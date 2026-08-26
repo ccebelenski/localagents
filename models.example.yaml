@@ -1,0 +1,43 @@
+# Example config — copy to models.yaml (gitignored) and edit for your setup.
+defaults:
+  model: qwen3.8-27b
+  permission_mode: acceptEdits
+  allowed_tools: [Read, Edit, Write, Glob, Grep, Bash, WebFetch]
+  disallowed_tools: [Agent, Task]
+  setting_sources: [project, local]
+  max_turns: 60
+  timeout_s: 1800
+  probe_timeout_s: 2.5
+  system_prompt_append: |
+    You are running as a delegated sub-agent on a local model. Work only on the task you were given,
+    verify your changes (run tests/builds where they exist), and finish with a concise report: what you changed (file paths),
+    how you verified it, and anything you could not complete.
+
+# Where models get served. What each one is serving right now, its context window and slot
+# occupancy are discovered live — nothing here needs updating when a model is swapped.
+endpoints:
+  llamacpp:
+    base_url: http://127.0.0.1:8080
+    backend: llama.cpp
+  vllm:
+    base_url: http://127.0.0.1:8000
+    backend: vllm
+  gpu-server:
+    base_url: http://gpu-server.lan:8000   # a bigger box on the LAN running vLLM
+    backend: vllm
+    host: gpu-server
+
+# The menu: names Claude may ask you to bring up. A name alone is enough (fuzzy-matched against
+# served ids); host/notes are relayed with the request. Optional overrides: served_name (exact/glob),
+# endpoint, context (fallback window), bring_up (start command — goes stale, usually omit).
+models:
+  qwen3.8-27b:
+    notes: default mid-size coder on llama.cpp; run with --reasoning on
+    tags: [coding, tools, local]
+  qwen3-coder:
+    notes: Qwen3-Coder-30B-A3B on llama.cpp; instruct (no thinking)
+    tags: [coding, tools, local]
+  deepseek-v4-flash:
+    host: gpu-server
+    notes: big model via vLLM; needs --enable-auto-tool-choice --tool-call-parser deepseek_v3
+    tags: [coding, tools, large, remote]

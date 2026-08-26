@@ -1,0 +1,44 @@
+[project]
+name = "localagents"
+version = "0.1.0"
+description = "MCP server that delegates Claude Code agent work to local models (llama.cpp / vLLM)"
+readme = "README.md"
+authors = [
+    { name = "Chris Cebelenski", email = "ccebelenski@gmail.com" }
+]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+keywords = ["claude-code", "mcp", "llama.cpp", "vllm", "local-llm", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Build Tools",
+]
+dependencies = [
+    "claude-agent-sdk>=0.2.144",
+    "httpx>=0.28.1",
+    "mcp>=2",
+    "pyyaml>=6.0.3",
+    "starlette>=1.6.0",
+    "uvicorn>=0.52.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/ccebelenski/localagents"
+Issues = "https://github.com/ccebelenski/localagents/issues"
+
+[project.scripts]
+localagents = "localagents:main"
+
+[build-system]
+requires = ["uv_build>=0.11.2,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

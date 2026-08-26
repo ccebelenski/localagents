@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in localagents misbehaves
+title: '[Bug]: '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. Most problems here turn out to be a specific model + server + Claude Code
+        version combination, so the versions below matter more than usual.
+
+  - type: input
+    id: backend
+    attributes:
+      label: Inference server and version
+      description: llama.cpp build (`llama-server --version`) or vLLM version, and how it was started.
+      placeholder: 'llama.cpp b10630, llama-server -hf ... --jinja --parallel 2'
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The served model id (as `list_models` reports it).
+      placeholder: unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL
+    validations:
+      required: true
+
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Code / Agent SDK version
+      description: Output of `claude --version`, and `claude-agent-sdk` from `uv pip list` if you know it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What went wrong, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Job log / requests.jsonl (optional)
+      description: >
+        The relevant part of `~/.local/state/localagents/jobs/<job>/transcript.txt` or
+        `requests.jsonl`, and the matching lines from the server log. Rendered as code.
+      render: shell
+    validations:
+      required: false

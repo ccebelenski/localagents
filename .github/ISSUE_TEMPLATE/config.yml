@@ -1,0 +1,3 @@
+# Blank issues are allowed — questions about a particular model/server combo
+# don't fit a form, and that's most of what comes up with local inference.
+blank_issues_enabled: true
