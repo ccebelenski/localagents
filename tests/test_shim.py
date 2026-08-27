@@ -37,7 +37,7 @@ def test_translate_vllm_style_error():
 
 def test_translate_leaves_other_errors_alone():
     assert translate_context_error(400, b'{"error":{"message":"bad json","type":"invalid_request_error"}}') is None
-    assert translate_context_error(500, LLAMA_ERR) is None
+    assert translate_context_error(500, b'{"error":{"type":"internal_error","message":"CUDA out of memory"}}') is None
     assert translate_context_error(400, b"not json") is None
 
 
@@ -88,3 +88,33 @@ def test_fuzzy_model_match():
     assert reg.match(ModelSpec(name="*Qwen3.8*"), ids) == ids[0]  # glob as name
     assert reg.match(ModelSpec(name="x", served_name="DeepSeek-V4-Flash"), ids) == ids[1]  # explicit override
     assert reg.match(ModelSpec(name="x", served_name="*V4*"), ids) == ids[1]
+
+
+VLLM_ERR = (b'{"type":"error","error":{"type":"internal_error","message":"This model\'s maximum context length is '
+            b'937472 tokens. However, you requested 16 output tokens and your prompt contains at least 937457 input '
+            b'tokens, for a total of at least 937473 tokens. Please reduce the length of the input prompt or the '
+            b'number of requested output tokens. (parameter=input_tokens, value=937457)"}}')
+
+
+def test_translate_vllm_anthropic_endpoint_500():
+    body, original = translate_context_error(500, VLLM_ERR)
+    assert json.loads(body)["error"]["message"] == "prompt is too long: 937473 tokens > 937472 maximum"
+    assert original.startswith("This model's maximum context length")
+
+
+def test_parse_metrics_sums_labelled_series():
+    from localagents.registry import parse_metrics, metrics_delta
+    text = """# HELP x
+vllm:prompt_tokens_total{engine="0",model_name="a"} 1000
+vllm:prompt_tokens_total{engine="1",model_name="a"} 200
+vllm:generation_tokens_total{engine="0",model_name="a"} 50
+vllm:prefix_cache_queries_total{engine="0",model_name="a"} 900
+vllm:prefix_cache_hits_total{engine="0",model_name="a"} 450
+vllm:num_requests_running{engine="0",model_name="a"} 1
+llamacpp:prompt_tokens_total 5
+"""
+    m = parse_metrics(text)
+    assert m["prompt_tokens"] == 1205 and m["generated_tokens"] == 50 and m["requests_running"] == 1
+    zero = {k: 0.0 for k in m}
+    d = metrics_delta(zero, m)
+    assert d["prompt_tokens_cached"] == 450 and d["prompt_tokens_processed"] == 755 and d["cache_hit_ratio"] == 0.5

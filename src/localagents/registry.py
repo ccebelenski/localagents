@@ -188,7 +188,20 @@ class Registry:
         # vLLM: /v1/models entries carry max_model_len
         ctx = {m["id"]: int(m["max_model_len"]) for m in entries if isinstance(m.get("max_model_len"), int)}
         if ctx:
-            return ctx, "vllm:max_model_len", {}
+            extra: dict[str, Any] = {}
+            try:
+                r = await c.get(f"{ep.url}/metrics")
+                if r.status_code == 200:
+                    mt = parse_metrics(r.text)
+                    extra["metrics"] = True
+                    extra["load"] = {
+                        "requests_running": int(mt.get("requests_running", 0)),
+                        "requests_waiting": int(mt.get("requests_waiting", 0)),
+                        "kv_cache_usage": round(mt.get("kv_cache_usage", 0.0), 3),
+                    }
+            except httpx.HTTPError:
+                pass
+            return ctx, "vllm:max_model_len", extra
         # llama.cpp: /props -> default_generation_settings.n_ctx (per slot); /slots -> occupancy
         is_llama = ep.backend.replace(".", "").replace("-", "").lower() in ("llamacpp", "llama") or any(
             m.get("owned_by") == "llamacpp" for m in entries
@@ -320,9 +333,10 @@ class Registry:
         return None
 
 
-# ---------- llama.cpp /metrics (server-wide counters; per-job deltas are computed by the runner)
+# ---------- /metrics (server-wide counters; per-job deltas are computed by the runner)
 
 _METRIC_KEYS = {
+    # llama.cpp (--metrics)
     "llamacpp:prompt_tokens_total": "prompt_tokens",
     "llamacpp:prompt_tokens_cached_total": "prompt_tokens_cached",
     "llamacpp:prompt_seconds_total": "prompt_seconds",
@@ -330,11 +344,39 @@ _METRIC_KEYS = {
     "llamacpp:tokens_predicted_seconds_total": "generated_seconds",
     "llamacpp:spec_decode_num_draft_tokens_total": "spec_draft_tokens",
     "llamacpp:spec_decode_num_accepted_tokens_total": "spec_accepted_tokens",
+    # vLLM (always on); prefix-cache counters are in tokens
+    "vllm:prompt_tokens_total": "prompt_tokens",
+    "vllm:generation_tokens_total": "generated_tokens",
+    "vllm:prefix_cache_queries_total": "prefix_queries",
+    "vllm:prefix_cache_hits_total": "prefix_hits",
+    "vllm:num_requests_running": "requests_running",
+    "vllm:num_requests_waiting": "requests_waiting",
+    "vllm:kv_cache_usage_perc": "kv_cache_usage",
 }
 
 
+def parse_metrics(text: str) -> dict[str, float]:
+    """Prometheus text -> {short_name: value}; labelled series (vLLM) are summed per metric."""
+    out: dict[str, float] = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        name, _, rest = line.partition(" ")
+        if "{" in name:  # name{labels} value
+            name, _, _ = name.partition("{")
+            rest = line[line.rfind("}") + 1:].strip()
+        key = _METRIC_KEYS.get(name)
+        if key is None:
+            continue
+        try:
+            out[key] = out.get(key, 0.0) + float(rest.split()[0])
+        except (ValueError, IndexError):
+            pass
+    return out
+
+
 async def fetch_metrics(base_url: str, timeout_s: float = 2.5) -> dict[str, float] | None:
-    """Snapshot llama.cpp's Prometheus counters (needs ``--metrics``). None if unavailable."""
+    """Snapshot the server's Prometheus counters (llama.cpp needs ``--metrics``). None if unavailable."""
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as c:
             r = await c.get(f"{base_url.rstrip('/')}/metrics")
@@ -342,38 +384,33 @@ async def fetch_metrics(base_url: str, timeout_s: float = 2.5) -> dict[str, floa
             return None
     except httpx.HTTPError:
         return None
-    out: dict[str, float] = {}
-    for line in r.text.splitlines():
-        if line.startswith("#") or " " not in line:
-            continue
-        k, _, v = line.partition(" ")
-        if k in _METRIC_KEYS:
-            try:
-                out[_METRIC_KEYS[k]] = float(v)
-            except ValueError:
-                pass
-    return out or None
+    return parse_metrics(r.text) or None
 
 
 def metrics_delta(before: dict[str, float] | None, after: dict[str, float] | None) -> dict[str, Any] | None:
-    """Cache/throughput summary for the span between two snapshots."""
+    """Cache/throughput summary for the span between two snapshots (llama.cpp or vLLM counters)."""
     if not before or not after:
         return None
-    d = {k: after.get(k, 0.0) - before.get(k, 0.0) for k in _METRIC_KEYS.values()}
-    processed, cached = d["prompt_tokens"], d["prompt_tokens_cached"]
-    out: dict[str, Any] = {
-        "prompt_tokens_processed": int(processed),
-        "prompt_tokens_cached": int(cached),
-        "generated_tokens": int(d["generated_tokens"]),
-    }
-    if processed + cached > 0:
-        out["cache_hit_ratio"] = round(cached / (processed + cached), 3)
-    if d["prompt_seconds"] > 0:
-        out["prompt_tps"] = round(processed / d["prompt_seconds"], 1)
-    if d["generated_seconds"] > 0:
-        out["generate_tps"] = round(d["generated_tokens"] / d["generated_seconds"], 1)
-    if d["spec_draft_tokens"] > 0:
-        out["spec_decode_acceptance"] = round(d["spec_accepted_tokens"] / d["spec_draft_tokens"], 3)
+    d = {k: after.get(k, 0.0) - before.get(k, 0.0) for k in set(before) | set(after)}
+    out: dict[str, Any] = {"generated_tokens": int(d.get("generated_tokens", 0))}
+    if "prefix_queries" in after:  # vLLM: prompt_tokens counts everything; hits are the cached part
+        total, hits = d.get("prompt_tokens", 0.0), d.get("prefix_hits", 0.0)
+        out["prompt_tokens_processed"] = int(max(0.0, total - hits))
+        out["prompt_tokens_cached"] = int(hits)
+        if d.get("prefix_queries", 0.0) > 0:
+            out["cache_hit_ratio"] = round(hits / d["prefix_queries"], 3)
+    else:  # llama.cpp: processed and cached are separate counters
+        processed, cached = d.get("prompt_tokens", 0.0), d.get("prompt_tokens_cached", 0.0)
+        out["prompt_tokens_processed"] = int(processed)
+        out["prompt_tokens_cached"] = int(cached)
+        if processed + cached > 0:
+            out["cache_hit_ratio"] = round(cached / (processed + cached), 3)
+        if d.get("prompt_seconds", 0.0) > 0:
+            out["prompt_tps"] = round(processed / d["prompt_seconds"], 1)
+        if d.get("generated_seconds", 0.0) > 0:
+            out["generate_tps"] = round(d["generated_tokens"] / d["generated_seconds"], 1)
+        if d.get("spec_draft_tokens", 0.0) > 0:
+            out["spec_decode_acceptance"] = round(d["spec_accepted_tokens"] / d["spec_draft_tokens"], 3)
     return out
 
 

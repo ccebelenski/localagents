@@ -100,8 +100,11 @@ def normalise_messages_body(body: dict[str, Any]) -> dict[str, Any]:
 
 _CTX_PATTERNS = (
     # llama.cpp: "request (327691 tokens) exceeds the available context size (262144 tokens), ..."
-    re.compile(r"request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\)", re.I),
-    # vLLM / OpenAI-style: "This model's maximum context length is 32768 tokens. However, you requested 40000 tokens"
+    re.compile(r"request \((?P<actual>\d+) tokens\) exceeds the available context size \((?P<limit>\d+) tokens\)", re.I),
+    # vLLM (Anthropic endpoint, seen as HTTP 500): "This model's maximum context length is 937472 tokens. However,
+    # you requested 16 output tokens and your prompt contains at least 937457 input tokens, for a total of at least 937473 tokens."
+    re.compile(r"maximum context length is (?P<limit>\d+) tokens.*?total of at least (?P<actual>\d+) tokens", re.I | re.S),
+    # vLLM / OpenAI-style chat endpoint: "... However, you requested 40000 tokens (39000 in the messages, ...)"
     re.compile(r"maximum context length is (?P<limit>\d+) tokens.*?requested (?P<actual>\d+) tokens", re.I | re.S),
 )
 _CTX_HINTS = ("exceeds the available context", "maximum context length", "exceed context limit", "context length exceeded")
@@ -112,9 +115,10 @@ def translate_context_error(status: int, data: bytes) -> tuple[bytes, str] | Non
 
     Returns ``(new_body, original_message)`` or None when the error is something else. Claude
     Code keys its recovery (compact, then retry) on the literal ``prompt is too long`` and reads
-    ``N tokens > M maximum`` to size the trim, so both are reproduced exactly.
+    ``N tokens > M maximum`` to size the trim, so both are reproduced exactly. vLLM reports the
+    condition as HTTP 500 ``internal_error``, so any 4xx/5xx with a matching message qualifies.
     """
-    if status not in (400, 413):
+    if status < 400:
         return None
     try:
         doc = json.loads(data)
@@ -132,9 +136,7 @@ def translate_context_error(status: int, data: bytes) -> tuple[bytes, str] | Non
         for pat in _CTX_PATTERNS:
             m = pat.search(msg)
             if m:
-                g = m.groupdict()
-                actual = int(g.get("actual") or m.group(1))
-                limit = int(g.get("limit") or m.group(2))
+                actual, limit = int(m.group("actual")), int(m.group("limit"))
                 break
     text = "prompt is too long"
     if actual is not None and limit is not None:

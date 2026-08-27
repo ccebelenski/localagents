@@ -205,9 +205,13 @@ job. Give each slot 128k or more.
   speculative-decode acceptance — the counters are server-wide, so overlapping jobs
   share the delta.
 - **vLLM**: `vllm serve <model> --served-model-name <alias> --enable-auto-tool-choice
-  --tool-call-parser <parser>`. The session is started with
-  `CLAUDE_CODE_ATTRIBUTION_HEADER=0` because the per-request attribution hash
-  defeats prefix caching.
+  --tool-call-parser <parser>`. The context window comes from `max_model_len` in
+  `/v1/models`; occupancy (`requests_running`/`waiting`, `kv_cache_usage`) and the per-job
+  cache stats come from its always-on `/metrics`. vLLM reports context overflow on the
+  Anthropic endpoint as HTTP 500 `internal_error`; the shim translates that too. The session
+  is started with `CLAUDE_CODE_ATTRIBUTION_HEADER=0` because the per-request attribution
+  hash defeats prefix caching. Verified with DeepSeek-V4-Flash: thinking blocks replay with
+  their signatures, prefix cache hits on every turn after the first.
 - The first turn of a job costs about 20k tokens of prompt on a cold slot (system
   prompt plus tool schemas), ~10 s on a 27B. Everything after that is a cache hit
   plus the delta.
