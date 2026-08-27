@@ -352,6 +352,8 @@ _METRIC_KEYS = {
     "vllm:num_requests_running": "requests_running",
     "vllm:num_requests_waiting": "requests_waiting",
     "vllm:kv_cache_usage_perc": "kv_cache_usage",
+    "vllm:spec_decode_num_draft_tokens_total": "spec_draft_tokens",
+    "vllm:spec_decode_num_accepted_tokens_total": "spec_accepted_tokens",
 }
 
 
@@ -399,6 +401,8 @@ def metrics_delta(before: dict[str, float] | None, after: dict[str, float] | Non
         out["prompt_tokens_cached"] = int(hits)
         if d.get("prefix_queries", 0.0) > 0:
             out["cache_hit_ratio"] = round(hits / d["prefix_queries"], 3)
+        if d.get("spec_draft_tokens", 0.0) > 0:
+            out["spec_decode_acceptance"] = round(d["spec_accepted_tokens"] / d["spec_draft_tokens"], 3)
     else:  # llama.cpp: processed and cached are separate counters
         processed, cached = d.get("prompt_tokens", 0.0), d.get("prompt_tokens_cached", 0.0)
         out["prompt_tokens_processed"] = int(processed)
