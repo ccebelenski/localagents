@@ -1,15 +1,10 @@
-"""Model/endpoint registry.
+"""Endpoint registry.
 
-Two concepts, deliberately separated because models are brought up and down often:
-
-* **Endpoint** – a place that speaks the Anthropic ``/v1/messages`` API
-  (llama.cpp ``llama-server``, vLLM, Ollama, ...).  What it is *currently*
-  serving is discovered live via ``GET /v1/models``.
-* **Model** – a named entry in the pool: the menu Claude can ask the human for by
-  name when nothing suitable is up. A name alone is enough (it is fuzzy-matched
-  against served ids); ``host``/``notes`` say where it lives and what it's for.
-  ``served_name``, ``endpoint``, ``context`` and ``bring_up`` are optional overrides —
-  the context window and endpoint are discovered live, and start commands rot.
+The config lists **endpoints**: places that speak the Anthropic ``/v1/messages`` API
+(llama.cpp ``llama-server``, vLLM, ...). Nothing about models lives in the config.
+What each endpoint is *currently* serving, its context window and its occupancy are
+discovered live via ``GET /v1/models`` (plus ``/props``, ``/slots`` or ``/metrics``)
+on every call. The human brings models up and down by hand; Claude uses whatever is up.
 
 The YAML file is re-read on every call, so edits take effect immediately.
 """
@@ -27,6 +22,10 @@ from typing import Any
 
 import httpx
 import yaml
+
+# Below this per-request window a Claude Code session spends most of its turns compacting
+# (~20k fixed prompt + summary + re-attached files). See README "Context windows".
+MIN_USEFUL_CONTEXT = 128_000
 
 DEFAULT_CONFIG_LOCATIONS = (
     Path.cwd() / "models.yaml",
@@ -85,23 +84,8 @@ class Endpoint:
 
 
 @dataclass
-class ModelSpec:
-    name: str
-    host: str = ""  # where the human runs it (informational: "local", "dgx", ...)
-    notes: str = ""  # what it's for / quirks, relayed to the human with a bring-up request
-    served_name: str = ""  # override: exact id or fnmatch glob; default = fuzzy match on name
-    endpoint: str | None = None  # override: preferred endpoint name
-    bring_up: str = ""  # override: start command to relay (optional; these go stale fast)
-    tags: list[str] = field(default_factory=list)
-    context: int | None = None  # fallback when the endpoint does not report a window
-    env: dict[str, str] = field(default_factory=dict)
-    max_turns: int | None = None
-    permission_mode: str | None = None
-
-
-@dataclass
 class Defaults:
-    model: str | None = None
+    model: str | None = None  # optional preference: served id, glob or fuzzy name; else first live endpoint
     permission_mode: str = "acceptEdits"
     allowed_tools: list[str] = field(
         default_factory=lambda: ["Read", "Edit", "Write", "Glob", "Grep", "Bash", "WebFetch"]
@@ -116,7 +100,7 @@ class Defaults:
 
 
 def local_path(path: Path) -> Path:
-    """Sidecar for entries added via register_model/register_endpoint: ``models.local.yaml``.
+    """Sidecar for endpoints added via register_endpoint: ``models.local.yaml``.
 
     The hand-written file is never rewritten (comments and layout survive); the sidecar is
     merged on top of it at load, entry by entry.
@@ -128,7 +112,6 @@ def local_path(path: Path) -> Path:
 class Registry:
     path: Path
     endpoints: dict[str, Endpoint]
-    models: dict[str, ModelSpec]
     defaults: Defaults
     raw: dict[str, Any]  # hand-written file, read-only
     local: dict[str, Any]  # models.local.yaml, written by register_*
@@ -140,17 +123,16 @@ class Registry:
         raw = _read_yaml(path)
         local = _read_yaml(local_path(path))
         merged_endpoints = {**(raw.get("endpoints") or {}), **(local.get("endpoints") or {})}
-        merged_models = {**(raw.get("models") or {}), **(local.get("models") or {})}
         endpoints = {name: Endpoint(name=name, **(cfg or {})) for name, cfg in merged_endpoints.items()}
-        models = {name: ModelSpec(name=name, **(cfg or {})) for name, cfg in merged_models.items()}
         defaults = Defaults(**{**(raw.get("defaults") or {}), **(local.get("defaults") or {})})
-        return cls(path=path, endpoints=endpoints, models=models, defaults=defaults, raw=raw, local=local)
+        # A leftover ``models:`` section from older configs is ignored: served models are discovered.
+        return cls(path=path, endpoints=endpoints, defaults=defaults, raw=raw, local=local)
 
     def save(self) -> None:
         """Persist ``self.local`` to the sidecar; ``models.yaml`` itself is left untouched."""
         lp = local_path(self.path)
         lp.parent.mkdir(parents=True, exist_ok=True)
-        header = "# Written by localagents register_model/register_endpoint; merged over models.yaml.\n"
+        header = "# Written by localagents register_endpoint; merged over models.yaml.\n"
         lp.write_text(header + yaml.dump(self.local, Dumper=_Dumper, sort_keys=False, width=10_000, allow_unicode=True))
 
     # ---------- probing ----------
@@ -175,6 +157,12 @@ class Registry:
             if context:
                 out["context"] = context
                 out["context_source"] = source
+                small = {sid: n for sid, n in context.items() if n < MIN_USEFUL_CONTEXT}
+                if small:
+                    out["context_warning"] = (
+                        f"window under {MIN_USEFUL_CONTEXT // 1000}k for {sorted(small)}: Claude Code will "
+                        "auto-compact constantly; poor fit for run_agent (fine for local_complete)"
+                    )
             out.update(extra)
             return out
         except Exception as e:  # noqa: BLE001
@@ -236,22 +224,17 @@ class Registry:
         return dict(zip(names, results))
 
     # ---------- resolution ----------
-    def match(self, spec: ModelSpec, served_ids: list[str]) -> str | None:
-        """Served id for a pool entry: ``served_name`` (exact/glob) if set, else fuzzy on the name.
+    @staticmethod
+    def match(name: str, served_ids: list[str]) -> str | None:
+        """Served id matching ``name``: exact, then fnmatch glob, then fuzzy.
 
         Fuzzy = alphanumerics only, case-folded, name must be a substring of the id — so
-        ``qwen3.8-27b`` matches ``unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL``. A plain served id
-        passed as a name (not in the pool) still matches exactly.
+        ``qwen3.8-27b`` matches ``unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL``.
         """
-        if spec.served_name:
-            for sid in served_ids:
-                if sid == spec.served_name or fnmatch.fnmatchcase(sid, spec.served_name):
-                    return sid
-            return None
         for sid in served_ids:
-            if sid == spec.name or fnmatch.fnmatchcase(sid, spec.name):
+            if sid == name or fnmatch.fnmatchcase(sid, name):
                 return sid
-        key = _squash(spec.name)
+        key = _squash(name)
         if len(key) < 3:
             return None
         for sid in served_ids:
@@ -262,9 +245,11 @@ class Registry:
     async def resolve(
         self, model: str | None = None, endpoint: str | None = None
     ) -> "Resolution":
-        """Find a live endpoint serving the requested model.
+        """Find a live endpoint serving ``model`` (served id, glob or fuzzy name).
 
-        Raises ModelUnavailable with a human-facing hint when nothing fits.
+        With no model (and no ``defaults.model``) the first live endpoint that is serving
+        anything wins, in config order. Raises ModelUnavailable with a human-facing hint
+        when nothing fits.
         """
         if endpoint and endpoint not in self.endpoints:
             raise ModelUnavailable(
@@ -273,64 +258,27 @@ class Registry:
             )
 
         model = model or self.defaults.model
-        spec = self.models.get(model) if model else None
-        if model and spec is None:
-            # Not in the pool: treat the string as a served model id / glob / fuzzy name.
-            spec = ModelSpec(name=model)
-
         candidates = [self.endpoints[endpoint]] if endpoint else list(self.endpoints.values())
-        if spec and spec.endpoint and not endpoint and spec.endpoint in self.endpoints:
-            # preferred endpoint first
-            candidates.sort(key=lambda e: 0 if e.name == spec.endpoint else 1)
-
         probes = await asyncio.gather(*(self.probe(e) for e in candidates))
         for ep, pr in zip(candidates, probes):
-            if not pr["up"]:
+            if not pr["up"] or not pr["models"]:
                 continue
-            if spec is None:
-                # No model requested: take whatever this endpoint is serving.
-                if pr["models"]:
-                    sid = pr["models"][0]
-                    return Resolution.make(ep, sid, self.models_for_served(sid), pr)
-                continue
-            served = self.match(spec, pr["models"])
+            served = self.match(model, pr["models"]) if model else pr["models"][0]
             if served:
-                return Resolution.make(ep, served, spec, pr)
+                return Resolution.make(ep, served, pr)
 
         # Nothing matched -> build a helpful hint.
         status = {ep.name: pr for ep, pr in zip(candidates, probes)}
-        hint_parts = []
-        if spec and spec.name in self.models:
-            where = f" on {spec.host}" if spec.host else ""
-            hint_parts.append(f"'{spec.name}' is not running anywhere. Ask the user to bring it up{where}.")
-            if spec.notes:
-                hint_parts.append(f"Notes: {spec.notes}")
-            if spec.bring_up:
-                hint_parts.append(f"Start command on file (may be stale):\n  {spec.bring_up}")
-        elif spec:
-            hint_parts.append(
-                f"'{spec.name}' is not in the pool and no endpoint is serving a model matching it. "
-                "Ask the user to start it, or pick from list_models."
-            )
-        else:
-            hint_parts.append("No endpoint is up. Ask the user which model to bring up.")
         up_now = {n: p["models"] for n, p in status.items() if p["up"]}
+        if not up_now:
+            hint = "No endpoint is up. Ask the user to start a model server."
+        elif model:
+            hint = f"No live endpoint is serving a model matching '{model}'. Ask the user to start one."
+        else:
+            hint = "Endpoints are up but none is serving a model. Ask the user to load one."
         if up_now:
-            hint_parts.append(f"Currently serving: {up_now}")
-        raise ModelUnavailable(
-            "\n".join(hint_parts),
-            model=spec.name if spec else None,
-            host=spec.host if spec else "",
-            notes=spec.notes if spec else "",
-            bring_up=spec.bring_up if spec else "",
-            endpoints=status,
-        )
-
-    def models_for_served(self, served_id: str) -> ModelSpec | None:
-        for spec in self.models.values():
-            if self.match(spec, [served_id]):
-                return spec
-        return None
+            hint += f"\nCurrently serving: {up_now}"
+        raise ModelUnavailable(hint, model=model, endpoints=status)
 
 
 # ---------- /metrics (server-wide counters; per-job deltas are computed by the runner)
@@ -422,18 +370,15 @@ def metrics_delta(before: dict[str, float] | None, after: dict[str, float] | Non
 class Resolution:
     endpoint: Endpoint
     served_model: str
-    spec: ModelSpec | None
     context: int | None = None  # tokens the backend will actually accept per request
     context_source: str = ""
 
     @classmethod
-    def make(cls, ep: Endpoint, served: str, spec: ModelSpec | None, probe: dict[str, Any]) -> "Resolution":
+    def make(cls, ep: Endpoint, served: str, probe: dict[str, Any]) -> "Resolution":
         probed = (probe.get("context") or {}).get(served)
         if probed:
-            return cls(ep, served, spec, probed, probe.get("context_source", "probe"))
-        if spec and spec.context:
-            return cls(ep, served, spec, spec.context, "models.yaml")
-        return cls(ep, served, spec)
+            return cls(ep, served, probed, probe.get("context_source", "probe"))
+        return cls(ep, served)
 
 
 class ModelUnavailable(Exception):

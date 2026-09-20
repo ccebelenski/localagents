@@ -59,8 +59,6 @@ def build_env(res: Resolution, base_url: str) -> dict[str, str]:
         if res.context < 128000:
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max(8192, res.context // 8))
     env.update(res.endpoint.env)
-    if res.spec:
-        env.update(res.spec.env)
     return env
 
 
@@ -185,7 +183,6 @@ async def run_job(
     shim_base_url: str,
 ) -> None:
     d = reg.defaults
-    spec = res.spec
     job.status = "running"
     job.started_at = time.time()
     metrics_before = await fetch_metrics(res.endpoint.url, d.probe_timeout_s)
@@ -200,10 +197,10 @@ async def run_job(
             model=res.served_model,
             env=build_env(res, shim_base_url),
             cwd=job.run_cwd,
-            permission_mode=permission_mode or (spec.permission_mode if spec else None) or d.permission_mode,
+            permission_mode=permission_mode or d.permission_mode,
             allowed_tools=allowed_tools or d.allowed_tools,
             disallowed_tools=d.disallowed_tools,
-            max_turns=max_turns or (spec.max_turns if spec else None) or d.max_turns,
+            max_turns=max_turns or d.max_turns,
             setting_sources=d.setting_sources,  # type: ignore[arg-type]
             system_prompt={"type": "preset", "preset": "claude_code", **({"append": append} if append else {})},
             resume=resume_session,

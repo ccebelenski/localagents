@@ -34,11 +34,12 @@ localagents ── spawns ──▶ headless `claude` (Agent SDK)
 
 Three things make this more than an environment variable:
 
-1. **A registry that is probed live.** `models.yaml` lists where servers are and a
-   menu of model names. What each server is actually serving right now, its real
-   context window, and how many slots are busy are discovered on every call. You
-   bring models up and down by hand — the server never launches anything — and
-   when Claude needs a model that isn't running it asks you for it by name.
+1. **Endpoints, not models, in the config.** `models.yaml` is a list of servers.
+   What each one is actually serving right now, its real context window, and how
+   many slots are busy are discovered on every call via `/v1/models` and friends.
+   You bring models up and down by hand — the server never launches anything —
+   and Claude uses whatever is up. If nothing suitable is running it asks you to
+   start something.
 
 2. **A shim between Claude Code and the backend.** Claude Code sends things local
    chat templates reject, and local servers fail in ways Claude Code doesn't
@@ -97,20 +98,23 @@ you don't have to do anything.
 
 If nothing suitable is running you'll be asked to start one:
 
-> `qwen3.8-27b` is not running anywhere. Ask the user to bring it up.
-> Notes: default mid-size coder on llama.cpp; run with --reasoning on
+> No live endpoint is serving a model matching `qwen`. Ask the user to start one.
+> Currently serving: {'dgx1': ['GLM-5.3-Flash-EXL3']}
 
-Start it however you normally do, say "it's up", and Claude retries.
+Start whatever you like, however you normally do, say "it's up", and Claude retries.
+Which model that is, is your call; the config never names one. The flip side: anything
+you leave running is fair game. Claude is told to name the model it's about to use and
+to check with you if the id looks unfamiliar, and `list_models` flags windows under
+128k, but the real gate is what you choose to start.
 
 ### Tools
 
 | tool | what it does |
 |---|---|
-| `list_models` | endpoints with live health, served ids, context window, slot occupancy; the pool with `available` |
+| `list_models` | endpoints with live health, served ids, context window, slot occupancy |
 | `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, … |
 | `wait_job` / `job_status` / `job_log` / `list_jobs` / `cancel_job` | follow and control jobs |
-| `request_model` | what to tell the user to bring a pool model up |
-| `register_model` / `register_endpoint` | add to the pool from inside a session (written to `models.local.yaml`) |
+| `register_endpoint` | add a server from inside a session (written to `models.local.yaml`) |
 | `local_complete` | one-shot generation with no tools — summaries, drafts, classification |
 
 Job records live in `~/.local/state/localagents/jobs/<job>/`: `transcript.txt`
@@ -121,8 +125,8 @@ you turn on request dumping.
 ## Config: `models.yaml`
 
 Start from `models.example.yaml`. It's re-read on every call, so edits take effect
-immediately, and the server never rewrites it — `register_*` write to a sidecar
-`models.local.yaml` that is merged on top.
+immediately, and the server never rewrites it — `register_endpoint` writes to a
+sidecar `models.local.yaml` that is merged on top.
 
 ```yaml
 endpoints:
@@ -133,26 +137,23 @@ endpoints:
     base_url: http://gpu-server.lan:8000
     backend: vllm
     host: gpu-server
-
-models:
-  qwen3.8-27b:
-    notes: default mid-size coder on llama.cpp; run with --reasoning on
-  deepseek-v4-flash:
-    host: gpu-server
-    notes: vllm needs --enable-auto-tool-choice --tool-call-parser deepseek_v3
 ```
 
-- **endpoints** are places that serve `/v1/messages`. What they serve is probed.
-- **models** are just names. A name is fuzzy-matched against served ids
-  (`qwen3.8-27b` finds `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL`), so an entry needs
-  nothing but `notes` and maybe a `host` to relay when asking you to start it.
-  `served_name` (exact id or glob), `endpoint`, `context` (fallback window) and
-  `bring_up` (a start command) exist as overrides if you want them. Start
-  commands go stale quickly; a name and a note usually age better.
-- **defaults** cover the default model, `permission_mode` (`acceptEdits`), allowed
-  and disallowed tools (subagents can't spawn subagents), which Claude settings to
-  load, `max_turns`, `timeout_s`, and a system-prompt suffix telling the agent it's
-  a delegate and how to report back.
+- **endpoints** are places that serve `/v1/messages`. That's the whole config:
+  what each one is serving is probed, never written down. Order is priority —
+  with no model named, the first endpoint that is up and serving something wins.
+  `host` and `notes` are informational and shown in `list_models`; `env` adds
+  environment variables to sessions that run against that endpoint.
+- **Picking a model** is done per call. `run_agent(model=...)` takes a served id,
+  a glob, or a fuzzy name (`qwen3.8-27b` finds `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL`);
+  `endpoint=` pins a server. Both are only needed when more than one thing is up.
+  `defaults.model` is an optional standing preference in the same syntax.
+- **defaults** also cover `permission_mode` (`acceptEdits`), allowed and disallowed
+  tools (subagents can't spawn subagents), which Claude settings to load,
+  `max_turns`, `timeout_s`, and a system-prompt suffix telling the agent it's a
+  delegate and how to report back.
+
+A `models:` section from an older config is ignored.
 
 ## What the shim does
 

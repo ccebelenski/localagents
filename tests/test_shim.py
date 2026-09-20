@@ -79,15 +79,23 @@ def test_metrics_delta():
 
 
 def test_fuzzy_model_match():
-    from localagents.registry import ModelSpec, Registry
-    reg = Registry.load()
+    from localagents.registry import Registry
     ids = ["unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL", "DeepSeek-V4-Flash"]
-    assert reg.match(ModelSpec(name="qwen3.8-27b"), ids) == ids[0]
-    assert reg.match(ModelSpec(name="deepseek-v4-flash"), ids) == ids[1]
-    assert reg.match(ModelSpec(name="qwen3-coder"), ids) is None
-    assert reg.match(ModelSpec(name="*Qwen3.8*"), ids) == ids[0]  # glob as name
-    assert reg.match(ModelSpec(name="x", served_name="DeepSeek-V4-Flash"), ids) == ids[1]  # explicit override
-    assert reg.match(ModelSpec(name="x", served_name="*V4*"), ids) == ids[1]
+    assert Registry.match("qwen3.8-27b", ids) == ids[0]  # fuzzy
+    assert Registry.match("deepseek-v4-flash", ids) == ids[1]
+    assert Registry.match("qwen3-coder", ids) is None
+    assert Registry.match("*Qwen3.8*", ids) == ids[0]  # glob
+    assert Registry.match("DeepSeek-V4-Flash", ids) == ids[1]  # exact
+    assert Registry.match("*V4*", ids) == ids[1]
+
+
+def test_registry_ignores_legacy_models_section(tmp_path):
+    from localagents.registry import Registry
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text("endpoints:\n  a:\n    base_url: http://127.0.0.1:1\nmodels:\n  old:\n    notes: gone\n")
+    reg = Registry.load(cfg)
+    assert list(reg.endpoints) == ["a"]
+    assert reg.defaults.model is None
 
 
 VLLM_ERR = (b'{"type":"error","error":{"type":"internal_error","message":"This model\'s maximum context length is '

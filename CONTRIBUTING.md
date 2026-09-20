@@ -42,7 +42,7 @@ if you change `runner.py` or `shim.py`, run a short job and look at
 | file | what |
 |---|---|
 | `server.py` | the MCP tools; thin, mostly argument handling |
-| `registry.py` | `models.yaml`, endpoint probing (health, context window, slots, metrics), model resolution |
+| `registry.py` | `models.yaml` (endpoints only), endpoint probing (health, served ids, context window, slots, metrics), model resolution |
 | `runner.py` | one job = one headless Claude Code session via the Agent SDK; env, worktrees, transcript |
 | `shim.py` | the in-process HTTP proxy every session talks through; all backend-specific fixups go here |
 | `jobs.py` | job records and on-disk logs |

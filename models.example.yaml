@@ -1,6 +1,6 @@
 # Example config — copy to models.yaml (gitignored) and edit for your setup.
 defaults:
-  model: qwen3.8-27b
+  # model: qwen3.8-27b   # optional preference (served id, glob or fuzzy name); default = first live endpoint
   permission_mode: acceptEdits
   allowed_tools: [Read, Edit, Write, Glob, Grep, Bash, WebFetch]
   disallowed_tools: [Agent, Task]
@@ -13,8 +13,10 @@ defaults:
     verify your changes (run tests/builds where they exist), and finish with a concise report: what you changed (file paths),
     how you verified it, and anything you could not complete.
 
-# Where models get served. What each one is serving right now, its context window and slot
-# occupancy are discovered live — nothing here needs updating when a model is swapped.
+# That's the whole config: where your servers are. Models are never listed here. What each
+# endpoint is serving right now, its context window and its slot occupancy are discovered live
+# on every call, so nothing needs updating when you swap a model. Order matters: with no model
+# named, the first endpoint that is up and serving something is used.
 endpoints:
   llamacpp:
     base_url: http://127.0.0.1:8080
@@ -27,17 +29,3 @@ endpoints:
     backend: vllm
     host: gpu-server
 
-# The menu: names Claude may ask you to bring up. A name alone is enough (fuzzy-matched against
-# served ids); host/notes are relayed with the request. Optional overrides: served_name (exact/glob),
-# endpoint, context (fallback window), bring_up (start command — goes stale, usually omit).
-models:
-  qwen3.8-27b:
-    notes: default mid-size coder on llama.cpp; run with --reasoning on
-    tags: [coding, tools, local]
-  qwen3-coder:
-    notes: Qwen3-Coder-30B-A3B on llama.cpp; instruct (no thinking)
-    tags: [coding, tools, local]
-  deepseek-v4-flash:
-    host: gpu-server
-    notes: big model via vLLM; needs --enable-auto-tool-choice --tool-call-parser deepseek_v3
-    tags: [coding, tools, large, remote]

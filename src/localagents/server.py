@@ -24,15 +24,30 @@ own infrastructure. Each `run_agent` job is a full headless Claude Code session 
 CLAUDE.md, same working tree) but backed by a local model instead of Anthropic's API.
 
 Workflow:
-  1. `list_models` to see which endpoints are up and what they currently serve.
-  2. `run_agent(task, model=...)` -> returns a job id immediately (or the result if wait_s > 0).
-     If the model is not up anywhere you get `model_unavailable`: ask the user to bring that
-     model up (by pool name, on its `host`), then retry once they say it's running.
+  1. `list_models` to see which endpoints are up and what they currently serve. Models are not
+     configured anywhere: whatever is running is what you can use. Nothing vets suitability but
+     you: prefer ids that look like instruct/coder models with `context` >= 128k (a
+     `context_warning` means the window is too small for an agent session). Always say which
+     served model you are about to use; if the id is unfamiliar or looks like a chat/roleplay
+     model, check with the user before launching rather than guessing.
+  2. `run_agent(task)` -> returns a job id immediately (or the result if wait_s > 0). Pass
+     `model=` (served id / glob / fuzzy name) or `endpoint=` only to pick between several live
+     endpoints. If you get `model_unavailable`, nothing suitable is running: tell the user what
+     is up and ask them to start a model, then retry once they say it's running.
   3. `wait_job` / `job_status` / `job_log` to follow progress; `cancel_job` to stop.
   4. Review what the local agent did (files_touched, or the worktree diff if isolation=worktree)
      — local models are less reliable than Claude, treat their output as a draft to verify.
 Use `local_complete` for cheap one-shot generation with no tools (summaries, drafts, classification).
 """
+
+# Returned inside tool results too: server instructions are far back in the prompt by the time a
+# model is chosen, and the served list is whatever the user left running, vetted by nobody.
+GUIDANCE = (
+    "Served models are whatever is running, not a curated list. Verify and validate unknown or "
+    "novel models before delegating to them, and confirm with the user that using one is appropriate. "
+    "Prefer instruct/coder ids with context >= 128k; a context_warning means the window is too small "
+    "for an agent session. Say which served model you are using."
+)
 
 mcp = MCPServer("localagents", instructions=INSTRUCTIONS)
 store = JobStore()
@@ -47,10 +62,11 @@ def _reg() -> Registry:
 
 @mcp.tool()
 async def list_models() -> dict[str, Any]:
-    """List configured endpoints (with live health + what they're serving now) and the model pool.
+    """List configured endpoints with live health and what each is serving right now.
 
-    Pool entries that are currently reachable are marked `available: true` with the endpoint name
-    and the served id. Unavailable ones are the menu to ask the user for (by name, on `host`).
+    Per endpoint: `up`, `models` (served ids), `context` (real per-request window per served id),
+    and slot/queue occupancy where the backend exposes it. Anything listed as served is usable
+    immediately via `run_agent`; if nothing suitable is up, ask the user to start a model.
     """
     reg = _reg()
     probes = await reg.probe_all()
@@ -58,80 +74,13 @@ async def list_models() -> dict[str, Any]:
         n: {"base_url": e.url, "backend": e.backend, "host": e.host, "notes": e.notes, **probes[n]}
         for n, e in reg.endpoints.items()
     }
-    pool = {}
-    for name, spec in reg.models.items():
-        where, live_ctx, sid = None, None, None
-        for en, pr in probes.items():
-            if pr["up"] and (sid := reg.match(spec, pr["models"])):
-                where = en
-                live_ctx = (pr.get("context") or {}).get(sid)
-                break
-        entry: dict[str, Any] = {"available": where is not None}
-        if where:
-            entry["endpoint"] = where
-            entry["served_model"] = sid
-        for k, v in (("host", spec.host), ("notes", spec.notes), ("tags", spec.tags),
-                     ("context", live_ctx or spec.context), ("bring_up", spec.bring_up if not where else "")):
-            if v:
-                entry[k] = v
-        pool[name] = entry
     return {
         "config": str(reg.path),
         "server_cwd": os.getcwd(),
         "default_model": reg.defaults.model,
         "endpoints": endpoints,
-        "models": pool,
+        "guidance": GUIDANCE,
     }
-
-
-@mcp.tool()
-async def request_model(model: str) -> dict[str, Any]:
-    """What to relay to the user to bring up a model that is not currently running.
-
-    Returns the pool entry's `host`/`notes` (and a start command only if one is on file). If the
-    model is already up, says so instead.
-    """
-    reg = _reg()
-    try:
-        res = await reg.resolve(model=model)
-        return {"available": True, "endpoint": res.endpoint.name, "served_model": res.served_model}
-    except ModelUnavailable as e:
-        return e.to_dict()
-
-
-@mcp.tool()
-async def register_model(
-    name: str,
-    host: str = "",
-    notes: str = "",
-    tags: list[str] | None = None,
-    served_name: str = "",
-    endpoint: str | None = None,
-    context: int | None = None,
-    bring_up: str = "",
-) -> dict[str, Any]:
-    """Add or update a model in the pool (persisted to models.yaml).
-
-    Only `name` is required: it is fuzzy-matched against served ids (alphanumerics, case-folded,
-    substring), so `qwen3.8-27b` finds `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL`. `host` and `notes`
-    are what gets relayed when asking the user to bring it up. The rest are overrides:
-    `served_name` (exact id or glob) when fuzzy matching is ambiguous, `endpoint` to prefer one,
-    `context` as a fallback window when the backend doesn't report one, `bring_up` a start command
-    (goes stale quickly; usually leave empty).
-    """
-    reg = _reg()
-    entry = {
-        "host": host,
-        "notes": notes,
-        "tags": tags or [],
-        "served_name": served_name,
-        "endpoint": endpoint,
-        "context": context,
-        "bring_up": bring_up.strip(),
-    }
-    reg.local.setdefault("models", {})[name] = {k: v for k, v in entry.items() if v not in (None, "", [])}
-    reg.save()
-    return {"ok": True, "model": name, "entry": reg.local["models"][name], "config": str(local_path(reg.path))}
 
 
 @mcp.tool()
@@ -142,7 +91,7 @@ async def register_endpoint(
     host: str = "local",
     notes: str = "",
 ) -> dict[str, Any]:
-    """Add or update an inference endpoint (persisted to models.yaml) and probe it.
+    """Add or update an inference endpoint (persisted to models.local.yaml) and probe it.
 
     `base_url` is the server root that exposes `/v1/messages`, e.g. `http://127.0.0.1:8080`.
     `backend` is one of llama.cpp | vllm | ollama | other (informational).
@@ -182,7 +131,8 @@ async def run_agent(
 
     Args:
       task: The brief. Be explicit; local models follow less implicit context than Claude.
-      model: Pool name (see list_models) or a served model id/glob. Default from models.yaml.
+      model: A served model id, glob or fuzzy name (see list_models). Default: `defaults.model`
+        from models.yaml if set, else whatever the first live endpoint is serving.
       endpoint: Force a specific endpoint; with no `model`, uses whatever it is serving.
       cwd: Working directory (default: this server's cwd, i.e. the current project).
       isolation: "none" (work in cwd, like a normal subagent) or "worktree" (fresh git worktree
@@ -200,7 +150,7 @@ async def run_agent(
     try:
         res = await reg.resolve(model=model, endpoint=endpoint)
     except ModelUnavailable as e:
-        return e.to_dict()
+        return {**e.to_dict(), "guidance": GUIDANCE}
 
     if isolation not in ("none", "worktree"):
         return {"error": "bad_argument", "message": "isolation must be 'none' or 'worktree'"}
