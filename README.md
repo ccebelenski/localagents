@@ -111,7 +111,7 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 
 | tool | what it does |
 |---|---|
-| `list_models` | endpoints with live health, served ids, context window, slot occupancy |
+| `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
 | `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, … |
 | `wait_job` / `job_status` / `job_log` / `list_jobs` / `cancel_job` | follow and control jobs |
 | `register_endpoint` | add a server from inside a session (written to `models.local.yaml`) |

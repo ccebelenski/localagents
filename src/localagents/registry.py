@@ -12,6 +12,7 @@ The YAML file is re-read on every call, so edits take effect immediately.
 from __future__ import annotations
 
 import asyncio
+import errno
 import fnmatch
 import os
 import re
@@ -19,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import yaml
@@ -67,6 +69,43 @@ def config_path() -> Path:
         if p.exists():
             return p
     return DEFAULT_CONFIG_LOCATIONS[0]
+
+
+def _chain_errno(exc: BaseException) -> int | None:
+    """First ``errno`` found on ``exc`` or anything it wraps (``__cause__``, ``__context__``,
+    exception-group members). httpx buries the kernel's OSError two ConnectErrors deep."""
+    seen: set[int] = set()
+    stack: list[BaseException | None] = [exc]
+    while stack:
+        e = stack.pop()
+        if e is None or id(e) in seen:
+            continue
+        seen.add(id(e))
+        n = getattr(e, "errno", None)
+        if isinstance(n, int):
+            return n
+        stack.extend([e.__cause__, e.__context__, *getattr(e, "exceptions", ())])
+    return None
+
+
+def classify_connect_failure(exc: BaseException, url: str) -> dict[str, Any]:
+    """Turn a failed probe into ``{"host": up|down|unknown, "error": <plain sentence>}``.
+
+    The kernel already distinguishes the two cases that matter, so no extra ping is needed:
+    ECONNREFUSED means the box is up and nothing listens on that port (a wrong port in
+    models.yaml); EHOSTUNREACH/ENETUNREACH mean the box is off or unroutable. A timeout is
+    ambiguous (powered off, or a firewall dropping packets) and is reported as unknown.
+    """
+    parts = urlsplit(url)
+    hostport = f"{parts.hostname}:{parts.port}" if parts.port else str(parts.hostname)
+    n = _chain_errno(exc)
+    if n == errno.ECONNREFUSED:
+        return {"host": "up", "error": f"{parts.hostname} is reachable but nothing is listening on {hostport} (nothing started there, or the port in models.yaml is wrong)"}
+    if n in (errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EHOSTDOWN):
+        return {"host": "down", "error": f"{parts.hostname} is unreachable ({errno.errorcode[n]})"}
+    if isinstance(exc, httpx.TimeoutException):
+        return {"host": "unknown", "error": f"{hostport} timed out (host off, or a firewall dropping packets)"}
+    return {"host": "unknown", "error": f"{type(exc).__name__}: {exc}"}
 
 
 @dataclass
@@ -153,7 +192,7 @@ class Registry:
                 entries = [m for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
                 ids = [m["id"] for m in entries]
                 context, source, extra = await self._probe_context(c, ep, entries)
-            out: dict[str, Any] = {"up": True, "models": ids, "latency_ms": int((time.monotonic() - t0) * 1000)}
+            out: dict[str, Any] = {"up": True, "host": "up", "models": ids, "latency_ms": int((time.monotonic() - t0) * 1000)}
             if context:
                 out["context"] = context
                 out["context_source"] = source
@@ -166,7 +205,7 @@ class Registry:
             out.update(extra)
             return out
         except Exception as e:  # noqa: BLE001
-            return {"up": False, "models": [], "error": f"{type(e).__name__}: {e}"}
+            return {"up": False, "models": [], **classify_connect_failure(e, ep.url)}
 
     @staticmethod
     async def _probe_context(
