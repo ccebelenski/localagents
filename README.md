@@ -170,6 +170,18 @@ KV-cache prefix and re-evaluates the whole ~35k-token prompt each time (21–47 
 per turn on a 27B). Folding in place keeps the prompt append-only: `f_sim_best`
 0.88–0.99 in llama-server's log, 2.5–14 s per turn.
 
+**Text next to tool results.** Claude Code appends a `<system-reminder>` text
+block to the user turn that carries tool results (and the fold above adds a
+`<system>` block there too). Gemma 4's chat template renders a tool response
+only when it sits directly after the assistant's tool call; behind llama.cpp's
+`/v1/messages` converter that mixed turn breaks the adjacency and the model
+sees *none* of its tool output — it then invents file contents, every Edit
+misses, and it reports success anyway. The shim moves such text blocks inside
+the last `tool_result`'s content, which every template renders. Measured on
+gemma-4-31B-it-qat (llama.cpp b11515): prompt growth after three file reads went
+from 256 tokens (blind) to ~3.1k (sees them); Qwen3.6 and Muse-Glimmer were
+unaffected either way.
+
 **Context overflow.** Claude Code assumes a 200k window for any model it doesn't
 recognise; with a smaller slot it runs into llama.cpp's
 `exceed_context_size_error`, which it doesn't understand, and the job dies. See

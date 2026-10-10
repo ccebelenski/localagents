@@ -66,6 +66,54 @@ def test_fold_leading_system_goes_to_next_user():
     assert out["messages"][0]["content"][1]["text"] == "q"
 
 
+def test_fold_text_into_last_tool_result():
+    body = {"messages": [
+        {"role": "user", "content": "read both"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {}},
+                                          {"type": "tool_use", "id": "b", "name": "Read", "input": {}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "a", "content": "file a"},
+            {"type": "tool_result", "tool_use_id": "b", "content": [{"type": "text", "text": "file b"}]},
+            {"type": "text", "text": "<system-reminder>\nremember\n</system-reminder>"},
+        ]},
+    ]}
+    out = normalise_messages_body(body)
+    blocks = out["messages"][2]["content"]
+    assert [b["type"] for b in blocks] == ["tool_result", "tool_result"]
+    assert blocks[0]["content"] == "file a"
+    assert blocks[1]["content"] == [{"type": "text", "text": "file b"},
+                                    {"type": "text", "text": "<system-reminder>\nremember\n</system-reminder>"}]
+    assert out["_localagents"]["folded_tool_result_text"] == 1
+
+
+def test_fold_system_reminder_lands_inside_tool_result():
+    body = {"messages": [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "a", "content": "ok"}]},
+        {"role": "system", "content": "budget: 90% left"},
+    ]}
+    out = normalise_messages_body(body)
+    assert [m["role"] for m in out["messages"]] == ["user", "assistant", "user"]
+    blocks = out["messages"][2]["content"]
+    assert len(blocks) == 1 and blocks[0]["type"] == "tool_result"
+    assert blocks[0]["content"] == [{"type": "text", "text": "ok"},
+                                    {"type": "text", "text": "<system>\nbudget: 90% left\n</system>"}]
+    assert out["_localagents"] == {"moved_system_messages": 1, "folded_tool_result_text": 1}
+
+
+def test_fold_leaves_plain_and_result_only_messages_alone():
+    body = {"messages": [
+        {"role": "user", "content": [{"type": "text", "text": "q"}, {"type": "image", "source": {}}]},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "a", "content": "ok"}]},
+    ]}
+    before = json.dumps(body)
+    out = normalise_messages_body(body)
+    assert json.dumps(out) == before
+    assert "_localagents" not in out
+
+
 def test_metrics_delta():
     from localagents.registry import metrics_delta
     before = {"prompt_tokens": 100, "prompt_tokens_cached": 50, "prompt_seconds": 1.0,

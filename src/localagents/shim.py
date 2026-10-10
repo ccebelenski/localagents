@@ -10,6 +10,11 @@ Normalisations (all no-ops when not needed):
   skills listing, token budget, reminders) are folded in place into the adjacent user message —
   chat templates such as Qwen's raise "System message must be at the beginning" otherwise, and
   folding in place (rather than hoisting to ``system``) keeps the KV-cache prefix stable.
+* A user message that mixes ``tool_result`` blocks with ``text`` blocks (Claude Code appends a
+  system-reminder to the tool-result turn, and the fold above adds one more) has the text moved
+  inside the last ``tool_result``'s content. Gemma 4's chat template only renders tool responses
+  that are adjacent to the assistant's tool call; the mixed message breaks that adjacency behind
+  llama.cpp's ``/v1/messages`` converter and the model never sees any of its tool output.
 * ``/v1/messages/count_tokens`` falls back to a char/4 estimate if the backend lacks it.
 * Backend "context exceeded" errors (llama.cpp ``exceed_context_size_error``, vLLM "maximum
   context length") are rewritten into Anthropic's ``prompt is too long: N tokens > M maximum``
@@ -49,16 +54,48 @@ def _text_of(content: Any) -> str:
     )
 
 
-def normalise_messages_body(body: dict[str, Any]) -> dict[str, Any]:
-    """Fold ``role: system`` entries in ``messages`` into an adjacent user message.
+def _fold_text_into_tool_results(msgs: list[dict[str, Any]]) -> int:
+    """Move ``text`` blocks that share a user message with ``tool_result`` blocks into the last result.
 
-    Position is preserved (the text is appended to the nearest preceding user message, or
-    prepended to the next one) rather than hoisted into the top-level ``system`` field, so
+    Returns the number of text blocks moved. Other block types (images) stay where they are.
+    """
+    folded = 0
+    for m in msgs:
+        content = m.get("content")
+        if m.get("role") != "user" or not isinstance(content, list):
+            continue
+        results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
+        texts = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        if not results or not texts:
+            continue
+        last = results[-1]
+        inner = last.get("content")
+        if isinstance(inner, str):
+            inner = [{"type": "text", "text": inner}] if inner else []
+        elif not isinstance(inner, list):
+            inner = []
+        last["content"] = list(inner) + [{"type": "text", "text": t.get("text", "")} for t in texts]
+        m["content"] = [b for b in content if not (isinstance(b, dict) and b.get("type") == "text")]
+        folded += len(texts)
+    return folded
+
+
+def normalise_messages_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Fold ``role: system`` entries in ``messages`` into an adjacent user message, then fold
+    text blocks that share a user message with tool results into the last tool result.
+
+    System text keeps its position (appended to the nearest preceding user message, or
+    prepended to the next one) rather than being hoisted into the top-level ``system`` field, so
     the prompt stays append-only across turns and the backend's KV-cache prefix is not
     invalidated on every request.
     """
     msgs = body.get("messages")
-    if not isinstance(msgs, list) or not any(m.get("role") == "system" for m in msgs):
+    if not isinstance(msgs, list):
+        return body
+    if not any(m.get("role") == "system" for m in msgs):
+        folded = _fold_text_into_tool_results(msgs)
+        if folded:
+            body.setdefault("_localagents", {})["folded_tool_result_text"] = folded
         return body
     out: list[dict[str, Any]] = []
     pending: list[str] = []  # system text with no preceding user message yet
@@ -94,7 +131,11 @@ def normalise_messages_body(body: dict[str, Any]) -> dict[str, Any]:
             system = [{"type": "text", "text": system}]
         body["system"] = system + [{"type": "text", "text": t} for t in pending]
     body["messages"] = out
-    body.setdefault("_localagents", {})["moved_system_messages"] = moved
+    note = body.setdefault("_localagents", {})
+    note["moved_system_messages"] = moved
+    folded = _fold_text_into_tool_results(out)
+    if folded:
+        note["folded_tool_result_text"] = folded
     return body
 
 
