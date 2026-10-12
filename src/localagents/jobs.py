@@ -49,6 +49,8 @@ class Job:
     log_dir: str = ""
     dump: bool = False
     context: int | None = None  # backend context window handed to the session
+    ctx_tokens: int | None = None  # prompt size of the last backend request (shim-observed)
+    gen_tps: float | None = None  # smoothed output tokens/s of recent backend responses
     metrics: dict[str, Any] | None = None  # llama.cpp /metrics delta over the job (endpoint-wide)
     # runtime-only
     _task: asyncio.Task | None = field(default=None, repr=False)
@@ -59,6 +61,23 @@ class Job:
         """Tell the store this job's visible state moved (it republishes the status file)."""
         if self._on_change:
             self._on_change()
+
+    def note_usage(self, usage: dict[str, Any] | None, ms: int, gen_ms: int | None = None) -> None:
+        """Record a backend response's usage (called by the shim): live context fill and speed.
+
+        ``gen_ms`` is the time from first streamed byte to end, i.e. generation without prompt
+        processing; it is used for the speed figure when known, else the whole request time."""
+        if not usage:
+            return
+        prompt = sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+        if prompt:
+            self.ctx_tokens = prompt
+        out = int(usage.get("output_tokens") or 0)
+        span = gen_ms if gen_ms else ms
+        if out and span > 0:
+            tps = out / (span / 1000)
+            self.gen_tps = tps if self.gen_tps is None else 0.5 * self.gen_tps + 0.5 * tps
+        self.changed()
 
     @property
     def done(self) -> bool:
@@ -96,6 +115,7 @@ class Job:
 class JobStore:
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
+        self.endpoint_load: dict[str, str] = {}  # endpoint name -> compact load text, while jobs run
 
     def new(self, **kw: Any) -> Job:
         jid = time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
@@ -112,7 +132,7 @@ class JobStore:
         """Write the status-line file for this server (see status.py)."""
         from . import status
 
-        status.publish(self.jobs.values())
+        status.publish(self.jobs.values(), self.endpoint_load)
 
     def get(self, jid: str) -> Job:
         if jid not in self.jobs:

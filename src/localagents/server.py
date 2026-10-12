@@ -154,6 +154,42 @@ def _progress_reporter_many(ctx: Context | None):
     return report
 
 
+LOAD_SAMPLE_S = 10.0
+_sampler: asyncio.Task | None = None
+
+
+async def _sample_endpoint_load() -> None:
+    """While jobs run, probe their endpoints every LOAD_SAMPLE_S and publish a compact load line
+    (slots busy, requests queued, KV cache) for the status bar. Idle servers publish nothing."""
+    while True:
+        try:
+            running = [j for j in store.jobs.values() if not j.done]
+            if running:
+                reg = _reg()
+                loads: dict[str, str] = {}
+                for name in dict.fromkeys(j.endpoint for j in running):
+                    ep = reg.endpoints.get(name)
+                    if ep is None:
+                        continue
+                    text = status.load_summary(await reg.probe(ep))
+                    if text:
+                        loads[name] = text
+                store.endpoint_load = loads
+                store.publish()
+            elif store.endpoint_load:
+                store.endpoint_load = {}
+                store.publish()
+        except Exception:  # noqa: BLE001  the status bar must never take the server down
+            pass
+        await asyncio.sleep(LOAD_SAMPLE_S)
+
+
+def _ensure_sampler() -> None:
+    global _sampler
+    if _sampler is None or _sampler.done():
+        _sampler = asyncio.create_task(_sample_endpoint_load())
+
+
 # ---------------------------------------------------------------- agents
 
 @mcp.tool()
@@ -249,6 +285,7 @@ async def run_agent(
         context=res.context,
     )
     await shim.start()
+    _ensure_sampler()
     job._task = asyncio.create_task(
         run_job(
             job, reg, res,

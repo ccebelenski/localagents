@@ -174,3 +174,17 @@ llamacpp:prompt_tokens_total 5
     zero = {k: 0.0 for k in m}
     d = metrics_delta(zero, m)
     assert d["prompt_tokens_cached"] == 450 and d["prompt_tokens_processed"] == 755 and d["cache_hit_ratio"] == 0.5
+
+
+def test_stream_usage_merges_message_start_and_message_delta():
+    from localagents.shim import _merge_usage, _usage_from_sse_head, _usage_from_sse_tail
+
+    head = (b'event: message_start\ndata: {"type":"message_start","message":{"id":"m","usage":'
+            b'{"input_tokens":1200,"cache_read_input_tokens":38000,"cache_creation_input_tokens":0,"output_tokens":1}}}\n\n'
+            b'event: content_block_start\ndata: {"type":"content_block_start","index":0}\n\n')
+    tail = (b'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":123}}\n\n'
+            b'event: message_stop\ndata: {"type":"message_stop"}\n\n')
+    merged = _merge_usage(_usage_from_sse_head(head), _usage_from_sse_tail(tail))
+    assert merged == {"input_tokens": 1200, "cache_read_input_tokens": 38000, "cache_creation_input_tokens": 0, "output_tokens": 123}
+    assert _merge_usage(None, {"output_tokens": 5}) == {"output_tokens": 5}
+    assert _merge_usage(None, None) is None

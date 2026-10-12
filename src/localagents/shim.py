@@ -270,15 +270,23 @@ class Shim:
             return Response(content=data, status_code=status, headers=resp_headers)
 
         async def gen():
-            last = b""
+            head = b""  # message_start carries input/cache token counts
+            last = b""  # message_delta carries output_tokens
+            t_first: float | None = None
             try:
                 async for chunk in resp.aiter_bytes():
+                    if t_first is None:
+                        t_first = time.monotonic()
+                    if len(head) < 65536:
+                        head += chunk
                     last = chunk
                     yield chunk
             finally:
                 await resp.aclose()
-                self._log(job, path, body, note, status=resp.status_code,
-                          ms=int((time.monotonic() - t0) * 1000), usage=_usage_from_sse_tail(last))
+                t_end = time.monotonic()
+                usage = _merge_usage(_usage_from_sse_head(head), _usage_from_sse_tail(last))
+                self._log(job, path, body, note, status=resp.status_code, ms=int((t_end - t0) * 1000),
+                          gen_ms=int((t_end - t_first) * 1000) if t_first else None, usage=usage)
 
         return StreamingResponse(gen(), status_code=resp.status_code, headers=resp_headers)
 
@@ -294,6 +302,8 @@ class Shim:
             )
         rec.update(note)
         rec = {k: v for k, v in rec.items() if v is not None}
+        if path.endswith("/v1/messages"):
+            job.note_usage(kw.get("usage"), int(kw.get("ms") or 0), kw.get("gen_ms"))
         with open(os.path.join(job.log_dir, "requests.jsonl"), "a") as f:
             f.write(json.dumps(rec) + "\n")
         if kw.get("error") and kw.get("status", 0) >= 400:
@@ -305,6 +315,25 @@ def _usage_from_json(data: bytes) -> dict[str, Any] | None:
         return json.loads(data).get("usage")
     except Exception:  # noqa: BLE001
         return None
+
+
+def _usage_from_sse_head(chunk: bytes) -> dict[str, Any] | None:
+    """Usage from the stream's ``message_start`` event: input and cache token counts."""
+    for line in chunk.decode(errors="replace").splitlines():
+        if line.startswith("data:") and '"message_start"' in line:
+            try:
+                return (json.loads(line[5:]).get("message") or {}).get("usage")
+            except Exception:  # noqa: BLE001
+                pass
+    return None
+
+
+def _merge_usage(head: dict[str, Any] | None, tail: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Combine message_start usage (prompt side) with message_delta usage (output side); the
+    delta wins where both carry a key, as it is the later, final figure."""
+    if not head and not tail:
+        return None
+    return {**(head or {}), **{k: v for k, v in (tail or {}).items() if v is not None}}
 
 
 def _usage_from_sse_tail(chunk: bytes) -> dict[str, Any] | None:

@@ -193,13 +193,26 @@ each job's state to `~/.local/state/localagents/status/<pid>.json` on every chan
 and `localagents statusline` prints them as one line:
 
 ```
-local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls · ✓ Muse-Glimmer-30B 3m02s
+local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls ctx 31% 82 t/s · llamacpp 1/1 slots · +1 other
 ```
 
-It reads only the files of servers that are still alive, keeps a finished job on the
-line for two minutes, and imports nothing heavy, so it runs in well under 100 ms.
-Append it to your status line script and set `refreshInterval` in the `statusLine`
-settings block so the elapsed times tick while the session is idle:
+Per running job: elapsed time, tool calls, files touched, how full the local model's
+context window is (`ctx`, from the token usage the shim sees on every backend
+response, so it tells you how close the agent is to compaction) and its recent
+generation speed. Then the load of each endpoint your jobs run on, probed every ten
+seconds while jobs run: slots busy for llama.cpp, requests running and queued and KV
+cache fill for vLLM. Finished jobs stay on the line for two minutes with a check mark
+(or a cross, clock or null sign for failed, timed out and cancelled).
+
+The line is scoped to the Claude Code session asking: each server records the Claude
+Code process that spawned it, and the renderer finds its own by walking up from the
+status line script. Jobs of other sessions on the same machine fold into `+N other`,
+because the boxes are shared and knowing one is busy matters even when the job isn't
+yours. Files of servers that have exited are ignored and removed.
+
+The renderer imports nothing heavy and runs in well under 100 ms. Append it to your
+status line script and set `refreshInterval` in the `statusLine` settings block so
+the elapsed times tick while the session is idle:
 
 ```bash
 local_jobs=$(timeout 2 localagents statusline 2>/dev/null)
