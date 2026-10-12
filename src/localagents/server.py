@@ -30,11 +30,27 @@ Workflow:
      `context_warning` means the window is too small for an agent session). Always say which
      served model you are about to use; if the id is unfamiliar or looks like a chat/roleplay
      model, check with the user before launching rather than guessing.
-  2. `run_agent(task)` -> returns a job id immediately (or the result if wait_s > 0). Pass
-     `model=` (served id / glob / fuzzy name) or `endpoint=` only to pick between several live
-     endpoints. If you get `model_unavailable`, nothing suitable is running: tell the user what
-     is up and ask them to start a model, then retry once they say it's running.
-  3. `wait_job` / `job_status` / `job_log` to follow progress; `cancel_job` to stop.
+  2. Start the job. Prefer the `local-agent` subagent when it is available (Agent tool,
+     subagent_type "local-agent"): the job then runs as a background agent and its result arrives
+     as a completion notification, so it can't be forgotten. It is a relay on a small model and
+     never chooses the model: that decision is yours, from step 1. Its prompt is a header with
+     the exact served id you picked (required; it refuses to start without one), a `---` line,
+     then the brief, which it relays verbatim:
+         model: <exact served id from list_models>
+         isolation: worktree        (optional; also endpoint, cwd, max_turns, timeout_s,
+                                     permission_mode, resume_job)
+         ---
+         <brief>
+     It replies with the final job record. The Agent tool's own `model` and `isolation` options
+     apply to the relay itself, not the local job: put those in the header. While it runs,
+     `list_jobs` / `job_status` / `job_log` still work; send it a message to cancel or follow up.
+     Without the subagent, call `run_agent(task)` directly: it returns a job id (or the result if
+     wait_s > 0); follow it with `wait_job` / `job_status` / `job_log`, and do not end your turn
+     while a job you started is still running.
+     Pass `model=` (served id / glob / fuzzy name) or `endpoint=` only to pick between several
+     live endpoints. If you get `model_unavailable`, nothing suitable is running: tell the user
+     what is up and ask them to start a model, then retry once they say it's running.
+  3. `cancel_job` stops a job either way.
   4. Review what the local agent did (files_touched, or the worktree diff if isolation=worktree)
      — local models are less reliable than Claude, treat their output as a draft to verify.
 Use `local_complete` for cheap one-shot generation with no tools (summaries, drafts, classification).
@@ -143,15 +159,10 @@ async def run_agent(
       max_turns: Cap on agent turns (default from models.yaml).
       allowed_tools: Override auto-approved tools.
       system_prompt_append: Extra instructions appended to the Claude Code system prompt.
-      resume_job: Continue a previous job's session (same model) with `task` as the next message.
+      resume_job: Continue a previous job's session with `task` as the next message. Runs on the
+        previous job's model and endpoint unless `model` is given.
       timeout_s: Wall-clock cap for the job.
     """
-    reg = _reg()
-    try:
-        res = await reg.resolve(model=model, endpoint=endpoint)
-    except ModelUnavailable as e:
-        return {**e.to_dict(), "guidance": GUIDANCE}
-
     if isolation not in ("none", "worktree"):
         return {"error": "bad_argument", "message": "isolation must be 'none' or 'worktree'"}
     work = str(Path(cwd or os.getcwd()).expanduser().resolve())
@@ -169,6 +180,15 @@ async def run_agent(
         resume_session = prev.session_id
         work = prev.run_cwd
         isolation = "none"
+        # Continue on the model that ran the session, not on whatever is the default now.
+        if model is None:
+            model, endpoint = prev.model, endpoint or prev.endpoint
+
+    reg = _reg()
+    try:
+        res = await reg.resolve(model=model, endpoint=endpoint)
+    except ModelUnavailable as e:
+        return {**e.to_dict(), "guidance": GUIDANCE}
 
     job = store.new(
         task=task,

@@ -84,17 +84,26 @@ If you'd rather keep it to one project, put this in that project's `.mcp.json`:
 
 Restart Claude Code (or `/mcp` → reconnect) after adding it; MCP servers load at startup.
 
+Then install the `local-agent` subagent, so jobs show up as agents (see [below](#the-local-agent-subagent)):
+
+```bash
+mkdir -p ~/.claude/agents && ln -s "$PWD/agents/local-agent.md" ~/.claude/agents/
+```
+
+It names the server's tools as `mcp__local__*`; if you registered the server under
+another name than `local`, copy the file instead and change the `tools:` line.
+
 ## Using it
 
 Claude picks it up like any tool. Ask for it by name and it'll do the right thing:
 
 > Use the local agent to add a `--json` flag to the CLI and cover it in the tests.
 
-What Claude does behind that: `list_models` to see what's up, `run_agent(task=…)`
-which returns a job id, then `wait_job` / `job_status` / `job_log` until it's done,
-then reads `files_touched` (or the worktree diff) and checks the work. Jobs that
-outlive Claude Code's 2-minute tool timeout get backgrounded and picked up later;
-you don't have to do anything.
+What Claude does behind that: `list_models` to see what's up and pick a model, then
+hands the brief to the `local-agent` subagent, which starts the job and waits for it
+in the background. When the job ends Claude gets the job record as a completion
+notification, reads `files_touched` (or the worktree diff) and checks the work.
+Without the subagent installed it calls `run_agent` and polls `wait_job` itself.
 
 If nothing suitable is running you'll be asked to start one:
 
@@ -116,6 +125,45 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 | `wait_job` / `job_status` / `job_log` / `list_jobs` / `cancel_job` | follow and control jobs |
 | `register_endpoint` | add a server from inside a session (written to `models.local.yaml`) |
 | `local_complete` | one-shot generation with no tools — summaries, drafts, classification |
+
+### The `local-agent` subagent
+
+A `run_agent` job on its own is an MCP tool call plus a job id Claude has to remember
+to poll. Claude Code doesn't know it's an agent: it isn't in the agent panel or
+`/tasks`, and nothing tells Claude when it finishes, so a job can be forgotten if
+Claude ends its turn before it's done.
+
+[`agents/local-agent.md`](agents/local-agent.md) fixes that by making each job a real
+background subagent. It's only a relay. It runs on Haiku, can use only the job tools
+(`run_agent`, `wait_job`, `job_status`, `job_log`, `cancel_job`), passes the brief
+through verbatim, waits, and returns the final job record unchanged. Picking the model
+stays with the main session, which still has all of the server's tools, `list_models`
+included. Claude passes its choice to the relay in a short header:
+
+```
+model: unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL
+isolation: worktree
+---
+Add a --json flag to the CLI and cover it in the tests. ...
+```
+
+`model:` is required and should be the exact served id from `list_models`. Which
+model runs matters, and the main session is the one with the live context windows
+and slot occupancy, the conversation, and your instructions. The relay doesn't have
+any of that, so it won't fill in a model, fall back to a default, or swap one. With
+no `model:` it refuses to start, and if the model isn't up it returns the
+`model_unavailable` error so Claude asks you as usual. Other header keys: `endpoint`,
+`cwd`, `max_turns`, `timeout_s`, `permission_mode`, `resume_job`. A resume header is
+the one case where `model:` can be left out: a resumed job continues on the model that
+ran the original session.
+
+While it runs, Claude can still check on it directly with `list_jobs` / `job_status` / `job_log`.
+Messages sent to the relay let Claude cancel the job or, after it finishes, continue
+the same local session (`resume_job`). Stopping the relay from `/tasks` does **not**
+stop the local job; use `cancel_job`. The overhead is a few small Haiku turns per job,
+about one per 100 s of job time.
+
+### Job records
 
 Job records live in `~/.local/state/localagents/jobs/<job>/`: `transcript.txt`
 (what the agent said and did), `events.jsonl` (every SDK message), `requests.jsonl`

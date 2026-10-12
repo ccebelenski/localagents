@@ -46,6 +46,7 @@ if you change `runner.py` or `shim.py`, run a short job and look at
 | `runner.py` | one job = one headless Claude Code session via the Agent SDK; env, worktrees, transcript |
 | `shim.py` | the in-process HTTP proxy every session talks through; all backend-specific fixups go here |
 | `jobs.py` | job records and on-disk logs |
+| `agents/local-agent.md` | Claude Code subagent that relays one job and reports its record, so jobs show up as background agents |
 
 Backend quirks belong in the shim, not in the runner. If a new server rejects
 something Claude Code sends, the fix is a normalisation in `shim.py` with a unit test
