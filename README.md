@@ -159,7 +159,11 @@ ran the original session.
 
 While it runs, Claude can still check on it directly with `list_jobs` / `job_status` / `job_log`.
 Messages sent to the relay let Claude cancel the job or, after it finishes, continue
-the same local session (`resume_job`). Stopping the relay from `/tasks` does **not**
+the same local session (`resume_job`). A follow-up runs on the same model, in the same
+directory and isolation: a worktree job continues in its tree, and if the tree was
+removed because the job changed nothing, it is recreated at the same path from the
+same base commit. Jobs live in the server's memory, so a follow-up is only possible
+while that server process is up. Stopping the relay from `/tasks` does **not**
 stop the local job; use `cancel_job`. The overhead is a few small Haiku turns per job,
 about one per 100 s of job time.
 

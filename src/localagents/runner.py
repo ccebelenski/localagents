@@ -69,6 +69,8 @@ def _git(cwd: str, *args: str) -> subprocess.CompletedProcess:
 
 
 def make_worktree(job: Job) -> dict[str, Any]:
+    if job.worktree:
+        return _restore_worktree(job.worktree)
     top = _git(job.cwd, "rev-parse", "--show-toplevel")
     if top.returncode != 0:
         raise RuntimeError(f"isolation=worktree requires a git repo at {job.cwd}: {top.stderr.strip()}")
@@ -83,6 +85,27 @@ def make_worktree(job: Job) -> dict[str, Any]:
     # keep the relative position inside the repo
     rel = Path(job.cwd).resolve().relative_to(Path(repo).resolve())
     return {"repo": repo, "path": str(wt / rel), "root": str(wt), "branch": branch, "base": base}
+
+
+def _restore_worktree(wt: dict[str, Any]) -> dict[str, Any]:
+    """A resumed job's tree: reuse it if it is still there, else recreate it at the same path.
+
+    finish_worktree removes the tree and branch of a job that changed nothing, so a follow-up to
+    a read-only job would otherwise start in a directory that no longer exists. The tree comes
+    back at the base commit the session saw (not the repo's current HEAD), on the same branch if
+    it still exists, so the paths and contents the session remembers are what it finds.
+    """
+    repo, root, branch = wt["repo"], wt["root"], wt["branch"]
+    if Path(root).is_dir():
+        return dict(wt)
+    _git(repo, "worktree", "prune")
+    if _git(repo, "rev-parse", "--verify", "--quiet", branch).returncode == 0:
+        r = _git(repo, "worktree", "add", root, branch)
+    else:
+        r = _git(repo, "worktree", "add", "-b", branch, root, wt["base"])
+    if r.returncode != 0:
+        raise RuntimeError(f"git worktree add (restore) failed: {r.stderr.strip()}")
+    return {**wt, "recreated": True}
 
 
 def finish_worktree(job: Job) -> None:
@@ -190,7 +213,10 @@ async def run_job(
         if job.isolation == "worktree":
             job.worktree = make_worktree(job)
             job.run_cwd = job.worktree["path"]
-            job.log_text(f"[worktree] {job.worktree['root']} branch={job.worktree['branch']}")
+            job.log_text(
+                f"[worktree] {job.worktree['root']} branch={job.worktree['branch']}"
+                + (" (recreated at base; the previous tree had been removed)" if job.worktree.get("recreated") else "")
+            )
 
         append = "\n\n".join(s for s in (d.system_prompt_append, system_prompt_append) if s)
         opts = ClaudeAgentOptions(

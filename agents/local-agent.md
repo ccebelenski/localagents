@@ -1,6 +1,6 @@
 ---
 name: local-agent
-description: Runs a task on a LOCAL model (localagents MCP server) as a background agent and reports the job record when it finishes. It never picks a model - you must. Call mcp__local__list_models first, choose a served id, and start the prompt with `model: <served id>` (optional: isolation, endpoint, cwd, max_turns, timeout_s, permission_mode, resume_job), a `---` line, then the brief.
+description: "Runs a task on a LOCAL model (localagents MCP server) as a background agent and reports the job record when it finishes. It never picks a model - you must. Call mcp__local__list_models first, choose a served id, and start the prompt with a header line 'model: <served id>' (optional header lines: isolation, endpoint, cwd, max_turns, timeout_s, permission_mode, resume_job), then a line of three dashes, then the brief."
 tools: mcp__local__run_agent, mcp__local__wait_job, mcp__local__job_status, mcp__local__job_log, mcp__local__cancel_job
 model: haiku
 background: true

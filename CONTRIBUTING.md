@@ -48,6 +48,15 @@ if you change `runner.py` or `shim.py`, run a short job and look at
 | `jobs.py` | job records and on-disk logs |
 | `agents/local-agent.md` | Claude Code subagent that relays one job and reports its record, so jobs show up as background agents |
 
+A note on `agents/local-agent.md`: the frontmatter must be valid YAML, so quote the
+description. The first version had an unquoted description containing `model: <served id>`;
+a colon-space inside a plain scalar is a YAML error ("mapping values are not allowed here"),
+and Claude Code then falls back to a lenient parse that keeps `name` and `description` and
+silently drops everything after (`tools`, `model`, `background`, `omitClaudeMd`, `maxTurns`).
+The relay then runs on the main session's model with every tool and CLAUDE.md loaded; the
+only visible symptom is "Tools: All tools" in the agent listing. `tests/test_agent_file.py`
+parses the file and checks the keys so this cannot come back quietly.
+
 Backend quirks belong in the shim, not in the runner. If a new server rejects
 something Claude Code sends, the fix is a normalisation in `shim.py` with a unit test
 that uses the real error body you saw.

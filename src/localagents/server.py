@@ -159,8 +159,11 @@ async def run_agent(
       max_turns: Cap on agent turns (default from models.yaml).
       allowed_tools: Override auto-approved tools.
       system_prompt_append: Extra instructions appended to the Claude Code system prompt.
-      resume_job: Continue a previous job's session with `task` as the next message. Runs on the
-        previous job's model and endpoint unless `model` is given.
+      resume_job: Continue a previous job's session with `task` as the next message. Only jobs
+        from this server process (the store is in memory; nothing survives a restart). Runs on
+        the previous job's model and endpoint unless `model` is given, in its cwd and isolation.
+        A worktree job's tree is reused; if it was removed (the job changed nothing) it is
+        recreated at the same path, on the same branch, at the base commit the session saw.
       timeout_s: Wall-clock cap for the job.
     """
     if isolation not in ("none", "worktree"):
@@ -169,7 +172,9 @@ async def run_agent(
     if not Path(work).is_dir():
         return {"error": "bad_argument", "message": f"cwd does not exist: {work}"}
 
+    run_cwd = work
     resume_session = None
+    worktree: dict[str, Any] | None = None
     if resume_job:
         try:
             prev = store.get(resume_job)
@@ -178,8 +183,17 @@ async def run_agent(
         if not prev.session_id:
             return {"error": "bad_argument", "message": f"job {resume_job} has no session to resume"}
         resume_session = prev.session_id
-        work = prev.run_cwd
-        isolation = "none"
+        # Continue where the session was. A worktree job keeps its tree: if the tree is gone
+        # (removed because the job changed nothing) run_job recreates it at the same path, so
+        # the paths the session remembers still resolve.
+        work, run_cwd = prev.cwd, prev.run_cwd
+        if prev.worktree:
+            isolation = "worktree"
+            worktree = {k: prev.worktree[k] for k in ("repo", "path", "root", "branch", "base")}
+        else:
+            isolation = "none"
+            if not Path(run_cwd).is_dir():
+                return {"error": "bad_argument", "message": f"cwd of job {resume_job} no longer exists: {run_cwd}"}
         # Continue on the model that ran the session, not on whatever is the default now.
         if model is None:
             model, endpoint = prev.model, endpoint or prev.endpoint
@@ -196,8 +210,9 @@ async def run_agent(
         endpoint=res.endpoint.name,
         base_url=res.endpoint.url,
         cwd=work,
-        run_cwd=work,
+        run_cwd=run_cwd,
         isolation=isolation,
+        worktree=worktree,
         dump=reg.defaults.dump_requests,
         context=res.context,
     )
@@ -301,11 +316,20 @@ async def local_complete(
     if temperature is not None:
         body["temperature"] = temperature
     headers = {"x-api-key": "local", "authorization": "Bearer local", "anthropic-version": "2023-06-01"}
-    async with httpx.AsyncClient(timeout=reg.defaults.timeout_s) as c:
-        r = await c.post(f"{res.endpoint.url}/v1/messages", json=body, headers=headers)
+    try:
+        async with httpx.AsyncClient(timeout=reg.defaults.timeout_s) as c:
+            r = await c.post(f"{res.endpoint.url}/v1/messages", json=body, headers=headers)
+    except httpx.HTTPError as e:
+        return {
+            "error": "backend_error", "endpoint": res.endpoint.name, "base_url": res.endpoint.url,
+            "message": f"{type(e).__name__}: {e}",
+        }
     if r.status_code != 200:
         return {"error": "backend_error", "status": r.status_code, "body": r.text[:2000]}
-    data = r.json()
+    try:
+        data = r.json()
+    except ValueError:
+        return {"error": "backend_error", "status": r.status_code, "body": r.text[:2000], "message": "response was not JSON"}
     text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
     return {
         "model": res.served_model,
