@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from localagents import server
+from localagents import jobs, server
 from localagents.registry import Defaults, Endpoint, Registry
 
 SERVING = {"first": ["default-model"], "second": ["big-model"]}
@@ -95,3 +95,115 @@ def test_local_complete_reports_transport_errors(reg, monkeypatch):
     out = asyncio.run(server.local_complete(prompt="hi", model="big-model"))
     assert out["error"] == "backend_error"
     assert out["endpoint"] == "second" and "ConnectError" in out["message"]
+
+
+class _Ctx:
+    """Stand-in for the MCP Context: records progress notifications."""
+
+    def __init__(self):
+        self.reports = []
+
+    async def report_progress(self, progress, total=None, message=None):
+        self.reports.append((progress, total, message))
+
+
+def _finish_later(job, delay):
+    async def go():
+        await asyncio.sleep(delay)
+        job.status = "succeeded"
+        job._done.set()
+    return go()
+
+
+def test_wait_s_reports_progress_until_done(reg, monkeypatch):
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+    ctx = _Ctx()
+
+    async def run():
+        task = asyncio.create_task(server.run_agent(task="slow", wait_s=5, ctx=ctx))
+        await asyncio.sleep(0.01)
+        job = server.store.jobs[max(server.store.jobs, key=lambda j: server.store.jobs[j].created_at)]
+        asyncio.create_task(_finish_later(job, 0.1))
+        return await task
+
+    out = asyncio.run(run())
+    assert out["status"] == "succeeded"
+    assert len(ctx.reports) >= 2
+    assert all("turns" in m for _, _, m in ctx.reports)
+
+
+def test_wait_job_times_out_and_still_reports(reg, monkeypatch):
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+    ctx = _Ctx()
+    job = _prev_job()
+    out = asyncio.run(server.wait_job(job.id, timeout_s=0.1, ctx=ctx))
+    assert out["status"] == "queued" and out["id"] == job.id
+    assert 2 <= len(ctx.reports) <= 6
+
+
+def test_wait_without_context_is_silent(reg):
+    job = _prev_job()
+    out = asyncio.run(server.wait_job(job.id, timeout_s=0.05))
+    assert out["id"] == job.id
+
+
+def test_tool_schemas_hide_the_context_parameter():
+    for name in ("run_agent", "wait_job", "wait_jobs"):
+        tool = server.mcp._tool_manager.get_tool(name)
+        assert "ctx" not in tool.parameters["properties"]
+        assert tool.context_kwarg == "ctx"
+
+
+def test_wait_jobs_all_waits_for_every_job(reg, monkeypatch):
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+    ctx = _Ctx()
+    a, b = _prev_job(), _prev_job()
+
+    async def run():
+        asyncio.create_task(_finish_later(a, 0.05))
+        asyncio.create_task(_finish_later(b, 0.15))
+        return await server.wait_jobs([a.id, b.id], timeout_s=5, ctx=ctx)
+
+    out = asyncio.run(run())
+    assert out["outcome"] == "all_done"
+    assert [j["id"] for j in out["done"]] == [a.id, b.id] and out["running"] == []
+    assert ctx.reports and ctx.reports[-1][1] == 2  # total = number of jobs
+    assert any(m.startswith("1/2 done") for _, _, m in ctx.reports)
+
+
+def test_wait_jobs_any_returns_on_first_finish(reg):
+    a, b = _prev_job(), _prev_job()
+
+    async def run():
+        asyncio.create_task(_finish_later(b, 0.05))
+        return await server.wait_jobs([a.id, b.id], timeout_s=5, mode="any")
+
+    out = asyncio.run(run())
+    assert out["outcome"] == "some_done"
+    assert [j["id"] for j in out["done"]] == [b.id]
+    assert [j["id"] for j in out["running"]] == [a.id]
+    assert out["running"][0]["status"] == "queued"
+
+
+def test_wait_jobs_timeout_and_bad_arguments(reg):
+    a = _prev_job()
+    out = asyncio.run(server.wait_jobs([a.id], timeout_s=0.05))
+    assert out["outcome"] == "timeout" and out["done"] == [] and len(out["running"]) == 1
+    assert asyncio.run(server.wait_jobs([a.id, "nope"], timeout_s=1))["error"] == "unknown_job"
+    assert asyncio.run(server.wait_jobs([], timeout_s=1))["error"] == "bad_argument"
+    assert asyncio.run(server.wait_jobs([a.id], timeout_s=1, mode="first"))["error"] == "bad_argument"
+
+
+def test_wait_jobs_already_finished_returns_immediately(reg):
+    a = _prev_job()
+    a.status = "failed"
+    a._done.set()
+    out = asyncio.run(server.wait_jobs([a.id], timeout_s=60))
+    assert out["outcome"] == "all_done" and out["done"][0]["status"] == "failed"
+
+
+def test_instructions_and_descriptions_fit_claude_codes_cap():
+    """Claude Code truncates server instructions and each tool description at 2048 characters."""
+    assert len(server.INSTRUCTIONS) <= 2048, len(server.INSTRUCTIONS)
+    for tool in server.mcp._tool_manager.list_tools():
+        assert len(tool.description or "") <= 2048, tool.name

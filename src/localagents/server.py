@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import os
+import time
 from pathlib import Path
 from typing import Any
 
 import httpx
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 
-from .jobs import JobStore
+from . import status
+from .jobs import Job, JobStore
 from .registry import ModelUnavailable, Registry, config_path, local_path
 from .runner import run_job
 from .shim import Shim
@@ -19,41 +22,32 @@ import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 INSTRUCTIONS = """\
-Delegate work to agents running on LOCAL models (llama.cpp / vLLM / Ollama) hosted on the user's
-own infrastructure. Each `run_agent` job is a full headless Claude Code session (same tools, same
-CLAUDE.md, same working tree) but backed by a local model instead of Anthropic's API.
+Delegate work to agents on LOCAL models (llama.cpp / vLLM) on the user's hardware. A `run_agent`
+job is a headless Claude Code session (same tools, CLAUDE.md, working tree) on a local model.
 
 Workflow:
-  1. `list_models` to see which endpoints are up and what they currently serve. Models are not
-     configured anywhere: whatever is running is what you can use. Nothing vets suitability but
-     you: prefer ids that look like instruct/coder models with `context` >= 128k (a
-     `context_warning` means the window is too small for an agent session). Always say which
-     served model you are about to use; if the id is unfamiliar or looks like a chat/roleplay
-     model, check with the user before launching rather than guessing.
-  2. Start the job. Prefer the `local-agent` subagent when it is available (Agent tool,
-     subagent_type "local-agent"): the job then runs as a background agent and its result arrives
-     as a completion notification, so it can't be forgotten. It is a relay on a small model and
-     never chooses the model: that decision is yours, from step 1. Its prompt is a header with
-     the exact served id you picked (required; it refuses to start without one), a `---` line,
-     then the brief, which it relays verbatim:
-         model: <exact served id from list_models>
-         isolation: worktree        (optional; also endpoint, cwd, max_turns, timeout_s,
-                                     permission_mode, resume_job)
-         ---
-         <brief>
-     It replies with the final job record. The Agent tool's own `model` and `isolation` options
-     apply to the relay itself, not the local job: put those in the header. While it runs,
-     `list_jobs` / `job_status` / `job_log` still work; send it a message to cancel or follow up.
-     Without the subagent, call `run_agent(task)` directly: it returns a job id (or the result if
-     wait_s > 0); follow it with `wait_job` / `job_status` / `job_log`, and do not end your turn
-     while a job you started is still running.
-     Pass `model=` (served id / glob / fuzzy name) or `endpoint=` only to pick between several
-     live endpoints. If you get `model_unavailable`, nothing suitable is running: tell the user
-     what is up and ask them to start a model, then retry once they say it's running.
-  3. `cancel_job` stops a job either way.
-  4. Review what the local agent did (files_touched, or the worktree diff if isolation=worktree)
-     — local models are less reliable than Claude, treat their output as a draft to verify.
-Use `local_complete` for cheap one-shot generation with no tools (summaries, drafts, classification).
+  1. `list_models`: which endpoints are up and what they serve. Nothing is configured or vetted;
+     only you judge suitability. Prefer instruct/coder ids with `context` >= 128k
+     (`context_warning` = too small for an agent). Say which served model you will use; if an id
+     is unfamiliar or looks like a chat model, ask the user.
+  2. `run_agent(task, model=<served id>, wait_s=<the job's timeout_s, default 1800>)` blocks until
+     the job ends and returns the record. Claude Code moves an MCP call running past
+     CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS (default 2 min; v2.1.212+) to a background task: you get a
+     task id, keep working, and the record arrives as a task notification. Progress every minute
+     keeps the call alive.
+     Several jobs: start each with `wait_s=0` (returns the id at once), then ONE
+     `wait_jobs([ids], timeout_s=...)` call; `mode="any"` returns on the first finish so you can
+     review it and call again on the rest. One call and one notification for all of them.
+     `model_unavailable`: nothing suitable is up; tell the user what is, ask them to start a model,
+     retry when they say so. `endpoint=` picks between live endpoints.
+     In subagents and non-interactive runs auto-backgrounding is off (unless
+     CLAUDE_AUTO_BACKGROUND_TASKS=1): use the `local-agent` subagent if installed (a relay; prompt
+     = `model: <served id>`, optional header lines, `---`, the brief verbatim), or
+     `run_agent(wait_s=0)` then `wait_job`, not ending your turn while the job runs.
+  3. `cancel_job` stops a job; `list_jobs` / `job_status` / `job_log` follow one.
+  4. Review the work (files_touched, or the worktree diff): local models are less reliable than
+     Claude; treat output as a draft to verify.
+`local_complete`: cheap one-shot generation, no tools (summaries, drafts, classification).
 """
 
 # Returned inside tool results too: server instructions are far back in the prompt by the time a
@@ -122,6 +116,44 @@ async def register_endpoint(
     return {"ok": True, "endpoint": name, "probe": probe, "config": str(local_path(reg.path))}
 
 
+def _progress_reporter(ctx: Context | None):
+    """Progress callback for a blocking wait: one notification per interval, never fatal."""
+    if ctx is None:
+        return None
+
+    async def report(job: Job) -> None:
+        elapsed = round(time.time() - (job.started_at or job.created_at))
+        msg = f"{job.status}: {elapsed}s, {job.num_turns} turns, {job.tool_calls} tool calls"
+        if job.last_activity:
+            msg += f"; {job.last_activity[:120]}"
+        try:
+            await ctx.report_progress(elapsed, None, msg)
+        except Exception:  # a client without progress support must not break the wait
+            pass
+
+    return report
+
+
+def _progress_reporter_many(ctx: Context | None):
+    """Progress callback for `wait_many`: one line per interval covering every job."""
+    if ctx is None:
+        return None
+
+    async def report(jobs: list[Job]) -> None:
+        done = sum(j.done for j in jobs)
+        parts = [f"{done}/{len(jobs)} done"]
+        for j in jobs:
+            if not j.done:
+                elapsed = round(time.time() - (j.started_at or j.created_at))
+                parts.append(f"{j.id}: {j.status} {elapsed}s, {j.num_turns} turns")
+        try:
+            await ctx.report_progress(done, len(jobs), "; ".join(parts))
+        except Exception:
+            pass
+
+    return report
+
+
 # ---------------------------------------------------------------- agents
 
 @mcp.tool()
@@ -138,12 +170,13 @@ async def run_agent(
     system_prompt_append: str | None = None,
     resume_job: str | None = None,
     timeout_s: int | None = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Delegate a task to an agent on a local model. Returns a job id immediately.
+    """Delegate a task to an agent on a local model and (with `wait_s`) wait for the result.
 
     The agent is a headless Claude Code session (Read/Edit/Write/Glob/Grep/Bash, project
     CLAUDE.md, same working tree) whose API calls go to the local endpoint. Write the task like a
-    brief for a capable but junior engineer: what to do, where, how to verify, and what to report.
+    brief for a capable but junior engineer: what to do, where, how to verify, what to report.
 
     Args:
       task: The brief. Be explicit; local models follow less implicit context than Claude.
@@ -151,19 +184,18 @@ async def run_agent(
         from models.yaml if set, else whatever the first live endpoint is serving.
       endpoint: Force a specific endpoint; with no `model`, uses whatever it is serving.
       cwd: Working directory (default: this server's cwd, i.e. the current project).
-      isolation: "none" (work in cwd, like a normal subagent) or "worktree" (fresh git worktree
-        on branch local-agent/<job>; kept only if the agent changed something, reported in
-        job.worktree with a diffstat). Use worktree for risky/large edits you want to review as a diff.
-      wait_s: If > 0, block up to this many seconds and return the result when done (else job id).
+      isolation: "none" (work in cwd) or "worktree" (fresh git worktree on branch
+        local-agent/<job>, kept only if the agent changed something; see job.worktree).
+      wait_s: If > 0, block up to this many seconds and return the final record, else return
+        the job id at once. Pass the job's timeout: Claude Code backgrounds a long call and
+        delivers the record as a task notification; progress is reported every minute.
       permission_mode: acceptEdits (default) | bypassPermissions | default | plan.
       max_turns: Cap on agent turns (default from models.yaml).
       allowed_tools: Override auto-approved tools.
       system_prompt_append: Extra instructions appended to the Claude Code system prompt.
-      resume_job: Continue a previous job's session with `task` as the next message. Only jobs
-        from this server process (the store is in memory; nothing survives a restart). Runs on
-        the previous job's model and endpoint unless `model` is given, in its cwd and isolation.
-        A worktree job's tree is reused; if it was removed (the job changed nothing) it is
-        recreated at the same path, on the same branch, at the base commit the session saw.
+      resume_job: Continue a previous job's session with `task` as the next message (same
+        server process only; the store is in memory). Runs on that job's model, endpoint, cwd
+        and isolation unless `model` is given; a removed worktree is recreated at its base.
       timeout_s: Wall-clock cap for the job.
     """
     if isolation not in ("none", "worktree"):
@@ -230,18 +262,63 @@ async def run_agent(
         )
     )
     if wait_s > 0:
-        await store.wait(job.id, wait_s)
+        await store.wait(job.id, wait_s, progress=_progress_reporter(ctx))
     return job.summary()
 
 
 @mcp.tool()
-async def wait_job(job_id: str, timeout_s: int = 120) -> dict[str, Any]:
-    """Block up to `timeout_s` seconds for a job to finish; returns its status/result either way."""
+async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = None) -> dict[str, Any]:
+    """Block up to `timeout_s` seconds for a job to finish; returns its status/result either way.
+
+    Progress is reported every minute while waiting, so a long timeout is safe to pass.
+    """
     try:
-        job = await store.wait(job_id, timeout_s)
+        job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx))
     except KeyError as e:
         return {"error": "unknown_job", "message": str(e)}
     return job.summary()
+
+
+@mcp.tool()
+async def wait_jobs(
+    job_ids: list[str],
+    timeout_s: int = 1800,
+    mode: str = "all",
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Block for several jobs at once: until all have finished (`mode="all"`), or until the first
+    one has (`mode="any"`), or `timeout_s` passes.
+
+    The way to run a swarm: start each job with `run_agent(..., wait_s=0)`, which returns at once,
+    then make this one call. It is one tool call however many jobs there are, so it costs one
+    auto-background wait instead of one per job, and one notification. Returns `done` (final
+    records) and `running` (ids still going, with status and elapsed time) so with `mode="any"`
+    you can review finished jobs and call again on the rest. Progress is reported every minute.
+    """
+    if mode not in ("all", "any"):
+        return {"error": "bad_argument", "message": "mode must be 'all' or 'any'"}
+    if not job_ids:
+        return {"error": "bad_argument", "message": "job_ids is empty"}
+    try:
+        jobs = await store.wait_many(job_ids, timeout_s, mode=mode, progress=_progress_reporter_many(ctx))
+    except KeyError as e:
+        return {"error": "unknown_job", "message": str(e)}
+    done = [j for j in jobs if j.done]
+    running = [j for j in jobs if not j.done]
+    if not running:
+        outcome = "all_done"
+    elif done:
+        outcome = "some_done"
+    else:
+        outcome = "timeout"
+    return {
+        "outcome": outcome,
+        "done": [j.summary() for j in done],
+        "running": [
+            {"id": j.id, "status": j.status, "elapsed_s": j.summary()["elapsed_s"], "num_turns": j.num_turns}
+            for j in running
+        ],
+    }
 
 
 @mcp.tool()
@@ -344,9 +421,19 @@ def main() -> None:
     import argparse
 
     ap = argparse.ArgumentParser(prog="localagents")
+    ap.add_argument(
+        "command", nargs="?", default="serve", choices=["serve", "statusline"],
+        help="serve (default): run the MCP server; statusline: print running local jobs for a status bar",
+    )
     ap.add_argument("--config", help="path to models.yaml (or set LOCALAGENTS_CONFIG)")
     ap.add_argument("--transport", default="stdio", choices=["stdio", "streamable-http", "sse"])
     a = ap.parse_args()
+    if a.command == "statusline":  # normally short-circuited in __init__ before this module loads
+        from .status import render
+
+        print(render())
+        return
     if a.config:
         os.environ["LOCALAGENTS_CONFIG"] = str(Path(a.config).expanduser().resolve())
+    atexit.register(status.remove)
     mcp.run(transport=a.transport)

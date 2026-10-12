@@ -9,7 +9,7 @@ import secrets
 import time
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 
 def state_dir() -> Path:
@@ -17,6 +17,10 @@ def state_dir() -> Path:
     d = Path(base) / "localagents"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+# How often a blocking wait sends a progress notification (well under Claude Code's idle timeouts).
+PROGRESS_INTERVAL_S = 60.0
 
 
 @dataclass
@@ -49,6 +53,12 @@ class Job:
     # runtime-only
     _task: asyncio.Task | None = field(default=None, repr=False)
     _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    _on_change: Callable[[], None] | None = field(default=None, repr=False)
+
+    def changed(self) -> None:
+        """Tell the store this job's visible state moved (it republishes the status file)."""
+        if self._on_change:
+            self._on_change()
 
     @property
     def done(self) -> bool:
@@ -94,17 +104,76 @@ class JobStore:
         job = Job(id=jid, log_dir=str(log_dir), **kw)
         (log_dir / "task.txt").write_text(job.task)
         self.jobs[jid] = job
+        job._on_change = self.publish
+        self.publish()
         return job
+
+    def publish(self) -> None:
+        """Write the status-line file for this server (see status.py)."""
+        from . import status
+
+        status.publish(self.jobs.values())
 
     def get(self, jid: str) -> Job:
         if jid not in self.jobs:
             raise KeyError(f"unknown job '{jid}'. Known: {sorted(self.jobs)[-10:]}")
         return self.jobs[jid]
 
-    async def wait(self, jid: str, timeout_s: float) -> Job:
+    async def wait_many(
+        self,
+        jids: list[str],
+        timeout_s: float,
+        mode: str = "all",
+        progress: Callable[[list[Job]], Awaitable[None]] | None = None,
+        interval_s: float | None = None,
+    ) -> list[Job]:
+        """Block until every job (`mode="all"`) or at least one (`mode="any"`) finishes, or
+        `timeout_s` passes. Returns the jobs in the order given. Progress as in `wait`."""
+        jobs = [self.get(j) for j in jids]  # raises KeyError before any waiting
+        if interval_s is None:
+            interval_s = PROGRESS_INTERVAL_S
+        satisfied = (lambda: all(j.done for j in jobs)) if mode == "all" else (lambda: any(j.done for j in jobs))
+        deadline = time.monotonic() + timeout_s
+        while jobs and not satisfied():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            step = min(remaining, interval_s) if progress else remaining
+            pending = [asyncio.ensure_future(j._done.wait()) for j in jobs if not j.done]
+            try:
+                await asyncio.wait(pending, timeout=step, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for f in pending:
+                    f.cancel()
+            if progress and not satisfied() and time.monotonic() < deadline:
+                await progress(jobs)
+        return jobs
+
+    async def wait(
+        self,
+        jid: str,
+        timeout_s: float,
+        progress: Callable[[Job], Awaitable[None]] | None = None,
+        interval_s: float | None = None,
+    ) -> Job:
+        """Block until the job finishes or `timeout_s` passes; returns the job either way.
+
+        With `progress`, it is awaited every `interval_s` while the wait continues. Claude Code
+        aborts an MCP tool call that stays silent for its idle window (30 min on stdio, 5 min on
+        HTTP), so a long wait has to say something now and then; a progress notification counts.
+        """
         job = self.get(jid)
-        try:
-            await asyncio.wait_for(job._done.wait(), timeout=timeout_s)
-        except asyncio.TimeoutError:
-            pass
+        if interval_s is None:
+            interval_s = PROGRESS_INTERVAL_S  # read at call time so tests can shorten it
+        deadline = time.monotonic() + timeout_s
+        while not job.done:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            step = min(remaining, interval_s) if progress else remaining
+            try:
+                await asyncio.wait_for(job._done.wait(), timeout=step)
+            except asyncio.TimeoutError:
+                if progress and not job.done and time.monotonic() < deadline:
+                    await progress(job)
         return job

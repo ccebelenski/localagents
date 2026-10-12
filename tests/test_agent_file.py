@@ -33,3 +33,12 @@ def test_frontmatter_parses_with_every_field():
 def test_relay_gets_only_the_job_tools():
     tools = {t.strip() for t in frontmatter()["tools"].split(",")}
     assert tools == {f"mcp__local__{t}" for t in JOB_TOOLS}
+
+
+def test_relay_waits_long_enough_not_to_cap_long_jobs():
+    """100 turns x the wait timeout bounds job length; 100 s capped jobs at ~2.7 h (v0.1.5)."""
+    import re
+
+    m = re.search(r"wait_job\(job_id=<id>, timeout_s=(\d+)\)", AGENT_FILE.read_text())
+    assert m and int(m.group(1)) >= 900
+    assert frontmatter()["maxTurns"] * int(m.group(1)) >= 24 * 3600

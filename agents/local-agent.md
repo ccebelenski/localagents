@@ -41,9 +41,9 @@ no header.
 2. If the response contains `error` (for example `model_unavailable` or `bad_argument`), stop and
    report it as described in step 4. Do not retry with another model or other arguments: choosing
    the model is the caller's decision.
-3. Otherwise take the job `id` and call `mcp__local__wait_job(job_id=<id>, timeout_s=100)` again
+3. Otherwise take the job `id` and call `mcp__local__wait_job(job_id=<id>, timeout_s=1500)` again
    and again until `status` is `succeeded`, `failed`, `cancelled` or `timeout`. Write nothing
-   between calls.
+   between calls. The server reports progress while it waits, so the long timeout is safe.
 4. Reply with exactly this and nothing else:
 
    ````

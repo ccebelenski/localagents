@@ -32,7 +32,8 @@ uv run pytest -q
 ```
 
 The unit tests cover the shim's request rewriting (system-message folding, context
-overflow translation) and the registry's model matching. None of them need a model
+overflow translation), the registry's model matching, resume and worktree handling, the
+blocking waits' progress reporting, the status-line publisher, and the relay agent file. None of them need a model
 server. Anything that does — a real job against llama.cpp or vLLM — is done by hand;
 if you change `runner.py` or `shim.py`, run a short job and look at
 `~/.local/state/localagents/jobs/<job>/requests.jsonl` before and after.
@@ -46,7 +47,8 @@ if you change `runner.py` or `shim.py`, run a short job and look at
 | `runner.py` | one job = one headless Claude Code session via the Agent SDK; env, worktrees, transcript |
 | `shim.py` | the in-process HTTP proxy every session talks through; all backend-specific fixups go here |
 | `jobs.py` | job records and on-disk logs |
-| `agents/local-agent.md` | Claude Code subagent that relays one job and reports its record, so jobs show up as background agents |
+| `status.py` | per-server status file for the Claude Code status line; `localagents statusline` renders it without importing the server |
+| `agents/local-agent.md` | Claude Code subagent that relays one job and reports its record; the fallback where auto-backgrounding is off |
 
 A note on `agents/local-agent.md`: the frontmatter must be valid YAML, so quote the
 description. The first version had an unquoted description containing `model: <served id>`;

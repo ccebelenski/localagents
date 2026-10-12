@@ -152,6 +152,11 @@ def _msg_to_dict(m: Any) -> dict[str, Any]:
 
 
 def _handle_message(job: Job, m: Any) -> None:
+    _apply_message(job, m)
+    job.changed()
+
+
+def _apply_message(job: Job, m: Any) -> None:
     job.log_event(_msg_to_dict(m))
     if isinstance(m, AssistantMessage):
         for b in m.content:
@@ -208,6 +213,7 @@ async def run_job(
     d = reg.defaults
     job.status = "running"
     job.started_at = time.time()
+    job.changed()
     metrics_before = await fetch_metrics(res.endpoint.url, d.probe_timeout_s)
     try:
         if job.isolation == "worktree":
@@ -268,3 +274,4 @@ async def run_job(
         except Exception as e:  # noqa: BLE001
             job.log_text(f"[worktree-error] {e}")
         job._done.set()
+        job.changed()

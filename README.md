@@ -100,10 +100,24 @@ Claude picks it up like any tool. Ask for it by name and it'll do the right thin
 > Use the local agent to add a `--json` flag to the CLI and cover it in the tests.
 
 What Claude does behind that: `list_models` to see what's up and pick a model, then
-hands the brief to the `local-agent` subagent, which starts the job and waits for it
-in the background. When the job ends Claude gets the job record as a completion
-notification, reads `files_touched` (or the worktree diff) and checks the work.
-Without the subagent installed it calls `run_agent` and polls `wait_job` itself.
+`run_agent` with the brief and `wait_s` set to the job's timeout. The call blocks
+until the job ends; after two minutes Claude Code moves it to a background task (shown
+in `/tasks`), Claude keeps working, and the final job record arrives as a task
+notification. Claude reads `files_touched` (or the worktree diff) and checks the work.
+The server sends a progress notification every minute while it waits, so the call never
+trips Claude Code's idle timeout, and the tool timeout itself defaults to about 28 hours.
+
+The two minutes are Claude Code's default (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`, in
+milliseconds). MCP calls run one after another, so with several agents to launch that
+is two minutes each. Two ways round it, which combine:
+
+- Set the variable lower in the `env` block of your settings. `10000` backgrounds
+  `run_agent` after ten seconds and leaves `list_models` and the other quick calls
+  inline; a `local_complete` that runs long comes back as a notification instead.
+- For a swarm, start each job with `wait_s: 0` (returns the id at once) and make one
+  `wait_jobs` call for all of them: one wait, one notification, however many jobs.
+  `mode: "any"` returns on the first to finish, so Claude can review it and call again
+  on the rest.
 
 If nothing suitable is running you'll be asked to start one:
 
@@ -122,23 +136,24 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 |---|---|
 | `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
 | `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, … |
-| `wait_job` / `job_status` / `job_log` / `list_jobs` / `cancel_job` | follow and control jobs |
+| `wait_job` / `wait_jobs` / `job_status` / `job_log` / `list_jobs` / `cancel_job` | follow and control jobs; the waits report progress while they block, `wait_jobs` takes several ids (`mode` all/any) |
 | `register_endpoint` | add a server from inside a session (written to `models.local.yaml`) |
 | `local_complete` | one-shot generation with no tools — summaries, drafts, classification |
 
 ### The `local-agent` subagent
 
-A `run_agent` job on its own is an MCP tool call plus a job id Claude has to remember
-to poll. Claude Code doesn't know it's an agent: it isn't in the agent panel or
-`/tasks`, and nothing tells Claude when it finishes, so a job can be forgotten if
-Claude ends its turn before it's done.
+Auto-backgrounding needs Claude Code 2.1.212 or later and is off inside subagents and
+in non-interactive runs unless `CLAUDE_AUTO_BACKGROUND_TASKS=1`. Without it a
+`run_agent` job is an MCP tool call plus a job id Claude has to remember to poll:
+Claude Code doesn't know it's an agent, nothing tells Claude when it finishes, and a
+job can be forgotten if Claude ends its turn before it's done.
 
-[`agents/local-agent.md`](agents/local-agent.md) fixes that by making each job a real
-background subagent. It's only a relay. It runs on Haiku, can use only the job tools
-(`run_agent`, `wait_job`, `job_status`, `job_log`, `cancel_job`), passes the brief
-through verbatim, waits, and returns the final job record unchanged. Picking the model
-stays with the main session, which still has all of the server's tools, `list_models`
-included. Claude passes its choice to the relay in a short header:
+[`agents/local-agent.md`](agents/local-agent.md) covers those cases by making each job
+a real background subagent. It's only a relay. It runs on Haiku, can use only the job
+tools (`run_agent`, `wait_job`, `job_status`, `job_log`, `cancel_job`), passes the
+brief through verbatim, waits, and returns the final job record unchanged. Picking the
+model stays with the main session, which still has all of the server's tools,
+`list_models` included. Claude passes its choice to the relay in a short header:
 
 ```
 model: unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL
@@ -165,7 +180,31 @@ removed because the job changed nothing, it is recreated at the same path from t
 same base commit. Jobs live in the server's memory, so a follow-up is only possible
 while that server process is up. Stopping the relay from `/tasks` does **not**
 stop the local job; use `cancel_job`. The overhead is a few small Haiku turns per job,
-about one per 100 s of job time.
+one per 25 minutes of job time (each `wait_job` blocks for 1500 s with progress
+notifications in between; v0.1.5 waited 100 s at a time, which with the relay's turn
+cap ended jobs longer than about 2.7 hours).
+
+### Status line
+
+Jobs started this way are MCP tasks, not subagents, so they don't appear in the agent
+panel. `/tasks` shows the latest progress line the server reported (status, elapsed,
+turns, tool calls, last activity). For an always-visible view, the server publishes
+each job's state to `~/.local/state/localagents/status/<pid>.json` on every change,
+and `localagents statusline` prints them as one line:
+
+```
+local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls · ✓ Muse-Glimmer-30B 3m02s
+```
+
+It reads only the files of servers that are still alive, keeps a finished job on the
+line for two minutes, and imports nothing heavy, so it runs in well under 100 ms.
+Append it to your status line script and set `refreshInterval` in the `statusLine`
+settings block so the elapsed times tick while the session is idle:
+
+```bash
+local_jobs=$(timeout 2 localagents statusline 2>/dev/null)
+[ -n "$local_jobs" ] && line+="  $local_jobs"
+```
 
 ### Job records
 
