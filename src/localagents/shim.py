@@ -147,8 +147,14 @@ _CTX_PATTERNS = (
     re.compile(r"maximum context length is (?P<limit>\d+) tokens.*?total of at least (?P<actual>\d+) tokens", re.I | re.S),
     # vLLM / OpenAI-style chat endpoint: "... However, you requested 40000 tokens (39000 in the messages, ...)"
     re.compile(r"maximum context length is (?P<limit>\d+) tokens.*?requested (?P<actual>\d+) tokens", re.I | re.S),
+    # strata (llama.cpp-compatible server; counts max_tokens against the window instead of clamping it):
+    # "request exceeds the context window: prompt (150053 tokens) + max tokens (16) exceeds the context (131072); ..."
+    re.compile(r"prompt \((?P<actual>\d+) tokens\) \+ max tokens \(\d+\) exceeds the context \((?P<limit>\d+)\)", re.I),
 )
-_CTX_HINTS = ("exceeds the available context", "maximum context length", "exceed context limit", "context length exceeded")
+_CTX_HINTS = (
+    "exceeds the available context", "maximum context length", "exceed context limit", "context length exceeded",
+    "exceeds the context window",
+)
 
 
 def translate_context_error(status: int, data: bytes) -> tuple[bytes, str] | None:

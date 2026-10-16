@@ -96,12 +96,16 @@ def publish(jobs: Iterable["Job"], endpoint_load: dict[str, str] | None = None, 
 
 
 def load_summary(probe: dict[str, Any]) -> str | None:
-    """Compact endpoint load from a registry probe: ``1/1 slots`` (llama.cpp) or
-    ``2 run 1 wait kv 34%`` (vLLM). None when the probe carries neither."""
+    """Compact endpoint load from a registry probe: ``1/1 slots`` (llama.cpp; strata adds
+    ``2 wait`` when requests are queued) or ``2 run 1 wait kv 34%`` (vLLM). None when the probe
+    carries neither."""
     slots = probe.get("slots") or {}
-    if "busy" in slots and "total" in slots:
-        return f"{slots['busy']}/{slots['total']} slots"
     load = probe.get("load") or {}
+    if "busy" in slots and "total" in slots:
+        out = f"{slots['busy']}/{slots['total']} slots"
+        if load.get("requests_waiting"):  # strata reports its queue depth beside the slots
+            out += f" {load['requests_waiting']} wait"
+        return out
     if "requests_running" in load:
         parts = [f"{load['requests_running']} run"]
         if load.get("requests_waiting"):

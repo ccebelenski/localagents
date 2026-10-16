@@ -28,4 +28,8 @@ endpoints:
     base_url: http://gpu-server.lan:8000   # a bigger box on the LAN running vLLM
     backend: vllm
     host: gpu-server
+  ai1:
+    base_url: http://ai1.lan:8080          # strata (llama.cpp-compatible); llama.cpp also works, minus occupancy and metrics
+    backend: strata
+    host: ai1
 

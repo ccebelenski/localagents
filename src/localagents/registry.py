@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import fnmatch
+import json
 import os
 import re
 import time
@@ -44,6 +45,16 @@ def _squash(text: str) -> str:
 
 class _Dumper(yaml.SafeDumper):
     """safe_dump that keeps multi-line strings readable (``|`` blocks) and never folds lines."""
+
+
+def backend_kind(backend: str) -> str:
+    """Normalise the config's ``backend`` string: llamacpp | vllm | strata | ollama | other."""
+    b = backend.replace(".", "").replace("-", "").replace("_", "").lower()
+    if b in ("llamacpp", "llama"):
+        return "llamacpp"
+    if b in ("vllm", "strata", "ollama", "other"):
+        return b
+    return "other"
 
 
 def _str_representer(dumper: yaml.SafeDumper, data: str) -> yaml.Node:
@@ -112,7 +123,7 @@ def classify_connect_failure(exc: BaseException, url: str) -> dict[str, Any]:
 class Endpoint:
     name: str
     base_url: str
-    backend: str = "other"  # llama.cpp | vllm | ollama | other
+    backend: str = "other"  # llama.cpp | vllm | strata | ollama | other
     host: str = "local"
     notes: str = ""
     env: dict[str, str] = field(default_factory=dict)  # extra env for claude sessions
@@ -230,10 +241,13 @@ class Registry:
                 pass
             return ctx, "vllm:max_model_len", extra
         # llama.cpp: /props -> default_generation_settings.n_ctx (per slot); /slots -> occupancy
-        is_llama = ep.backend.replace(".", "").replace("-", "").lower() in ("llamacpp", "llama") or any(
-            m.get("owned_by") == "llamacpp" for m in entries
-        )
-        if not (is_llama or ep.backend == "other"):
+        # (only when started with --slots, advertised as endpoint_slots).
+        # strata: same /props and /slots shapes, but /slots and /metrics are always on and not
+        # advertised, and /metrics is JSON (see parse_strata_metrics) with a live queue depth.
+        kind = backend_kind(ep.backend)
+        is_llama = kind == "llamacpp" or any(m.get("owned_by") == "llamacpp" for m in entries)
+        is_strata = kind == "strata"
+        if not (is_llama or is_strata or kind == "other"):
             return {}, "", {}
         extra: dict[str, Any] = {}
         try:
@@ -242,17 +256,30 @@ class Registry:
                 return {}, "", {}
             props = r.json()
             n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx")
-            if props.get("endpoint_slots"):
+            if props.get("endpoint_slots") or is_strata:
                 sl = await c.get(f"{ep.url}/slots")
                 if sl.status_code == 200 and isinstance(sl.json(), list):
                     slots = sl.json()
                     busy = sum(1 for x in slots if x.get("is_processing"))
                     extra["slots"] = {"total": len(slots), "busy": busy, "free": len(slots) - busy}
-            elif isinstance(props.get("total_slots"), int):
+            if "slots" not in extra and isinstance(props.get("total_slots"), int):
                 extra["slots"] = {"total": props["total_slots"]}
-            extra["metrics"] = bool(props.get("endpoint_metrics"))
+            extra["metrics"] = bool(props.get("endpoint_metrics")) or is_strata
+            if is_strata:
+                mt = await c.get(f"{ep.url}/metrics")
+                if mt.status_code == 200:
+                    live = (mt.json() or {}).get("live") or {}
+                    if isinstance(live.get("queued"), int):
+                        extra["load"] = {"requests_waiting": live["queued"]}
+            elif is_llama and kind == "llamacpp":
+                # An endpoint configured as llama.cpp that is really strata loses nothing today,
+                # but the strata branch reads its slots and metrics; say so.
+                hint = await _strata_hint(c, ep)
+                if hint:
+                    extra["hint"] = hint
+            source = "strata:/props n_ctx" if is_strata else "llama.cpp:/props n_ctx"
             if isinstance(n_ctx, int) and n_ctx > 0:
-                return {m["id"]: n_ctx for m in entries}, "llama.cpp:/props n_ctx", extra
+                return {m["id"]: n_ctx for m in entries}, source, extra
         except (httpx.HTTPError, ValueError):
             pass
         return {}, "", extra
@@ -364,8 +391,49 @@ def parse_metrics(text: str) -> dict[str, float]:
     return out
 
 
+async def _strata_hint(c: httpx.AsyncClient, ep: Endpoint) -> str | None:
+    """``/health`` on strata carries ``"service": "strata"``; llama-server's does not."""
+    try:
+        r = await c.get(f"{ep.url}/health")
+        if r.status_code == 200 and isinstance(r.json(), dict) and r.json().get("service") == "strata":
+            return f"/health reports strata; set `backend: strata` for endpoint '{ep.name}' to get slot occupancy and per-job metrics"
+    except (httpx.HTTPError, ValueError):
+        pass
+    return None
+
+
+def parse_strata_metrics(doc: dict[str, Any]) -> dict[str, float]:
+    """strata's JSON ``/metrics`` -> the same short names as llama.cpp's counters.
+
+    ``totals`` is cumulative since the server started: ``prompt_tokens`` counts every prompt token
+    including the ``reused`` (prefix-cached) ones, so the processed count is the difference;
+    ``prompt_ms``/``decode_ms`` are the phase times; ``drafts_offered``/``drafts_accepted`` are
+    the speculative-decode counters. ``live.queued`` is the request queue depth.
+    """
+    totals = doc.get("totals") if isinstance(doc, dict) else None
+    if not isinstance(totals, dict):
+        return {}
+    def num(k: str) -> float:
+        v = totals.get(k)
+        return float(v) if isinstance(v, (int, float)) else 0.0
+    out = {
+        "prompt_tokens": max(0.0, num("prompt_tokens") - num("reused")),
+        "prompt_tokens_cached": num("reused"),
+        "prompt_seconds": num("prompt_ms") / 1000.0,
+        "generated_tokens": num("output_tokens"),
+        "generated_seconds": num("decode_ms") / 1000.0,
+        "spec_draft_tokens": num("drafts_offered"),
+        "spec_accepted_tokens": num("drafts_accepted"),
+    }
+    live = doc.get("live") or {}
+    if isinstance(live.get("queued"), (int, float)):
+        out["requests_waiting"] = float(live["queued"])
+    return out
+
+
 async def fetch_metrics(base_url: str, timeout_s: float = 2.5) -> dict[str, float] | None:
-    """Snapshot the server's Prometheus counters (llama.cpp needs ``--metrics``). None if unavailable."""
+    """Snapshot the server's counters: Prometheus text (llama.cpp needs ``--metrics``; vLLM) or
+    strata's JSON. None if unavailable."""
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as c:
             r = await c.get(f"{base_url.rstrip('/')}/metrics")
@@ -373,7 +441,13 @@ async def fetch_metrics(base_url: str, timeout_s: float = 2.5) -> dict[str, floa
             return None
     except httpx.HTTPError:
         return None
-    return parse_metrics(r.text) or None
+    text = r.text
+    if text.lstrip().startswith("{"):
+        try:
+            return parse_strata_metrics(json.loads(text)) or None
+        except ValueError:
+            return None
+    return parse_metrics(text) or None
 
 
 def metrics_delta(before: dict[str, float] | None, after: dict[str, float] | None) -> dict[str, Any] | None:

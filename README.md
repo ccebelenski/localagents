@@ -246,7 +246,8 @@ endpoints:
 - **endpoints** are places that serve `/v1/messages`. That's the whole config:
   what each one is serving is probed, never written down. Order is priority —
   with no model named, the first endpoint that is up and serving something wins.
-  `host` and `notes` are informational and shown in `list_models`; `env` adds
+  `backend` (`llama.cpp`, `vllm`, `strata`, `other`) selects how the window and occupancy
+  are probed; `host` and `notes` are informational and shown in `list_models`; `env` adds
   environment variables to sessions that run against that endpoint.
 - **Picking a model** is done per call. `run_agent(model=...)` takes a served id,
   a glob, or a fuzzy name (`qwen3.8-27b` finds `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL`);
@@ -321,6 +322,16 @@ job. Give each slot 128k or more.
   tokens processed vs. cached, cache hit ratio, prompt and generation tok/s, and
   speculative-decode acceptance — the counters are server-wide, so overlapping jobs
   share the delta.
+- **strata**: a llama.cpp-compatible server; mark it `backend: strata`. Its `/props`,
+  `/slots` and `/v1/messages` have llama-server's shapes but `/slots` and `/metrics` are
+  always on and never advertised in `/props`, and `/metrics` is JSON (cumulative `totals`
+  plus a live queue depth) rather than Prometheus text, so the strata backend reads them
+  unconditionally: `list_models` shows `{total, busy, free}` plus `requests_waiting`, and
+  jobs get the same cache/throughput record as on llama.cpp. Marked `llama.cpp` it still
+  works (window from `/props`) but without occupancy or per-job metrics, and the probe
+  says so in a `hint`. strata counts `max_tokens` against the window instead of clamping
+  it, so it refuses a request earlier than llama-server would; the shim translates that
+  refusal, or set `"fit_max_tokens": true` in its `strata-<model>.json` to clamp.
 - **vLLM**: `vllm serve <model> --served-model-name <alias> --enable-auto-tool-choice
   --tool-call-parser <parser>`. The context window comes from `max_model_len` in
   `/v1/models`; occupancy (`requests_running`/`waiting`, `kv_cache_usage`) and the per-job

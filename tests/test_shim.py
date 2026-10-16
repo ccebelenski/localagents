@@ -35,6 +35,17 @@ def test_translate_vllm_style_error():
     assert json.loads(body)["error"]["message"] == "prompt is too long: 40000 tokens > 32768 maximum"
 
 
+def test_translate_strata_error():
+    # captured from strata 0.1.44.1 on ai1 (2026-10-16); it rejects prompt + max_tokens > window with a 400
+    err = {"error": {"type": "invalid_request_error",
+                     "message": "request exceeds the context window: prompt (150053 tokens) + max tokens (16) exceeds the "
+                                "context (131072); requests are never truncated. Send a smaller max_tokens (at most 0 here), "
+                                "or add \"fit_max_tokens\": true to the model's strata-<model>.json to shorten it to the room left (#545)"}}
+    body, original = translate_context_error(400, json.dumps(err).encode())
+    assert json.loads(body)["error"]["message"] == "prompt is too long: 150053 tokens > 131072 maximum"
+    assert original.startswith("request exceeds the context window")
+
+
 def test_translate_leaves_other_errors_alone():
     assert translate_context_error(400, b'{"error":{"message":"bad json","type":"invalid_request_error"}}') is None
     assert translate_context_error(500, b'{"error":{"type":"internal_error","message":"CUDA out of memory"}}') is None

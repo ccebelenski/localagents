@@ -104,7 +104,8 @@ async def register_endpoint(
     """Add or update an inference endpoint (persisted to models.local.yaml) and probe it.
 
     `base_url` is the server root that exposes `/v1/messages`, e.g. `http://127.0.0.1:8080`.
-    `backend` is one of llama.cpp | vllm | ollama | other (informational).
+    `backend` is one of llama.cpp | vllm | strata | ollama | other; it selects how the context
+    window and occupancy are probed (strata is llama.cpp-compatible but advertises nothing).
     """
     reg = _reg()
     reg.local.setdefault("endpoints", {})[name] = {
