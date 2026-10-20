@@ -105,9 +105,9 @@ def test_fetch_metrics_accepts_json_and_delta_matches_one_job(monkeypatch):
     before["totals"] = {"since": 0, "requests": 12, "prompt_tokens": 22677, "reused": 1339, "output_tokens": 1159,
                         "prompt_ms": 5302.0, "decode_ms": 11000.0, "drafts_offered": 800, "drafts_accepted": 600}
     _serve(monkeypatch, {"/metrics": before})
-    b = asyncio.run(fetch_metrics(URL))
+    b = asyncio.run(fetch_metrics(Endpoint(name="ai1", base_url=URL, backend="strata")))
     _serve(monkeypatch, {"/metrics": METRICS})
-    a = asyncio.run(fetch_metrics(URL))
+    a = asyncio.run(fetch_metrics(Endpoint(name="ai1", base_url=URL, backend="strata")))
     d = metrics_delta(b, a)
     # the span is the run_agent job of 2026-10-16: one 20k cold prompt, then a 20288-token cache hit
     assert d["prompt_tokens_processed"] == (43027 - 21627) - (22677 - 1339) == 62
@@ -120,7 +120,7 @@ def test_fetch_metrics_accepts_json_and_delta_matches_one_job(monkeypatch):
 
 def test_fetch_metrics_still_parses_prometheus(monkeypatch):
     _serve(monkeypatch, {"/metrics": "# HELP x\nllamacpp:prompt_tokens_total 100\nllamacpp:tokens_predicted_total 7\n"})
-    assert asyncio.run(fetch_metrics(URL)) == {"prompt_tokens": 100.0, "generated_tokens": 7.0}
+    assert asyncio.run(fetch_metrics(Endpoint(name="ai1", base_url=URL, backend="strata"))) == {"prompt_tokens": 100.0, "generated_tokens": 7.0}
 
 
 def test_load_summary_shows_strata_queue_beside_slots():

@@ -61,7 +61,7 @@ GUIDANCE = (
 
 mcp = MCPServer("localagents", instructions=INSTRUCTIONS)
 store = JobStore()
-shim = Shim(lambda jid: store.jobs.get(jid))
+shim = Shim(lambda jid: store.jobs.get(jid), endpoint_lookup=lambda name: _reg().endpoints.get(name))
 
 
 def _reg() -> Registry:
@@ -430,7 +430,7 @@ async def local_complete(
         body["system"] = system
     if temperature is not None:
         body["temperature"] = temperature
-    headers = {"x-api-key": "local", "authorization": "Bearer local", "anthropic-version": "2023-06-01"}
+    headers = {**res.endpoint.auth_headers(), "anthropic-version": "2023-06-01"}
     try:
         async with httpx.AsyncClient(timeout=reg.defaults.timeout_s) as c:
             r = await c.post(f"{res.endpoint.url}/v1/messages", json=body, headers=headers)

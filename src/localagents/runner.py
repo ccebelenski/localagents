@@ -214,7 +214,7 @@ async def run_job(
     job.status = "running"
     job.started_at = time.time()
     job.changed()
-    metrics_before = await fetch_metrics(res.endpoint.url, d.probe_timeout_s)
+    metrics_before = await fetch_metrics(res.endpoint, d.probe_timeout_s)
     try:
         if job.isolation == "worktree":
             job.worktree = make_worktree(job)
@@ -266,7 +266,7 @@ async def run_job(
         job.finished_at = time.time()
         if metrics_before:
             # Server-wide counters: with other jobs on the same endpoint the delta is shared.
-            job.metrics = metrics_delta(metrics_before, await fetch_metrics(res.endpoint.url, d.probe_timeout_s))
+            job.metrics = metrics_delta(metrics_before, await fetch_metrics(res.endpoint, d.probe_timeout_s))
             if job.metrics:
                 job.log_text(f"[metrics] {json.dumps(job.metrics)}")
         try:

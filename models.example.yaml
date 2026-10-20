@@ -32,4 +32,5 @@ endpoints:
     base_url: http://ai1.lan:8080          # strata (llama.cpp-compatible); llama.cpp also works, minus occupancy and metrics
     backend: strata
     host: ai1
+    # api_key: sk-...                      # for a server started with --api-key; sent on every call, never shown to the agent
 

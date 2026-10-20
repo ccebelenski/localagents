@@ -42,6 +42,7 @@ from starlette.routing import Route
 
 if TYPE_CHECKING:
     from .jobs import Job
+    from .registry import Endpoint
 
 HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding", "accept-encoding"}
 
@@ -193,8 +194,15 @@ def translate_context_error(status: int, data: bytes) -> tuple[bytes, str] | Non
 
 
 class Shim:
-    def __init__(self, lookup: Callable[[str], "Job | None"]):
+    def __init__(
+        self,
+        lookup: Callable[[str], "Job | None"],
+        endpoint_lookup: Callable[[str], "Endpoint | None"] | None = None,
+    ):
         self.lookup = lookup
+        # The session is given the placeholder key ``local``; the endpoint's real ``api_key`` (if
+        # any) is swapped in here so it never reaches the delegated agent's environment.
+        self.endpoint_lookup = endpoint_lookup
         self.port: int | None = None
         self._server: uvicorn.Server | None = None
         self._task: asyncio.Task | None = None
@@ -240,6 +248,9 @@ class Shim:
             note = body.pop("_localagents", {})
             raw = json.dumps(body).encode()
         headers = {k: v for k, v in req.headers.items() if k.lower() not in HOP_HEADERS}
+        ep = self.endpoint_lookup(job.endpoint) if self.endpoint_lookup else None
+        if ep is not None and ep.api_key:
+            headers.update(ep.auth_headers())
         url = job.base_url + path
         t0 = time.monotonic()
         upstream = self._client.build_request(req.method, url, content=raw, headers=headers, params=req.query_params)

@@ -248,7 +248,12 @@ endpoints:
   with no model named, the first endpoint that is up and serving something wins.
   `backend` (`llama.cpp`, `vllm`, `strata`, `other`) selects how the window and occupancy
   are probed; `host` and `notes` are informational and shown in `list_models`; `env` adds
-  environment variables to sessions that run against that endpoint.
+  environment variables to sessions that run against that endpoint. `api_key` is sent on
+  every call to that endpoint (as both `x-api-key` and `Authorization: Bearer`, so
+  llama.cpp's and vLLM's `--api-key` and Anthropic-shaped servers all accept it). It stays
+  in the MCP server: the delegated session is given the placeholder `local` and the shim
+  swaps the real key in, so an agent's `env` or Bash never sees it. Without a key the
+  placeholder is what goes out, which open servers ignore.
 - **Picking a model** is done per call. `run_agent(model=...)` takes a served id,
   a glob, or a fuzzy name (`qwen3.8-27b` finds `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL`);
   `endpoint=` pins a server. Both are only needed when more than one thing is up.

@@ -127,10 +127,18 @@ class Endpoint:
     host: str = "local"
     notes: str = ""
     env: dict[str, str] = field(default_factory=dict)  # extra env for claude sessions
+    api_key: str | None = None  # sent on every call to this endpoint; never handed to the session
 
     @property
     def url(self) -> str:
         return self.base_url.rstrip("/")
+
+    def auth_headers(self) -> dict[str, str]:
+        """Both header forms, because llama.cpp and vLLM check ``Authorization: Bearer`` while
+        Anthropic-shaped servers check ``x-api-key``. Without a key the placeholder ``local`` goes
+        out, which is what the delegated session itself sends."""
+        key = self.api_key or "local"
+        return {"x-api-key": key, "authorization": f"Bearer {key}"}
 
 
 @dataclass
@@ -196,7 +204,7 @@ class Registry:
         """
         t0 = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=self.defaults.probe_timeout_s) as c:
+            async with httpx.AsyncClient(timeout=self.defaults.probe_timeout_s, headers=ep.auth_headers()) as c:
                 r = await c.get(f"{ep.url}/v1/models")
                 r.raise_for_status()
                 data = r.json()
@@ -431,12 +439,12 @@ def parse_strata_metrics(doc: dict[str, Any]) -> dict[str, float]:
     return out
 
 
-async def fetch_metrics(base_url: str, timeout_s: float = 2.5) -> dict[str, float] | None:
+async def fetch_metrics(ep: Endpoint, timeout_s: float = 2.5) -> dict[str, float] | None:
     """Snapshot the server's counters: Prometheus text (llama.cpp needs ``--metrics``; vLLM) or
     strata's JSON. None if unavailable."""
     try:
-        async with httpx.AsyncClient(timeout=timeout_s) as c:
-            r = await c.get(f"{base_url.rstrip('/')}/metrics")
+        async with httpx.AsyncClient(timeout=timeout_s, headers=ep.auth_headers()) as c:
+            r = await c.get(f"{ep.url}/metrics")
         if r.status_code != 200:
             return None
     except httpx.HTTPError:
