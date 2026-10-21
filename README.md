@@ -109,15 +109,16 @@ trips Claude Code's idle timeout, and the tool timeout itself defaults to about 
 
 The two minutes are Claude Code's default (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`, in
 milliseconds). MCP calls run one after another, so with several agents to launch that
-is two minutes each. Two ways round it, which combine:
+is two minutes each. Set the variable lower in the `env` block of your settings: `10000`
+backgrounds `run_agent` after ten seconds and leaves `list_models` and the other quick
+calls inline (a `local_complete` that runs long comes back as a notification instead).
+Then a swarm is one blocking `run_agent` per job, and every job delivers its own
+notification when it finishes, with nothing for Claude to re-arm.
 
-- Set the variable lower in the `env` block of your settings. `10000` backgrounds
-  `run_agent` after ten seconds and leaves `list_models` and the other quick calls
-  inline; a `local_complete` that runs long comes back as a notification instead.
-- For a swarm, start each job with `wait_s: 0` (returns the id at once) and make one
-  `wait_jobs` call for all of them: one wait, one notification, however many jobs.
-  `mode: "any"` returns on the first to finish, so Claude can review it and call again
-  on the rest.
+`wait_jobs` is the fallback for calls that cannot background: start each job with
+`wait_s: 0` and wait on all the ids in one call. Use it knowingly: a `mode: "any"` wait
+returns on the first finish and must be re-armed at once, or the remaining jobs finish
+with nobody watching (one coordinator lost six hours to that).
 
 If nothing suitable is running you'll be asked to start one:
 

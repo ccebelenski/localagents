@@ -207,3 +207,13 @@ def test_instructions_and_descriptions_fit_claude_codes_cap():
     assert len(server.INSTRUCTIONS) <= 2048, len(server.INSTRUCTIONS)
     for tool in server.mcp._tool_manager.list_tools():
         assert len(tool.description or "") <= 2048, tool.name
+
+
+def test_swarm_guidance_names_the_rearm_trap():
+    """Every session reads the pattern from here: one blocking run_agent per job is the rule and
+    `wait_jobs(mode="any")` carries its re-arm warning, so a later trim cannot drop either."""
+    assert "one blocking run_agent per job" in server.INSTRUCTIONS
+    assert "re-arm" in server.INSTRUCTIONS
+    desc = {t.name: t.description or "" for t in server.mcp._tool_manager.list_tools()}
+    assert "Fallback only" in desc["wait_jobs"] and "re-arm" in desc["wait_jobs"]
+    assert "swarms included" in desc["run_agent"]

@@ -26,24 +26,23 @@ Delegate work to agents on LOCAL models (llama.cpp / vLLM) on the user's hardwar
 job is a headless Claude Code session (same tools, CLAUDE.md, working tree) on a local model.
 
 Workflow:
-  1. `list_models`: which endpoints are up and what they serve. Nothing is configured or vetted;
-     only you judge suitability. Prefer instruct/coder ids with `context` >= 128k
-     (`context_warning` = too small for an agent). Say which served model you will use; if an id
-     is unfamiliar or looks like a chat model, ask the user.
+  1. `list_models`: live endpoints and what they serve. Nothing is vetted; you judge suitability.
+     Prefer instruct/coder ids with `context` >= 128k (`context_warning` = too small). Say which
+     served model you use; ask the user about an unfamiliar or chat-looking id.
   2. `run_agent(task, model=<served id>, wait_s=<the job's timeout_s, default 1800>)` blocks until
-     the job ends and returns the record. Claude Code moves an MCP call running past
-     CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS (default 2 min; v2.1.212+) to a background task: you get a
-     task id, keep working, and the record arrives as a task notification. Progress every minute
-     keeps the call alive.
-     Several jobs: start each with `wait_s=0` (returns the id at once), then ONE
-     `wait_jobs([ids], timeout_s=...)` call; `mode="any"` returns on the first finish so you can
-     review it and call again on the rest. One call and one notification for all of them.
-     `model_unavailable`: nothing suitable is up; tell the user what is, ask them to start a model,
-     retry when they say so. `endpoint=` picks between live endpoints.
-     In subagents and non-interactive runs auto-backgrounding is off (unless
-     CLAUDE_AUTO_BACKGROUND_TASKS=1): use the `local-agent` subagent if installed (a relay; prompt
-     = `model: <served id>`, optional header lines, `---`, the brief verbatim), or
-     `run_agent(wait_s=0)` then `wait_job`, not ending your turn while the job runs.
+     the job ends and returns the record. Claude Code (v2.1.212+) moves a call running past
+     CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS (default 2 min) to a background task: you get a task id,
+     keep working, and the record arrives as a task notification.
+     Several jobs: one blocking run_agent per job, never wait_s=0 + wait_jobs. Each job then
+     notifies on its own finish; nothing to re-arm. Set CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=10000
+     (settings env) so each call backgrounds in seconds.
+     wait_jobs is a fallback for calls that cannot background; mode="any" must be re-armed
+     after every return or the remaining jobs finish unseen.
+     `model_unavailable`: tell the user what is up, ask them to start a model, retry when told.
+     `endpoint=` picks between live endpoints.
+     Subagents and non-interactive runs do not auto-background (unless CLAUDE_AUTO_BACKGROUND_TASKS=1):
+     use the `local-agent` subagent if installed (a relay; prompt = `model: <served id>`, optional
+     header lines, `---`, the brief verbatim), or `run_agent(wait_s=0)` then `wait_job` in-turn.
   3. `cancel_job` stops a job; `list_jobs` / `job_status` / `job_log` follow one.
   4. Review the work (files_touched, or the worktree diff): local models are less reliable than
      Claude; treat output as a draft to verify.
@@ -226,6 +225,7 @@ async def run_agent(
       wait_s: If > 0, block up to this many seconds and return the final record, else return
         the job id at once. Pass the job's timeout: Claude Code backgrounds a long call and
         delivers the record as a task notification; progress is reported every minute.
+        Use for every job, swarms included.
       permission_mode: acceptEdits (default) | bypassPermissions | default | plan.
       max_turns: Cap on agent turns (default from models.yaml).
       allowed_tools: Override auto-approved tools.
@@ -324,14 +324,10 @@ async def wait_jobs(
     mode: str = "all",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Block for several jobs at once: until all have finished (`mode="all"`), or until the first
-    one has (`mode="any"`), or `timeout_s` passes.
-
-    The way to run a swarm: start each job with `run_agent(..., wait_s=0)`, which returns at once,
-    then make this one call. It is one tool call however many jobs there are, so it costs one
-    auto-background wait instead of one per job, and one notification. Returns `done` (final
-    records) and `running` (ids still going, with status and elapsed time) so with `mode="any"`
-    you can review finished jobs and call again on the rest. Progress is reported every minute.
+    """Block for several jobs: all finished (mode="all"), first finished (mode="any"), or timeout_s.
+    Fallback only: prefer one blocking run_agent per job (each notifies on its own finish).
+    mode="any" must be re-armed after every return or the rest finish unseen.
+    Returns done (final records) and running (ids, status, elapsed). Progress every minute.
     """
     if mode not in ("all", "any"):
         return {"error": "bad_argument", "message": "mode must be 'all' or 'any'"}
