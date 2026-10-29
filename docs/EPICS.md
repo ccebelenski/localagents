@@ -4,6 +4,10 @@ Preliminary breakdown of `docs/superpowers/specs/2026-10-29-monitor-design.md`, 
 incremental builds with a test gate per story. Adjust as we go. `☐` open, `☑` merged.
 Each story: scope, gate (what must be green), lane hint (per `~/.claude/hints/local-delegation.md`).
 
+Standing rule (2026-10-29): every piece of work is reviewed, read-only, by a model that did
+not do it, before it merges; designs and specs included. Findings carry file:line and a
+scenario; the disposition (accepted / declined with reason) is recorded.
+
 Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before any parser;
 2.4 before any page story; 3.5 last.
 
