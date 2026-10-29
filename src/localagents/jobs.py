@@ -99,7 +99,6 @@ class Job:
     # runtime-only
     _task: asyncio.Task | None = field(default=None, repr=False)
     _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
-    _on_change: Callable[[], None] | None = field(default=None, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)  # the store's db connection
     _pending_tools: dict[str, int] = field(default_factory=dict, repr=False)  # tool_use_id -> rowid of its tool_calls row (spec write rule)
 
@@ -108,10 +107,8 @@ class Job:
     _METRIC_COLUMNS = _METRIC_COUNTERS + ("cache_hit_ratio", "prompt_tps", "generate_tps", "spec_decode_acceptance")
 
     def changed(self) -> None:
-        """Tell the store this job's visible state moved (it republishes the status file and
-        updates the job's row in the database)."""
-        if self._on_change:
-            self._on_change()
+        """This job's visible state moved: write the new state to its row. The status line reads
+        the table, so there is nothing else to notify."""
         self._row_update()
 
     def _row_update(self) -> None:
@@ -257,9 +254,13 @@ class Job:
 
 
 class JobStore:
+    # describable by describe_server(): server attributes the status line needs that are not known
+    # at process start. Names never reach SQL unchecked; pid/owner/started are set by _open alone.
+    _SERVER_COLS = ("config", "transport", "shim_port")
+
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
-        self.endpoint_load: dict[str, str] = {}  # endpoint name -> compact load text, while jobs run
+        self.endpoint_load: dict[str, str] = {}  # gone in step 4: replaced by record_endpoint_load + the table
         self._conn: sqlite3.Connection | None = None
         self._server_id: str | None = None
 
@@ -280,7 +281,8 @@ class JobStore:
         if self._conn is not None:
             return
         # One row per process (spec: docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md).
-        # config, transport, shim_port and the updated/stopped timestamps are story 1.5a's: left NULL.
+        # config/transport/shim_port are filled by describe_server(), updated beats by
+        # heartbeat(), stopped by close(); the story-1.5a sampler and status line drive them.
         conn = db.open_db()
         server_id = db.new_uuid()
         try:
@@ -288,9 +290,12 @@ class JobStore:
         except importlib.metadata.PackageNotFoundError:  # running from a source tree without metadata
             version = "dev"
         with db.immediate(conn):
+            # updated = started: a row with no heartbeat yet must still count as live for its
+            # first 60 s (spec Liveness); NULL would make it dead the moment it is written.
+            started = time.time()
             conn.execute(
-                "INSERT INTO mcp_servers (id, pid, owner, started, cwd, version) VALUES (?, ?, ?, ?, ?, ?)",
-                (server_id, os.getpid(), os.getppid(), time.time(), os.getcwd(), version),
+                "INSERT INTO mcp_servers (id, pid, owner, started, updated, cwd, version) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (server_id, os.getpid(), os.getppid(), started, started, os.getcwd(), version),
             )
         self._conn, self._server_id = conn, server_id
 
@@ -303,7 +308,6 @@ class JobStore:
         job = Job(id=jid, name=name, log_dir=str(log_dir), **kw)
         job.mcp_server_id = self.server_id
         self.jobs[jid] = job
-        job._on_change = self.publish
         job._conn = self.conn
         # the task itself is the jobs.task column now (task.txt is dropped)
         with db.immediate(self.conn):
@@ -321,14 +325,80 @@ class JobStore:
                  job.status, created_at, time.time(), 1 if job.dump else 0, 1 if job.log_events else 0,
                  json.dumps(job.worktree) if job.worktree is not None else None),
             )
-        self.publish()
         return job
 
-    def publish(self) -> None:
-        """Write the status-line file for this server (see status.py)."""
-        from . import status
+    # ----- server-row lifecycle (story 1.5a; spec Liveness) -----
 
-        status.publish(self.jobs.values(), self.endpoint_load)
+    def describe_server(self, **cols: Any) -> None:
+        """Update this server's row with any of config, transport, shim_port (only the keys given)."""
+        if not cols:
+            return
+        bad = set(cols) - set(self._SERVER_COLS)
+        if bad:
+            raise ValueError(f"describable server columns are {', '.join(self._SERVER_COLS)}; got {', '.join(sorted(bad))}")
+        with db.immediate(self.conn):
+            self.conn.execute(
+                f"UPDATE mcp_servers SET {', '.join(f'{c} = ?' for c in cols)} WHERE id = ?",
+                (*cols.values(), self.server_id),
+            )
+
+    def heartbeat(self) -> None:
+        """Move this row's ``updated`` to now: the liveness signal the status line and the
+        ``lost`` rule read. Runs every LOAD_SAMPLE_S on the asyncio thread (prune's thread must
+        not touch this connection)."""
+        with db.immediate(self.conn):
+            self.conn.execute("UPDATE mcp_servers SET updated = ? WHERE id = ?", (time.time(), self.server_id))
+
+    def close(self) -> None:
+        """Mark this server's row stopped (clean exit). Idempotent and never raises: it runs at
+        exit via atexit, where a locked or broken database must not add noise to the shutdown."""
+        if self._conn is None:
+            return  # never used the database: there is no row to mark and none to create
+        try:
+            with db.immediate(self._conn):
+                self._conn.execute(
+                    "UPDATE mcp_servers SET stopped = ? WHERE id = ? AND stopped IS NULL",
+                    (time.time(), self.server_id),
+                )
+        except sqlite3.Error:
+            pass  # a row left unstopped ages out by heartbeat instead
+
+    def mark_lost_jobs(self, now: float | None = None) -> int:
+        """The spec's startup rule: a job whose server row is not live (no heartbeat for 60 s,
+        or ``stopped`` set) will never finish: mark it ``lost``. This is the only status write to
+        another server's jobs; this server's own row was written/heartbeated moments ago, so the
+        fresh ``updated`` keeps its jobs out of the sweep."""
+        now = now if now is not None else time.time()
+        with db.immediate(self.conn):
+            cur = self.conn.execute(
+                """UPDATE jobs SET status = 'lost', error = 'server exited', finished_at = ?, updated = ?
+                   WHERE status IN ('queued', 'running')
+                     AND mcp_server_id IN (
+                       SELECT id FROM mcp_servers WHERE stopped IS NOT NULL OR updated < ?
+                     )""",
+                (now, now, now - 60),
+            )
+            return cur.rowcount
+
+    def record_endpoint_load(self, loads: dict[str, str]) -> None:
+        """Last-writer-wins compact load text per endpoint (the sampler's; the status line reads
+        it back keyed by name). The endpoint row id comes from this store's running jobs — the
+        name alone would not identify the row (endpoints is keyed name+base_url+backend+host) and
+        the sampler only reports for endpoints that have running jobs anyway."""
+        if not loads:
+            return
+        ids: dict[str, int] = {}
+        for j in self.jobs.values():
+            if not j.done and j.endpoint_id is not None:
+                ids.setdefault(j.endpoint, j.endpoint_id)
+        with db.immediate(self.conn):
+            for name, text in loads.items():
+                eid = ids.get(name)
+                if eid is not None:
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO endpoint_load (endpoint_id, updated, load) VALUES (?, ?, ?)",
+                        (eid, time.time(), text),
+                    )
 
     def get(self, jid: str) -> Job:
         if jid not in self.jobs:

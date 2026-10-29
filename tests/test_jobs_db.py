@@ -64,8 +64,11 @@ def test_mcp_servers_row_at_first_use(monkeypatch, tmp_path):
     assert r["version"], "version must be non-empty (importlib.metadata or 'dev')"
     assert r["cwd"] == os.getcwd() and r["started"] <= time.time()
     # story 1.5a fills these; they must exist as columns and start NULL
-    for col in ("config", "transport", "shim_port", "updated", "stopped"):
+    for col in ("config", "transport", "shim_port", "stopped"):
         assert r[col] is None
+    # Liveness: a row with no heartbeat yet counts as live for its first 60 s, so _open sets
+    # updated = started (a NULL updated would make the row dead the moment it is written).
+    assert r["updated"] == r["started"]
 
 
 def test_directory_and_branch_use_name(monkeypatch, tmp_path):
@@ -148,3 +151,132 @@ def test_lookup_rows_reused_across_jobs(monkeypatch, tmp_path):
     assert a.endpoint_id == b.endpoint_id and a.model_id == b.model_id
     assert store.conn.execute("SELECT COUNT(*) FROM endpoints").fetchone()[0] == 1
     assert store.conn.execute("SELECT COUNT(*) FROM models").fetchone()[0] == 1
+
+
+# --- story 1.5a: server-row lifecycle (heartbeat, describe, close) and the startup lost rule ---
+
+
+def _srv_row(store, sid=None):
+    return store.conn.execute(
+        "SELECT * FROM mcp_servers WHERE id = ?", (sid or store.server_id,)
+    ).fetchone()
+
+
+def test_heartbeat_advances_updated(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    u0 = _srv_row(store)["updated"]
+    time.sleep(0.01)  # REAL clocks: two time.time() calls a beat apart must differ
+    store.heartbeat()
+    assert _srv_row(store)["updated"] > u0
+    assert _srv_row(store)["stopped"] is None  # heartbeating must not touch stopped
+
+
+def test_describe_server_updates_only_given_keys(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    store.describe_server(config="/cfg/models.yaml", transport="stdio")
+    r = _srv_row(store)
+    assert r["config"] == "/cfg/models.yaml" and r["transport"] == "stdio"
+    assert r["shim_port"] is None  # not given: untouched
+    store.describe_server(shim_port=43210)
+    r = _srv_row(store)
+    assert r["shim_port"] == 43210 and r["config"] == "/cfg/models.yaml" and r["transport"] == "stdio"
+    with pytest.raises(ValueError):
+        store.describe_server(pid=1)  # not a describable column: never interpolated into SQL
+
+
+def test_close_sets_stopped_and_is_idempotent(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    store.conn  # opening is what writes the row; close() must not create one if the store never used the db
+    store.close()
+    r = _srv_row(store)
+    assert r["stopped"] is not None and r["stopped"] >= r["started"]
+    first = r["stopped"]
+    time.sleep(0.01)
+    store.close()  # idempotent: a second close must not move the first exit stamp
+    assert _srv_row(store)["stopped"] == first
+
+
+def test_close_on_an_unused_store_is_a_noop(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    store.close()  # never opened the database: nothing to mark, and it must not create a file
+    assert not db.db_path().exists()
+
+
+def test_close_never_raises(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    store.conn
+
+    @contextmanager
+    def boom(conn):
+        raise sqlite3.OperationalError("database is locked")
+        yield  # unreachable; makes this a context manager
+
+    monkeypatch.setattr(jobs.db, "immediate", boom)
+    store.close()  # runs at exit: must swallow, not raise
+
+
+def _stale_store(monkeypatch, tmp_path, now):
+    """A second server whose heartbeat is 61 s old (row in the same database)."""
+    other = jobs.JobStore()
+    other.conn.execute("UPDATE mcp_servers SET updated = ? WHERE id = ?", (now - 61, other.server_id))
+    return other
+
+
+def test_mark_lost_jobs_marks_other_servers_not_this_one(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    mine = _new(store)
+    mine.status, mine.started_at = "running", time.time()
+    mine.changed()
+
+    now = time.time()
+    other = _stale_store(monkeypatch, tmp_path, now)
+    stale_run = _new(other)
+    stale_run.status, stale_run.started_at = "running", now - 100
+    stale_run.changed()
+    stale_queued = _new(other)  # queued needs no changed(): new() inserted it queued
+    finished = _new(other)
+    finished.status, finished.finished_at = "succeeded", now - 5
+    finished.changed()
+
+    assert store.mark_lost_jobs(now) == 2  # running + queued; the finished one is left alone
+    for j in (stale_run, stale_queued):
+        r = _row(store, j.id)
+        assert r["status"] == "lost" and r["error"] == "server exited"
+        assert r["finished_at"] == pytest.approx(now) and r["updated"] == pytest.approx(now)
+    assert _row(store, finished.id)["status"] == "succeeded"
+    assert _row(store, mine.id)["status"] == "running"  # this server's row is fresh: never touched
+    # a second call finds nothing left to mark
+    assert store.mark_lost_jobs(now + 10) == 0
+
+
+def test_mark_lost_jobs_marks_a_stopped_server_despite_a_fresh_heartbeat(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    exited = jobs.JobStore()  # clean exit: stopped set, heartbeat still recent
+    job = _new(exited)
+    job.status, job.started_at = "running", now - 10
+    job.changed()
+    exited.conn.execute("UPDATE mcp_servers SET stopped = ? WHERE id = ?", (now - 1, exited.server_id))
+    assert store.mark_lost_jobs(now) == 1
+    assert _row(store, job.id)["status"] == "lost" and _row(store, job.id)["error"] == "server exited"
+
+
+def test_record_endpoint_load_writes_by_running_jobs_endpoint(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    store.record_endpoint_load({"llamacpp": "1/1 slots"})
+    row = store.conn.execute("SELECT * FROM endpoint_load WHERE endpoint_id = ?", (job.endpoint_id,)).fetchone()
+    assert row["load"] == "1/1 slots" and row["updated"] <= time.time()
+    # a name with no running job here is skipped (the endpoint row would only be a guess by name)
+    store.record_endpoint_load({"nosuch": "2 run 1 wait"})
+    assert store.conn.execute("SELECT COUNT(*) FROM endpoint_load").fetchone()[0] == 1
+    # last writer wins on the same endpoint
+    store.record_endpoint_load({"llamacpp": "2/2 slots"})
+    row = store.conn.execute("SELECT load FROM endpoint_load WHERE endpoint_id = ?", (job.endpoint_id,)).fetchone()
+    assert row[0] == "2/2 slots"
+    assert store.conn.execute("SELECT COUNT(*) FROM endpoint_load").fetchone()[0] == 1
+    # a finished job no longer resolves its endpoint
+    job.status, job.finished_at = "succeeded", time.time()
+    job.changed()
+    store.record_endpoint_load({"llamacpp": "0/2 slots"})
+    assert store.conn.execute("SELECT load FROM endpoint_load").fetchone()[0] == "2/2 slots"

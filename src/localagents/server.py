@@ -6,6 +6,7 @@ import asyncio
 import atexit
 import os
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,16 @@ GUIDANCE = (
     "for an agent session. Say which served model you are using."
 )
 
-mcp = MCPServer("localagents", instructions=INSTRUCTIONS)
+@asynccontextmanager
+async def _mcp_lifespan(_mcp_server: MCPServer):
+    """The MCP server's startup hook (the low-level Server enters it around every serve): start
+    the load sampler here so the mcp_servers heartbeat runs from the beginning, not from the
+    first job. run_agent still calls _ensure_sampler() as a belt for paths that bypass this."""
+    _ensure_sampler()
+    yield {}
+
+
+mcp = MCPServer("localagents", instructions=INSTRUCTIONS, lifespan=_mcp_lifespan)
 store = JobStore()
 shim = Shim(lambda jid: store.jobs.get(jid), endpoint_lookup=lambda name: _reg().endpoints.get(name))
 
@@ -156,13 +166,16 @@ def _progress_reporter_many(ctx: Context | None):
 
 LOAD_SAMPLE_S = 10.0
 _sampler: asyncio.Task | None = None
+_shim_port_recorded = False  # shim.port is the process's: describe_server(shim_port=...) runs once
 
 
 async def _sample_endpoint_load() -> None:
-    """While jobs run, probe their endpoints every LOAD_SAMPLE_S and publish a compact load line
-    (slots busy, requests queued, KV cache) for the status bar. Idle servers publish nothing."""
+    """Every LOAD_SAMPLE_S: heartbeat this server's row (jobs or not: the status line reads
+    liveness from it), and while jobs run also probe their endpoints and write the compact load
+    text to endpoint_load. Idle servers write no load rows: old ones age out by ``updated``."""
     while True:
         try:
+            store.heartbeat()
             running = [j for j in store.jobs.values() if not j.done]
             if running:
                 reg = _reg()
@@ -174,11 +187,7 @@ async def _sample_endpoint_load() -> None:
                     text = status.load_summary(await reg.probe(ep))
                     if text:
                         loads[name] = text
-                store.endpoint_load = loads
-                store.publish()
-            elif store.endpoint_load:
-                store.endpoint_load = {}
-                store.publish()
+                store.record_endpoint_load(loads)
         except Exception:  # noqa: BLE001  the status bar must never take the server down
             pass
         await asyncio.sleep(LOAD_SAMPLE_S)
@@ -289,6 +298,10 @@ async def run_agent(
         context=res.context,
     )
     await shim.start()
+    global _shim_port_recorded
+    if not _shim_port_recorded and shim.port:
+        _shim_port_recorded = True
+        store.describe_server(shim_port=shim.port)  # once: the port is the process's, not the job's
     _ensure_sampler()
     job._task = asyncio.create_task(
         run_job(
@@ -472,7 +485,11 @@ def main() -> None:
         return
     if a.config:
         os.environ["LOCALAGENTS_CONFIG"] = str(Path(a.config).expanduser().resolve())
-    atexit.register(status.remove)
+    # the server row is the status line's spine: fill it, sweep jobs a crashed server left
+    # behind (spec's lost rule — the only status write to another server's jobs), mark stopped at exit
+    store.describe_server(config=str(config_path()), transport=a.transport)
+    store.mark_lost_jobs()
+    atexit.register(store.close)
     try:  # retention: old job directories go at startup and after every job (see jobs.prune)
         prune(_reg().defaults.job_retention_days)
     except OSError:

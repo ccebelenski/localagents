@@ -1,6 +1,8 @@
-"""Status-line publishing: the server writes a per-pid file, the renderer merges live ones."""
+"""Story 1.5a: the status line reads the shared database. Servers keep their mcp_servers row
+alive (heartbeat / updated=started) and write jobs, requests and tool calls; the renderer
+merges the live servers' jobs into one line. The rendered strings are pinned: the table swap
+must not change what the status bar shows."""
 
-import json
 import os
 import subprocess
 import sys
@@ -8,12 +10,23 @@ import time
 
 from localagents import jobs, status
 
+MODEL = "unsloth/Qwen3.8-Flash-Next-GGUF:UD-IQ4_XS"
 
-def _job(**kw):
-    return jobs.JobStore().new(
-        task="t", model=kw.pop("model", "unsloth/Qwen3.8-Flash-Next-GGUF:UD-IQ4_XS"),
-        endpoint="llamacpp", base_url="http://x:8080", cwd="/tmp", run_cwd="/tmp", isolation="none",
-    )
+
+def _store(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    return jobs.JobStore()
+
+
+def _new(store, **kw):
+    kw.setdefault("task", "t")
+    kw.setdefault("model", MODEL)
+    kw.setdefault("endpoint", "llamacpp")
+    kw.setdefault("base_url", "http://x:8080")
+    kw.setdefault("cwd", "/tmp")
+    kw.setdefault("run_cwd", "/tmp")
+    kw.setdefault("isolation", "none")
+    return store.new(**kw)
 
 
 def test_short_model_and_elapsed():
@@ -26,50 +39,68 @@ def test_short_model_and_elapsed():
 
 
 def test_publish_and_render_running_job(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    job = _job()
-    job.status = "running"
-    job.started_at = time.time() - 78
-    job.tool_calls = 4
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    now = time.time()
+    job.status, job.started_at = "running", now - 78
+    for i in range(4):
+        job.record_tool_call(now - 40 + i, "Bash", f"b{i}", "ls")
     job.changed()
-    data = json.loads((status.status_dir() / f"{os.getpid()}.json").read_text())
-    assert data["pid"] == os.getpid() and data["jobs"][0]["id"] == job.id
-    me = os.getppid()  # what publish() records as owner for this process
-    assert status.render(owner=me) == "local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls"
-    job.tool_calls, job.files_touched = 1, ["/tmp/a.py"]
+    srv = store.conn.execute("SELECT * FROM mcp_servers WHERE id = ?", (store.server_id,)).fetchone()
+    assert srv["pid"] == os.getpid() and srv["owner"] == os.getppid()
+    me = os.getppid()  # what _open records as owner for this process
+    assert status.render(now=now, owner=me) == "local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls"
+    # this job retires off the line; a second one shows the single forms
+    job.status, job.finished_at = "succeeded", now - 3600
     job.changed()
-    assert status.render(owner=me) == "local: ⟳ Qwen3.8-Flash-Next 1m18s 1 call 1 file"
+    job2 = _new(store)
+    job2.status, job2.started_at = "running", now - 78
+    job2.record_tool_call(now - 20, "Edit", "e1", "/tmp/a.py")
+    job2.changed()
+    assert status.render(now=now, owner=me) == "local: ⟳ Qwen3.8-Flash-Next 1m18s 1 call 1 file"
 
 
 def test_finished_jobs_linger_then_drop(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    job = _job()
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
     job.status, job.started_at, job.finished_at = "succeeded", 1000.0, 1180.0
-    job._done.set()
-    status.publish([job], now=1200.0)
+    job.changed()
     assert status.render(now=1200.0, owner=os.getppid()) == "local: ✓ Qwen3.8-Flash-Next 3m00s"
+    # collect filters by `now`, so the linger boundary moves with the clock, not with a re-publish
     assert status.render(now=1180.0 + status.KEEP_FINISHED_S + 1) == ""
-    status.publish([job], now=1180.0 + status.KEEP_FINISHED_S + 1)
-    assert json.loads((status.status_dir() / f"{os.getpid()}.json").read_text())["jobs"] == []
 
 
-def test_dead_server_file_is_ignored_and_removed(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    proc = subprocess.Popen(["true"])
-    proc.wait()  # a pid that has exited
-    dead = status.status_dir() / f"{proc.pid}.json"
-    dead.write_text(json.dumps({"pid": proc.pid, "updated": time.time(), "jobs": [
-        {"id": "x", "model": "m", "status": "running", "started_at": time.time()}]}))
-    assert status.render() == ""
-    assert not dead.exists()
+def test_dead_server_jobs_are_dropped(monkeypatch, tmp_path):
+    """Liveness is heartbeat first, pid second: a live pid whose row stopped beating 61 s ago
+    is not live, and neither is one marked stopped. The row itself is history and stays."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    now = time.time()
+    job.status, job.started_at = "running", now - 30
+    job.changed()
+    assert status.render(now=now, owner=os.getppid()) == "local: ⟳ Qwen3.8-Flash-Next 30s"
+    store.conn.execute("UPDATE mcp_servers SET updated = ? WHERE id = ?", (now - 61, store.server_id))
+    assert status.render(now=now, owner=os.getppid()) == ""
+    store.conn.execute("UPDATE mcp_servers SET updated = ?, stopped = ? WHERE id = ?", (now, now, store.server_id))
+    assert status.render(now=now, owner=os.getppid()) == ""
+    assert store.conn.execute("SELECT COUNT(*) FROM mcp_servers").fetchone()[0] == 1
 
 
 def test_remove_deletes_own_file(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    status.publish([])
-    assert (status.status_dir() / f"{os.getpid()}.json").exists()
-    status.remove()
-    assert not (status.status_dir() / f"{os.getpid()}.json").exists()
+    """"remove" is close(): stopped set, the server's jobs vanish from the line, and close is
+    idempotent."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    now = time.time()
+    job.status, job.started_at = "running", now - 30
+    job.changed()
+    assert status.render(now=now, owner=os.getppid()) == "local: ⟳ Qwen3.8-Flash-Next 30s"
+    store.close()
+    row = store.conn.execute("SELECT stopped FROM mcp_servers WHERE id = ?", (store.server_id,)).fetchone()
+    assert row["stopped"] is not None
+    assert status.render(now=now, owner=os.getppid()) == ""
+    store.close()
+    assert status.render(now=now, owner=os.getppid()) == ""
 
 
 def test_statusline_command_is_light():
@@ -84,19 +115,30 @@ def test_statusline_command_is_light():
     assert out.stdout.strip().splitlines()[-1] == "[]"
 
 
+def test_render_without_a_database_is_an_empty_line(monkeypatch, tmp_path):
+    """A machine with no database yet: print the empty line, create no file (or directory)."""
+    monkeypatch.setenv("LOCALAGENTS_DB", str(tmp_path / "nope" / "localagents.db"))
+    assert status.render() == ""
+    assert not (tmp_path / "nope").exists()
+
+
 def test_other_sessions_jobs_fold_into_a_count(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     now = time.time()
-    mine = _job()
+    mine_store = _store(monkeypatch, tmp_path)
+    mine = _new(mine_store)
     mine.status, mine.started_at = "running", now - 30
-    status.publish([mine], {"llamacpp": "1/1 slots"}, now=now)
+    mine.changed()
+    mine_store.record_endpoint_load({"llamacpp": "1/1 slots"})
     # a second live server (same pid is fine for the liveness check) owned by another session
-    other = status.status_dir() / "999999999.json"
-    other.write_text(json.dumps({"pid": os.getpid(), "owner": 4242, "updated": now, "jobs": [
-        {"id": "o1", "model": "x/GLM-5.3-Flash-EXL3", "endpoint": "dgx1", "status": "running", "started_at": now - 5},
-        {"id": "o2", "model": "x/GLM-5.3-Flash-EXL3", "endpoint": "dgx1", "status": "succeeded",
-         "started_at": now - 50, "finished_at": now - 10}],
-        "endpoints": {"dgx1": "2 run 1 wait kv 34%"}}))
+    other = jobs.JobStore()
+    other.conn.execute("UPDATE mcp_servers SET owner = 4242 WHERE id = ?", (other.server_id,))
+    o1 = _new(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000")
+    o1.status, o1.started_at = "running", now - 5
+    o1.changed()
+    o2 = _new(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000")
+    o2.status, o2.started_at, o2.finished_at = "succeeded", now - 50, now - 10
+    o2.changed()
+    other.record_endpoint_load({"dgx1": "2 run 1 wait kv 34%"})
     assert status.render(now=now, owner=os.getppid()) == "local: ⟳ Qwen3.8-Flash-Next 30s · llamacpp 1/1 slots · +2 other"
     assert status.render(now=now, owner=4242) == "local: ✓ GLM-5.3-Flash 40s · ⟳ GLM-5.3-Flash 5s · dgx1 2 run 1 wait kv 34% · +1 other"
     # no identifiable Claude Code parent: everything is ours, no endpoint load shown for non-running
@@ -113,9 +155,12 @@ def test_load_summary_shapes():
 
 
 def test_shim_usage_feeds_context_and_speed(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    job = _job()
-    job.status, job.started_at, job.context = "running", time.time() - 10, 131072
+    """The shim calls both: note_usage keeps the in-memory fields (job_status still reads them)
+    and _log records the request row — the line now derives ctx fill and speed from the rows."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store, context=131072)
+    now = time.time()
+    job.status, job.started_at = "running", now - 10
     job.note_usage({"input_tokens": 1000, "cache_read_input_tokens": 39000, "output_tokens": 300}, ms=3000)
     assert job.ctx_tokens == 40000 and job.gen_tps == 100.0
     job.note_usage({"output_tokens": 300}, ms=9000, gen_ms=3000)  # prompt processing excluded
@@ -123,6 +168,16 @@ def test_shim_usage_feeds_context_and_speed(monkeypatch, tmp_path):
     job.note_usage({"input_tokens": 2000, "cache_read_input_tokens": 40000, "output_tokens": 200}, ms=4000)
     assert job.ctx_tokens == 42000 and job.gen_tps == 75.0  # smoothed
     job.note_usage(None, ms=0)  # count_tokens etc.: no change
+    for t, ms, gen_ms, usage in (
+        (1, 3000, None, {"input_tokens": 1000, "cache_read_input_tokens": 39000, "output_tokens": 300}),
+        (2, 9000, 3000, {"output_tokens": 300}),
+        (3, 4000, None, {"input_tokens": 2000, "cache_read_input_tokens": 40000, "output_tokens": 200}),
+        (4, 5, None, None),  # the count_tokens call note_usage(None) stands for: a null-usage row
+    ):
+        rec = {"t": now + t, "path": "/v1/messages", "status": 200, "ms": ms, "usage": usage}
+        if gen_ms is not None:
+            rec["gen_ms"] = gen_ms
+        job.record_request(rec)
     assert status.render(owner=os.getppid()) == "local: ⟳ Qwen3.8-Flash-Next 10s ctx 32% 75 t/s"
 
 

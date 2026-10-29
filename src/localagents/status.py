@@ -1,37 +1,24 @@
-"""Publish job state for the Claude Code status line.
+"""Render the Claude Code status line from the shared SQLite tables (story 1.5a).
 
-The server writes ``<state>/status/<pid>.json`` whenever a job changes (start, every SDK
-message, finish). ``render()`` reads every file whose server is still alive and prints one
-line, e.g. ``local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls · ✓ Muse-Glimmer-30B 3m02s``. The
+Every MCP server keeps its ``mcp_servers`` row alive with a heartbeat and writes its jobs,
+requests and tool calls to the database; ``render()`` reads the live servers' jobs and prints
+one line, e.g. ``local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls · ✓ Muse-Glimmer-30B 3m02s``. The
 ``localagents statusline`` command runs ``render()`` and nothing else, so it stays fast enough
-to run on every status line refresh (no server, MCP or HTTP imports here).
+for every status-line refresh: stdlib plus ``db``/``derive`` only, under 100 ms, and it never
+creates or fails on the database (no live servers or no database yet prints the empty line).
 """
 
 from __future__ import annotations
 
-import json
 import os
+import sqlite3
 import time
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import Any
 
-from .jobs import state_dir
-
-if TYPE_CHECKING:  # pragma: no cover
-    from .jobs import Job
+from . import db, derive
 
 KEEP_FINISHED_S = 120.0  # a finished job stays on the line this long
 MAX_ACTIVITY = 60
-
-
-def status_dir() -> Path:
-    d = state_dir() / "status"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _path(pid: int | None = None) -> Path:
-    return status_dir() / f"{pid or os.getpid()}.json"
 
 
 def short_model(served_id: str) -> str:
@@ -50,49 +37,6 @@ def fmt_elapsed(seconds: float) -> str:
     if s < 3600:
         return f"{s // 60}m{s % 60:02d}s"
     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
-
-
-def _entry(job: "Job") -> dict[str, Any]:
-    ctx_pct = None
-    if job.ctx_tokens and job.context:
-        ctx_pct = round(100 * job.ctx_tokens / job.context)
-    return {
-        "id": job.id,
-        "model": job.model,
-        "endpoint": job.endpoint,
-        "status": job.status,
-        "started_at": job.started_at or job.created_at,
-        "finished_at": job.finished_at,
-        "tool_calls": job.tool_calls,
-        "num_turns": job.num_turns,
-        "files": len(job.files_touched),
-        "ctx_pct": ctx_pct,
-        "gen_tps": round(job.gen_tps) if job.gen_tps else None,
-        "last_activity": job.last_activity[:MAX_ACTIVITY],
-    }
-
-
-def publish(jobs: Iterable["Job"], endpoint_load: dict[str, str] | None = None, now: float | None = None) -> None:
-    """Write this server's status file atomically. Never raises: the status line is a convenience.
-
-    ``owner`` is the Claude Code process that spawned this server (its parent), so a status line
-    running under the same Claude Code can tell this session's jobs from another session's.
-    """
-    now = now or time.time()
-    try:
-        entries = [
-            _entry(j) for j in jobs
-            if not j.done or (j.finished_at and now - j.finished_at < KEEP_FINISHED_S)
-        ]
-        p = _path()
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps({
-            "pid": os.getpid(), "owner": os.getppid(), "updated": now,
-            "jobs": entries, "endpoints": endpoint_load or {},
-        }))
-        os.replace(tmp, p)
-    except OSError:
-        pass
 
 
 def load_summary(probe: dict[str, Any]) -> str | None:
@@ -137,14 +81,6 @@ def my_owner() -> int | None:
     return None
 
 
-def remove() -> None:
-    """Delete this server's status file (registered at exit; a dead pid is also skipped on read)."""
-    try:
-        _path().unlink(missing_ok=True)
-    except OSError:
-        pass
-
-
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -155,34 +91,70 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def collect(now: float | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
+def collect(now: float | None = None, conn: sqlite3.Connection | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Job entries from every live server, oldest first, each tagged with its server's ``owner``,
-    plus the merged endpoint load map. Files of dead servers are removed."""
-    now = now or time.time()
-    out: list[dict[str, Any]] = []
-    loads: dict[str, str] = {}
-    d = status_dir()
-    for p in sorted(d.glob("*.json")):
-        try:
-            data = json.loads(p.read_text())
-            pid = int(data.get("pid") or p.stem)
-        except (OSError, ValueError):
-            continue
-        if not _alive(pid):
-            try:
-                p.unlink()
-            except OSError:
-                pass
-            continue
-        owner = data.get("owner")
-        for e in data.get("jobs", []):
-            fin = e.get("finished_at")
-            if fin and now - fin >= KEEP_FINISHED_S:
-                continue
-            out.append({**e, "owner": owner})
-        loads.update({k: v for k, v in (data.get("endpoints") or {}).items() if v})
-    out.sort(key=lambda e: e.get("started_at") or 0)
-    return out, loads
+    plus the merged endpoint load map (spec "Access patterns": the status line's budget).
+
+    Live = ``stopped IS NULL`` and a heartbeat within 60 s, checked before the pid because pids
+    are reused. Their jobs are queued/running or finished within KEEP_FINISHED_S; the metrics
+    are the spec's read-time derivations. Nothing is deleted here: rows are history. A machine
+    with no database yet gets empty maps and no file created.
+    """
+    now = now if now is not None else time.time()
+    own_conn = conn is None
+    if own_conn:
+        if not db.db_path().exists():
+            return [], {}
+        conn = db.open_db()
+    try:
+        servers = [
+            s for s in conn.execute(
+                "SELECT id, pid, owner FROM mcp_servers"
+                " WHERE stopped IS NULL AND updated >= ? AND pid IS NOT NULL",
+                (now - 60.0,),
+            ).fetchall()
+            if _alive(s["pid"])  # heartbeat first, pid second (spec Liveness)
+        ]
+        out: list[dict[str, Any]] = []
+        for s in servers:
+            for j in conn.execute(
+                "SELECT j.*, m.served_id AS model_served, e.name AS endpoint_name"
+                " FROM jobs j JOIN models m ON m.id = j.model_id JOIN endpoints e ON e.id = j.endpoint_id"
+                " WHERE j.mcp_server_id = ? AND (j.status IN ('queued', 'running') OR j.finished_at >= ?)",
+                (s["id"], now - KEEP_FINISHED_S),
+            ).fetchall():
+                ctx = derive.ctx_tokens(conn, j["id"])
+                ctx_pct = round(100 * ctx / j["context"]) if ctx and j["context"] else None
+                tps = derive.gen_tps(conn, j["id"])
+                out.append({
+                    "id": j["id"],
+                    "model": j["model_served"],
+                    "endpoint": j["endpoint_name"],
+                    "status": j["status"],
+                    "started_at": j["started_at"] or j["created_at"],
+                    "finished_at": j["finished_at"],
+                    "tool_calls": derive.tool_call_count(conn, j["id"]),
+                    "num_turns": j["num_turns"],
+                    "files": len(derive.files_touched(conn, j["id"])),
+                    "ctx_pct": ctx_pct,
+                    "gen_tps": round(tps) if tps else None,
+                    "last_activity": (j["last_activity"] or "")[:MAX_ACTIVITY],
+                    "owner": s["owner"],
+                })
+        loads = {
+            r["name"]: r["load"]
+            for r in conn.execute(
+                "SELECT e.name, l.load FROM endpoint_load l JOIN endpoints e ON e.id = l.endpoint_id"
+                " WHERE l.updated >= ?",
+                (now - 60.0,),
+            ).fetchall()
+            if r["load"]
+        }
+        out.sort(key=lambda e: e.get("started_at") or 0)
+        return out, loads
+    finally:
+        if own_conn:
+            conn.close()
 
 
 MARK = {"queued": "…", "running": "⟳", "succeeded": "✓", "failed": "✗", "timeout": "⏱", "cancelled": "∅"}
@@ -215,9 +187,15 @@ def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ",
     Jobs of this Claude Code session (same ``owner`` pid) are shown in full, followed by the load
     of the endpoints they run on; other sessions' jobs are folded into ``+N other``, because the
     boxes are shared and knowing one is busy matters even when the job isn't yours.
+
+    It must never print a traceback: the database is somebody else's process's file, so a
+    too-new schema, a lock or any sqlite failure renders as the empty line.
     """
     now = now or time.time()
-    entries, loads = collect(now)
+    try:
+        entries, loads = collect(now)
+    except (db.SchemaError, sqlite3.Error, OSError):
+        return ""
     if not entries:
         return ""
     if owner is None:
