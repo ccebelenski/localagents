@@ -116,6 +116,8 @@ Per endpoint, derived from rows (so a restart reconstructs them from the databas
 | down, recent | up within the attention window (24 h default), unreachable now | full size, alert colour, the probe's sentence; names a job that was running on it when it dropped |
 | dormant | not seen within the window | one muted line inside its host card, "last seen <date>"; never hidden, never alarmed |
 
+A probe older than the window, up or not, counts as not seen: a monitor that was stopped for longer than the window shows every endpoint dormant until its first tick (ruling 2026-10-29).
+
 Cold start with no history: a down endpoint is dormant, never alert (no fourteen alarms).
 
 Per node, derived from its endpoints' probes (`classify_connect_failure` already reads the

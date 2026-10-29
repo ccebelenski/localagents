@@ -29,13 +29,17 @@ def endpoint_state(
     """The endpoint's display state (spec §4) from its last probe row and the time of its
     newest up probe — derived from rows, so a restart reconstructs it from the database:
 
-    ``"live"`` — the last probe is up. The probe row is the truth: it beats a stale
-    ``last_up_t`` (the combination cannot happen, but the function trusts the row).
+    ``"live"`` — the last probe is up *and* within the window (measured from its ``t``,
+    boundary included, as ``interval_s``): the display principle is "not seen within the
+    window", so a probe older than the window is not seen (ruling 2026-10-29). An up row
+    with a stale window happens whenever collection is silent past the window — the
+    monitor stopped, or the machine slept, while the endpoint kept answering — and shows
+    dormant until the first tick, not full content off a day-old row.
     ``"down"`` — the last probe is not up, but it was seen up within the attention window
     (the boundary included, as ``interval_s``): it dropped recently, alert colour.
     ``"dormant"`` — not seen up within the window, including no history at all: a cold
     start with no probes is dormant, never alarmed (spec §4)."""
-    if last_probe is not None and last_probe["up"]:
+    if last_probe is not None and last_probe["up"] and now - last_probe["t"] <= window_s:
         return "live"
     if last_up_t is not None and now - last_up_t <= window_s:
         return "down"

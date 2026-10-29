@@ -89,15 +89,18 @@ def _log(msg: str) -> None:
 async def probe_port(host: str, port: int = 22, timeout_s: float = 2.0) -> str:
     """The node fallback probe (spec §3 "Node fallback probe"): asked for only when every
     endpoint on the host timed out — one TCP connect to the host's port 22. ``"answered"``
-    on a completed connect, ``"refused"`` on a connection refusal (the box is up; sshd is
-    not, or the port answers with a refusal), ``"nothing"`` on a timeout or any other
-    OSError (the box is off, or a firewall drops the packets). The connector is
-    ``asyncio.open_connection`` read through the module global, so tests can inject a fake."""
+    on a completed connect, ``"refused"`` on a connection refusal or a reset — both answer,
+    so the box is up (sshd is not, the port answers with a refusal, or something between
+    here and it sends a RST; ruling 2026-10-29) — and ``"nothing"`` on a timeout or any
+    other OSError (the box is off, or a firewall drops the packets). The connector is
+    ``asyncio.open_connection`` read through the module global, so tests can inject a
+    fake. Both refusal classes precede the OSError catch: they are OSError subclasses."""
     try:
         _reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout_s)
         writer.close()
+        await writer.wait_closed()
         return "answered"
-    except ConnectionRefusedError:
+    except (ConnectionRefusedError, ConnectionResetError):
         return "refused"
     except (TimeoutError, OSError):
         return "nothing"
@@ -116,10 +119,12 @@ async def run(
     """Probe every endpoint until ``stop`` is set: one task per endpoint, all concurrent. Each
     task ticks, then sleeps ``state.interval_s`` (5 s within ``window_s`` of its newest up
     probe, 60 s dormant; the window is the attention window, ``monitor:``'s ``attention_hours``
-    in hours, story 2.3). A failing tick (any exception: ``Registry.probe`` already turns a
-    failed probe into an ``up: False`` dict, so these are database errors) is logged to stderr
-    and the loop goes on. One more task prunes the monitor's tables at start and then every
-    ``retention_every_s`` (``retention.prune_probes``, ``retention_days``)."""
+    in hours, story 2.3). Any error — in the tick or between ticks (``Registry.probe`` already
+    turns a failed probe into an ``up: False`` dict, so ticks raise only database errors;
+    between ticks it was the cadence computation) — is one stderr line and a dormant back-off;
+    the loop outlives it (ruling 2026-10-29). One more task prunes the monitor's tables at
+    start and then every ``retention_every_s`` (``retention.prune_probes``,
+    ``retention_days``)."""
 
     async def prune() -> None:
         while not stop.is_set():
@@ -133,18 +138,20 @@ async def run(
         kind = backend_kind(ep.backend)
         eid: int | None = None
         while not stop.is_set():
+            seconds = state.DORMANT_S  # what any error sleeps before the next attempt
             try:
                 if eid is None:
                     eid = endpoint_id(conn, ep)
                 await tick(reg, conn, ep, eid, now(), kind)
-            except Exception as e:  # noqa: BLE001 — the loop outlives any one tick
+                # inside the tick's guard (ruling 2026-10-29, review 2.3): nothing between
+                # ticks may raise — a TypeError here once escaped the task and gather's
+                # return_exceptions=False turned it into the process exiting. The cost of
+                # the single guard: a failed tick costs one dormant sleep instead of
+                # re-reading the cadence — the loop surviving every error matters more.
+                seconds = state.interval_s(last_up_t(conn, eid), now(), window_s)
+            except Exception as e:  # noqa: BLE001 — the loop outlives any error, in the
+                # tick or between ticks (CancelledError is a BaseException: it passes)
                 _log(f"{ep.name}: tick failed: {type(e).__name__}: {e}")
-            # read apart from the tick: one failed tick must not drop a live endpoint to 60 s
-            last_up = None
-            try:
-                last_up = last_up_t(conn, eid) if eid is not None else None
-            except sqlite3.Error as e:
-                _log(f"{ep.name}: reading the last up probe failed: {e}")
-            await _sleep_or_stop(stop, state.interval_s(last_up, now(), window_s))
+            await _sleep_or_stop(stop, seconds)
 
     await asyncio.gather(prune(), *(one(ep) for ep in endpoints))

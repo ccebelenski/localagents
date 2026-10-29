@@ -203,11 +203,28 @@ def test_the_loop_runs_two_ticks_for_two_endpoints_and_stops_on_the_event(monkey
     assert None in waits and any(w is not None for w in waits)
 
 
+def _parking_sleeps(monkeypatch):
+    """``_sleep_or_stop`` replaced by a recorder that never really waits: it returns at once
+    for the endpoint's own sleeps and parks on ``stop`` for the prune task's 3600, exactly
+    like the real sleep, so the prune task cannot run ahead of the endpoint task."""
+    sleeps = []
+
+    async def record(stop, seconds):
+        sleeps.append(seconds)
+        if seconds == 3600:
+            await stop.wait()
+    monkeypatch.setattr(collect, "_sleep_or_stop", record)
+    return sleeps
+
+
 def test_a_failing_tick_is_logged_and_the_loop_goes_on(monkeypatch, conn, capsys):
+    """Row 4 (review 2.3, ruling 2026-10-29: the interval line joins the tick's guard): a
+    failed tick is one stderr line and a DORMANT_S back-off, then the next attempt ticks."""
     up = _real_probe(monkeypatch, STRATA_AI2, "strata")
     reg = FakeRegistry({"a": [RuntimeError("database is locked"), up]})
     _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json")])
     monkeypatch.setattr(state, "interval_s", lambda *a, **k: 0)
+    sleeps = _parking_sleeps(monkeypatch)
     ep = Endpoint(name="a", base_url=URL, backend="strata")
 
     async def main():
@@ -223,13 +240,56 @@ def test_a_failing_tick_is_logged_and_the_loop_goes_on(monkeypatch, conn, capsys
         reg.probe = probe
         await asyncio.wait_for(collect.run(reg, conn, [ep], stop), 10)
     asyncio.run(main())
-    assert "a: tick failed: RuntimeError: database is locked" in capsys.readouterr().err
-    assert _count(conn, "probes") == 1
+    err = capsys.readouterr().err
+    assert "a: tick failed: RuntimeError: database is locked" in err
+    assert err.count("tick failed") == 1
+    assert state.DORMANT_S in sleeps  # the back-off after the failed attempt
+    assert _count(conn, "probes") == 1  # and the loop did go on: the second attempt ticked
 
 
-def test_a_failed_tick_keeps_a_live_endpoint_on_the_fast_cadence(monkeypatch, conn):
-    """After an up probe, a tick that fails still reads the newest up probe for the cadence:
-    a transient database error never drops a live endpoint to the dormant 60 s."""
+def test_an_error_between_ticks_does_not_kill_the_loop(monkeypatch, conn, capsys):
+    """Row 4, the brief's reproduction (review 2.3 probe 3): the cadence read/interval_s
+    used to sit outside the guard, so one TypeError (a quoted ``window_s``) escaped the
+    task and ``gather`` killed the process. Now: one stderr line, the loop ticks again,
+    and ``run`` returns when ``stop`` is set."""
+    up = _real_probe(monkeypatch, STRATA_AI2, "strata")
+    reg = FakeRegistry({"a": [up]})
+    _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json"), _strata("strata/ai2_metrics_2.json")])
+    boom = [True]
+
+    def flaky(last_up_t, now, window_s=state.ATTENTION_WINDOW_S):
+        if boom[0]:
+            boom[0] = False
+            raise TypeError("'<=' not supported between instances of 'float' and 'str'")
+        return 0
+    monkeypatch.setattr(state, "interval_s", flaky)
+    sleeps = _parking_sleeps(monkeypatch)
+    ep = Endpoint(name="a", base_url=URL, backend="strata")
+
+    async def main():
+        stop = asyncio.Event()
+        orig = reg.probe
+
+        async def probe(e):
+            out = await orig(e)
+            if reg.calls["a"] >= 2:
+                stop.set()
+            return out
+        reg.probe = probe
+        await asyncio.wait_for(collect.run(reg, conn, [ep], stop, now=lambda: T0), 10)
+    asyncio.run(main())
+    err = capsys.readouterr().err
+    assert "a: tick failed: TypeError" in err
+    assert err.count("tick failed") == 1  # one line, not a crash and not a repeated log
+    assert state.DORMANT_S in sleeps  # the back-off after the between-ticks error
+    assert reg.calls["a"] == 2  # the loop ticked again after it
+    assert _count(conn, "probes") == 2  # the healthy second tick wrote its row
+
+
+def test_a_failed_tick_backs_off_once_then_recovers_the_fast_cadence(monkeypatch, conn):
+    """Row 4 changed the story-2.2 contract (the read and interval_s now sit INSIDE the
+    tick's guard): a failed tick no longer re-reads the newest up probe — it costs exactly
+    one DORMANT_S back-off — and the next successful tick is back on the fast cadence."""
     up = _real_probe(monkeypatch, STRATA_AI2, "strata")
     reg = FakeRegistry({"a": [up, RuntimeError("database is locked"), up]})
     _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json"), _strata("strata/ai2_metrics_2.json")])
@@ -239,6 +299,7 @@ def test_a_failed_tick_keeps_a_live_endpoint_on_the_fast_cadence(monkeypatch, co
         waits.append(last_up_t)
         return 0
     monkeypatch.setattr(state, "interval_s", record)
+    sleeps = _parking_sleeps(monkeypatch)
     ep = Endpoint(name="a", base_url=URL, backend="strata")
 
     async def main():
@@ -254,7 +315,8 @@ def test_a_failed_tick_keeps_a_live_endpoint_on_the_fast_cadence(monkeypatch, co
         reg.probe = probe
         await asyncio.wait_for(collect.run(reg, conn, [ep], stop, now=lambda: T0), 10)
     asyncio.run(main())
-    assert waits == [T0, T0, T0]
+    assert waits == [T0, T0]  # the failed middle attempt never consulted the cadence
+    assert sleeps.count(state.DORMANT_S) == 1  # one back-off, then fast cadence again
 
 
 def test_run_passes_the_attention_window_to_the_cadence(monkeypatch, conn):

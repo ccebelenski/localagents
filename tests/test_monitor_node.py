@@ -7,8 +7,11 @@ deterministic timeout test."""
 import asyncio
 import socket
 
+import httpx
+
 from localagents.monitor import state
 from localagents.monitor.collect import probe_port
+from localagents.registry import classify_connect_failure
 
 _DOWN = {"up": False, "host": "down"}
 _UNKNOWN = {"up": False, "host": "unknown"}
@@ -24,6 +27,14 @@ def test_a_refusal_proves_the_box_is_up():
     """[refused] -> up: an unreachable endpoint on a box that answers is 'endpoint down',
     shown on that line only — the node itself is up."""
     assert state.node_state([_REFUSED]) == "up"
+
+
+def test_a_read_timeout_node_is_up_without_the_fallback():
+    """Ruling C (review 2.3 probe 2): classify_connect_failure calls a ReadTimeout host
+    ``up`` (the connect answered), so the any-host-up rule fires on the single endpoint —
+    the stalled box no longer pays a port-22 connect every tick to re-prove it."""
+    out = classify_connect_failure(httpx.ReadTimeout("timed out"), "http://ai2:8080")
+    assert state.node_state([{"up": False, "host": out["host"]}]) == "up"
 
 
 def test_every_endpoint_unreachable_is_down():
@@ -116,6 +127,15 @@ def test_a_non_routable_address_yields_nothing():
     """10.255.255.1 with a 0.1 s window: no route (the kernel's EHOSTUNREACH) or a dropped
     SYN (the timeout) — neither needs any network beyond the kernel's own refusal."""
     assert asyncio.run(probe_port("10.255.255.1", 22, timeout_s=0.1)) == "nothing"
+
+
+def test_a_reset_from_the_connector_is_refused(monkeypatch):
+    """Ruling D (review 2.3): a TCP reset is an ANSWER — something on the box rejected the
+    connection — so it is refused (the box is up), not nothing (which would say down)."""
+    async def reset(*args, **kwargs):
+        raise ConnectionResetError("Connection reset by peer")
+    monkeypatch.setattr("asyncio.open_connection", reset)
+    assert asyncio.run(probe_port("anywhere", 22, timeout_s=0.5)) == "refused"
 
 
 def test_a_timeout_from_the_connector_is_nothing(monkeypatch):

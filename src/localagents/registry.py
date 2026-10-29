@@ -104,8 +104,12 @@ def classify_connect_failure(exc: BaseException, url: str) -> dict[str, Any]:
 
     The kernel already distinguishes the two cases that matter, so no extra ping is needed:
     ECONNREFUSED means the box is up and nothing listens on that port (a wrong port in
-    models.yaml); EHOSTUNREACH/ENETUNREACH mean the box is off or unroutable. A timeout is
-    ambiguous (powered off, or a firewall dropping packets) and is reported as unknown.
+    models.yaml); EHOSTUNREACH/ENETUNREACH mean the box is off or unroutable. A timeout
+    *before* the connection exists (ConnectTimeout, PoolTimeout) is ambiguous (powered off,
+    or a firewall dropping packets) and is reported as unknown; a timeout *after* it
+    (ReadTimeout, WriteTimeout) proves the box answered — the engine is stalled or
+    overloaded — and is reported as up (ruling 2026-10-29, review 2.3: the port-22 fallback
+    used to re-prove this every tick of a stalled engine).
     """
     parts = urlsplit(url)
     hostport = f"{parts.hostname}:{parts.port}" if parts.port else str(parts.hostname)
@@ -114,6 +118,8 @@ def classify_connect_failure(exc: BaseException, url: str) -> dict[str, Any]:
         return {"host": "up", "error": f"{parts.hostname} is reachable but nothing is listening on {hostport} (nothing started there, or the port in models.yaml is wrong)"}
     if n in (errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EHOSTDOWN):
         return {"host": "down", "error": f"{parts.hostname} is unreachable ({errno.errorcode[n]})"}
+    if isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout)):
+        return {"host": "up", "error": f"{hostport} answered the connection but did not respond in time (the engine is stalled or overloaded)"}
     if isinstance(exc, httpx.TimeoutException):
         return {"host": "unknown", "error": f"{hostport} timed out (host off, or a firewall dropping packets)"}
     return {"host": "unknown", "error": f"{type(exc).__name__}: {exc}"}

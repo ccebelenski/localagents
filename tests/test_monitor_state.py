@@ -37,9 +37,10 @@ def test_the_intervals_are_ints():
 # --- Story 2.3 item 1: the endpoint display state (spec §4) ---
 
 
-def _up_probe():
-    """A successful probe as the probes table stores it: ``up`` is 0/1, ``host`` text."""
-    return {"up": 1, "host": "up"}
+def _up_probe(t: float = NOW):
+    """A successful probe as the probes table stores it: ``up`` is 0/1, ``host`` text,
+    ``t`` its timestamp (the window is measured from it — ruling 2026-10-29)."""
+    return {"up": 1, "host": "up", "t": t}
 
 
 def _down_probe():
@@ -66,10 +67,23 @@ def test_no_probe_at_all_is_dormant():
     assert state.endpoint_state(None, None, NOW) == "dormant"
 
 
-def test_an_up_probe_beats_stale_history():
-    """live: the probe is up but last_up_t is older than the window — impossible, but the
-    function must trust the probe row."""
-    assert state.endpoint_state(_up_probe(), NOW - 10 * DAY, NOW) == "live"
+def test_a_stale_up_probe_is_dormant_not_live():
+    """Ruling 2026-10-29 (review 2.3 probe 1 D): the display principle is "not seen within
+    the window", so an up row older than the window is dormant — the combination happens
+    whenever collection is silent past the window (the monitor stopped, or the machine
+    slept, while the endpoint died), and it must not render full content off a day-old
+    row. The same row one second younger is live (the boundary, included, is `<=`)."""
+    stale = _up_probe(t=NOW - DAY - 1)
+    assert state.endpoint_state(stale, NOW - DAY - 1, NOW) == "dormant"
+    assert state.endpoint_state(_up_probe(t=NOW - DAY), NOW - DAY, NOW) == "live"
+
+
+def test_a_stale_up_probe_and_the_cadence_agree():
+    """The two consumers of the same rows (display and cadence) must not disagree: probe
+    1 D showed endpoint_state saying live while interval_s said dormant."""
+    stale_t = NOW - DAY - 1
+    assert state.endpoint_state(_up_probe(t=stale_t), stale_t, NOW) == "dormant"
+    assert state.interval_s(stale_t, NOW) == state.DORMANT_S
 
 
 def test_endpoint_state_window_is_a_parameter():
@@ -82,5 +96,5 @@ def test_a_sqlite3_row_is_accepted_as_the_last_probe():
     """The last probe comes off the probes table as a sqlite3.Row, not a dict: both work."""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT 1 AS up, 'up' AS host").fetchone()
+    row = conn.execute("SELECT 1 AS up, 'up' AS host, 1793288065.0 AS t").fetchone()
     assert state.endpoint_state(row, NOW - 10, NOW) == "live"
