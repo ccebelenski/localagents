@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from localagents.jobs import Job
+from localagents.jobs import Job, state_dir
 from localagents.runner import finish_worktree, make_worktree
 
 RESUME_KEYS = ("repo", "path", "root", "branch", "base")
@@ -32,8 +32,10 @@ def repo(tmp_path, monkeypatch):
 
 def job(jid, repo, log_dir, worktree=None):
     log_dir.mkdir(parents=True, exist_ok=True)
+    # id and name deliberately differ: make_worktree must name the branch and directory after the NAME
     return Job(
-        id=jid, task="t", model="m", endpoint="e", base_url="http://e", cwd=str(repo), run_cwd=str(repo),
+        id="e3b0c442-98fc-4c00-9a96-54a3242b1f0e", name=jid, task="t", model="m", endpoint="e",
+        base_url="http://e", cwd=str(repo), run_cwd=str(repo),
         isolation="worktree", worktree=worktree, log_dir=str(log_dir),
     )
 
@@ -42,6 +44,9 @@ def test_no_change_job_removes_tree_and_branch(repo, tmp_path):
     j = job("j1", repo, tmp_path / "logs" / "j1")
     j.worktree = make_worktree(j)
     assert Path(j.worktree["root"]).is_dir()
+    # the branch and directory carry the job NAME, not the uuid id
+    assert j.worktree["branch"] == "local-agent/j1"
+    assert j.worktree["root"] == str(state_dir() / "worktrees" / "repo" / "j1")
     finish_worktree(j)
     assert j.worktree["kept"] is False
     assert not Path(j.worktree["root"]).exists()

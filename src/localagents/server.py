@@ -281,6 +281,8 @@ async def run_agent(
         cwd=work,
         run_cwd=run_cwd,
         isolation=isolation,
+        backend=res.endpoint.backend,
+        host=res.endpoint.host,
         worktree=worktree,
         dump=reg.defaults.dump_requests,
         log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",

@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from localagents import jobs
 from localagents.registry import Defaults
@@ -20,17 +21,17 @@ def test_log_event_is_a_no_op_by_default(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     job = _job()
     job.log_event({"type": "AssistantMessage", "content": "x" * 1000})
-    assert not (tmp_path / "localagents" / "jobs" / job.id / "events.jsonl").exists()
+    assert not (Path(job.log_dir) / "events.jsonl").exists()
     # the other logs are unaffected by the gate
     job.log_text("[assistant] hello")
-    assert (tmp_path / "localagents" / "jobs" / job.id / "transcript.txt").read_text() == "[assistant] hello\n"
+    assert (Path(job.log_dir) / "transcript.txt").read_text() == "[assistant] hello\n"
 
 
 def test_log_event_writes_when_enabled(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     job = _job(log_events=True)
     job.log_event({"type": "AssistantMessage"})
-    assert (tmp_path / "localagents" / "jobs" / job.id / "events.jsonl").read_text() == '{"type": "AssistantMessage"}\n'
+    assert (Path(job.log_dir) / "events.jsonl").read_text() == '{"type": "AssistantMessage"}\n'
 
 
 def test_defaults_carry_retention_and_events_flags():
@@ -58,6 +59,17 @@ def test_prune_removes_only_job_dirs_older_than_cutoff(monkeypatch, tmp_path):
     removed = jobs.prune(days=7, now=now)
     assert removed == [old]
     assert not old.exists() and edge.exists() and recent.exists()
+
+
+def test_prune_matches_eight_hex_names_too(monkeypatch, tmp_path):
+    """New job names carry 8 hex (uuid prefix); the old 4-hex names must keep matching."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    now = time.mktime(time.strptime("20261029-120000", "%Y%m%d-%H%M%S"))
+    old = _mkjob(tmp_path, "20261021-115959-abcdee12")     # 7 days + 1 s: gone
+    edge = _mkjob(tmp_path, "20261022-120001-1234abcd")    # just inside 7 days: kept
+    removed = jobs.prune(days=7, now=now)
+    assert removed == [old]
+    assert not old.exists() and edge.exists()
 
 
 def test_prune_leaves_anything_not_named_like_a_job(monkeypatch, tmp_path):

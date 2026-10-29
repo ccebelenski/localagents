@@ -127,7 +127,7 @@ def _relay(tmp_path, endpoints, job_endpoint):
     """Drive one /v1/messages request through the shim; return the upstream request it made."""
     from localagents.jobs import Job
 
-    job = Job(id="j1", task="t", model="m", endpoint=job_endpoint, base_url=URL, cwd=str(tmp_path),
+    job = Job(id="j1", name="j1", task="t", model="m", endpoint=job_endpoint, base_url=URL, cwd=str(tmp_path),
               run_cwd=str(tmp_path), isolation="none", log_dir=str(tmp_path))
     up = _Upstream()
     shim = Shim(lambda jid: job, endpoint_lookup=lambda name: endpoints.get(name))
