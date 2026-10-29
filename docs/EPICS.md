@@ -328,7 +328,17 @@ the duplicates go), then docs.
   `root`; `metrics` keys are not named in §5a, rendered in `derive._METRICS_COLUMNS` order.
   Decisions: a second EventSource per job-page view, closed by teardown; lost when the status
   is lost or the server stopped beating. Merged beside 3.3 by four hand-composed conflicts.
-  Review: Qwen/ai1, pending.)
+  Reviewed by Qwen/ai1 job 20261029-151042-fe1a7792, 80 turns: every element against the
+  API, both transcript branches, stream counts by EventSource instrumentation cross-checked
+  with ss, five cold loads, the a→b race, the merge's bare `h3` measured not to restyle 3.3's
+  tier headers; three cosmetic defects: the metrics order comment claims derive's order and
+  is not; the context fill uses the browser clock while the marks use the server's; the
+  `file://` log-directory link is dead over http. Noticed: the field-name gate skips chains
+  rooted at `state.`. Folded in 3.4a.)
+- ☐ **3.4a Fold of the 3.4 review** (reviewer fixes its own findings): the metrics order
+  stated honestly; `contextFill` on the same clock as the marks; the log directory shown as
+  selectable text with a copy affordance, no dead link; the field-name gate walks `state.`
+  chains. Lane: Qwen (ai1).
 
 - ☑ **3.5 `localagents smoke`.** (Qwen/ai1 job 20261029-130838-4304e120, 104 turns, 431 tests;
   three live runs pasted verbatim in the job's report: ai2 full green, llamacpp requests
