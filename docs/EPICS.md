@@ -240,7 +240,9 @@ the duplicates go), then docs.
   `date` with Bash and report it"); a temp config entry on a dead port; printed checklist,
   non-zero exit on a missing row. README monitor section. Gate: smoke green against the real
   `models.yaml`; two-minute live run at merge. Lane: Qwen on Strata (node-pass shape), the
-  endpoint and model named in the brief.
+  endpoint and model named in the brief. Dispatched 2026-10-29 to Qwen/ai1 ahead of 3.1-3.4:
+  the script needs only the tables and the collector; the README monitor section and the
+  merge gates come with the pages.
 
 ## Epic 4: operations (V2, not scheduled)
 
