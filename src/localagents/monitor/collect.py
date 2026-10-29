@@ -39,6 +39,9 @@ _PREVIOUS_COUNTERS = (
     " FROM probe_counters c JOIN probes p ON p.id = c.probe_id"
     " WHERE p.endpoint_id = ? ORDER BY p.t DESC, p.id DESC LIMIT 1"
 )
+# Down probes in the interval between the previous counters row and this tick: a rate whose
+# dt spans an outage attributes the post-gap growth to the whole wall time (review P3).
+_DOWN_PROBES = "SELECT COUNT(*) FROM probes WHERE endpoint_id = ? AND up = 0 AND t > ? AND t <= ?"
 
 
 def _event(conn: sqlite3.Connection, t: float, endpoint_id: int, kind: str, detail: str | None) -> None:
@@ -52,9 +55,14 @@ async def tick(reg: Any, conn: sqlite3.Connection, ep: Endpoint, endpoint_id: in
     ``/metrics`` is fetched only when the probe is up (a down endpoint would time out a second
     time). Events, compared with the endpoint's previous rows: up -> down writes ``down`` with
     the failure sentence, down -> up writes ``up``; a counter that went backwards since the
-    previous counters row (down probes in between are skipped) or a changed ``since`` writes
-    ``restarted`` naming it. The first probe of an endpoint writes no event (a cold start is not
-    a transition)."""
+    previous counters row or a changed ``since`` writes ``restarted`` naming it. An interval
+    that contains a down probe has NO rate (like a reset, and not a restart: the growth may have
+    happened before the outage), so the post-gap tick writes no rate and no event. The first
+    probe of an endpoint writes no event (a cold start is not a transition).
+
+    The tick's database work is one transaction: a failure anywhere inside the ``immediate()``
+    block (a row, an event) rolls the whole tick back — a probes row is never stored without its
+    counters/hardware rows, and no event is stored for a tick whose rows did not commit."""
     probe = await reg.probe(ep)
     up = bool(probe.get("up"))
     doc = await fetch_metrics_doc(ep, reg.defaults.probe_timeout_s) if up else None
@@ -68,8 +76,16 @@ async def tick(reg: Any, conn: sqlite3.Connection, ep: Endpoint, endpoint_id: in
         if last is not None and bool(last["up"]) != up:
             _event(conn, now, endpoint_id, "up" if up else "down", None if up else r.probe["error"])
         if prev is not None and r.counters is not None:
-            prev_counters = {k: prev[k] for k in rows.COUNTER_COLUMNS}
-            rt = rates.rates(prev_counters, r.counters, now - prev["t"], backend, prev["since"], r.probe["since"])
+            down = conn.execute(_DOWN_PROBES, (endpoint_id, prev["t"], now)).fetchone()[0]
+            if down:
+                # ruling B: a rate spanning an outage reads as a cliff; there is no rate, and
+                # the interval is not a restart (the counters may have reset during the gap)
+                rt = rates.Rates(None, None, None, None, reset=False,
+                                 reason=f"gap: {down} down probe(s) in the interval")
+            else:
+                prev_counters = {k: prev[k] for k in rows.COUNTER_COLUMNS}
+                rt = rates.rates(prev_counters, r.counters, now - prev["t"], backend,
+                                 prev["since"], r.probe["since"])
             if rt.reset:
                 _event(conn, now, endpoint_id, "restarted", rt.reason)
     return probe_id

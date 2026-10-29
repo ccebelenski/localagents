@@ -184,6 +184,11 @@ def _probe_row(t: float, endpoint_id: int, model_id: int | None, *, up: bool, ho
 
 def _insert_probe(conn: sqlite3.Connection, row: dict, counters: dict | None,
                   hardware: dict | None) -> None:
+    # a parsed metrics dict can carry gauges beside the counters (llama.cpp's
+    # requests_processing/requests_deferred map to running/waiting since story 2.2a); the
+    # counters row takes the counter columns only, NULL when absent (spec §3, ruling C)
+    if counters is not None:
+        counters = {k: counters.get(k) for k in rows.COUNTER_COLUMNS}
     rows.insert(conn, rows.ProbeRows(row, counters, hardware))
 
 

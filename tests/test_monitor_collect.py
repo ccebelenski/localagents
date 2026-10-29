@@ -6,13 +6,14 @@ returns story-2.1 capture documents in order. The up probe dicts are what the re
 except the down probe, which is ``classify_connect_failure``'s own output.
 """
 import asyncio
+import copy
 import errno
 
 import httpx
 import pytest
 
 from localagents import db
-from localagents.monitor import collect, state
+from localagents.monitor import collect, rates, state
 from localagents.registry import Defaults, Endpoint, Registry, classify_connect_failure
 
 from monitor_fixtures import LLAMACPP, STRATA_AI2, doc, raw, serve
@@ -158,6 +159,102 @@ def test_up_then_down_then_up_writes_down_with_the_sentence_then_up(monkeypatch,
     assert tuple(row) == (0, "up", sentence, None)
     # the counters comparison skips the down row: pass 1 -> pass 2 grew, no restart
     assert _count(conn, "probe_counters") == 2
+
+
+def _next_pair_doc(first: str, second: str) -> dict:
+    """The second capture advanced by the first pair's own increment: the same growth over
+    any interval, so a tick that uses it computes the pair's rates."""
+    a, b = doc(first), copy.deepcopy(doc(second))
+    for k, v in b["totals"].items():
+        if k != "since" and isinstance(v, (int, float)):
+            b["totals"][k] = v + (v - a["totals"][k])
+    return b
+
+
+def test_a_rate_whose_interval_spans_a_down_probe_has_no_rate_and_no_event(monkeypatch, conn):
+    """Story 2.2a row 3 (review P3, ruling B): probe 2's sequence up -> down -> down -> up ->
+    up at T, +5, +10, +1000, +1139. The first up tick after the gap compares counters rows
+    1000 s apart; the rate is suppressed with ``reason = "gap: 2 down probe(s) in the
+    interval"`` and it is NOT written as a restart. The next up interval contains no down
+    probe, so it is the pair's own rate over 139 s (33.482 prompt/s, 18.590 gen/s)."""
+    up = _real_probe(monkeypatch, STRATA_AI2, "strata")
+    down = _down_probe()
+    reg = FakeRegistry({"ai2": [up, down, down, up, up]})
+    _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json"), _strata("strata/ai2_metrics_2.json"),
+                        ("strata", _next_pair_doc("strata/ai2_metrics_1.json", "strata/ai2_metrics_2.json"))])
+    calls = []
+    real = rates.rates
+
+    def spy(*args, **kw):
+        out = real(*args, **kw)
+        calls.append((args[2], out))
+        return out
+    monkeypatch.setattr(rates, "rates", spy)
+    ep = Endpoint(name="ai2", base_url=URL, backend="strata")
+    eid = collect.endpoint_id(conn, ep)
+    for t in (T0, T0 + 5, T0 + 10, T0 + 1000, T0 + 1139):
+        asyncio.run(collect.tick(reg, conn, ep, eid, t, "strata"))
+    sentence = ("10.0.0.60 is reachable but nothing is listening on 10.0.0.60:8080 "
+                "(nothing started there, or the port in models.yaml is wrong)")
+    # no `restarted` for the gap: only the transition events
+    assert _events(conn) == [(T0 + 5, "down", sentence), (T0 + 1000, "up", None)]
+    assert _count(conn, "probes") == 5 and _count(conn, "probe_counters") == 3
+    # the gap tick computed no rate; the next one is the clean 139 s pair
+    assert len(calls) == 1, calls
+    dt_s, rt = calls[0]
+    assert dt_s == pytest.approx(139.0)
+    assert rt.reset is False and rt.reason is None
+    assert rt.prompt_tps == pytest.approx(4654 / 139)
+    assert rt.gen_tps == pytest.approx(2584 / 139)
+    assert rt.cached_tps == pytest.approx(484756 / 139)
+
+
+def test_the_reset_sequence_still_writes_exactly_one_restarted(monkeypatch, conn):
+    """Story 2.2a row 3, probe 2 (b): ai2_1 -> ai2_2 -> ai2_1 (three up ticks) has no down
+    probe in any interval, so the third tick's backwards counters are still a restart."""
+    up = _real_probe(monkeypatch, STRATA_AI2, "strata")
+    reg = FakeRegistry({"ai2": [up]})
+    _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json"), _strata("strata/ai2_metrics_2.json"),
+                        _strata("strata/ai2_metrics_1.json")])
+    ep = Endpoint(name="ai2", base_url=URL, backend="strata")
+    eid = collect.endpoint_id(conn, ep)
+    for k in range(3):
+        asyncio.run(collect.tick(reg, conn, ep, eid, T0 + 139 * k, "strata"))
+    (t, kind, detail), = _events(conn)
+    assert (t, kind) == (T0 + 278, "restarted")
+    assert detail.startswith("counters went backwards: prompt_tokens 392790 → 388136, "
+                             "prompt_tokens_cached 15727997 → 15243241")
+
+
+def test_a_tick_is_all_or_nothing(monkeypatch, conn):
+    """Story 2.2a row 4 (review P5, ruling E): the collect path that runs is ``tick``'s own
+    ``immediate()`` block, not ``rows.write`` (deleted). An event insert failing inside a tick
+    rolls back that tick's probes row too: no probes row at the failed t, no counters row, no
+    event, no open transaction — and the next tick writes normally."""
+    up = _real_probe(monkeypatch, STRATA_AI2, "strata")
+    reg = FakeRegistry({"ai2": [up, _down_probe(), up]})
+    _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json"), _strata("strata/ai2_metrics_2.json")])
+    ep = Endpoint(name="ai2", base_url=URL, backend="strata")
+    eid = collect.endpoint_id(conn, ep)
+    real_event = collect._event
+    calls = {"n": 0}
+
+    def failing_event(*args, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("event write failed")
+        return real_event(*args, **kw)
+    monkeypatch.setattr(collect, "_event", failing_event)
+    p1 = asyncio.run(collect.tick(reg, conn, ep, eid, T0, "strata"))  # no transition event
+    with pytest.raises(RuntimeError, match="event write failed"):
+        asyncio.run(collect.tick(reg, conn, ep, eid, T0 + 5, "strata"))  # down: event raises
+    assert _count(conn, "probes") == 1 and _count(conn, "probe_counters") == 1
+    assert conn.execute("SELECT COUNT(*) FROM probes WHERE t = ?", (T0 + 5,)).fetchone()[0] == 0
+    assert _events(conn) == [] and not conn.in_transaction
+    p3 = asyncio.run(collect.tick(reg, conn, ep, eid, T0 + 10, "strata"))
+    assert p3 > p1
+    assert _count(conn, "probes") == 2 and _count(conn, "probe_counters") == 2
+    assert not conn.in_transaction
 
 
 def test_a_cold_start_down_writes_no_event(monkeypatch, conn):

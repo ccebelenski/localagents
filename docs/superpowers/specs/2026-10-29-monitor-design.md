@@ -58,8 +58,9 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
 - **Jobs:** read from the `jobs`/`requests`/`tool_calls` tables every 2 s (running jobs with
   context fill and speed; finished records for history).
 - **Storage:** `probes` (monitor-owned) in the shared database; probe rows older than 7 days
-  deleted on the same schedule as job directories. Schema migrated by version number. The
-  database is a cache of the fleet, not the record of truth: deleting it costs history only.
+  deleted on the same schedule as job directories, per endpoint through the `(endpoint_id, t)`
+  index; event rows share the probe horizon. Schema migrated by version number. The database is
+  a cache of the fleet, not the record of truth: deleting it costs history only.
 
   Monitor tables, approved 2026-10-29 (schema version 3; version 2 is `jobs.compactions`,
   story 1.11). Conventions as the MCP schema: epoch REAL timestamps, lookups by id, flat
@@ -83,7 +84,9 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
     since         REAL                               server start epoch when known (Strata totals.since)
     INDEX probes_endpoint_t (endpoint_id, t)
 
-  probe_counters    the cumulative counters as parsed, one row per probe; all REAL, NULL when absent
+  probe_counters    the cumulative counters as parsed, one row per probe that reported counters
+                    (none for a down probe or a document without counters); a column is NULL when
+                    its counter is absent
     probe_id      INTEGER PRIMARY KEY REFERENCES probes(id)
     prompt_tokens, prompt_tokens_cached, prompt_seconds, generated_tokens, generated_seconds,
     spec_draft_tokens, spec_accepted_tokens, prefix_queries, prefix_hits, preemptions

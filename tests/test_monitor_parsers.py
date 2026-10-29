@@ -84,6 +84,58 @@ def test_metrics_delta_over_the_vllm_pair_is_unchanged_by_preemptions():
     }
 
 
+def test_parse_strata_metrics_omits_a_counter_the_totals_do_not_carry():
+    """Story 2.2a row 2 (review D2): a key missing from ``totals`` is absent from the parsed
+    counters, never a 0.0 that reads as "reported and zero". Constructed by deleting one key
+    at a time from the ai2 pass-2 capture (the captures carry every key)."""
+    full = doc("strata/ai2_metrics_2.json")
+    everything = registry.parse_strata_metrics(full)
+    assert everything["spec_draft_tokens"] == 186884.0 and everything["spec_accepted_tokens"] == 133904.0
+    # no drafts: the speculative-decode series simply is not there
+    bare = copy.deepcopy(full)
+    del bare["totals"]["drafts_offered"]
+    m = registry.parse_strata_metrics(bare)
+    assert "spec_draft_tokens" not in m and m["spec_accepted_tokens"] == 133904.0
+    del bare["totals"]["drafts_accepted"]
+    m = registry.parse_strata_metrics(bare)
+    assert "spec_draft_tokens" not in m and "spec_accepted_tokens" not in m
+    # no reused: processed is the whole prompt count, cached is absent
+    no_reused = copy.deepcopy(full)
+    del no_reused["totals"]["reused"]
+    m = registry.parse_strata_metrics(no_reused)
+    assert m["prompt_tokens"] == 16120787.0 and "prompt_tokens_cached" not in m
+    # a missing timing column is no seconds, not 0 s
+    no_prompt_ms = copy.deepcopy(full)
+    del no_prompt_ms["totals"]["prompt_ms"]
+    assert "prompt_seconds" not in registry.parse_strata_metrics(no_prompt_ms)
+    # nothing in totals: nothing parsed
+    assert registry.parse_strata_metrics({"totals": {}}) == {}
+    assert registry.parse_strata_metrics({"totals": {"since": 1.0}}) == {}
+
+
+def test_a_strata_document_without_drafts_has_no_spec_keys_in_the_delta_or_the_job_row():
+    """Story 2.2a row 2: metrics_delta diffs the intersection, so a document that stopped
+    carrying the drafts counters produces no ``spec_decode_acceptance`` (no KeyError), and
+    Job._metric_values reads the missing key as None."""
+    from localagents.jobs import Job
+
+    full = doc("strata/ai2_metrics_2.json")
+    bare = copy.deepcopy(full)
+    for key in ("drafts_offered", "drafts_accepted"):
+        del bare["totals"][key]
+    before = registry.parse_strata_metrics(doc("strata/ai2_metrics_1.json"))
+    after = registry.parse_strata_metrics(bare)
+    d = registry.metrics_delta(before, after, backend="strata")
+    assert d is not None and "spec_decode_acceptance" not in d
+    assert d["prompt_tokens_processed"] == 4654 and d["generated_tokens"] == 2584
+    job = Job(id="j", name="n", task="t", model="m", endpoint="e", base_url="u",
+              cwd="c", run_cwd="c", isolation="none")
+    job.metrics = d
+    values = dict(zip(job._METRIC_COLUMNS, job._metric_values()))
+    assert values["spec_decode_acceptance"] is None
+    assert values["prompt_tokens_processed"] == 4654
+
+
 def test_parse_strata_extra_reads_since_speed_hardware_and_state_from_ai2_pass_2():
     x = parse_strata_extra(doc("strata/ai2_metrics_2.json"))
     assert x["since"] == 1793229893.2645304  # totals.since

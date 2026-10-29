@@ -374,6 +374,9 @@ _METRIC_KEYS = {
     "llamacpp:tokens_predicted_seconds_total": "generated_seconds",
     "llamacpp:spec_decode_num_draft_tokens_total": "spec_draft_tokens",
     "llamacpp:spec_decode_num_accepted_tokens_total": "spec_accepted_tokens",
+    # gauges: llama.cpp's names for the probes row's running/waiting columns (story 2.2a D)
+    "llamacpp:requests_processing": "requests_running",
+    "llamacpp:requests_deferred": "requests_waiting",
     # vLLM (always on); prefix-cache counters are in tokens
     "vllm:prompt_tokens_total": "prompt_tokens",
     "vllm:generation_tokens_total": "generated_tokens",
@@ -426,24 +429,36 @@ def parse_strata_metrics(doc: dict[str, Any]) -> dict[str, float]:
     including the ``reused`` (prefix-cached) ones, so the processed count is the difference;
     ``prompt_ms``/``decode_ms`` are the phase times; ``drafts_offered``/``drafts_accepted`` are
     the speculative-decode counters. ``live.queued`` is the request queue depth.
-    """
+
+    A counter the document does not carry is ABSENT from the result, never 0.0 (story 2.2a
+    row 2, review D2, for the schema's "NULL when absent"): a chart or a rate must read "not reported",
+    not "reported and zero". So ``prompt_tokens`` processed is ``prompt_tokens - reused`` when
+    both are present; with ``reused`` absent it is ``prompt_tokens`` itself and the cached column
+    is absent; with ``prompt_tokens`` absent no processed count is reported."""
     totals = doc.get("totals") if isinstance(doc, dict) else None
     if not isinstance(totals, dict):
         return {}
-    def num(k: str) -> float:
+
+    def num(k: str) -> float | None:
         v = totals.get(k)
-        return float(v) if isinstance(v, (int, float)) else 0.0
-    out = {
-        "prompt_tokens": max(0.0, num("prompt_tokens") - num("reused")),
-        "prompt_tokens_cached": num("reused"),
-        "prompt_seconds": num("prompt_ms") / 1000.0,
-        "generated_tokens": num("output_tokens"),
-        "generated_seconds": num("decode_ms") / 1000.0,
-        "spec_draft_tokens": num("drafts_offered"),
-        "spec_accepted_tokens": num("drafts_accepted"),
-    }
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    out: dict[str, float] = {}
+    prompt, reused = num("prompt_tokens"), num("reused")
+    if prompt is not None:
+        out["prompt_tokens"] = max(0.0, prompt - reused) if reused is not None else prompt
+    if reused is not None:
+        out["prompt_tokens_cached"] = reused
+    for src, dst, scale in (("prompt_ms", "prompt_seconds", 1000.0),
+                            ("output_tokens", "generated_tokens", 1.0),
+                            ("decode_ms", "generated_seconds", 1000.0),
+                            ("drafts_offered", "spec_draft_tokens", 1.0),
+                            ("drafts_accepted", "spec_accepted_tokens", 1.0)):
+        v = num(src)
+        if v is not None:
+            out[dst] = v / scale
     live = doc.get("live") or {}
-    if isinstance(live.get("queued"), (int, float)):
+    if isinstance(live.get("queued"), (int, float)) and not isinstance(live["queued"], bool):
         out["requests_waiting"] = float(live["queued"])
     return out
 

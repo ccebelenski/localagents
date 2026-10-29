@@ -51,6 +51,16 @@ def test_rows_older_than_the_cutoff_go_newer_stay_and_jobs_are_untouched(conn):
     assert not conn.in_transaction
 
 
+def test_the_probes_delete_uses_the_endpoint_t_index(conn):
+    """Story 2.2a row 5 (review: a bare ``t < ?`` scan; ruling F): retention deletes per
+    endpoint through the existing ``(endpoint_id, t)`` index. The plan for the exact statement
+    the pruner runs must name ``probes_endpoint_t``."""
+    plan = " | ".join(str(row[3]) for row in
+                      conn.execute("EXPLAIN QUERY PLAN " + retention._DELETE_OLD_PROBES, (1, 0)))
+    assert "probes_endpoint_t" in plan, plan
+    assert "INDEX" in plan, plan
+
+
 def test_zero_days_disables_pruning(conn):
     _seed(conn, NOW - 30 * DAY)
     assert retention.prune_probes(conn, days=0, now=NOW) == 0

@@ -12,7 +12,6 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from .. import db
 from ..registry import STRATA_HARDWARE_KEYS, parse_metrics, parse_strata_extra, parse_strata_metrics
 
 # Column lists in the spec's order; the insert statements are built from these, never from a
@@ -71,7 +70,9 @@ def probe_to_rows(
 ) -> ProbeRows:
     """The rows for one probe. A down probe is a row with its host class and failure sentence and
     nothing else (a document passed with it is ignored: a failed probe has no counters). Gauges
-    come from the probe dict first (``load``, ``slots``), then from the parsed document."""
+    come from the metrics document when it carries them — the parsed counters/gauges, then the
+    document's extras; the probe dict's rounded copy (``load``) only when the document does not.
+    ``/slots`` occupancy has no document form and always comes from the probe dict."""
     up = bool(probe.get("up"))
     row: dict[str, Any] = dict.fromkeys(PROBE_COLUMNS)
     row.update(t=t, endpoint_id=endpoint_id, model_id=model_id, up=1 if up else 0,
@@ -83,18 +84,20 @@ def probe_to_rows(
     slots = probe.get("slots") if isinstance(probe.get("slots"), dict) else {}
 
     def gauge(key: str) -> Any:
-        return load[key] if load.get(key) is not None else parsed.get(key)
+        for source in (parsed, extra, load):
+            if source.get(key) is not None:
+                return source[key]
+        return None
 
-    running = gauge("requests_running")
     kv = gauge("kv_cache_usage")
     row.update(
         latency_ms=_int(probe.get("latency_ms")),
         context=_context(probe),
         slots_total=_int(slots.get("total")),
         slots_busy=_int(slots.get("busy")),
-        requests_running=_int(running if running is not None else extra.get("requests_running")),
+        requests_running=_int(gauge("requests_running")),
         requests_waiting=_int(gauge("requests_waiting")),
-        kv_cache_usage=float(kv) if isinstance(kv, (int, float)) else None,
+        kv_cache_usage=float(kv) if isinstance(kv, (int, float)) and not isinstance(kv, bool) else None,
         gen_tps=extra.get("gen_tps"),
         since=extra.get("since"),
     )
@@ -116,17 +119,12 @@ def _insert(conn: sqlite3.Connection, table: str, columns: tuple[str, ...], valu
 
 
 def insert(conn: sqlite3.Connection, rows: ProbeRows) -> int:
-    """Insert the rows with no transaction of its own (the caller holds ``immediate()``)."""
+    """Insert the rows with no transaction of its own: the caller holds ``immediate()`` (the
+    collector's ``tick``), so the probes row, its counters and hardware rows and the tick's
+    events commit or roll back together (story 2.2a ruling E)."""
     probe_id = _insert(conn, "probes", PROBE_COLUMNS, rows.probe)
     if rows.counters is not None:
         _insert(conn, "probe_counters", ("probe_id",) + COUNTER_COLUMNS, {"probe_id": probe_id, **rows.counters})
     if rows.hardware is not None:
         _insert(conn, "probe_hardware", ("probe_id",) + HARDWARE_COLUMNS, {"probe_id": probe_id, **rows.hardware})
     return probe_id
-
-
-def write(conn: sqlite3.Connection, rows: ProbeRows) -> int:
-    """Insert the probes row and its counters and hardware rows in one ``immediate()``
-    transaction; returns the probe id."""
-    with db.immediate(conn):
-        return insert(conn, rows)

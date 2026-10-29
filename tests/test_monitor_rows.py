@@ -73,8 +73,10 @@ def test_vllm_probe_and_dgx1a_doc(monkeypatch):
         "t": T, "endpoint_id": 3, "model_id": 4, "up": 1, "host": "up", "error": None,
         "context": 307712,  # dgx1-a_models_1 max_model_len
         "slots_total": None, "slots_busy": None,
-        "requests_running": 1, "requests_waiting": 0,  # the probe's load, from /metrics
-        "kv_cache_usage": 0.17,  # load: round(0.16963064295485641, 3)
+        "requests_running": 1, "requests_waiting": 0,  # the /metrics document
+        # the document's exact vllm:kv_cache_usage_perc, not the probe load's rounded 0.17
+        # (story 2.2a ruling A: the document wins, the probe dict's copy is the fallback)
+        "kv_cache_usage": 0.16963064295485641,
         "gen_tps": None, "since": None,
     }
     assert r.counters == {
@@ -93,7 +95,8 @@ def test_llamacpp_probe_takes_slots_from_the_probe_dict(monkeypatch):
         "t": T, "endpoint_id": 3, "model_id": 4, "up": 1, "host": "up", "error": None,
         "context": 262144,  # llamacpp_props_1 n_ctx (per slot)
         "slots_total": 2, "slots_busy": 0,  # llamacpp_slots_1: two slots, neither processing
-        "requests_running": None, "requests_waiting": None,  # llama.cpp's counters carry neither
+        # llamacpp:requests_processing / :requests_deferred 0 in the capture (story 2.2a ruling D)
+        "requests_running": 0.0, "requests_waiting": 0.0,
         "kv_cache_usage": None, "gen_tps": None, "since": None,
     }
     assert r.counters == {
@@ -103,6 +106,22 @@ def test_llamacpp_probe_takes_slots_from_the_probe_dict(monkeypatch):
         "prefix_queries": None, "prefix_hits": None, "preemptions": None,
     }
     assert r.hardware is None
+
+
+def test_a_document_gauge_beats_the_probe_dicts_rounded_copy():
+    """Ruling A, constructed: the probe dict carries a rounded occupancy and the parsed
+    document an exact one; the row holds the document's number. Only when the document
+    carries no such gauge does the probe dict's copy stand in."""
+    probe = {"up": True, "host": "up", "models": [], "latency_ms": 1,
+             "load": {"requests_running": 3, "requests_waiting": 2, "kv_cache_usage": 0.17}}
+    doc = ("prometheus", "vllm:num_requests_running 1\nvllm:num_requests_waiting 0\n"
+                          "vllm:kv_cache_usage_perc 0.16963064295485641\n")
+    row = rows.probe_to_rows(1, None, probe, doc, T).probe
+    assert (row["requests_running"], row["requests_waiting"], row["kv_cache_usage"]) == (
+        1, 0, 0.16963064295485641)
+    # no gauge in the document: the probe dict's copy is the only source left
+    row = rows.probe_to_rows(1, None, probe, ("prometheus", "vllm:prompt_tokens_total 5\n"), T).probe
+    assert (row["requests_running"], row["requests_waiting"], row["kv_cache_usage"]) == (3, 2, 0.17)
 
 
 def test_an_up_probe_with_no_metrics_document_has_no_counters_row(monkeypatch):
@@ -154,13 +173,18 @@ def test_context_of_a_multi_model_endpoint_is_the_first_served_ids():
 
 
 @pytest.mark.parametrize("routes, backend", [(STRATA_AI2, "strata"), (VLLM_DGX1A, "vllm"), (LLAMACPP, "llama.cpp")])
-def test_write_round_trips_through_sqlite_row(monkeypatch, tmp_path, routes, backend):
+def test_insert_round_trips_through_sqlite_row(monkeypatch, tmp_path, routes, backend):
+    """``rows.insert`` under the caller's transaction (the collector's ``tick``) round-trips:
+    the probes row is exactly ``ProbeRows.probe`` and the children match the counters and
+    hardware dicts, NULL columns included. The tick's all-or-nothing guarantee is
+    tests/test_monitor_collect.py::test_a_tick_is_all_or_nothing (story 2.2a ruling E)."""
     probe, doc = _probe_and_doc(monkeypatch, routes, backend)
     conn = db.open_db(tmp_path / "m.db")
     eid = db.lookup_id(conn, "endpoints", name="ep", base_url=URL, backend=backend, host="local")
     mid = db.lookup_id(conn, "models", served_id=probe["models"][0])
     r = rows.probe_to_rows(eid, mid, probe, doc, T)
-    pid = rows.write(conn, r)
+    with db.immediate(conn):
+        pid = rows.insert(conn, r)
     got = dict(conn.execute("SELECT * FROM probes WHERE id = ?", (pid,)).fetchone())
     assert got == {"id": pid, **r.probe}
     c = conn.execute("SELECT * FROM probe_counters WHERE probe_id = ?", (pid,)).fetchone()
@@ -168,17 +192,4 @@ def test_write_round_trips_through_sqlite_row(monkeypatch, tmp_path, routes, bac
     h = conn.execute("SELECT * FROM probe_hardware WHERE probe_id = ?", (pid,)).fetchone()
     assert (dict(h) if h else None) == ({"probe_id": pid, **r.hardware} if r.hardware else None)
     assert not conn.in_transaction
-    conn.close()
-
-
-def test_write_is_one_transaction(tmp_path):
-    """A counters row that cannot be written takes the probes row with it (one immediate())."""
-    conn = db.open_db(tmp_path / "m.db")
-    eid = db.lookup_id(conn, "endpoints", name="ep", base_url=URL, backend="strata", host="local")
-    probe = {"up": True, "host": "up", "models": [], "latency_ms": 1}
-    r = rows.probe_to_rows(eid, None, probe, None, T)
-    r.counters = {"no_such_column": 1.0}
-    with pytest.raises(ValueError, match="no_such_column"):
-        rows.write(conn, r)
-    assert conn.execute("SELECT COUNT(*) FROM probes").fetchone()[0] == 0
     conn.close()

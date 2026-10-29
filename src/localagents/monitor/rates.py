@@ -22,7 +22,10 @@ class Rates:
     cached_tps: float | None  # prompt tokens served from the prefix cache per wall second
     spec_acceptance: float | None  # accepted / drafted over the interval; None with no drafts
     reset: bool
-    reason: str | None = None  # why it is a reset: the counters that went backwards, or since
+    # why there is no rate: a reset (the counters that went backwards, or since changed) or a
+    # gap ("gap: <n> down probe(s) in the interval" — the collector suppresses the rate without
+    # calling rates(); it is not a reset and writes no event)
+    reason: str | None = None
 
 
 def _num(v: float) -> str:

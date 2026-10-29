@@ -181,7 +181,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 8956,
     "parser": "prometheus",
-    "digest": "a1d0da51388c7da0372becfd80891038bf594cabc3cb2a1e5785b3b637c129b6"
+    "digest": "23398886d0f5450cde750b837c8568fdaaa3ea66650352428e68b7266404c185"
   },
   {
     "path": "llamacpp/llamacpp_models_1.json",
@@ -269,7 +269,7 @@
     "captured_at": "2026-10-29T15:36:44Z",
     "bytes": 2553,
     "parser": "prometheus",
-    "digest": "f3d14f0850dcb288fbadaa42403a6f573e4ce0320b046c09b68a2fdd58280506"
+    "digest": "5e121d095e5d7fe42a2c8780086abce057cf6ddc05743c7a527caab153503883"
   },
   {
     "path": "llamacpp/llamacpp_slots_2.json",
