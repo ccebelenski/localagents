@@ -194,7 +194,16 @@ the duplicates go), then docs.
 - ☑ **2.2a Fold of the 2.2 review** (DeepSeek/dgx1-a job 20261029-130402-63783c35, 115 turns,
   every row mutation-checked; merged over 2.3a by three-way patch; the merge broke the seed
   (the llama.cpp parser's new gauge keys reached a counters insert): coordinator fix in seed.py,
-  14 seed tests red then green; 420 tests. Review: Qwen3.8-27B, pending.)
+  14 seed tests red then green; 420 tests. Reviewed by Qwen3.8-27B/llamacpp job 20261029-132418-acff0b90, 148 turns, 32 min: the
+  three-way merge checked line by line (every 2.3a line present, none duplicated); rulings A-F
+  constructed over the real documents (dgx kv exact, llama.cpp 0/0 from the document, NULL
+  drafts); the gap and reset sequences over the real pair without synthesis; the
+  all-or-nothing test proven by a two-transaction mutation; retention plans read. NO defects.
+  Rulings taken by the coordinator: a reset under a gap IS recorded as `restarted` (detail
+  "during a gap"), still no rate; the prober's `load` copy omits a series the document lacks
+  so the row stays NULL; `endpoint_events` pruned per endpoint through its index; the "no
+  event" docstring says "no restarted event". Folded in 2.2b.)
+- ☐ **2.2b Fold of the 2.2a review** (reviewer fixes its own findings). Lane: Qwen3.8-27B.
 - ☑ **2.3 Display and node state.** (Qwen3.8-27B/llamacpp job 20261029-122542-1e3d7290, 82
   turns, 361 tests: `endpoint_state`/`node_state`/`node_dormant` with every truth-table row its
   own test, boundary shared with `interval_s`; `probe_port` against a real listener, a closed
