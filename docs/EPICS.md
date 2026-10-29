@@ -301,8 +301,19 @@ the duplicates go), then docs.
   endpoint under the 5 s throttle. Noticed: `port_free` binds without SO_REUSEADDR so a restart
   within TIME-WAIT exits 2 where uvicorn would bind; the seeded running job always reads
   "server gone"; §5a gaps: the database path, a `probe_state` on the snapshot endpoint, an id
-  for `dropped_job`. Review: DeepSeek, pending.)
-- ☐ **3.2a Fold of the 3.2 build notes.** `port_free` with SO_REUSEADDR; snapshot gains
+  for `dropped_job`. Reviewed by DeepSeek/dgx1-a jobs 20261029-143800-51052727 (died on a
+  second screenshot: one image per prompt on that lane) and 20261029-145359-ca56f9f1
+  (continuation, 78 turns): every §5 element tabled against the API, eleven constructed states
+  with no null/undefined/NaN text, 120 s idle with zero polls, each range one fleet call plus
+  one per live endpoint, stop and restart on the same port with the dot back without a reload,
+  the wheel and the field gate; one §5 deviation: the fleet charts legend every configured
+  endpoint, §5 says per live endpoint; confirmed `port_free`'s TIME-WAIT refusal for ~60 s;
+  notes: a node-down card repeats each endpoint's sentence under the card note; the field gate
+  cannot see bracket reads. Folded in 3.2a.)
+- ☐ **3.2a Fold of the 3.2 build notes and the page reviews.** Split: 3.2a-server (Qwen ai1)
+  and 3.2a-page (after the 3.3 review). Page items from the reviews: fleet charts for live
+  endpoints only; a node-down card does not repeat each endpoint's sentence; the field gate
+  sees bracket reads with a literal key. `port_free` with SO_REUSEADDR; snapshot gains
   `db_path`, `endpoint.probe_state` and `dropped_job_id`; the page uses them; the header's
   window reads `24h` not `1d00h`; the job row's current tool and last activity are relativised
   to the job's root as the status bar does (1.11b's rule, server-side: `jobs[].last_tool` and
