@@ -103,13 +103,17 @@ the duplicates go), then docs.
   records 404, not 200); `mcp_servers.owner` is the pid of the nearest `claude` ancestor (the
   session), parent pid only when there is none, so a wrapper launch (`uv run`) no longer folds
   a session's own jobs into "+N other". Lane: Qwen (ai1), DeepSeek review.
-- ☑ **1.9a Fold of the 1.9 review** (DeepSeek/dgx1-a job 20261029-120539-6bd5c17b, 78 turns, 263 tests; three files three-way patched over 1.11a; third-model review by Qwen/ai1 pending) (reviewer fixes its own findings, ruling (a)): every tool's
+- ☑ **1.9a Fold of the 1.9 review** (DeepSeek/dgx1-a job 20261029-120539-6bd5c17b, 78 turns, 263 tests; three files three-way patched over 1.11a; reviewed by Qwen/ai1 job 20261029-122217-cc1db55a, 77 turns: rules 1-4 clean through the real doors at three database moments, 413 shape, cancel-while-failing order; two defects: `run_agent`'s `store.new` guard catches `sqlite3.Error` only, so a newer-schema file raises `SchemaError` as a traceback; modern node's comm is `node-MainThread` (verified on node 26), so the npm branch of the owner walk never fires; possibles: argv-position false positive, multi-line log entries split `tail_lines`. Folded in 1.9b.) (reviewer fixes its own findings, ruling (a)): every tool's
   final `summary()` answers `database_error`; `requests.http_status` is the backend's status on
   the overflow rewrite too (500 stays 500; the spec names 0 as the no-answer sentinel); the
   count_tokens fallback records its real `ms`; cancels absorbed during worktree creation print a
   `[cancel]` line naming the step; a failed `worktree add -b` deletes the branch it created; the
   owner walk also accepts a `node` ancestor whose cmdline runs `claude`. Lane: DeepSeek, review
   by Qwen.
+- ☐ **1.9b Fold of the 1.9a review** (reviewer fixes its own findings): `store.new` guarded for
+  `db.SchemaError` too; the owner walk's node rule matches `comm` starting with `node` and only
+  argv[0]/argv[1] basenames; `Job.log_text` keeps one line per entry (embedded newlines
+  flattened). Lane: Qwen (ai1).
 - ☐ **1.10 `wait_job`/`wait_jobs` on any job.** The waits work for any job on the machine: an
   in-process job through its settle event as today; another server's job by polling its row
   (2 s) until a terminal status or the timeout, with `mark_lost_jobs` applied every 30 s of
