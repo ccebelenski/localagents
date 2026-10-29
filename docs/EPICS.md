@@ -110,7 +110,7 @@ the duplicates go), then docs.
   `[cancel]` line naming the step; a failed `worktree add -b` deletes the branch it created; the
   owner walk also accepts a `node` ancestor whose cmdline runs `claude`. Lane: DeepSeek, review
   by Qwen.
-- ☐ **1.9b Fold of the 1.9a review** (reviewer fixes its own findings): `store.new` guarded for
+- ☑ **1.9b Fold of the 1.9a review** (Qwen/ai1 job 20261029-123309-2f18d755, 39 turns, 326 tests; the startup writes were guarded too; log flattening declined: assistant text is multi-line on purpose; coordinator read the 13-line source diff) (reviewer fixes its own findings): `store.new` guarded for
   `db.SchemaError` too; the owner walk's node rule matches `comm` starting with `node` and only
   argv[0]/argv[1] basenames; `Job.log_text` keeps one line per entry (embedded newlines
   flattened). Lane: Qwen (ai1).
