@@ -29,6 +29,37 @@ def main() -> None:
             print(p)
         print(f"{'dry run: ' if a.dry_run else ''}{len(removed)} job director{'y' if len(removed) == 1 else 'ies'} older than {a.days} days")
         return
+    if sys.argv[1:2] == ["seed"]:
+        import argparse
+        from pathlib import Path
+
+        from . import db
+        from .monitor import seed
+
+        ap = argparse.ArgumentParser(
+            prog="localagents seed",
+            description="build an offline, deterministic monitor database from the fixtures "
+                        "(three hosts, a finished and a running job), timestamps shifted to --now")
+        ap.add_argument("--db", default=None,
+                        help="the database file (default: db.db_path(): LOCALAGENTS_DB, else the state dir)")
+        ap.add_argument("--now", default=None,
+                        help="epoch seconds or ISO-8601 to shift the world to (default: the current time)")
+        ap.add_argument("--force", action="store_true",
+                        help="replace an existing database: delete every row and seed fresh")
+        a = ap.parse_args(sys.argv[2:])
+        path = Path(a.db).expanduser() if a.db else db.db_path()
+        conn = db.open_db(path)
+        try:
+            counts = seed.seed(conn, seed.parse_now(a.now), seed.default_fixtures_dir(), force=a.force)
+        except seed.SeedRefused as e:
+            conn.close()
+            print(e)
+            sys.exit(2)
+        conn.close()
+        for table, n in counts.items():
+            print(f"{table}: {n}")
+        print(path)
+        return
     from .server import main as serve
 
     serve()

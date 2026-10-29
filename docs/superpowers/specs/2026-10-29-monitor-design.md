@@ -191,10 +191,13 @@ job history routes, time-range parsing with a bad range rejected.
 
 **Scripted live data, two subcommands in the package (acceptance depends on them):**
 - `localagents seed`: offline, deterministic. Builds a database from the fixtures with
-  timestamps shifted to now: three hosts; one live endpoint with an hour of counter history;
-  one down since 20 min ago; one dormant since last week; a finished job with requests and tool
-  calls; one running job. What the browser smoke and route tests run against; shows every
-  display state at once.
+  timestamps shifted to now: three hosts — **ai1** (Strata, live, an hour of probes at 5 s
+  with the busy ai2 capture's counters interpolated across it, a running job on its one slot),
+  **dgx1-a** (vLLM, down since 20 min ago — a refused connection: the box answers, nothing
+  listens), and **llamacpp** (dormant, last up a week ago) — plus a finished job with requests
+  and tool calls (the real story-1.9 export, re-timed to end 10 min ago) and a running job
+  (the same export truncated to its first 40 requests and 50 tool calls, started 5 min ago).
+  What the browser smoke and route tests run against; shows every display state at once.
 - `localagents smoke`: online, no Claude session. (1) a few short `/v1/messages` requests over
   httpx to a named endpoint; (2) one real job through `run_job` with a fixed brief ("run `date`
   with Bash and report it") on the model given, so the job, request and tool-call tables fill

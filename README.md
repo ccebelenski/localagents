@@ -310,6 +310,30 @@ never point `LOCALAGENTS_DB` at one. Back it up with SQLite, not `cp`:
 sqlite3 ~/.local/state/localagents/localagents.db ".backup /path/to/backup.db"
 ```
 
+#### Seeding a database for the monitor
+
+The monitor's web UI (Epic 3) and its route tests run against a **seeded** database, built
+offline and deterministically from the captured fixtures under `tests/fixtures/monitor/` with
+every timestamp shifted to `--now` (the current time by default). One command builds a
+database that shows every display state at once:
+
+```bash
+LOCALAGENTS_DB=/tmp/seed.db localagents seed
+```
+
+The seeded world has three hosts: **ai1** (Strata, live — an hour of probes at 5 s with the
+busy ai2 capture's counters interpolated across it, a running job on its one slot), **dgx1-a**
+(vLLM, down since 20 min ago — a refused connection: the box answers, nothing listens), and
+**llamacpp** (dormant — last up a week ago). It also holds a finished job with its requests
+and tool calls (the real story-1.9 export, re-timed to have ended 10 min ago) and a running
+job (the same export truncated to its first 40 requests and 50 tool calls, started 5 min ago).
+
+`localagents seed` is for the monitor's smoke and route tests, not for your live fleet. It
+writes to the path `--db` names (default `db.db_path()`, so `LOCALAGENTS_DB` is the normal
+way to aim it), so point it at a throwaway file, never the real one. It refuses a database
+that already holds `jobs` or `probes` rows unless `--force` is given — and `--force`
+*replaces* (it deletes every row of every table and seeds fresh), never appends.
+
 ## Config: `models.yaml`
 
 Start from `models.example.yaml`. It's re-read on every call, so edits take effect
