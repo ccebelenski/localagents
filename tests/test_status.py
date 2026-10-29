@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from localagents import jobs, status
 
@@ -140,7 +141,8 @@ def test_statusline_command_is_light(tmp_path):
         [sys.executable, "-c",
          "import sys; sys.argv=['localagents','statusline']; import localagents; localagents.main(); "
          "print(sorted(m for m in sys.modules if m in ('mcp','httpx','uvicorn','localagents.server')))"],
-        capture_output=True, text=True, cwd="src",
+        # absolute: a relative "src" broke the test when pytest ran from another directory
+        capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent / "src",
         env={**os.environ, "XDG_STATE_HOME": str(state), "LOCALAGENTS_DB": str(state / "localagents.db")},
     )
     assert out.returncode == 0, out.stderr
@@ -154,6 +156,29 @@ def test_render_without_a_database_is_an_empty_line(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAGENTS_DB", str(tmp_path / "nope" / "localagents.db"))
     assert status.render() == ""
     assert not (tmp_path / "nope").exists()
+
+
+def test_a_corrupt_pid_is_not_a_live_server(monkeypatch, tmp_path):
+    """Review of 1.7, finding 9: os.kill(2**40, 0) raises OverflowError, which pid_alive let out:
+    the status bar printed a traceback (render promises it never does). A corrupt pid is not a
+    live process: the server drops off the line."""
+    from localagents import db
+
+    assert db.pid_alive(2**40) is False and db.pid_alive(2**40, strict=True) is False
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    job.status, job.started_at = "running", time.time() - 5
+    job.changed()
+    store.conn.execute("UPDATE mcp_servers SET pid = ? WHERE id = ?", (2**40, store.server_id))
+    assert status.render(owner=os.getppid()) == ""
+
+
+def test_render_swallows_a_pid_error_too(monkeypatch, tmp_path):
+    def overflow(now=None, conn=None):
+        raise OverflowError("signed integer is greater than maximum")
+
+    monkeypatch.setattr(status, "collect", overflow)
+    assert status.render() == ""
 
 
 def test_other_sessions_jobs_fold_into_a_count(monkeypatch, tmp_path):

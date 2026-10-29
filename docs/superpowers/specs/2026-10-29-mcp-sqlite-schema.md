@@ -146,6 +146,9 @@ PRAGMA user_version = 1; journal_mode = WAL; busy_timeout = 5000; foreign_keys =
 An `mcp_servers` row is live when `updated` is within 60 s and `stopped` is NULL; `os.kill(pid, 0)`
 is a second check, not the first, because pids are reused. A job's server not being live is
 what hides it from the status line and what the `lost` rule above acts on.
+Correction after 1.7: the `lost` rule acts on a server that is not live only when `stopped` is
+set or its pid is gone too (`os.kill` raising ProcessLookupError, or PermissionError: another
+user's process), so a stale heartbeat with a live pid of this user is spared as stalled.
 
 ## Access patterns the indexes serve
 
@@ -194,3 +197,6 @@ reset; 15 `http_status` rename and `updated` defined.
 Declined: 10 (pid reuse): liveness is heartbeat first, pid second, so a reused pid without a
 heartbeat is not live; the `lost` rule covers the stale jobs. 11 in part: `jobs(name)` kept
 for ordering; `tool_calls(tool_use_id)` dropped as suggested; `mcp_servers(updated)` added.
+Correction after 1.7 (the decline of 10): the `lost` rule now spares a stale row whose pid is
+alive, so a crashed server's pid reused by another process of this user delays the sweep of its
+jobs until that process exits; a pid reused by another user's process is read as dead.

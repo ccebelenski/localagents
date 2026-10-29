@@ -204,6 +204,27 @@ def _apply_message(job: Job, m: Any) -> None:
 
 # ---------------- main entry ----------------
 
+async def _make_worktree_shielded(job: Job) -> dict[str, Any]:
+    """make_worktree in a thread, safe against a cancel (review of 1.7, finding 2).
+
+    A cancel cannot stop the thread: git goes on to create the tree and branch. So the thread's
+    future is shielded, and on a cancel this waits for it (absorbing further cancels; the wait is
+    bounded by the git calls), records the tree on the job so run_job's finally removes it, and
+    then re-raises the cancel."""
+    made = asyncio.ensure_future(asyncio.to_thread(make_worktree, job))
+    try:
+        return await asyncio.shield(made)
+    except asyncio.CancelledError:
+        while not made.done():
+            try:
+                await asyncio.wait([made])
+            except asyncio.CancelledError:
+                pass
+        if not made.cancelled() and made.exception() is None:
+            job.worktree = made.result()
+        raise
+
+
 async def run_job(
     job: Job,
     reg: Registry,
@@ -221,13 +242,16 @@ async def run_job(
     job.status = "running"
     job.started_at = time.time()
     job.changed()
-    metrics_before = await fetch_metrics(res.endpoint, d.probe_timeout_s)
+    metrics_before = None
     try:
+        # inside the try: a cancel landing in this first await must still run the finally, or
+        # the job stays `running` for good (review of 1.7, finding 3)
+        metrics_before = await fetch_metrics(res.endpoint, d.probe_timeout_s)
         if job.isolation == "worktree":
             # to_thread: these are blocking git calls (story 1.7 item 7). subprocess.run would
             # stall the event loop that carries this server's heartbeat and the shim's serving;
             # neither function touches the thread-bound sqlite connection.
-            job.worktree = await asyncio.to_thread(make_worktree, job)
+            job.worktree = await _make_worktree_shielded(job)
             job.run_cwd = job.worktree["path"]
             job.changed()  # another server's job_status sees the tree before the first message
             job.log_text(

@@ -274,16 +274,26 @@ def lookup_id(conn: sqlite3.Connection, table: str, **cols: str) -> int:
     return row[0]
 
 
-def pid_alive(pid: int) -> bool:
+def pid_alive(pid: int, strict: bool = False) -> bool:
     """Is this pid still running? The liveness second check (spec Liveness: heartbeat first,
     pid second, because pids are reused). Lives here because both ``status`` (the status line)
-    and ``jobs`` (the ``lost`` sweep) need it and neither may import the other."""
+    and ``jobs`` (the ``lost`` sweep) need it and neither may import the other.
+
+    ``strict`` is the sweep's reading: a PermissionError means the pid belongs to another user,
+    and this user's database is written only by this user's servers, so the server that wrote
+    the row is gone and its pid was reused (review of 1.7, finding 5). The status line keeps the
+    lenient reading: its heartbeat check comes first.
+
+    A pid os.kill cannot even take (above a C int, not an integer: a corrupt row) is not a live
+    process, in either reading (review of 1.7, finding 9)."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        return not strict
+    except (OverflowError, ValueError, TypeError):
+        return False
     return True
 
 

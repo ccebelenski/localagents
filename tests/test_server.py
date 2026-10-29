@@ -42,14 +42,36 @@ def _prev_job(**kw):
     return job
 
 
-def test_resume_keeps_previous_model(reg):
+def _settle(job, status="succeeded"):
+    """As run_job leaves a job: final status, finally done (resume needs a settled job)."""
+    job.status = status
+    job._done.set()
+    return job
+
+
+def test_resume_refuses_a_job_that_has_not_settled(reg):
+    """Review of 1.7, "also noticed": resume_job took a running job, and one still in run_job's
+    finally (status final, finish_worktree running in its thread) let the new job reuse a tree
+    the old one was about to remove. It is refused until the previous job has settled."""
     prev = _prev_job()
+    prev.status = "running"
+    out = asyncio.run(server.run_agent(task="next", resume_job=prev.id))
+    assert out["error"] == "job_running" and prev.name in out["message"]
+    prev.status = "succeeded"  # status final, finally still running
+    assert asyncio.run(server.run_agent(task="next", resume_job=prev.id))["error"] == "job_running"
+    _settle(prev)
+    out = asyncio.run(server.run_agent(task="next", resume_job=prev.id))
+    assert out["error"] is None and out["model"] == "big-model"
+
+
+def test_resume_keeps_previous_model(reg):
+    prev = _settle(_prev_job())
     out = asyncio.run(server.run_agent(task="next", resume_job=prev.id))
     assert out["model"] == "big-model" and out["endpoint"] == "second"
 
 
 def test_resume_with_explicit_model_overrides(reg):
-    prev = _prev_job()
+    prev = _settle(_prev_job())
     out = asyncio.run(server.run_agent(task="next", resume_job=prev.id, model="default-model"))
     assert out["model"] == "default-model" and out["endpoint"] == "first"
 
@@ -68,7 +90,7 @@ def _prev_worktree_job(tmp_path):
                   "base": "abc123", "kept": False, "note": "no changes; worktree removed"},
     )
     job.session_id = "sess-wt"
-    return job
+    return _settle(job)
 
 
 def test_resume_worktree_job_keeps_tree_even_when_removed(reg, tmp_path):
@@ -82,7 +104,7 @@ def test_resume_worktree_job_keeps_tree_even_when_removed(reg, tmp_path):
 
 
 def test_resume_plain_job_with_missing_cwd_is_an_error(reg, tmp_path):
-    prev = _prev_job()
+    prev = _settle(_prev_job())
     prev.run_cwd = str(tmp_path / "gone")
     out = asyncio.run(server.run_agent(task="next", resume_job=prev.id))
     assert out["error"] == "bad_argument" and "no longer exists" in out["message"]
@@ -251,6 +273,18 @@ def test_wait_jobs_timeout_and_bad_arguments(reg):
     assert asyncio.run(server.wait_jobs([a.id], timeout_s=1, mode="first"))["error"] == "bad_argument"
 
 
+def test_wait_jobs_lists_a_job_still_in_its_finally_as_running(reg):
+    """Review of 1.7, finding 1: a job whose status is final but whose run_job finally is still
+    finishing its worktree (`_done` unset) is not handed back as done: its record is incomplete."""
+    a, b = _prev_job(), _prev_job()
+    a.status = "failed"
+    a._done.set()
+    b.status = "succeeded"  # status set, finally still running
+    out = asyncio.run(server.wait_jobs([a.id, b.id], timeout_s=5, mode="any"))
+    assert out["outcome"] == "some_done"
+    assert [j["id"] for j in out["done"]] == [a.id] and [j["id"] for j in out["running"]] == [b.id]
+
+
 def test_wait_jobs_already_finished_returns_immediately(reg):
     a = _prev_job()
     a.status = "failed"
@@ -297,6 +331,24 @@ def test_startup_writes_survive_a_locked_database(monkeypatch, tmp_path, capsys)
     assert row["config"] == "/cfg/models.yaml" and row["transport"] == "stdio"
 
 
+def test_startup_sweep_runs_when_the_describe_write_fails(monkeypatch, tmp_path, capsys):
+    """Review of 1.7, finding 11: the two startup writes are independent; a failed describe
+    must not skip the sweep of crashed servers' jobs."""
+    import sqlite3
+
+    store = jobs.JobStore()
+    swept = []
+
+    def locked(**cols):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "describe_server", locked)
+    monkeypatch.setattr(store, "mark_lost_jobs", lambda now=None: swept.append(1) or 0)
+    server._startup_writes(store, "/cfg/models.yaml", "stdio")
+    assert swept == [1]
+    assert capsys.readouterr().err.count("database is locked") == 1
+
+
 def test_startup_removes_the_old_status_directory(monkeypatch, tmp_path):
     """Story 1.7 item 6: ~/.local/state/localagents/status/ held the pre-1.5a per-pid JSON
     files; nothing writes or reads it any more, and the startup helper deletes it when present."""
@@ -307,3 +359,55 @@ def test_startup_removes_the_old_status_directory(monkeypatch, tmp_path):
     server._startup_writes(store, "/cfg/models.yaml", "stdio")
     assert not old.exists()
     server._startup_writes(store, "/cfg/models.yaml", "stdio")  # absent: no-op, no error
+
+
+def test_shim_port_write_failure_cannot_orphan_a_queued_job(reg, monkeypatch):
+    """Review of 1.7, finding 4: describe_server(shim_port=...) ran after new() and before the
+    task was created, so a locked database left a `queued` job with no task, for good, and set the
+    once-guard anyway. The job runs; the port is recorded on a later call."""
+    import sqlite3
+
+    started = []
+
+    async def record_run(job, *a, **kw):
+        started.append(job.id)
+
+    monkeypatch.setattr(server, "run_job", record_run)
+    monkeypatch.setattr(server.shim, "port", 4242)
+    real = server.store.describe_server
+
+    def locked(**cols):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(server.store, "describe_server", locked)
+
+    async def go():
+        out = await server.run_agent(task="t")
+        await asyncio.sleep(0)  # let the task start
+        return out
+
+    out = asyncio.run(go())
+    assert out["error"] is None and out["status"] == "queued"  # a job record, not a refusal
+    job = server.store.get(out["id"])
+    assert job._task is not None and started == [job.id]
+    assert server._shim_port_recorded is False  # not recorded: the next call tries again
+    monkeypatch.setattr(server.store, "describe_server", real)
+    asyncio.run(go())
+    assert server._shim_port_recorded is True
+    row = server.store.conn.execute("SELECT shim_port FROM mcp_servers WHERE id = ?", (server.store.server_id,)).fetchone()
+    assert row["shim_port"] == 4242
+
+
+def test_run_agent_answers_a_database_error_like_its_other_refusals(reg, monkeypatch):
+    """Review of 1.7, finding 8: new() raising sqlite3.Error reached the caller as a bare "Error
+    executing tool run_agent" (the SDK keeps the cause out of the reply). It is a refusal dict
+    now, so the caller can tell a locked database from a bug."""
+    import sqlite3
+
+    def locked(*a, **kw):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(jobs.db, "lookup_id", locked)
+    out = asyncio.run(server.run_agent(task="t"))
+    assert out["error"] == "database_error" and "database is locked" in out["message"]
+    assert server.store.jobs == {}

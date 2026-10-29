@@ -66,6 +66,34 @@ def test_new_leaves_no_orphan_directory_when_the_database_refuses(monkeypatch, t
     assert store.jobs == {}
 
 
+def test_new_leaves_no_directory_when_the_first_open_fails(monkeypatch, tmp_path):
+    """Review of 1.7, finding 7: new() made the job directory before the store's lazy open, so a
+    database that could not be opened on first use (the startup writes swallow that) left an
+    orphan directory. The open comes first now."""
+    store = _store(monkeypatch, tmp_path)
+
+    def locked():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(jobs.db, "open_db", locked)
+    with pytest.raises(sqlite3.OperationalError):
+        _new(store)
+    jobs_dir = jobs.state_dir() / "jobs"
+    assert not jobs_dir.exists() or list(jobs_dir.iterdir()) == []
+    assert store.jobs == {}
+
+
+def test_new_cleans_up_on_any_error_not_only_sqlite(monkeypatch, tmp_path):
+    """An unserialisable worktree raises TypeError inside the INSERT's arguments: no directory,
+    no in-memory job, and the error re-raised."""
+    store = _store(monkeypatch, tmp_path)
+    with pytest.raises(TypeError):
+        _new(store, isolation="worktree", worktree={"x": object()})
+    assert list((jobs.state_dir() / "jobs").iterdir()) == []
+    assert store.jobs == {}
+    assert not store.conn.in_transaction
+
+
 def test_store_does_not_open_the_database_until_used(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     assert not db.db_path().exists(), "constructing a JobStore must not create the database"
@@ -292,8 +320,11 @@ def test_close_never_raises(monkeypatch, tmp_path):
 
 
 # A pid that does not exist (story 1.7 item 2: the sweep needs a *dead* pid, and the tests must
-# prove it). Asserted dead in test_mark_lost_jobs_sweeps_a_dead_pid.
-DEAD_PID = 2**22 - 1
+# prove it). pid_max itself is never assigned (pids run 1 .. pid_max - 1); 2**22 - 1 was a legal
+# pid on a box whose pid_max is 2**22 (review of 1.7, finding 10). Linux-only, like the suite's
+# /proc reads. Asserted dead in test_mark_lost_jobs_sweeps_a_dead_pid.
+with open("/proc/sys/kernel/pid_max") as _f:
+    DEAD_PID = int(_f.read())
 
 
 def _stale_store(monkeypatch, tmp_path, now):
@@ -369,10 +400,72 @@ def test_mark_lost_jobs_spares_a_stale_heartbeat_with_a_live_pid(monkeypatch, tm
     assert _row(store, job.id)["status"] == "lost"
 
 
+def _stale_running_job(pid, now):
+    """Another server, heartbeat 61 s old, row pid `pid`, one running job. Returns the job."""
+    other = jobs.JobStore()
+    job = _new(other)
+    job.status, job.started_at = "running", now - 100
+    job.changed()
+    other.conn.execute("UPDATE mcp_servers SET updated = ?, pid = ? WHERE id = ?", (now - 61, pid, other.server_id))
+    return job
+
+
+def test_mark_lost_jobs_sweeps_a_stale_pid_owned_by_another_user(monkeypatch, tmp_path):
+    """Review of 1.7, finding 5: os.kill raising PermissionError means the pid is another user's
+    process; this user's database is written only by this user's servers, so the server that
+    wrote the row is gone and its pid was reused. The sweep reads that as dead; the status line
+    keeps the lenient reading (its heartbeat check comes first)."""
+    if os.geteuid() == 0:
+        pytest.skip("root can signal every process: no PermissionError to construct")
+    with pytest.raises(PermissionError):
+        os.kill(1, 0)
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    job = _stale_running_job(1, now)
+    assert store.mark_lost_jobs(now) == 1
+    assert _row(store, job.id)["status"] == "lost"
+    assert db.pid_alive(1) is True and db.pid_alive(1, strict=True) is False
+
+
+def test_mark_lost_jobs_survives_a_long_server_history(monkeypatch, tmp_path):
+    """Review of 1.7, finding 6: mcp_servers rows are history and never deleted. The sweep built
+    an IN list of every dead server id ever written, and past SQLite's 32766 variables every
+    startup's sweep failed with "too many SQL variables". Candidates come from the servers that
+    still have unfinished jobs."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    with db.immediate(store.conn):
+        store.conn.executemany(
+            "INSERT INTO mcp_servers (id, pid, owner, started, updated, stopped, cwd, version)"
+            " VALUES (?, ?, 1, ?, ?, ?, '/', 'x')",
+            [(db.new_uuid(), DEAD_PID, now - 1e5, now - 1e5, now - 1e5) for _ in range(40_000)],
+        )
+    job = _stale_running_job(DEAD_PID, now)
+    assert store.mark_lost_jobs(now) == 1
+    assert _row(store, job.id)["status"] == "lost"
+
+
+def test_mark_lost_jobs_sweeps_a_corrupt_pid(monkeypatch, tmp_path):
+    """Review of 1.7, finding 9: a pid above a C int raised OverflowError out of the sweep, past
+    _startup_writes' sqlite3.Error guard, and the server died at startup. Not a live process."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    job = _stale_running_job(2**40, now)
+    assert store.mark_lost_jobs(now) == 1
+    assert _row(store, job.id)["status"] == "lost"
+
+
 def test_mark_lost_jobs_sweeps_a_dead_pid(monkeypatch, tmp_path):
-    """The DEAD_PID the tests use is provably gone: os.kill raises ProcessLookupError."""
+    """The DEAD_PID the tests use is provably gone (os.kill raises ProcessLookupError), and a
+    stale server row carrying it has its running job swept."""
     with pytest.raises(ProcessLookupError):
         os.kill(DEAD_PID, 0)
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    job = _stale_running_job(DEAD_PID, now)
+    assert store.mark_lost_jobs(now) == 1
+    r = _row(store, job.id)
+    assert r["status"] == "lost" and r["error"] == "server exited"
 
 
 def test_mark_lost_jobs_marks_a_stopped_server_despite_a_fresh_heartbeat(monkeypatch, tmp_path):

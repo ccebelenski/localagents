@@ -134,3 +134,162 @@ def test_resume_reuses_kept_tree_and_reports_its_diff(repo, tmp_path):
     finish_worktree(j2)
     assert j2.worktree["kept"] is True
     assert "b.txt" in j2.worktree["diffstat"] and "c.txt" in j2.worktree["diffstat"]
+
+
+# ---- run_job driven against a real store and repo (review of 1.7: the wait/cancel windows) ----
+
+
+def _drive_setup(monkeypatch, *, metrics=None):
+    """Stub the model side of run_job: query yields no message, fetch_metrics is `metrics` (an
+    async callable) or answers None. Returns (registry, resolution, run_job keyword arguments)."""
+    from localagents import runner
+    from localagents.registry import Defaults, Endpoint, Registry, Resolution
+
+    async def no_metrics(*a, **kw):
+        return None
+
+    def fake_query(prompt, options):
+        async def nothing():
+            return
+            yield
+
+        return nothing()
+
+    monkeypatch.setattr(runner, "fetch_metrics", metrics or no_metrics)
+    monkeypatch.setattr(runner, "query", fake_query)
+    ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
+    reg = Registry(path=None, endpoints={"e": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
+    kw = dict(permission_mode=None, max_turns=None, allowed_tools=None, system_prompt_append=None,
+              resume_session=None, timeout_s=10, shim_base_url="http://127.0.0.1:1/job/x")
+    return reg, Resolution(ep, "served-model"), kw
+
+
+def _store_job(repo, isolation="worktree"):
+    from localagents.jobs import JobStore
+
+    store = JobStore()
+    j = store.new(task="t", model="served-model", endpoint="e", base_url="http://e:8080", cwd=str(repo),
+                  run_cwd=str(repo), isolation=isolation, backend="llama.cpp", host="e")
+    return store, j
+
+
+def _branch_exists(repo, branch):
+    return bool(git(repo, "branch", "--list", branch))
+
+
+def _slow(monkeypatch, name, seconds):
+    """Make runner.<name> (a function run_job calls in a worker thread) sleep first."""
+    import time
+
+    from localagents import runner
+
+    real = getattr(runner, name)
+
+    def slow(*a, **kw):
+        time.sleep(seconds)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(runner, name, slow)
+
+
+def test_wait_returns_only_after_the_finally_work(repo, monkeypatch):
+    """Review of 1.7, finding 1: run_job sets the final status before its finally awaits
+    finish_worktree in a thread. A wait that woke on a progress tick in that window returned a
+    record with no `kept`/`note` and a row still `running`; the wait is on the event now."""
+    import asyncio
+
+    from localagents import runner
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    _slow(monkeypatch, "finish_worktree", 0.5)
+    store, j = _store_job(repo)
+
+    async def progress(_):
+        pass
+
+    async def go():
+        task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        got = await store.wait(j.id, 30, progress=progress, interval_s=0.05)
+        snap = (got._done.is_set(), dict(got.worktree or {}),
+                store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0])
+        await task
+        return snap
+
+    done, wt, row_status = asyncio.run(go())
+    assert done
+    assert wt.get("kept") is False and wt.get("note") == "no changes; worktree removed"
+    assert row_status == "failed"  # the stub session ends without a result message
+
+
+def test_wait_many_returns_only_after_the_finally_work(repo, monkeypatch):
+    import asyncio
+
+    from localagents import runner
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    _slow(monkeypatch, "finish_worktree", 0.5)
+    store, j = _store_job(repo)
+
+    async def progress(_):
+        pass
+
+    async def go():
+        task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        [got] = await store.wait_many([j.id], 30, progress=progress, interval_s=0.05)
+        snap = (got._done.is_set(), dict(got.worktree or {}))
+        await task
+        return snap
+
+    done, wt = asyncio.run(go())
+    assert done and wt.get("kept") is False
+
+
+def test_cancel_during_make_worktree_leaves_no_tree(repo, monkeypatch):
+    """Review of 1.7, finding 2: a cancel landing while make_worktree runs in its thread used to
+    leave the tree and branch the thread went on to create, with job.worktree None, so the finally
+    had nothing to remove. The call is shielded: the tree is recorded, then removed."""
+    import asyncio
+
+    from localagents import runner
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    _slow(monkeypatch, "make_worktree", 0.5)
+    store, j = _store_job(repo)
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        await asyncio.sleep(0.15)
+        j._task.cancel()
+        await store.wait(j.id, 10)
+
+    asyncio.run(go())
+    assert j.status == "cancelled" and j.settled
+    assert j.worktree is not None and j.worktree["kept"] is False
+    assert not Path(j.worktree["root"]).exists()
+    assert not _branch_exists(repo, f"local-agent/{j.name}")
+    assert not (state_dir() / "worktrees" / repo.name / j.name).exists()
+
+
+def test_cancel_during_the_first_metrics_probe_finishes_cancelled(repo, monkeypatch):
+    """Review of 1.7, finding 3: the first fetch_metrics await sat before the try, so a cancel
+    landing there skipped the finally: the job stayed `running` in memory and in its row, forever."""
+    import asyncio
+
+    from localagents import runner
+
+    async def slow_metrics(*a, **kw):
+        await asyncio.sleep(1.0)
+        return None
+
+    reg, res, kw = _drive_setup(monkeypatch, metrics=slow_metrics)
+    store, j = _store_job(repo, isolation="none")
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        await asyncio.sleep(0.2)
+        j._task.cancel()
+        await store.wait(j.id, 5)
+
+    asyncio.run(go())
+    assert j.status == "cancelled" and j.settled and j.finished_at is not None
+    assert store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "cancelled"

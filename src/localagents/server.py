@@ -271,7 +271,7 @@ async def run_agent(
         server process only; the store is in memory — job_status, job_log and
         list_jobs(all=True) read any server's jobs instead). Runs on that job's model,
         endpoint, cwd and isolation unless `model` is given; a removed worktree is recreated
-        at its base.
+        at its base. Refused while that job runs.
       timeout_s: Wall-clock cap for the job.
     """
     if isolation not in ("none", "worktree"):
@@ -291,6 +291,13 @@ async def run_agent(
             if foreign is not None:
                 return foreign
             return {"error": "unknown_job", "message": e.args[0]}
+        if not prev.settled:
+            # settled, not done: a job still in run_job's finally may be removing the very tree
+            # the resume would reuse (review of 1.7)
+            return {
+                "error": "job_running",
+                "message": f"job {prev.name} ({prev.id}) has not finished; wait_job for it, then resume",
+            }
         if not prev.session_id:
             return {"error": "bad_argument", "message": f"job {resume_job} has no session to resume"}
         resume_session = prev.session_id
@@ -315,26 +322,37 @@ async def run_agent(
     except ModelUnavailable as e:
         return {**e.to_dict(), "guidance": GUIDANCE}
 
-    job = store.new(
-        task=task,
-        model=res.served_model,
-        endpoint=res.endpoint.name,
-        base_url=res.endpoint.url,
-        cwd=work,
-        run_cwd=run_cwd,
-        isolation=isolation,
-        backend=res.endpoint.backend,
-        host=res.endpoint.host,
-        worktree=worktree,
-        dump=reg.defaults.dump_requests,
-        log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",
-        context=res.context,
-    )
+    # Everything that can raise runs before new() or cannot raise after it: a job that exists
+    # without its task stays `queued` for good (review of 1.7, finding 4). The shim serves every
+    # job and does not depend on this one, so it starts first.
     await shim.start()
+    try:
+        job = store.new(
+            task=task,
+            model=res.served_model,
+            endpoint=res.endpoint.name,
+            base_url=res.endpoint.url,
+            cwd=work,
+            run_cwd=run_cwd,
+            isolation=isolation,
+            backend=res.endpoint.backend,
+            host=res.endpoint.host,
+            worktree=worktree,
+            dump=reg.defaults.dump_requests,
+            log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",
+            context=res.context,
+        )
+    except sqlite3.Error as e:
+        # a refusal like the others, not a bare tool error: the SDK keeps an exception's text out
+        # of the reply, and the caller should see "database is locked" (review of 1.7, finding 8)
+        return {"error": "database_error", "message": f"the job could not be recorded: {e}"}
     global _shim_port_recorded
     if not _shim_port_recorded and shim.port:
-        _shim_port_recorded = True
-        store.describe_server(shim_port=shim.port)  # once: the port is the process's, not the job's
+        try:
+            store.describe_server(shim_port=shim.port)  # once: the port is the process's, not the job's
+            _shim_port_recorded = True  # only on success: a dropped write is retried by the next job
+        except sqlite3.Error as e:
+            job.log_text(f"[db-error] shim_port: {e}")
     _ensure_sampler()
     job._task = asyncio.create_task(
         run_job(
@@ -391,8 +409,9 @@ async def wait_jobs(
         jobs = await store.wait_many(job_ids, timeout_s, mode=mode, progress=_progress_reporter_many(ctx))
     except KeyError as e:
         return {"error": "unknown_job", "message": e.args[0]}
-    done = [j for j in jobs if j.done]
-    running = [j for j in jobs if not j.done]
+    # settled, as wait_many waits: a job still in run_job's finally has an incomplete record
+    done = [j for j in jobs if j.settled]
+    running = [j for j in jobs if not j.settled]
     if not running:
         outcome = "all_done"
     elif done:
@@ -562,13 +581,18 @@ def _startup_writes(store: JobStore, config: str, transport: str) -> None:
     """The two startup writes to this server's row and the crashed servers' jobs: fill the row
     the status line hangs its jobs on, then sweep jobs a crashed server left behind (spec's lost
     rule — the only status write to another server's jobs). A locked or broken database costs
-    both, never the server: the spec accepts a dropped update, not a dropped server (story 1.7
+    the write that failed, never the server: the spec accepts a dropped update, not a dropped server (story 1.7
     item 4). Factor of main(), so a test can drive it without mcp.run()."""
+    # two tries: the writes are independent, and a failed describe must not skip the sweep
+    # (review of 1.7, finding 11)
     try:
         store.describe_server(config=config, transport=transport)
+    except sqlite3.Error as e:
+        print(f"localagents: startup server-row write skipped: {e}", file=sys.stderr)
+    try:
         store.mark_lost_jobs()
     except sqlite3.Error as e:
-        print(f"localagents: startup database writes skipped: {e}", file=sys.stderr)
+        print(f"localagents: startup lost-job sweep skipped: {e}", file=sys.stderr)
     # story 1.7 item 6: the pre-1.5a status/<pid>.json files are dead weight — the tables and
     # the heartbeat replaced them, and no code reads or writes that directory any more
     shutil.rmtree(state_dir() / "status", ignore_errors=True)

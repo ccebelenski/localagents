@@ -187,8 +187,8 @@ def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ",
     now = now or time.time()
     try:
         entries, loads = collect(now)
-    except (db.SchemaError, sqlite3.Error, OSError):
-        return ""
+    except (db.SchemaError, sqlite3.Error, OSError, OverflowError, ValueError):
+        return ""  # Overflow/ValueError: a corrupt row's values (review of 1.7, finding 9)
     if not entries:
         return ""
     if owner is None:

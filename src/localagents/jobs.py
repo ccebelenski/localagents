@@ -208,6 +208,14 @@ class Job:
     def done(self) -> bool:
         return self.status in ("succeeded", "failed", "cancelled", "timeout", "lost")
 
+    @property
+    def settled(self) -> bool:
+        """run_job's finally has finished: the worktree is finished, the row is final, the record
+        complete. ``done`` turns true earlier (the status is set before the finally awaits
+        finish_worktree in a thread), so a wait that hands back the record waits on this
+        (review of 1.7, finding 1)."""
+        return self._done.is_set()
+
     def summary(self, include_result: bool = True) -> dict[str, Any]:
         d = {
             f.name: getattr(self, f.name)
@@ -316,14 +324,17 @@ class JobStore:
         jid = db.new_uuid()
         created_at = kw.setdefault("created_at", time.time())
         name = db.job_name(created_at, jid)
+        # open the database (and this server's row) before anything is made on disk: a failed
+        # first open must leave no job directory behind (review of 1.7, finding 7)
+        server_id, conn = self.server_id, self.conn
         log_dir = state_dir() / "jobs" / name
         log_dir.mkdir(parents=True, exist_ok=False)  # a name collision would be a minting bug; don't hide it
-        job = Job(id=jid, name=name, log_dir=str(log_dir), **kw)
-        job.mcp_server_id = self.server_id
-        self.jobs[jid] = job
-        job._conn = self.conn
         # the task itself is the jobs.task column now (task.txt is dropped)
         try:
+            job = Job(id=jid, name=name, log_dir=str(log_dir), **kw)
+            job.mcp_server_id = server_id
+            self.jobs[jid] = job
+            job._conn = conn
             with db.immediate(self.conn):
                 endpoint_id = db.lookup_id(
                     self.conn, "endpoints",
@@ -341,9 +352,10 @@ class JobStore:
                      json.dumps(job.worktree) if job.worktree is not None else None,
                      job.context, job.num_turns, job.last_activity),
                 )
-        except sqlite3.Error:
+        except BaseException:
             # the job cannot be recorded, so the call fails loudly — but cleanly (story 1.7
-            # item 5): no orphan directory, and no in-memory job the database never saw
+            # item 5): no orphan directory, and no in-memory job the database never saw. Any
+            # error, not only sqlite's: a TypeError from the arguments orphans the same way.
             shutil.rmtree(log_dir, ignore_errors=True)
             self.jobs.pop(jid, None)
             raise
@@ -395,22 +407,26 @@ class JobStore:
         server's jobs; this server's own row was heartbeated moments ago and stays out."""
         now = now if now is not None else time.time()
         with db.immediate(self.conn):
+            # candidates are the not-live servers that still have unfinished jobs, never the whole
+            # server history: that grows by a row per server start and is never deleted, and an
+            # IN list of it hit SQLite's variable limit (review of 1.7, finding 6)
             dead = [
-                r["id"]
+                (now, now, r["id"])
                 for r in self.conn.execute(
-                    "SELECT id, pid, stopped FROM mcp_servers"
-                    " WHERE stopped IS NOT NULL OR updated IS NULL OR updated < ?",
+                    "SELECT DISTINCT s.id, s.pid, s.stopped FROM mcp_servers s"
+                    " JOIN jobs j ON j.mcp_server_id = s.id"
+                    " WHERE j.status IN ('queued', 'running')"
+                    "   AND (s.stopped IS NOT NULL OR s.updated IS NULL OR s.updated < ?)",
                     (now - 60,),
                 ).fetchall()
-                if r["stopped"] is not None or r["pid"] is None or not db.pid_alive(r["pid"])
+                if r["stopped"] is not None or r["pid"] is None or not db.pid_alive(r["pid"], strict=True)
             ]
             if not dead:
                 return 0
-            cur = self.conn.execute(
-                f"""UPDATE jobs SET status = 'lost', error = 'server exited', finished_at = ?, updated = ?
-                    WHERE status IN ('queued', 'running')
-                      AND mcp_server_id IN ({', '.join('?' * len(dead))})""",
-                (now, now, *dead),
+            cur = self.conn.executemany(
+                """UPDATE jobs SET status = 'lost', error = 'server exited', finished_at = ?, updated = ?
+                   WHERE status IN ('queued', 'running') AND mcp_server_id = ?""",
+                dead,
             )
             return cur.rowcount
 
@@ -456,14 +472,15 @@ class JobStore:
         jobs = [self.get(j) for j in jids]  # raises KeyError before any waiting
         if interval_s is None:
             interval_s = PROGRESS_INTERVAL_S
-        satisfied = (lambda: all(j.done for j in jobs)) if mode == "all" else (lambda: any(j.done for j in jobs))
+        # settled, not done: the record is handed back only once run_job's finally has run
+        satisfied = (lambda: all(j.settled for j in jobs)) if mode == "all" else (lambda: any(j.settled for j in jobs))
         deadline = time.monotonic() + timeout_s
         while jobs and not satisfied():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
             step = min(remaining, interval_s) if progress else remaining
-            pending = [asyncio.ensure_future(j._done.wait()) for j in jobs if not j.done]
+            pending = [asyncio.ensure_future(j._done.wait()) for j in jobs if not j.settled]
             try:
                 await asyncio.wait(pending, timeout=step, return_when=asyncio.FIRST_COMPLETED)
             finally:
@@ -490,7 +507,7 @@ class JobStore:
         if interval_s is None:
             interval_s = PROGRESS_INTERVAL_S  # read at call time so tests can shorten it
         deadline = time.monotonic() + timeout_s
-        while not job.done:
+        while not job.settled:  # not job.done: see Job.settled
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -498,6 +515,6 @@ class JobStore:
             try:
                 await asyncio.wait_for(job._done.wait(), timeout=step)
             except asyncio.TimeoutError:
-                if progress and not job.done and time.monotonic() < deadline:
+                if progress and not job.settled and time.monotonic() < deadline:
                     await progress(job)
         return job
