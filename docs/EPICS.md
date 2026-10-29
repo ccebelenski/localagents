@@ -247,7 +247,20 @@ the duplicates go), then docs.
   are absent keys; job detail's `tool_calls` is a list where the summary's is an int (flagged
   for the fold). Noticed: `collect.probe_port` is never called by `run`, the node fallback is
   dead code → 3.1b; `metrics_delta` truncates fractional deltas (seed-only effect); the seed's
-  server pid again. Review: Qwen/ai1, pending.)
+  server pid again. Reviewed by Qwen/ai1 job 20261029-134412-26c2432a, 67 turns: every §5 datum tabled against
+  §5a; routes recomputed by hand over the seeded world; two streams, cancel, stop and a dropped
+  table mid-stream; SIGINT/SIGTERM exit 0 in under 200 ms; 7-day history 1.1 s off the loop (a
+  third of it leaks through the GIL). Gaps for the pages: Strata's state strip is never stored;
+  no fleet route (one history call per endpoint, each downsampled differently); no latency
+  series; PCIe/CPU/RAM stored but not served as series; disk nowhere in the schema; no
+  requests-by-endpoint route though the data exists. Defect: a port in use exits 3 with a raw
+  traceback. The `tool_calls` int is overwritten by a list in job detail. Folded in 3.1a.)
+- ☐ **3.1a Fold of the 3.1 review** (reviewer fixes its own findings): schema v4 adds
+  `probes.state` (Strata's `live.state`, else idle/busy) and `probe_hardware.disk_read_mb`/
+  `disk_write_mb`; history serves latency, PCIe, CPU, RAM, disk and state series; a fleet route
+  on one time grid; a requests-by-endpoint route; job detail's list is `tool_call_log`; a port in
+  use exits 2 with one sentence; §5a follows. Lane: Qwen (ai1), review by DeepSeek. 3.2 waits
+  for it.
 - ☐ **3.1b Node fallback wired.** `collect.run` asks `probe_port` when every endpoint of a
   host timed out in the same round and stores the answer (a `host_probes` row or a column on
   the probe), so `node_state`'s `fallback` argument has a source; §3's rule becomes code.
