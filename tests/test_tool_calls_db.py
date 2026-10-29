@@ -7,7 +7,6 @@ claude_agent_sdk dataclasses (AssistantMessage / UserMessage / ToolUseBlock / To
 the same ones runner.py imports) — the honest substitute for real stream capture.
 """
 
-import json
 import sqlite3
 from contextlib import contextmanager
 
@@ -89,9 +88,10 @@ def _row_vals(store, job):
 
 
 def test_tool_use_rows(monkeypatch, tmp_path):
-    """One row per ToolUseBlock in t order; input per the spec: edit tools store the path
-    (NULL when absent), a tool with a string ``command`` (Bash) the first 120 chars of the
-    command, every other tool the first 120 chars of the input JSON."""
+    """One row per ToolUseBlock in t order; input per the spec: a tool with a string
+    ``command`` (Bash) the first 120 chars of the command, any tool whose input carries a path
+    (the edit tools and the path-shaped readers, story 1.11b) the path itself (NULL for an
+    edit tool without one), every other tool the first 120 chars of the input JSON."""
     store = _store(monkeypatch, tmp_path)
     job = _new(store)
     _feed(store, monkeypatch, job, [1000.0, 1001.0, 1002.0, 1003.0])
@@ -99,8 +99,8 @@ def test_tool_use_rows(monkeypatch, tmp_path):
     assert [r["tool"] for r in rows] == ["Read", "Bash", "Edit", "Write"]
     assert [r["t"] for r in rows] == [1000.0, 1000.0, 1002.0, 1002.0]
     assert [r["tool_use_id"] for r in rows] == ["tu-read", "tu-bash", "tu-edit", "tu-write"]
-    # Read is not an edit tool: input is its JSON (shorter than 120 chars, so the whole thing)
-    assert rows[0]["input"] == json.dumps({"file_path": "/a.py"})[:120]
+    # Read is path-shaped: input is its file_path, not the JSON around it (story 1.11b)
+    assert rows[0]["input"] == "/a.py"
     # Bash: exactly the first 120 chars of its command (review of 1.5b: not of the input JSON)
     assert rows[1]["input"] == ("uv run pytest -q " + "x" * 200)[:120]
     assert len(rows[1]["input"]) == 120
@@ -138,6 +138,46 @@ def test_last_activity_shows_the_same_text_as_the_row(monkeypatch, tmp_path):
         row = store.conn.execute("SELECT input FROM tool_calls WHERE tool_use_id = ?", (block.id,)).fetchone()
         assert row["input"] == row_input
         assert derive.last_tool(store.conn, job.id) == activity  # the same text as the row's view
+
+
+def test_path_shaped_tools_store_their_path(monkeypatch, tmp_path):
+    """Story 1.11b: the input rule stores the path for ANY path-shaped tool — a dict input
+    with no string ``command`` and a string ``file_path``/``notebook_path``/``path`` (the
+    first key found, in that order) stores that path, so a Read on the status row names the
+    file instead of showing its JSON head. A tool with no path key (a Grep of only a
+    pattern) keeps the JSON head; and files_touched is unchanged — it filters on the edit
+    tool NAMES, so a Read row whose input is now a bare path never joins it."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    clock = _Clock()
+    monkeypatch.setattr(runner, "time", clock)
+
+    cases = [
+        # Glob/Grep/Read: the path, not the JSON around it
+        (ToolUseBlock(id="tu-glob", name="Glob", input={"pattern": "**/*.py", "path": "/work/src"}),
+         "Glob: /work/src", "/work/src"),
+        (ToolUseBlock(id="tu-grep", name="Grep", input={"pattern": "needle", "path": "/work"}),
+         "Grep: /work", "/work"),
+        # the first key found in file_path, notebook_path, path order
+        (ToolUseBlock(id="tu-note", name="NotebookEdit",
+                      input={"notebook_path": "/n.ipynb", "path": "/decoy"}),
+         "NotebookEdit: /n.ipynb", "/n.ipynb"),
+        (ToolUseBlock(id="tu-read", name="Read", input={"file_path": "/work/a.py", "limit": 5}),
+         "Read: /work/a.py", "/work/a.py"),
+        # a Grep with only a pattern: no path key, so the JSON head as today
+        (ToolUseBlock(id="tu-pattern", name="Grep", input={"pattern": "needle"}),
+         'Grep: {"pattern": "needle"}', '{"pattern": "needle"}'),
+    ]
+    for block, activity, row_input in cases:
+        clock.now += 1.0
+        runner._apply_message(job, AssistantMessage(content=[block], model="m"))
+        assert job.last_activity == activity
+        row = store.conn.execute("SELECT input FROM tool_calls WHERE tool_use_id = ?", (block.id,)).fetchone()
+        assert row["input"] == row_input
+        assert derive.last_tool(store.conn, job.id) == activity
+    # files_touched reads only the edit-tool rows: the Glob/Grep/Read rows of paths are not
+    # files touched even though their input column now holds a bare path
+    assert derive.files_touched(store.conn, job.id) == ["/n.ipynb"]
 
 
 def test_results_set_finished_and_is_error(monkeypatch, tmp_path):

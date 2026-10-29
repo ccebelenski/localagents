@@ -14,6 +14,7 @@ database (no live servers or no database yet prints the empty line).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from typing import Any
@@ -72,6 +73,36 @@ def my_owner() -> int | None:
     return db.session_pid()
 
 
+def display_activity(text: str | None, root: str | None, limit: int = MAX_ACTIVITY) -> str | None:
+    """The status row's view of a job's raw ``last_activity`` (story 1.11b): ONE line — every
+    run of whitespace, newlines of a multi-line Bash command included, collapses to a single
+    space, then stripped — with paths under the job's root shown relative to it (every
+    occurrence of ``root + "/"`` goes, so the 60-char budget reaches the file name instead of
+    the worktree prefix), and cut to ``limit`` characters AFTER relativising. None in, None
+    out. Pure: the raw text on the job row and in ``derive.last_tool`` is never touched —
+    only the row's rendering changes here."""
+    if text is None:
+        return None
+    text = " ".join(text.split())
+    if root:
+        text = text.replace(root + "/", "")
+    return text[:limit]
+
+
+def _job_root(j: sqlite3.Row) -> str | None:
+    """The job's root for relativising activity paths (story 1.11b): the worktree's ``path``
+    when the job runs in one, else its cwd. A corrupt worktree column must not blank the
+    whole line (render's promise), so a JSON failure falls back to the cwd."""
+    if j["worktree"]:
+        try:
+            worktree = json.loads(j["worktree"])
+        except ValueError:  # JSONDecodeError is a ValueError
+            return j["cwd"]
+        if isinstance(worktree, dict) and isinstance(worktree.get("path"), str) and worktree["path"]:
+            return worktree["path"]
+    return j["cwd"]
+
+
 def collect(now: float | None = None, conn: sqlite3.Connection | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Job entries from every live server, oldest first, each tagged with its server's ``owner``,
     plus the merged endpoint load map (spec "Access patterns": the status line's budget).
@@ -123,7 +154,10 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
                     "files": len(derive.files_touched(conn, j["id"])),
                     "ctx_pct": ctx_pct,
                     "gen_tps": round(tps) if tps else None,
-                    "last_activity": (j["last_activity"] or "")[:MAX_ACTIVITY],
+                    # raw: the row relativises against the root and cuts (display_activity),
+                    # so the cut can no longer happen here (story 1.11b)
+                    "last_activity": j["last_activity"],
+                    "root": _job_root(j),
                     "owner": s["owner"],
                 })
         loads = {
@@ -174,8 +208,10 @@ def _row_bits(e: dict[str, Any]) -> list[str]:
     bits = _entry_bits(e)
     if e.get("compactions"):
         bits.append(_n(e["compactions"], "compaction"))
-    if e.get("status") == "running" and e.get("last_activity"):  # collect already cut it to MAX_ACTIVITY
-        bits.append(e["last_activity"])
+    if e.get("status") == "running":
+        activity = display_activity(e.get("last_activity"), e.get("root"))
+        if activity:  # one line, relative, cut to MAX_ACTIVITY (story 1.11b)
+            bits.append(activity)
     return bits
 
 

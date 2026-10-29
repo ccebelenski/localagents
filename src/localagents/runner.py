@@ -212,15 +212,28 @@ def _apply_message(job: Job, m: Any) -> None:
                 short = json.dumps(b.input, default=str)
                 job.log_text(f"[tool] {b.name} {short[:400]}")
                 input_text = short[:120]
-                command = b.input.get("command") if isinstance(b.input, dict) else None
-                if isinstance(command, str):
-                    # spec: a string `command` (Bash) stores the command itself, not the JSON
-                    # around it, so the progress line reads "Bash: uv run pytest -q"
-                    input_text = command[:120]
-                if b.name in EDIT_TOOLS:
-                    # spec: edit tools store just the path (NULL when absent); the count of
-                    # calls and the files touched are read back from the rows (story 1.5b).
-                    input_text = b.input.get("file_path") or b.input.get("notebook_path")
+                if isinstance(b.input, dict):
+                    command = b.input.get("command")
+                    path = None
+                    for key in ("file_path", "notebook_path", "path"):
+                        value = b.input.get(key)
+                        if isinstance(value, str) and value:
+                            path = value
+                            break
+                    if isinstance(command, str):
+                        # spec: a string `command` (Bash) stores the command itself, not the JSON
+                        # around it, so the progress line reads "Bash: uv run pytest -q"
+                        input_text = command[:120]
+                    elif path is not None:
+                        # spec: any path-shaped tool (the edit tools and the readers with a
+                        # file_path/notebook_path/path — Read, Glob, Grep, LS) stores just the
+                        # path, so a Read on the status row names the file (story 1.11b); the
+                        # count of calls and the files touched are still read back from the
+                        # rows by tool name (story 1.5b)
+                        input_text = path
+                    elif b.name in EDIT_TOOLS:
+                        # spec: an edit tool whose input carries no path stores NULL
+                        input_text = None
                 # last_activity shows the same text the row shows, in derive.last_tool's shape:
                 # job_status and the progress line read it, so a Bash call says
                 # "Bash: uv run pytest -q", never the JSON around the command (review of 1.8)

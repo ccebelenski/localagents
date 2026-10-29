@@ -365,6 +365,65 @@ def test_collect_carries_the_compactions_count(monkeypatch, tmp_path):
     assert entries[0]["compactions"] == 2
 
 
+def test_display_activity_is_one_line_relative_with_the_cut_after():
+    """Story 1.11b: display_activity is the row's pure view of a raw last_activity: every run
+    of whitespace (a multi-line Bash command included) collapses to one space, paths under
+    the job's root lose that prefix (every occurrence), and the cut to MAX_ACTIVITY happens
+    AFTER relativising so the file name survives where the raw cut ate the budget on the
+    worktree path. None stays None."""
+    assert status.display_activity(None, None) is None
+    multi = 'Bash: python3 -c "\nimport json\nx = 1\n"'
+    assert status.display_activity(multi, None) == 'Bash: python3 -c " import json x = 1 "'
+    root = "/home/u/.local/state/localagents/worktrees/claudelocalmcp/wt1"
+    assert status.display_activity(f"Read: {root}/tests/test_x.py", root) == "Read: tests/test_x.py"
+    # every occurrence of the root; a path outside it untouched; a rootless view untouched too
+    assert status.display_activity(f"Grep: {root}/a {root}/b", root) == "Grep: a b"
+    assert status.display_activity("Read: /elsewhere/a.py", root) == "Read: /elsewhere/a.py"
+    # the raw string is well past 60 before the name; without the root it is cut there —
+    # the complaint's behavior — while the relative one is short and the name survives
+    raw = f"Read: {root}/tests/test_x.py"
+    assert len(raw) > status.MAX_ACTIVITY
+    assert status.display_activity(raw, None) == raw[:status.MAX_ACTIVITY]
+    raw = f"Read: {root}/tests/deep/nested/test_x.py"
+    assert len(raw) > status.MAX_ACTIVITY
+    assert status.display_activity(raw, root) == "Read: tests/deep/nested/test_x.py"
+    # and even a relative overflow is still cut to the limit
+    assert len(status.display_activity("Read: " + "d" * 200, None)) == status.MAX_ACTIVITY
+
+
+def test_row_activity_is_one_line_relative_to_the_root(monkeypatch, tmp_path):
+    """Story 1.11b: collect keeps the RAW last_activity and the job's root (the worktree's
+    ``path`` when there is one, else cwd) on the entry, and the row renders the activity as
+    one line with paths relative to that root — the multi-line Bash command no longer breaks
+    the row into bar lines, and the worktree prefix no longer eats the 60 characters."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    root = str(tmp_path / "wt")
+
+    wt = _new(store, endpoint="ai1", base_url="http://ai1:8080", model="x/Qwen3.8-27B")
+    wt.status, wt.started_at = "running", now - 30
+    wt.last_activity = f'Read: {root}/tests/test_x.py\nBash: python3 -c "\nimport json\n"'
+    wt.worktree = {"repo": "/repo", "path": root, "root": root, "branch": "b", "base": "m"}
+    wt.changed()
+
+    plain = _new(store, endpoint="ai1", base_url="http://ai1:8080", model="x/Qwen3.8-27B",
+                 cwd=str(tmp_path / "repo"))
+    plain.status, plain.started_at = "running", now - 20
+    plain.last_activity = f"Read: {plain.cwd}/app.py"
+    plain.changed()
+
+    entries, _ = status.collect(now=now, conn=store.conn)
+    by_id = {e["id"]: e for e in entries}
+    assert by_id[wt.id]["last_activity"] == wt.last_activity  # raw: the cut moved to the row
+    assert by_id[wt.id]["root"] == root  # the worktree JSON's path
+    assert by_id[plain.id]["root"] == str(tmp_path / "repo")  # else the job's cwd
+    assert status.render_lines(now=now, owner=_owner()) == [
+        "local ai1",
+        "  ⟳ Qwen3.8-27B 30s · Read: tests/test_x.py Bash: python3 -c \" import json \"",
+        "  ⟳ Qwen3.8-27B 20s · Read: app.py",
+    ]
+
+
 def test_load_summary_shapes():
     assert status.load_summary({"slots": {"total": 2, "busy": 1, "free": 1}}) == "1/2 slots"
     assert status.load_summary({"load": {"requests_running": 2, "requests_waiting": 1, "kv_cache_usage": 0.337}}) == "2 run 1 wait kv 34%"

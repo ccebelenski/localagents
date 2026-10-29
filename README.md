@@ -216,7 +216,9 @@ Per running job: elapsed time, tool calls, files touched, how full the local mod
 context window is (`ctx`, from the token usage recorded on every backend request, so it
 tells you how close the agent is to compaction), its recent generation speed, the
 compaction count (a trailing indicator of a context-tuning problem — the harness says so
-with a `compact_boundary` message) and its last tool call. The load of each endpoint your
+with a `compact_boundary` message) and its last tool call — shown as one line (a multi-line
+command is folded to one row) with paths relative to the job's worktree, so the row names
+the file instead of the path that leads to it. The load of each endpoint your
 jobs run on rides its header line, probed every ten seconds while jobs run: slots busy
 for llama.cpp, requests running and queued and KV cache fill for vLLM. Finished jobs
 stay on the line for two minutes with a check mark (or a cross, clock, null sign or

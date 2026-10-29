@@ -86,13 +86,19 @@ tool_calls                          -- one row per ToolUseBlock the runner saw
   t, finished REAL                  -- finished: when the matching ToolResultBlock arrived
   tool        TEXT                  -- Read, Edit, Bash, ...
   tool_use_id TEXT
-  input       TEXT                  -- edit tools (Edit, Write, MultiEdit, NotebookEdit): the
-                                    --   file_path/notebook_path, NULL when absent; other
-                                    --   tools: first 120 chars of the command/input
-                                    --   (corrected after the 1.5b review: an input with a
-                                    --   string `command` key, i.e. Bash, stores the first 120
-                                    --   chars of the command; any other tool the first 120
-                                    --   chars of its input JSON)
+  input       TEXT                  -- an input with a string `command` key (Bash): the first
+                                    --   120 chars of the command; else a path-shaped tool — a
+                                    --   dict input with a string `file_path`, `notebook_path`
+                                    --   or `path` (the first key found, in that order: the
+                                    --   edit tools Edit/Write/MultiEdit/NotebookEdit and the
+                                    --   readers Read/Glob/Grep/LS that carry one): that path,
+                                    --   NULL for an edit tool whose input carries none; any
+                                    --   other tool: the first 120 chars of its input JSON
+                                    --   (corrected after the 1.5b review: the command rule;
+                                    --   amended after 1.11b: the path rule covers any
+                                    --   path-shaped tool, not only the edit tools — a Read
+                                    --   stores the file it is reading, its JSON head only
+                                    --   when it has no path key)
   is_error    INTEGER (0/1)         -- from the matching ToolResultBlock
 
 indexes
