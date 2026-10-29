@@ -310,8 +310,10 @@ the duplicates go), then docs.
   endpoint, §5 says per live endpoint; confirmed `port_free`'s TIME-WAIT refusal for ~60 s;
   notes: a node-down card repeats each endpoint's sentence under the card note; the field gate
   cannot see bracket reads. Folded in 3.2a.)
-- ☐ **3.2a Fold of the 3.2 build notes and the page reviews.** Split: 3.2a-server (Qwen ai1)
-  and 3.2a-page (after the 3.3 review). Page items from the reviews: fleet charts for live
+- ☐ **3.2a Fold of the 3.2 build notes and the page reviews.** Split: 3.2a-server ☑ (Qwen/ai1
+  job 20261029-153853-bcc9fa21, 123 turns, 594 tests: port_free with SO_REUSEADDR, static
+  no-cache, the snapshot fields, relativised tool text, the seed's up-probe models corrected;
+  review folded into the 3.3a review) and 3.2a-page (Opus, running). Page items from the reviews: fleet charts for live
   endpoints only; a node-down card does not repeat each endpoint's sentence; the field gate
   sees bracket reads with a literal key. `port_free` with SO_REUSEADDR; snapshot gains
   `db_path`, `endpoint.probe_state` and `dropped_job_id`; the page uses them; the header's
