@@ -89,13 +89,18 @@ def make_worktree(job: Job) -> dict[str, Any]:
         return {"repo": repo, "path": str(wt / rel), "root": str(wt), "branch": branch, "base": base}
     except BaseException as e:
         # the tree and branch exist but job.worktree will never name them, so nothing else
-        # would remove them: this does, then re-raises (DeepSeek review of 6005f94)
+        # would remove them: this does, then re-raises (DeepSeek review of 6005f94). A cleanup
+        # step that itself fails is named in the raised error, never silent (story 1.9 item 5).
         rm = _git(repo, "worktree", "remove", "--force", str(wt))
-        _git(repo, "branch", "-D", branch)
+        br = _git(repo, "branch", "-D", branch)
+        fails = []
         if rm.returncode != 0:
+            fails.append(f"removing the tree also failed ({rm.stderr.strip()}): it is left at {wt}")
+        if br.returncode != 0:
+            fails.append(f"removing the branch also failed ({br.stderr.strip()}): branch {branch} is left in {repo}")
+        if fails:
             raise RuntimeError(
-                f"worktree setup failed after git worktree add ({type(e).__name__}: {e}); removing "
-                f"the tree also failed ({rm.stderr.strip()}): it is left at {wt}, branch {branch}"
+                f"worktree setup failed after git worktree add ({type(e).__name__}: {e}); " + "; ".join(fails)
             ) from e
         raise
 
@@ -361,12 +366,18 @@ async def _to_the_end(job: Job, aw: Any, what: str) -> None:
     goes on in its task or thread and is waited for, like _make_worktree_shielded), and any
     exception or absorbed cancel is a transcript line. Never raises."""
     fut = asyncio.ensure_future(aw)
-    absorbed = 0
+    # Count the task's cancel requests (cancelling(), 3.11+), not the CancelledErrors this loop
+    # sees: two back-to-back Task.cancel() calls fold into one delivery, so the except-based
+    # count under-reported — two concurrent cancel_job calls during a step printed 1 (and with
+    # both deliveries landing before the step, 0) (story 1.9 item 4, DeepSeek probe).
+    task = asyncio.current_task()
+    started = task.cancelling() if task is not None else 0
     while not fut.done():
         try:
             await asyncio.wait([fut])  # wait() never cancels fut, unlike await fut
         except asyncio.CancelledError:
-            absorbed += 1
+            pass
+    absorbed = (task.cancelling() if task is not None else 0) - started
     if absorbed:
         _log_safe(job, f"[cancel] {absorbed} cancel(s) arrived during the job's {what} step; it ran to the end")
     if fut.cancelled():

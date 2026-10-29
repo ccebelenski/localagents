@@ -9,9 +9,16 @@ import sys
 import time
 from pathlib import Path
 
-from localagents import jobs, status
+from localagents import db, jobs, status
 
 MODEL = "unsloth/Qwen3.8-Flash-Next-GGUF:UD-IQ4_XS"
+
+
+def _owner():
+    """What _open records as this process's owner (story 1.9 item 9): the walk to a ``claude``
+    ancestor when one is above us, the parent pid when there is none. Tests that hand an
+    owner to render() use it so they pass in either environment."""
+    return db.session_pid() or os.getppid()
 
 
 def _store(monkeypatch, tmp_path):
@@ -50,8 +57,8 @@ def test_publish_and_render_running_job(monkeypatch, tmp_path):
         job.record_tool_call(now - 40 + i, "Bash", f"b{i}", "ls")
     job.changed()
     srv = store.conn.execute("SELECT * FROM mcp_servers WHERE id = ?", (store.server_id,)).fetchone()
-    assert srv["pid"] == os.getpid() and srv["owner"] == os.getppid()
-    me = os.getppid()  # what _open records as owner for this process
+    assert srv["pid"] == os.getpid() and srv["owner"] == _owner()
+    me = _owner()  # what _open records as owner for this process
     assert status.render(now=now, owner=me) == "local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls"
     # this job retires off the line; a second one shows the single forms
     job.status, job.finished_at = "succeeded", now - 3600
@@ -68,7 +75,7 @@ def test_finished_jobs_linger_then_drop(monkeypatch, tmp_path):
     job = _new(store)
     job.status, job.started_at, job.finished_at = "succeeded", 1000.0, 1180.0
     job.changed()
-    assert status.render(now=1200.0, owner=os.getppid()) == "local: ✓ Qwen3.8-Flash-Next 3m00s"
+    assert status.render(now=1200.0, owner=_owner()) == "local: ✓ Qwen3.8-Flash-Next 3m00s"
     # collect filters by `now`, so the linger boundary moves with the clock, not with a re-publish
     assert status.render(now=1180.0 + status.KEEP_FINISHED_S + 1) == ""
 
@@ -83,7 +90,7 @@ def test_null_lookup_ids_still_render(monkeypatch, tmp_path):
     job.status, job.started_at = "running", now - 12
     job.changed()
     store.conn.execute("UPDATE jobs SET model_id = NULL, endpoint_id = NULL WHERE id = ?", (job.id,))
-    assert status.render(now=now, owner=os.getppid()) == "local: ⟳ ? 12s"
+    assert status.render(now=now, owner=_owner()) == "local: ⟳ ? 12s"
 
 
 def test_lost_job_has_a_mark(monkeypatch, tmp_path):
@@ -94,7 +101,7 @@ def test_lost_job_has_a_mark(monkeypatch, tmp_path):
     now = time.time()
     job.status, job.started_at, job.finished_at = "lost", now - 45, now - 5
     job.changed()
-    assert status.render(now=now, owner=os.getppid()) == "local: † Qwen3.8-Flash-Next 40s"
+    assert status.render(now=now, owner=_owner()) == "local: † Qwen3.8-Flash-Next 40s"
 
 
 def test_dead_server_jobs_are_dropped(monkeypatch, tmp_path):
@@ -105,11 +112,11 @@ def test_dead_server_jobs_are_dropped(monkeypatch, tmp_path):
     now = time.time()
     job.status, job.started_at = "running", now - 30
     job.changed()
-    assert status.render(now=now, owner=os.getppid()) == "local: ⟳ Qwen3.8-Flash-Next 30s"
+    assert status.render(now=now, owner=_owner()) == "local: ⟳ Qwen3.8-Flash-Next 30s"
     store.conn.execute("UPDATE mcp_servers SET updated = ? WHERE id = ?", (now - 61, store.server_id))
-    assert status.render(now=now, owner=os.getppid()) == ""
+    assert status.render(now=now, owner=_owner()) == ""
     store.conn.execute("UPDATE mcp_servers SET updated = ?, stopped = ? WHERE id = ?", (now, now, store.server_id))
-    assert status.render(now=now, owner=os.getppid()) == ""
+    assert status.render(now=now, owner=_owner()) == ""
     assert store.conn.execute("SELECT COUNT(*) FROM mcp_servers").fetchone()[0] == 1
 
 
@@ -121,13 +128,13 @@ def test_remove_deletes_own_file(monkeypatch, tmp_path):
     now = time.time()
     job.status, job.started_at = "running", now - 30
     job.changed()
-    assert status.render(now=now, owner=os.getppid()) == "local: ⟳ Qwen3.8-Flash-Next 30s"
+    assert status.render(now=now, owner=_owner()) == "local: ⟳ Qwen3.8-Flash-Next 30s"
     store.close()
     row = store.conn.execute("SELECT stopped FROM mcp_servers WHERE id = ?", (store.server_id,)).fetchone()
     assert row["stopped"] is not None
-    assert status.render(now=now, owner=os.getppid()) == ""
+    assert status.render(now=now, owner=_owner()) == ""
     store.close()
-    assert status.render(now=now, owner=os.getppid()) == ""
+    assert status.render(now=now, owner=_owner()) == ""
 
 
 def test_statusline_command_is_light(tmp_path):
@@ -170,7 +177,7 @@ def test_a_corrupt_pid_is_not_a_live_server(monkeypatch, tmp_path):
     job.status, job.started_at = "running", time.time() - 5
     job.changed()
     store.conn.execute("UPDATE mcp_servers SET pid = ? WHERE id = ?", (2**40, store.server_id))
-    assert status.render(owner=os.getppid()) == ""
+    assert status.render(owner=_owner()) == ""
 
 
 def test_render_swallows_a_pid_error_too(monkeypatch, tmp_path):
@@ -198,7 +205,7 @@ def test_other_sessions_jobs_fold_into_a_count(monkeypatch, tmp_path):
     o2.status, o2.started_at, o2.finished_at = "succeeded", now - 50, now - 10
     o2.changed()
     other.record_endpoint_load({"dgx1": "2 run 1 wait kv 34%"})
-    assert status.render(now=now, owner=os.getppid()) == "local: ⟳ Qwen3.8-Flash-Next 30s · llamacpp 1/1 slots · +2 other"
+    assert status.render(now=now, owner=_owner()) == "local: ⟳ Qwen3.8-Flash-Next 30s · llamacpp 1/1 slots · +2 other"
     assert status.render(now=now, owner=4242) == "local: ✓ GLM-5.3-Flash 40s · ⟳ GLM-5.3-Flash 5s · dgx1 2 run 1 wait kv 34% · +1 other"
     # no identifiable Claude Code parent: everything is ours, no endpoint load shown for non-running
     monkeypatch.setattr(status, "my_owner", lambda: None)
@@ -231,10 +238,32 @@ def test_shim_usage_feeds_context_and_speed(monkeypatch, tmp_path):
         if gen_ms is not None:
             rec["gen_ms"] = gen_ms
         job.record_request(rec)
-    assert status.render(owner=os.getppid()) == "local: ⟳ Qwen3.8-Flash-Next 10s ctx 32% 75 t/s"
+    assert status.render(owner=_owner()) == "local: ⟳ Qwen3.8-Flash-Next 10s ctx 32% 75 t/s"
 
 
 def test_my_owner_walks_to_a_claude_process_or_none():
     owner = status.my_owner()
     if owner is not None:  # running under Claude Code's Bash tool
         assert open(f"/proc/{owner}/comm").read().strip() == "claude"
+
+
+def test_my_owner_is_the_dbs_shared_walk(monkeypatch):
+    """Story 1.9 item 9: my_owner is db.session_pid with no argument — the row and the line
+    finally compute the same thing, by construction."""
+    monkeypatch.setattr(db, "session_pid", lambda start_pid=None: 9999)
+    assert status.my_owner() == 9999
+
+
+def test_open_records_the_walked_session_pid(monkeypatch, tmp_path):
+    """The server row's owner is the walk's answer — the pid of the Claude Code session the
+    server runs under — falling back to the parent pid when there is no claude ancestor
+    (story 1.9 item 9). Under `uv run localagents` the parent is uv, so the two views used
+    never to match and the session's own jobs rendered as "+N other"."""
+    monkeypatch.setattr(db, "session_pid", lambda start_pid=None: 4242)
+    store = _store(monkeypatch, tmp_path)
+    srv = store.conn.execute("SELECT pid, owner FROM mcp_servers WHERE id = ?", (store.server_id,)).fetchone()
+    assert srv["pid"] == os.getpid() and srv["owner"] == 4242
+    monkeypatch.setattr(db, "session_pid", lambda start_pid=None: None)
+    other = jobs.JobStore()
+    srv = other.conn.execute("SELECT owner FROM mcp_servers WHERE id = ?", (other.server_id,)).fetchone()
+    assert srv["owner"] == os.getppid()

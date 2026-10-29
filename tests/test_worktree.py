@@ -346,6 +346,34 @@ def test_make_worktree_removes_its_tree_when_a_step_after_the_add_fails(repo, mo
     assert "local-agent" not in git(repo, "worktree", "list")
 
 
+def test_make_worktree_names_a_branch_its_cleanup_could_not_delete(repo, tmp_path, monkeypatch):
+    """Story 1.9 item 5: the cleanup after a failed post-add step ran `git branch -D` unchecked
+    and said nothing when it failed — a leftover branch was never named. A failed branch -D is
+    appended to the raised error; the tree half (as before) too when its removal fails."""
+    from localagents import runner
+
+    j = job("j5", repo, tmp_path / "logs" / "j5")
+    real = runner._git
+
+    def failing(cwd, *args):
+        if args[:2] == ("branch", "-D"):
+            return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: simulated branch failure")
+        return real(cwd, *args)
+
+    monkeypatch.setattr(runner, "_git", failing)
+
+    class Unrelated(type(Path())):
+        def relative_to(self, *a, **kw):
+            raise ValueError(f"{self} is not under the repo")
+
+    monkeypatch.setattr(runner, "Path", Unrelated)
+    with pytest.raises(RuntimeError) as ei:
+        make_worktree(j)
+    assert "fatal: simulated branch failure" in str(ei.value)
+    assert "local-agent/j5" in str(ei.value)  # the leftover branch is named
+    assert _branch_exists(repo, "local-agent/j5")  # and really is left
+
+
 def test_a_make_worktree_error_during_a_cancel_is_not_dropped(repo, monkeypatch):
     """_make_worktree_shielded's cancel path waited for the thread and dropped a non-cancel
     exception from it without a word. The cancel still wins (the job is `cancelled`), and the
@@ -467,3 +495,41 @@ def test_a_second_cancel_inside_the_finally_cannot_strand_the_job(repo, monkeypa
     assert not _branch_exists(repo, f"local-agent/{j.name}")
     if where == "metrics":
         assert j.metrics == {"generated_tokens": 1}  # the probe was waited for, not abandoned
+
+
+def test_the_cancel_line_counts_every_absorbed_cancel(repo, monkeypatch):
+    """Story 1.9 item 4 (DeepSeek probe): two concurrent cancel_job calls land back to back,
+    and CPython folds the second Task.cancel() into the first delivery, so the loop's
+    except-based count saw one cancel where two arrived — and when both landed before the
+    finally, none. The count comes from the task's cancelling() delta across the step: every
+    absorbed cancel is counted."""
+    import asyncio
+
+    from localagents import runner
+
+    calls = {"n": 0}
+
+    async def metrics(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            await asyncio.sleep(1.0)  # slow after-metrics: the step the cancels land in
+        return {"generated_tokens": float(calls["n"])}
+
+    reg, res, kw = _drive_setup(monkeypatch, metrics=metrics)
+    _blocking_query(monkeypatch)
+    store, j = _store_job(repo, isolation="none")
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        await asyncio.sleep(0.3)
+        j._task.cancel()
+        await asyncio.sleep(0.2)  # now inside the finally's slow after-metrics await
+        assert j.done and not j.settled
+        j._task.cancel()
+        j._task.cancel()  # two concurrent cancels: the back-to-back pattern
+        await store.wait(j.id, 5)
+        await asyncio.wait([j._task], timeout=5)
+
+    asyncio.run(go())
+    assert j.settled and j.status == "cancelled"
+    assert "[cancel] 2 cancel(s) arrived during the job's finish step; it ran to the end" in j.transcript_tail()

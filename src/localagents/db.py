@@ -307,6 +307,32 @@ def pid_alive(pid: int, strict: bool = False) -> bool:
     return True
 
 
+def session_pid(start_pid: int | None = None) -> int | None:
+    """Pid of the nearest ``claude`` process above ``start_pid`` (default: this process): the
+    Claude Code session this process runs under. Lives here because both ``status`` (the walk
+    the status line does) and ``jobs`` (the ``mcp_servers.owner`` the line matches against)
+    need the same answer — the server wrote its parent pid while the line walked to claude, so
+    a session's own jobs rendered as "+N other" (story 1.9 item 9). None when there is no
+    ``claude`` ancestor. Stdlib only; ``open`` goes through the module global so a test can
+    fake /proc."""
+    pid = os.getpid() if start_pid is None else start_pid
+    for _ in range(12):
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                stat = f.read()
+            ppid = int(stat.rsplit(")", 1)[1].split()[1])
+            with open(f"/proc/{ppid}/comm") as f:
+                comm = f.read().strip()
+        except (OSError, ValueError, IndexError):
+            return None
+        if comm == "claude":
+            return ppid
+        if ppid <= 1:
+            return None
+        pid = ppid
+    return None
+
+
 def new_uuid() -> str:
     """A uuid4 as text with dashes: ``mcp_servers.id`` and ``jobs.id``."""
     return str(uuid.uuid4())

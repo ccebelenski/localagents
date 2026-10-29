@@ -311,3 +311,41 @@ def test_processes_racing_first_sight_lookups_converge_on_one_row_each(tmp_path)
 def test_job_name_is_local_timestamp_and_first_8_hex(utc):
     created = calendar.timegm((2026, 10, 29, 3, 16, 17, 0, 0, 0)) + 0.75
     assert db.job_name(created, "adf7c0de-1234-4abc-8def-0123456789ab") == "20261029-031617-adf7c0de"
+
+
+def _fake_proc(monkeypatch, files):
+    """/proc files served from memory: session_pid's walk is tested against fixed data."""
+    import io
+
+    def fake_open(path, *a, **kw):
+        if path not in files:
+            raise FileNotFoundError(path)
+        return io.StringIO(files[path])
+
+    # raising=False: `open` is a builtin, not a module attribute; setting the module global
+    # makes session_pid's unqualified open() resolve to the fake before builtins
+    monkeypatch.setattr(db, "open", fake_open, raising=False)
+
+
+def test_session_pid_walks_to_the_claude_ancestor(monkeypatch):
+    """Story 1.9 item 9: the walk (moved from status.my_owner) finds the nearest ``claude``
+    ancestor's pid: python -> uv -> claude answers 8, the claude pid."""
+    _fake_proc(monkeypatch, {
+        "/proc/100/stat": "100 (python) S 99 100 100 0 -1 4194304 1 0 0 0",
+        "/proc/99/stat": "99 (uv) S 8 99 99 0 -1 4194304 1 0 0 0",
+        "/proc/99/comm": "uv\n",
+        "/proc/8/comm": "claude\n",
+    })
+    assert db.session_pid(start_pid=100) == 8
+
+
+def test_session_pid_is_none_below_init_or_without_proc(monkeypatch):
+    """No ``claude`` before the walk runs out (init reached, or /proc unreadable): None, the
+    same answer the old my_owner gave."""
+    _fake_proc(monkeypatch, {
+        "/proc/100/stat": "100 (pytest) S 1 100 100 0 -1 4194304 1 0 0 0",
+        "/proc/1/comm": "systemd\n",
+    })
+    assert db.session_pid(start_pid=100) is None
+    _fake_proc(monkeypatch, {})
+    assert db.session_pid(start_pid=12345) is None

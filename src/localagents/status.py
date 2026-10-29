@@ -10,7 +10,6 @@ creates or fails on the database (no live servers or no database yet prints the 
 
 from __future__ import annotations
 
-import os
 import sqlite3
 import time
 from typing import Any
@@ -62,23 +61,10 @@ def load_summary(probe: dict[str, Any]) -> str | None:
 
 def my_owner() -> int | None:
     """Pid of the nearest ``claude`` process above us: the Claude Code session whose status line
-    is asking. None when there is none (then every job counts as ours)."""
-    pid = os.getpid()
-    for _ in range(12):
-        try:
-            with open(f"/proc/{pid}/stat") as f:
-                stat = f.read()
-            ppid = int(stat.rsplit(")", 1)[1].split()[1])
-            with open(f"/proc/{ppid}/comm") as f:
-                comm = f.read().strip()
-        except (OSError, ValueError, IndexError):
-            return None
-        if comm == "claude":
-            return ppid
-        if ppid <= 1:
-            return None
-        pid = ppid
-    return None
+    is asking. None when there is none (then every job counts as ours). The walk lives in
+    ``db.session_pid`` — the server writes the same answer as its row's ``owner``, so a
+    session's own jobs match instead of folding into "+N other" (story 1.9 item 9)."""
+    return db.session_pid()
 
 
 def collect(now: float | None = None, conn: sqlite3.Connection | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:

@@ -130,22 +130,35 @@ async def register_endpoint(
     return {"ok": True, "endpoint": name, "probe": probe, "config": str(local_path(reg.path))}
 
 
+def _elapsed(job: Job) -> float:
+    """Seconds since the job started: 0.0 when neither started_at nor created_at is set, the
+    rule summary() already follows for a hand-built Job (story 1.9 item 2)."""
+    start = job.started_at or job.created_at
+    return round(time.time() - start, 1) if start is not None else 0.0
+
+
 def _progress_reporter(ctx: Context | None):
     """Progress callback for a blocking wait: one notification per interval, never fatal."""
     if ctx is None:
         return None
 
     async def report(job: Job) -> None:
-        elapsed = round(time.time() - (job.started_at or job.created_at))
-        conn = store.conn
-        calls = derive.tool_call_count(conn, job.id)
-        msg = f"{job.status}: {elapsed}s, {job.num_turns} turns, {calls} tool calls"
-        errors = derive.error_count(conn, job.id)
-        if errors:
-            msg += f", {errors} errors"
-        last = derive.last_tool(conn, job.id)  # what the agent is doing right now, from the rows
-        if last:
-            msg += f"; {last}"
+        elapsed = int(_elapsed(job))
+        msg = f"{job.status}: {elapsed}s, {job.num_turns} turns"
+        try:
+            conn = store.conn
+            msg += f", {derive.tool_call_count(conn, job.id)} tool calls"
+            errors = derive.error_count(conn, job.id)
+            if errors:
+                msg += f", {errors} errors"
+            last = derive.last_tool(conn, job.id)  # what the agent is doing right now, from the rows
+            if last:
+                msg += f"; {last}"
+        except (sqlite3.Error, db.SchemaError) as e:
+            # a derive read failing inside store.wait must not abort the wait: the line says
+            # what it can without the derived parts, one stderr line names the failure
+            # (story 1.9 item 6)
+            print(f"localagents: progress line degraded: {type(e).__name__}: {e}", file=sys.stderr)
         try:
             await ctx.report_progress(elapsed, None, msg)
         except Exception:  # a client without progress support must not break the wait
@@ -164,7 +177,7 @@ def _progress_reporter_many(ctx: Context | None):
         parts = [f"{done}/{len(jobs)} done"]
         for j in jobs:
             if not j.done:
-                elapsed = round(time.time() - (j.started_at or j.created_at))
+                elapsed = int(_elapsed(j))
                 # name, not uuid: a user comparing this line with list_jobs or a job directory
                 # can match it (DeepSeek review of 1.2)
                 parts.append(f"{j.name}: {j.status} {elapsed}s, {j.num_turns} turns")
@@ -230,6 +243,18 @@ def _foreign_job_error(job_id: str) -> dict[str, str] | None:
     }
 
 
+def _foreign_or_unknown(job_id: str, e: KeyError) -> dict[str, Any]:
+    """The unknown-job answer shared by wait/cancel/resume: another server's job if the shared
+    row says so, plain unknown_job if it does not exist. A row read that fails answers
+    database_error — "not found" would be a lie when the finding itself failed, so
+    _foreign_job_error's error propagates here and is answered (story 1.9 item 6)."""
+    try:
+        foreign = _foreign_job_error(job_id)
+    except (sqlite3.Error, db.SchemaError) as db_e:
+        return _database_error(db_e)
+    return foreign or {"error": "unknown_job", "message": e.args[0]}
+
+
 @mcp.tool()
 async def run_agent(
     task: str,
@@ -288,10 +313,7 @@ async def run_agent(
         try:
             prev = store.get(resume_job)
         except KeyError as e:
-            foreign = _foreign_job_error(resume_job)
-            if foreign is not None:
-                return foreign
-            return {"error": "unknown_job", "message": e.args[0]}
+            return _foreign_or_unknown(resume_job, e)
         if not prev.settled:
             # settled, not done: a job still in run_job's finally may be removing the very tree
             # the resume would reuse (review of 1.7)
@@ -388,7 +410,9 @@ async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = Non
     try:
         job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx))
     except KeyError as e:
-        return _foreign_job_error(job_id) or {"error": "unknown_job", "message": e.args[0]}
+        return _foreign_or_unknown(job_id, e)
+    except (sqlite3.Error, db.SchemaError) as e:
+        return _database_error(e)  # the summary()'s own derive reads (story 1.9 item 6)
     return job.summary()
 
 
@@ -408,15 +432,20 @@ async def wait_jobs(
         return {"error": "bad_argument", "message": "mode must be 'all' or 'any'"}
     if not job_ids:
         return {"error": "bad_argument", "message": "job_ids is empty"}
-    for jid in job_ids:
-        if jid not in store.jobs:
-            foreign = _foreign_job_error(jid)
-            if foreign is not None:
-                return foreign
+    try:
+        for jid in job_ids:
+            if jid not in store.jobs:
+                foreign = _foreign_job_error(jid)
+                if foreign is not None:
+                    return foreign
+    except (sqlite3.Error, db.SchemaError) as e:
+        return _database_error(e)  # a failed row read is never an unknown_job (story 1.9 item 6)
     try:
         jobs = await store.wait_many(job_ids, timeout_s, mode=mode, progress=_progress_reporter_many(ctx))
     except KeyError as e:
         return {"error": "unknown_job", "message": e.args[0]}
+    except (sqlite3.Error, db.SchemaError) as e:
+        return _database_error(e)
     # settled, as wait_many waits: a job still in run_job's finally has an incomplete record
     done = [j for j in jobs if j.settled]
     running = [j for j in jobs if not j.settled]
@@ -430,9 +459,10 @@ async def wait_jobs(
         "outcome": outcome,
         "done": [j.summary() for j in done],
         "running": [
-            # elapsed from the timestamps (summary()'s formula), not a whole summary's db reads
+            # elapsed from the timestamps (summary()'s formula, None-settled 0.0 included —
+            # story 1.9 item 2), not a whole summary's db reads
             {"id": j.id, "status": j.status,
-             "elapsed_s": round(time.time() - (j.started_at or j.created_at), 1), "num_turns": j.num_turns}
+             "elapsed_s": _elapsed(j), "num_turns": j.num_turns}
             for j in running
         ],
     }
@@ -478,6 +508,10 @@ async def job_status(job_id: str) -> dict[str, Any]:
             # the same guard as list_jobs: the database failing is database_error, and a
             # newer-schema file (SchemaError, a RuntimeError) is one way it fails (review of 1.8)
             return _database_error(db_e)
+    except (sqlite3.Error, db.SchemaError) as db_e:
+        # an in-process job's summary() derives read the rows too: their failure is the
+        # database's problem, not the caller's traceback (story 1.9 item 6)
+        return _database_error(db_e)
 
 
 @mcp.tool()
@@ -490,8 +524,12 @@ async def list_jobs(
     limit: the newest N jobs only (default 50; 0 = no limit). The database keeps every job
     ever run, so all=True without a limit grows with the whole history."""
     if not all:
-        mine = [j for j in sorted(store.jobs.values(), key=oldest_first) if include_finished or not j.done]
-        return [j.summary(include_result=False) for j in (mine[-limit:] if limit > 0 else mine)]
+        try:
+            mine = [j for j in sorted(store.jobs.values(), key=oldest_first) if include_finished or not j.done]
+            return [j.summary(include_result=False) for j in (mine[-limit:] if limit > 0 else mine)]
+        except (sqlite3.Error, db.SchemaError) as e:
+            # every in-process summary() read the rows too (story 1.9 item 6)
+            return _database_error(e)
     # the newest `limit` rows, returned oldest first (newest last, as the in-process list).
     # A NULL created_at means oldest: SQLite sorts NULLs last in DESC (so the inner LIMIT cuts
     # it first) and first in ASC (so the outer re-sort puts it at the oldest end) — no
@@ -514,34 +552,42 @@ async def list_jobs(
 async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str, Any]:
     """Tail of a job's human-readable transcript (assistant text, tool calls, results).
 
-    Works for any localagents server's job. tools=N also returns the last N recorded tool
-    calls (t, finished, tool, input, is_error), oldest first."""
+    tail_lines=0 is the whole transcript (as list_jobs(limit=0) is); a negative tail_lines is
+    bad_argument. Works for any localagents server's job. tools=N also returns the last N
+    recorded tool calls (t, finished, tool, input, is_error), oldest first."""
+    if tail_lines < 0:
+        return {"error": "bad_argument", "message": "tail_lines must be >= 0 (0 is the whole transcript)"}
     try:
-        job = store.get(job_id)
-        status_, log_dir, transcript = job.status, job.log_dir, job.transcript_tail(tail_lines)
-    except KeyError as e:
-        row = store.conn.execute("SELECT status, name FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        if row is None:
-            return {"error": "unknown_job", "message": e.args[0]}
-        # another server's job: its log directory follows from its name (spec derivation)
-        status_ = row["status"]
-        log_dir = str(state_dir() / "jobs" / row["name"]) if row["name"] else None
-        p = Path(log_dir) / "transcript.txt" if log_dir else None
-        lines = p.read_text(errors="replace").splitlines() if p is not None and p.exists() else []
-        transcript = "\n".join(lines[-tail_lines:])
-    out: dict[str, Any] = {"job_id": job_id, "status": status_, "log_dir": log_dir, "transcript": transcript}
-    if not log_dir or not Path(log_dir).is_dir():
-        # retention removed it (or it never existed): say so rather than an unexplained ""
-        out["transcript"] = ""
-        out["note"] = f"transcript pruned or never written ({log_dir})"
-    if tools > 0:
-        rows = store.conn.execute(
-            "SELECT t, finished, tool, input, is_error FROM tool_calls WHERE job_id = ?"
-            " ORDER BY t DESC, rowid DESC LIMIT ?",
-            (job_id, tools),
-        ).fetchall()
-        out["tool_calls"] = [dict(r) for r in reversed(rows)]  # the last N, oldest first
-    return out
+        try:
+            job = store.get(job_id)
+            status_, log_dir, transcript = job.status, job.log_dir, job.transcript_tail(tail_lines)
+        except KeyError as e:
+            row = store.conn.execute("SELECT status, name FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None:
+                return {"error": "unknown_job", "message": e.args[0]}
+            # another server's job: its log directory follows from its name (spec derivation)
+            status_ = row["status"]
+            log_dir = str(state_dir() / "jobs" / row["name"]) if row["name"] else None
+            p = Path(log_dir) / "transcript.txt" if log_dir else None
+            lines = p.read_text(errors="replace").splitlines() if p is not None and p.exists() else []
+            transcript = "\n".join(lines[-tail_lines:] if tail_lines else lines)
+        out: dict[str, Any] = {"job_id": job_id, "status": status_, "log_dir": log_dir, "transcript": transcript}
+        if not log_dir or not Path(log_dir).is_dir():
+            # retention removed it (or it never existed): say so rather than an unexplained ""
+            out["transcript"] = ""
+            out["note"] = f"transcript pruned or never written ({log_dir})"
+        if tools > 0:
+            rows = store.conn.execute(
+                "SELECT t, finished, tool, input, is_error FROM tool_calls WHERE job_id = ?"
+                " ORDER BY t DESC, rowid DESC LIMIT ?",
+                (job_id, tools),
+            ).fetchall()
+            out["tool_calls"] = [dict(r) for r in reversed(rows)]  # the last N, oldest first
+        return out
+    except (sqlite3.Error, db.SchemaError) as e:
+        # the foreign branch's row SELECT and the tools=N query both read the database;
+        # their failure is database_error, not a traceback (story 1.9 item 6)
+        return _database_error(e)
 
 
 @mcp.tool()
@@ -550,13 +596,18 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
     try:
         job = store.get(job_id)
     except KeyError as e:
-        return _foreign_job_error(job_id) or {"error": "unknown_job", "message": e.args[0]}
+        return _foreign_or_unknown(job_id, e)
     if not job.done and job._task:
         job._task.cancel()
     # a done job whose finally is still finishing its worktree gets the same wait as a cancelled
     # one: the record handed back is the settled one, with kept/note (DeepSeek review of 6005f94)
     await store.wait(job_id, 15)
-    return job.summary()
+    out = job.summary()
+    if not job.settled:
+        # the 15 s wait timed out: say so — the record is mid-finally and may still move
+        # (story 1.9 item 3)
+        out["note"] = "cancel requested; the job had not settled after 15 s"
+    return out
 
 
 # ---------------------------------------------------------------- one-shot

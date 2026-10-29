@@ -182,6 +182,23 @@ def test_summary_and_summary_from_row_agree_for_the_same_job(monkeypatch, tmp_pa
     assert job.summary(include_result=False) == derive.summary_from_row(store.conn, row, include_result=False)
 
 
+def test_summary_hands_out_a_copy_of_the_worktree(monkeypatch, tmp_path):
+    """summary() put the live worktree dict into its result: a caller mutating the summary it
+    was given moved the job itself (story 1.9 item 1). The summary's dict is a copy."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store, isolation="worktree", worktree={
+        "repo": "/r", "path": "/p", "root": "/rt", "branch": "local-agent/x", "base": "abc",
+    })
+    s = job.summary()
+    assert s["worktree"] == job.worktree
+    s["worktree"]["kept"] = True
+    s["worktree"]["branch"] = "tampered"
+    assert "kept" not in job.worktree and job.worktree["branch"] == "local-agent/x"
+    assert job.summary(include_result=False)["worktree"] == {
+        "repo": "/r", "path": "/p", "root": "/rt", "branch": "local-agent/x", "base": "abc",
+    }  # the copy rule both ways
+
+
 def test_job_status_reads_a_foreign_jobs_row(monkeypatch, tmp_path):
     """A second JobStore means a second server (its own mcp_servers row); job_status answers
     from the database even though the job is nowhere in this process."""
@@ -261,6 +278,31 @@ def test_job_log_works_for_any_job_and_tails_the_tool_calls(monkeypatch, tmp_pat
     assert calls[1]["t"] == 1003.0 and calls[1]["is_error"] == 0
     assert "tool_calls" not in asyncio.run(server.job_log(foreign.id))  # tools=0: the key is absent
     assert asyncio.run(server.job_log("no-such-job"))["error"] == "unknown_job"
+
+
+def test_job_log_tail_lines_zero_is_all_lines_negative_is_bad_argument(monkeypatch, tmp_path):
+    """Story 1.9 item 7: tail_lines=0 returned every line only by Python accident
+    (`lines[-0:]`). It is the contract now, as list_jobs(limit=0) is; a negative value is
+    bad_argument (it used to drop that many lines from the FRONT)."""
+    from pathlib import Path
+
+    job = _new(server.store)
+    (Path(job.log_dir) / "transcript.txt").write_text("\n".join(f"line {i}" for i in range(50)) + "\n")
+    all_lines = [f"line {i}" for i in range(50)]
+
+    out = asyncio.run(server.job_log(job.id, tail_lines=0))
+    assert out["transcript"].splitlines() == all_lines
+    assert asyncio.run(server.job_log(job.id, tail_lines=10))["transcript"].splitlines() == all_lines[-10:]
+
+    bad = asyncio.run(server.job_log(job.id, tail_lines=-1))
+    assert bad["error"] == "bad_argument" and "tail_lines" in bad["message"]
+
+    # a foreign job takes the same rule (its branch did the same accidental slice)
+    other = jobs.JobStore()
+    foreign = _new(other)
+    (Path(foreign.log_dir) / "transcript.txt").write_text("\n".join(all_lines) + "\n")
+    assert asyncio.run(server.job_log(foreign.id, tail_lines=0))["transcript"].splitlines() == all_lines
+    assert asyncio.run(server.job_log(foreign.id, tail_lines=-1))["error"] == "bad_argument"
 
 
 # --- fold of the cross-model review of 1.5b ---
@@ -653,3 +695,106 @@ def test_wait_jobs_running_elapsed_does_not_build_a_summary(monkeypatch, tmp_pat
     out = asyncio.run(server.wait_jobs([job.id], timeout_s=0.01))
     assert out["outcome"] == "timeout"
     assert out["running"][0]["id"] == job.id and 29.0 <= out["running"][0]["elapsed_s"] <= 40.0
+
+
+def test_wait_jobs_running_elapsed_survives_a_job_with_no_timestamps(monkeypatch, tmp_path):
+    """A Job whose started_at and created_at are both None (one built outside new(), or a row
+    whose created_at is NULL): `time.time() - None` raised TypeError in the running branch
+    (story 1.9 item 2). elapsed_s is 0.0 when neither is set, as summary() rules."""
+    job = _new(server.store)
+    job.status, job.started_at, job.created_at = "running", None, None
+    out = asyncio.run(server.wait_jobs([job.id], timeout_s=0.01))
+    assert out["outcome"] == "timeout"
+    assert out["running"][0]["elapsed_s"] == 0.0
+
+
+# --- story 1.9 item 6: database_error on every read path (spec "Tool contract decisions") ---
+
+
+def test_read_paths_answer_database_error_not_a_traceback(monkeypatch, tmp_path):
+    """Any sqlite3.Error raised while a tool READS the database is answered database_error,
+    never a traceback. Dropping a table the read paths touch is the plainest way to fail every
+    one of them at once (the brief's derive-patch sketch cannot reach job_log's direct tools
+    query, so this fails the database itself instead)."""
+    job = _new(server.store)
+    server.store.conn.execute("DROP TABLE tool_calls")
+
+    for name, call in (
+        ("job_status", lambda: server.job_status(job.id)),  # the in-process summary() derive reads
+        ("list_jobs", lambda: server.list_jobs()),  # the all=False branch
+        ("job_log", lambda: server.job_log(job.id, tools=2)),  # the tools=N query
+    ):
+        out = asyncio.run(call())
+        assert out["error"] == "database_error" and "no such table" in out["message"], name
+
+
+class _BrokenConn(jobs.JobStore):
+    """Every read through the connection fails: the row lookups behind the unknown-job answers."""
+
+    @property
+    def conn(self):
+        import sqlite3
+
+        raise sqlite3.OperationalError("database is locked")
+
+
+def test_a_failing_row_lookup_is_never_an_unknown_job(monkeypatch, tmp_path):
+    """"not found" would be a lie when the finding itself failed: when the row read inside
+    _foreign_job_error (or behind job_status's fallback) cannot run, every tool answers
+    database_error (story 1.9 item 6)."""
+    _store(monkeypatch, tmp_path)  # the env; the replacement store never opens a connection
+    server.store = _BrokenConn()
+    for name, call in (
+        ("job_status", lambda: server.job_status("no-such-id")),
+        ("job_log", lambda: server.job_log("no-such-id")),
+        ("wait_job", lambda: server.wait_job("no-such-id", timeout_s=0.01)),
+        ("wait_jobs", lambda: server.wait_jobs(["no-such-id"], timeout_s=0.01)),
+        ("cancel_job", lambda: server.cancel_job("no-such-id")),
+        ("run_agent", lambda: server.run_agent(task="x", resume_job="no-such-id")),
+    ):
+        out = asyncio.run(call())
+        assert out["error"] == "database_error", name
+
+
+def test_a_failing_derive_read_degrades_the_progress_line_not_the_wait(monkeypatch, tmp_path, capsys):
+    """The reporter's derive reads run inside store.wait: one failing must not abort the wait.
+    The line says what it can without the derived parts, one stderr line names the failure, and
+    the wait still returns the finished job once the rows are readable again."""
+    import re
+    import sqlite3
+
+    job = _new(server.store)
+    real = derive.tool_call_count
+
+    def locked(conn, jid):
+        if not job.settled:  # the rows are unreadable for as long as the wait runs
+            raise sqlite3.OperationalError("database is locked")
+        return real(conn, jid)
+
+    monkeypatch.setattr(derive, "tool_call_count", locked)
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+
+    class Ctx:
+        def __init__(self):
+            self.reports = []
+
+        async def report_progress(self, progress, total=None, message=None):
+            self.reports.append(message)
+
+    ctx = Ctx()
+
+    async def go():
+        async def finish_later():
+            await asyncio.sleep(0.08)
+            job.status = "succeeded"
+            job._done.set()
+
+        asyncio.create_task(finish_later())
+        return await server.wait_job(job.id, timeout_s=5, ctx=ctx)
+
+    out = asyncio.run(go())
+    assert out["status"] == "succeeded" and out["id"] == job.id
+    assert ctx.reports, "the wait ran but reported nothing"
+    assert all(re.fullmatch(r"(queued|running): \d+s, 0 turns", m) for m in ctx.reports), ctx.reports
+    err = capsys.readouterr().err
+    assert err.count("database is locked") >= 1, err

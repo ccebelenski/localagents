@@ -334,6 +334,54 @@ llamacpp:prompt_tokens_total 5
     assert d["prompt_tokens_cached"] == 450 and d["prompt_tokens_processed"] == 755 and d["cache_hit_ratio"] == 0.5
 
 
+def test_count_tokens_fallback_records_the_backends_404(tmp_path, monkeypatch):
+    """Story 1.9 item 8: the count_tokens fallback logged status=200 although the backend
+    answered 404 — a request row that claimed a status the backend never sent. The row records
+    http_status=404 with the estimate's error note; the shim's reply to Claude Code stays 200
+    with the estimate (that reply is the shim's own contract, unchanged)."""
+    import asyncio
+
+    import httpx
+    from starlette.requests import Request
+
+    from localagents import jobs
+    from localagents.shim import Shim
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    job = jobs.JobStore().new(
+        task="t", model="m", endpoint="e", base_url="http://x:8080", backend="llama.cpp", host="local",
+        cwd="/tmp", run_cwd="/tmp", isolation="none",
+    )
+    shim = Shim(lambda jid: job)
+
+    async def not_found(upstream, stream=True):
+        return httpx.Response(404, request=upstream)  # the backend has no /v1/messages/count_tokens
+
+    monkeypatch.setattr(shim._client, "send", not_found)
+
+    raw = json.dumps({"model": "m", "messages": [{"role": "user", "content": "hello"}]}).encode()
+
+    async def receive():
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    scope = {
+        "type": "http", "method": "POST", "headers": [(b"content-type", b"application/json")],
+        "path": f"/job/{job.id}/v1/messages/count_tokens", "query_string": b"", "root_path": "",
+        "path_params": {"job_id": job.id, "path": "v1/messages/count_tokens"},
+    }
+
+    resp = asyncio.run(shim.relay(Request(scope, receive)))
+    assert resp.status_code == 200  # the reply to Claude Code: the estimate, as before
+    assert json.loads(resp.body) == {"input_tokens": max(1, len(raw) // 4)}
+
+    row = job._conn.execute(
+        "SELECT r.*, p.path AS path_name FROM requests r JOIN paths p ON p.id = r.path_id"
+    ).fetchone()
+    assert row["path_name"] == "/v1/messages/count_tokens"
+    assert row["http_status"] == 404  # what the backend actually answered
+    assert row["error"] == "count_tokens unsupported; estimated"
+
+
 def test_stream_usage_merges_message_start_and_message_delta():
     from localagents.shim import _merge_usage, _usage_from_sse_head, _usage_from_sse_tail
 

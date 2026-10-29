@@ -172,6 +172,14 @@ user's process), so a stale heartbeat with a live pid of this user is spared as 
   `wait_jobs`, `cancel_job` and `resume_job` need the in-process task and keep refusing
   another server's job with a clear error.
 - `job_status.usage` is the request sums (above).
+- `job_log(tail_lines=0)` is the whole transcript (the contract, as `list_jobs(limit=0)` is); a
+  negative `tail_lines` is `bad_argument` (story 1.9 item 7).
+- `requests.http_status` is always the status the backend answered: the `count_tokens` fallback
+  records the backend's 404 with `error="count_tokens unsupported; estimated"` even though the
+  shim replies to Claude Code with its own 200 and the estimate (story 1.9 item 8).
+- `mcp_servers.owner` is the pid of the nearest `claude` ancestor the server runs under
+  (`db.session_pid`), the parent pid when there is none — the same walk `status.my_owner` does,
+  so a session's own jobs match their session on the status line (story 1.9 item 9).
 - `localagents prune` matches directories named `YYYYMMDD-HHMMSS-<hex>{4,}` (the old four-hex
   names and the new eight-hex names); retention must exceed the longest configured
   `timeout_s`, which the README says.

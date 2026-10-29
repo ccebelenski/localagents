@@ -263,7 +263,10 @@ class Shim:
         if path.endswith("/count_tokens") and resp.status_code == 404:
             await resp.aclose()
             est = max(1, len(raw) // 4)
-            self._log(job, path, body, note, status=200, ms=0, error="count_tokens unsupported; estimated")
+            # the row records the backend's own status: http_status is always what the backend
+            # answered, even though the reply to Claude Code is our 200 with the estimate
+            # (story 1.9 item 8)
+            self._log(job, path, body, note, status=404, ms=0, error="count_tokens unsupported; estimated")
             return JSONResponse({"input_tokens": est})
 
         if body is not None and (job.dump or os.environ.get("LOCALAGENTS_DUMP_REQUESTS") == "1"):

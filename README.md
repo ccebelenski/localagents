@@ -144,7 +144,7 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 | `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
 | `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, … |
 | `wait_job` / `wait_jobs` / `cancel_job` | control jobs this server started; the waits report progress while they block, `wait_jobs` takes several ids (`mode` all/any) |
-| `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls and carries a `note` when the job's directory was pruned, `list_jobs(all=True)` spans every server's, and the listing answers with the 50 newest by default (`limit=0` lists everything) |
+| `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls and carries a `note` when the job's directory was pruned, `job_log(tail_lines=0)` returns the whole transcript, `list_jobs(all=True)` spans every server's, and the listing answers with the 50 newest by default (`limit=0` lists everything) |
 | `foreign_job` | the answer `wait_job`, `wait_jobs`, `cancel_job` and `run_agent(resume_job=…)` give for a job another server started; the three reads above work on any job |
 | `register_endpoint` | add a server from inside a session (written to `models.local.yaml`) |
 | `local_complete` | one-shot generation with no tools — summaries, drafts, classification |
@@ -216,11 +216,12 @@ sign or dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancell
 "Live" means the heartbeat: a server is shown while its last beat is under a minute
 old (and its pid still exists). A server that exited or was killed drops off the line
 as its jobs age out; the next server to start marks that one's unfinished jobs `lost`.
-The line is scoped to the Claude Code session asking: each server records the Claude
-Code process that spawned it, and the renderer finds its own by walking up from the
-status line script. Jobs of other sessions on the same machine fold into `+N other`,
-because the boxes are shared and knowing one is busy matters even when the job isn't
-yours.
+The line is scoped to the Claude Code session asking: each server records as its owner
+the nearest `claude` ancestor it runs under (its parent pid when there is none — the
+same walk the renderer does up from the status line script), so a session's own jobs
+match their session whichever way the server was started (`uv run localagents`
+included). Jobs of other sessions on the same machine fold into `+N other`, because
+the boxes are shared and knowing one is busy matters even when the job isn't yours.
 
 The renderer imports nothing heavy and runs in well under 100 ms, and it never prints a
 traceback: the database is another process's file, so a too-new schema or a lock

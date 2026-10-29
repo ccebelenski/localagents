@@ -124,7 +124,10 @@ def test_mcp_servers_row_at_first_use(monkeypatch, tmp_path):
     assert len(rows) == 1
     r = rows[0]
     assert r["id"] == store.server_id
-    assert r["pid"] == os.getpid() and r["owner"] == os.getppid()
+    assert r["pid"] == os.getpid()
+    # owner: the Claude Code session pid (the db.session_pid walk), the parent pid when no
+    # claude ancestor is above us (story 1.9 item 9)
+    assert r["owner"] == (db.session_pid() or os.getppid())
     assert r["version"], "version must be non-empty (importlib.metadata or 'dev')"
     assert r["cwd"] == os.getcwd() and r["started"] <= time.time()
     # story 1.5a fills these; they must exist as columns and start NULL

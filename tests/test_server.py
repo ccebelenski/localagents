@@ -437,6 +437,26 @@ def test_nothing_between_new_and_the_task_can_orphan_a_job(reg, monkeypatch, cap
     assert "shim_port" in capsys.readouterr().err
 
 
+def test_cancel_job_says_when_the_settle_wait_times_out(reg, monkeypatch):
+    """Story 1.9 item 3: cancel_job waited its 15 s and returned the summary as it stood,
+    silently, when the settle never came — the caller could not tell a timed-out cancel from a
+    completed one. The answer carries a note then; a settled cancel does not."""
+    job = _prev_job()  # never settles: _done is not set
+
+    async def short_wait(jid, timeout_s, progress=None):
+        assert timeout_s == 15  # the note names this exact wait
+        return job
+
+    monkeypatch.setattr(server.store, "wait", short_wait)
+    out = asyncio.run(server.cancel_job(job.id))
+    assert out["note"] == "cancel requested; the job had not settled after 15 s"
+    assert out["status"] == "queued" and out["id"] == job.id  # the summary as it stands
+
+    job._done.set()
+    out = asyncio.run(server.cancel_job(job.id))
+    assert "note" not in out  # settled: nothing to say
+
+
 def test_run_agent_answers_a_database_error_like_its_other_refusals(reg, monkeypatch):
     """Review of 1.7, finding 8: new() raising sqlite3.Error reached the caller as a bare "Error
     executing tool run_agent" (the SDK keeps the cause out of the reply). It is a refusal dict

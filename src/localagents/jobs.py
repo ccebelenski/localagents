@@ -231,6 +231,8 @@ class Job:
             for f in fields(self)
             if not f.name.startswith("_") and f.name not in self._SUMMARY_HIDDEN
         }
+        if d["worktree"] is not None:  # a copy: the caller must not hold the job's own dict (story 1.9 item 1)
+            d["worktree"] = dict(d["worktree"])
         start = self.started_at or self.created_at  # None only for a hand-built Job: 0, as summary_from_row
         d["elapsed_s"] = round((self.finished_at or time.time()) - start, 1) if start is not None else 0
         d["task"] = self.task if len(self.task) < 300 else self.task[:300] + "…"
@@ -276,11 +278,13 @@ class Job:
             f.write(text.rstrip("\n") + "\n")
 
     def transcript_tail(self, n_lines: int = 80) -> str:
+        """The last ``n_lines`` lines; 0 is the whole transcript (job_log's contract,
+        story 1.9 item 7 — stated here too so it is never the ``lines[-0:]`` accident)."""
         p = Path(self.log_dir) / "transcript.txt"
         if not p.exists():
             return ""
         lines = p.read_text(errors="replace").splitlines()
-        return "\n".join(lines[-n_lines:])
+        return "\n".join(lines[-n_lines:] if n_lines else lines)
 
 
 class JobStore:
@@ -322,9 +326,12 @@ class JobStore:
             # updated = started: a row with no heartbeat yet must still count as live for its
             # first 60 s (spec Liveness); NULL would make it dead the moment it is written.
             started = time.time()
+            # owner: the Claude Code session this server runs under (the same walk the status
+            # line does), so its jobs match their session on the line; the parent pid when no
+            # claude ancestor exists (story 1.9 item 9)
             conn.execute(
                 "INSERT INTO mcp_servers (id, pid, owner, started, updated, cwd, version) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (server_id, os.getpid(), os.getppid(), started, started, os.getcwd(), version),
+                (server_id, os.getpid(), db.session_pid() or os.getppid(), started, started, os.getcwd(), version),
             )
         self._conn, self._server_id = conn, server_id
 
