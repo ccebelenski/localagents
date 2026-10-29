@@ -171,12 +171,14 @@ def _next_pair_doc(first: str, second: str) -> dict:
     return b
 
 
-def test_a_rate_whose_interval_spans_a_down_probe_has_no_rate_and_no_event(monkeypatch, conn):
+def test_a_rate_whose_interval_spans_a_down_probe_has_no_rate_and_no_restarted_event(monkeypatch, conn):
     """Story 2.2a row 3 (review P3, ruling B): probe 2's sequence up -> down -> down -> up ->
     up at T, +5, +10, +1000, +1139. The first up tick after the gap compares counters rows
     1000 s apart; the rate is suppressed with ``reason = "gap: 2 down probe(s) in the
-    interval"`` and it is NOT written as a restart. The next up interval contains no down
-    probe, so it is the pair's own rate over 139 s (33.482 prompt/s, 18.590 gen/s)."""
+    interval"`` and no restarted event is written (a plain gap: the counters grew across the
+    interval, they did not go backwards). The gap tick's down -> up transition event is
+    written as usual and asserted below. The next up interval contains no down probe, so it
+    is the pair's own rate over 139 s (33.482 prompt/s, 18.590 gen/s)."""
     up = _real_probe(monkeypatch, STRATA_AI2, "strata")
     down = _down_probe()
     reg = FakeRegistry({"ai2": [up, down, down, up, up]})
@@ -207,6 +209,69 @@ def test_a_rate_whose_interval_spans_a_down_probe_has_no_rate_and_no_event(monke
     assert rt.prompt_tps == pytest.approx(4654 / 139)
     assert rt.gen_tps == pytest.approx(2584 / 139)
     assert rt.cached_tps == pytest.approx(484756 / 139)
+
+
+def test_a_reset_across_a_gap_writes_restarted_during_a_gap(monkeypatch, conn):
+    """Story 2.2b ruling A (review: the gap won and the restart was never recorded): the
+    llamacpp capture pair is a real restart (every counter backwards) and the interval also
+    holds a down probe. The restart is still recorded — a restart during an outage is the
+    common case, an engine crash is exactly a down probe plus zeroed counters — with the
+    reason suffixed `` (during a gap)``; the interval keeps the gap's Rates: no rate,
+    ``rates.rates`` is never called. (The gap test above is the plain case: doc1 -> doc2
+    grew, so it writes no restarted either.)"""
+    probe = _real_probe(monkeypatch, LLAMACPP, "llama.cpp")
+    reg = FakeRegistry({"local": [probe, _down_probe(), probe]})
+    _docs(monkeypatch, [_prom("llamacpp/llamacpp_metrics_1.txt"), _prom("llamacpp/llamacpp_metrics_2.txt")])
+    calls = []
+    real = rates.rates
+
+    def spy(*args, **kw):
+        out = real(*args, **kw)
+        calls.append((args[2], out))
+        return out
+    monkeypatch.setattr(rates, "rates", spy)
+    ep = Endpoint(name="local", base_url=URL, backend="llama.cpp")
+    eid = collect.endpoint_id(conn, ep)
+    for k, t in enumerate((T0, T0 + 5, T0 + 10)):
+        asyncio.run(collect.tick(reg, conn, ep, eid, t, "llamacpp"))
+    sentence = ("10.0.0.60 is reachable but nothing is listening on 10.0.0.60:8080 "
+                "(nothing started there, or the port in models.yaml is wrong)")
+    ev = _events(conn)
+    assert ev[:2] == [(T0 + 5, "down", sentence), (T0 + 10, "up", None)]
+    (t, kind, detail), = [e for e in ev if e[1] == "restarted"]
+    assert (t, kind) == (T0 + 10, "restarted")
+    assert detail.endswith(" (during a gap)"), detail
+    assert detail.removesuffix(" (during a gap)").startswith(
+        "counters went backwards: prompt_tokens 4705 → 0, prompt_tokens_cached 18341 → 0")
+    assert _count(conn, "probe_counters") == 2
+    assert calls == []  # the gap interval has no rate
+
+
+def test_a_plain_gap_writes_no_restarted(monkeypatch, conn):
+    """Story 2.2b ruling A, the plain gap case (the brief's ai2 construction): doc1 ->
+    down -> doc1. The counters did not go backwards across the interval, so the gap tick
+    writes no restarted event — only the transitions — and no rate (``rates.rates`` is
+    never called)."""
+    up = _real_probe(monkeypatch, STRATA_AI2, "strata")
+    down = _down_probe()
+    reg = FakeRegistry({"ai2": [up, down, up]})
+    _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json"), _strata("strata/ai2_metrics_1.json")])
+    calls = []
+    real = rates.rates
+
+    def spy(*args, **kw):
+        out = real(*args, **kw)
+        calls.append((args[2], out))
+        return out
+    monkeypatch.setattr(rates, "rates", spy)
+    ep = Endpoint(name="ai2", base_url=URL, backend="strata")
+    eid = collect.endpoint_id(conn, ep)
+    for k, t in enumerate((T0, T0 + 5, T0 + 10)):
+        asyncio.run(collect.tick(reg, conn, ep, eid, t, "strata"))
+    sentence = ("10.0.0.60 is reachable but nothing is listening on 10.0.0.60:8080 "
+                "(nothing started there, or the port in models.yaml is wrong)")
+    assert _events(conn) == [(T0 + 5, "down", sentence), (T0 + 10, "up", None)]
+    assert calls == []
 
 
 def test_the_reset_sequence_still_writes_exactly_one_restarted(monkeypatch, conn):

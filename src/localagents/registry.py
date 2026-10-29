@@ -248,11 +248,16 @@ class Registry:
                 if r.status_code == 200:
                     mt = parse_metrics(r.text)
                     extra["metrics"] = True
-                    extra["load"] = {
-                        "requests_running": int(mt.get("requests_running", 0)),
-                        "requests_waiting": int(mt.get("requests_waiting", 0)),
-                        "kv_cache_usage": round(mt.get("kv_cache_usage", 0.0), 3),
-                    }
+                    # only the series the document actually has: an absent series stays
+                    # absent, so rows' fallback (document, then this copy) leaves the column
+                    # NULL — a 0.0 default would store a false "empty" (ruling 2026-10-29)
+                    load = {}
+                    for key in ("requests_running", "requests_waiting"):
+                        if key in mt:
+                            load[key] = int(mt[key])
+                    if "kv_cache_usage" in mt:
+                        load["kv_cache_usage"] = round(mt["kv_cache_usage"], 3)
+                    extra["load"] = load
             except httpx.HTTPError:
                 pass
             return ctx, "vllm:max_model_len", extra

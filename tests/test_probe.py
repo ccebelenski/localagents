@@ -6,6 +6,8 @@ import pytest
 
 from localagents.registry import Defaults, Endpoint, Registry, classify_connect_failure
 
+from monitor_fixtures import raw
+
 URL = "http://10.0.0.60:8000"
 
 
@@ -80,3 +82,28 @@ def test_probe_reports_host_state(monkeypatch):
     reg = Registry(path=None, endpoints={}, defaults=Defaults(), raw={}, local={})
     out = asyncio.run(reg.probe(Endpoint(name="ai2", base_url=URL, backend="llama.cpp")))
     assert out["up"] is False and out["models"] == [] and out["host"] == "up"
+
+
+# --- Story 2.2b ruling B: the prober's load copy carries only the series the document has ---
+
+
+def test_a_vllm_probe_over_a_doc_without_the_kv_series_carries_no_kv_key(monkeypatch):
+    """list_models spreads the probe dict as-is, so the prober must not invent an absent
+    series as a 0.0 default (it would store a false "empty"). The dgx1-a capture without
+    its vllm:kv_cache_usage_perc line: the load dict has exactly the gauge series the
+    document still has — no kv_cache_usage key at all."""
+    text = raw("vllm/dgx1-a_metrics_1.txt").decode()
+    no_kv = "\n".join(l for l in text.splitlines() if not l.startswith("vllm:kv_cache_usage_perc{"))
+    routes = {"/v1/models": raw("vllm/dgx1-a_models_1.json"), "/metrics": no_kv.encode()}
+
+    async def get(self, url, **kw):
+        req = httpx.Request("GET", url)
+        body = routes.get(url[len(URL):])
+        if body is None:
+            return httpx.Response(404, content=b"not found", request=req)
+        return httpx.Response(200, content=body, request=req)
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    reg = Registry(path=None, endpoints={}, defaults=Defaults(), raw={}, local={})
+    out = asyncio.run(reg.probe(Endpoint(name="dgx1-a", base_url=URL, backend="vllm")))
+    assert out["up"] is True
+    assert out["load"] == {"requests_running": 1, "requests_waiting": 0}  # the document's, no kv key

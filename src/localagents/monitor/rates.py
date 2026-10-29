@@ -24,7 +24,8 @@ class Rates:
     reset: bool
     # why there is no rate: a reset (the counters that went backwards, or since changed) or a
     # gap ("gap: <n> down probe(s) in the interval" — the collector suppresses the rate without
-    # calling rates(); it is not a reset and writes no event)
+    # calling rates(); it is not a reset, and the collector writes a ``restarted`` event for it
+    # only when the counters say the reset spanned the gap, suffixed " (during a gap)")
     reason: str | None = None
 
 

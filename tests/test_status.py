@@ -429,6 +429,9 @@ def test_load_summary_shapes():
     assert status.load_summary({"load": {"requests_running": 2, "requests_waiting": 1, "kv_cache_usage": 0.337}}) == "2 run 1 wait kv 34%"
     assert status.load_summary({"load": {"requests_running": 0, "requests_waiting": 0, "kv_cache_usage": 0.0}}) == "0 run kv 0%"
     assert status.load_summary({"up": True, "models": ["m"]}) is None
+    # ruling B (2026-10-29): the prober's load copy carries only the series the document has,
+    # so a vLLM probe over a gauge-less document reaches the summary with an empty load
+    assert status.load_summary({"up": True, "load": {}}) is None
     assert status.load_summary({"slots": {"total": 4}}) is None  # llama.cpp without /slots enabled
 
 

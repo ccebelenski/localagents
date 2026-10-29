@@ -2,6 +2,7 @@
 (children first); the job tables are never touched (monitor spec §3: retention deletes only the
 monitor's tables)."""
 import asyncio
+import time
 
 import pytest
 
@@ -59,6 +60,67 @@ def test_the_probes_delete_uses_the_endpoint_t_index(conn):
                       conn.execute("EXPLAIN QUERY PLAN " + retention._DELETE_OLD_PROBES, (1, 0)))
     assert "probes_endpoint_t" in plan, plan
     assert "INDEX" in plan, plan
+
+
+def test_the_events_delete_uses_the_endpoint_t_index(conn):
+    """Story 2.2b ruling C (review: a bare ``t < ?`` delete plans as a full
+    ``SCAN endpoint_events``; the index is ``(endpoint_id, t)``): retention deletes per
+    endpoint through ``endpoint_events_endpoint_t``, as for probes. The plan for the exact
+    statement the pruner runs must name the index."""
+    plan = " | ".join(str(row[3]) for row in
+                      conn.execute("EXPLAIN QUERY PLAN " + retention._DELETE_OLD_EVENTS, (1, 0)))
+    assert "endpoint_events_endpoint_t" in plan, plan
+    assert "INDEX" in plan, plan
+
+
+def test_discovery_is_bounded_to_the_endpoints_table(conn):
+    """Story 2.2b ruling C (review: the old discovery, ``SELECT DISTINCT endpoint_id FROM
+    probes WHERE t < ?``, walked the whole ``probes_endpoint_t`` index): the pruner iterates
+    the small ``endpoints`` table and deletes per endpoint, so no statement scans a monitor
+    table or its whole index."""
+    assert retention._ENDPOINT_IDS == "SELECT id FROM endpoints"
+
+
+def test_pruning_three_endpoints_of_a_thousand_old_probes_each_stays_under_a_second(conn):
+    """The 2.2a review's probe 3(d) construction: 3 endpoints x 1000 old probes each, with
+    their counters and hardware children, two old and one new event per endpoint, and a job
+    row. Every delete rides the (endpoint_id, t) indexes, so the prune stays a few
+    milliseconds (loose bound: well under a second); ``endpoint_events`` is pruned on the
+    same cutoff, ``jobs`` is never touched."""
+    eids = [db.lookup_id(conn, "endpoints", name=f"ep{i}", base_url=f"http://10.0.0.{i}:8080",
+                         backend="strata", host=f"ep{i}") for i in range(3)]
+    with db.immediate(conn):
+        for eid in eids:
+            for k in range(1000):
+                t = NOW - 9 * DAY + k * (2 * DAY / 1000)
+                conn.execute("INSERT INTO probes (t, endpoint_id, up, host) VALUES (?, ?, 1, 'up')",
+                             (t, eid))
+            for k in range(5):
+                t = NOW - k * 60.0
+                conn.execute("INSERT INTO probes (t, endpoint_id, up, host) VALUES (?, ?, 1, 'up')",
+                             (t, eid))
+            for pid in [r[0] for r in conn.execute("SELECT id FROM probes WHERE endpoint_id = ?", (eid,))]:
+                conn.execute("INSERT INTO probe_counters (probe_id, prompt_tokens) VALUES (?, 1.0)", (pid,))
+                conn.execute("INSERT INTO probe_hardware (probe_id, gpu_util) VALUES (?, 50.0)", (pid,))
+            conn.execute("INSERT INTO endpoint_events (t, endpoint_id, kind) VALUES (?, ?, 'up')",
+                         (NOW - 8 * DAY, eid))
+            conn.execute("INSERT INTO endpoint_events (t, endpoint_id, kind) VALUES (?, ?, 'down')",
+                         (NOW - 8 * DAY + 100, eid))
+            conn.execute("INSERT INTO endpoint_events (t, endpoint_id, kind) VALUES (?, ?, 'up')",
+                         (NOW - 10, eid))
+        job_id = db.new_uuid()
+        conn.execute(
+            "INSERT INTO jobs (id, name, endpoint_id, task, cwd, status, created_at, started_at, updated, last_activity)"
+            " VALUES (?, 'j', ?, 't', '/t', 'succeeded', ?, ?, ?, ?)",
+            (job_id, eids[0], NOW - 30 * DAY, NOW - 30 * DAY, NOW - 30 * DAY + 60, NOW - 30 * DAY + 60))
+    cutoff = NOW - retention.RETENTION_DAYS * DAY
+    t0 = time.monotonic()
+    assert retention.prune_probes(conn, days=retention.RETENTION_DAYS, now=NOW) == 3000
+    assert time.monotonic() - t0 < 1.0
+    assert _counts(conn) == {"probes": 15, "probe_counters": 15, "probe_hardware": 15,
+                             "endpoint_events": 3, "jobs": 1, "endpoints": 3}
+    assert conn.execute("SELECT COUNT(*) FROM probes WHERE t < ?", (cutoff,)).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM endpoint_events WHERE t < ?", (cutoff,)).fetchone()[0] == 0
 
 
 def test_zero_days_disables_pruning(conn):

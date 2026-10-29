@@ -57,8 +57,12 @@ async def tick(reg: Any, conn: sqlite3.Connection, ep: Endpoint, endpoint_id: in
     the failure sentence, down -> up writes ``up``; a counter that went backwards since the
     previous counters row or a changed ``since`` writes ``restarted`` naming it. An interval
     that contains a down probe has NO rate (like a reset, and not a restart: the growth may have
-    happened before the outage), so the post-gap tick writes no rate and no event. The first
-    probe of an endpoint writes no event (a cold start is not a transition).
+    happened before the outage), so the plain post-gap tick writes no rate and no restarted
+    event (a gap tick that is also a down -> up transition still writes that transition event
+    — the gap test asserts it). When the counters themselves say the engine restarted across
+    the gap (a backwards counter, or a changed since), the gap tick writes that restart with
+    its reason suffixed by `` (during a gap)`` and still no rate (ruling A, 2026-10-29). The
+    first probe of an endpoint writes no event (a cold start is not a transition).
 
     The tick's database work is one transaction: a failure anywhere inside the ``immediate()``
     block (a row, an event) rolls the whole tick back — a probes row is never stored without its
@@ -78,8 +82,15 @@ async def tick(reg: Any, conn: sqlite3.Connection, ep: Endpoint, endpoint_id: in
         if prev is not None and r.counters is not None:
             down = conn.execute(_DOWN_PROBES, (endpoint_id, prev["t"], now)).fetchone()[0]
             if down:
-                # ruling B: a rate spanning an outage reads as a cliff; there is no rate, and
-                # the interval is not a restart (the counters may have reset during the gap)
+                # A rate spanning an outage reads as a cliff: the interval has no rate. But
+                # the counters themselves may say the engine restarted across the gap (an
+                # engine crash is exactly a down probe plus zeroed counters), so a gap-spanning
+                # reset is still recorded — with its timing qualified — and the interval keeps
+                # the gap's Rates (ruling A, 2026-10-29).
+                prev_counters = {k: prev[k] for k in rows.COUNTER_COLUMNS}
+                reset = rates.reset_reason(prev_counters, r.counters, prev["since"], r.probe["since"])
+                if reset is not None:
+                    _event(conn, now, endpoint_id, "restarted", reset + " (during a gap)")
                 rt = rates.Rates(None, None, None, None, reset=False,
                                  reason=f"gap: {down} down probe(s) in the interval")
             else:

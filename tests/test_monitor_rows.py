@@ -5,13 +5,14 @@ The probe dicts come from the real ``Registry.probe`` run over the story-2.1 cap
 """
 import asyncio
 
+import httpx
 import pytest
 
 from localagents import db
-from localagents.monitor import rows
+from localagents.monitor import collect, rows
 from localagents.registry import Defaults, Endpoint, Registry, classify_connect_failure, fetch_metrics_doc
 
-from monitor_fixtures import LLAMACPP, STRATA_AI2, VLLM_DGX1A, serve
+from monitor_fixtures import LLAMACPP, STRATA_AI2, VLLM_DGX1A, raw, serve
 
 URL = "http://10.0.0.60:8080"
 T = 1793288065.0
@@ -192,4 +193,44 @@ def test_insert_round_trips_through_sqlite_row(monkeypatch, tmp_path, routes, ba
     h = conn.execute("SELECT * FROM probe_hardware WHERE probe_id = ?", (pid,)).fetchone()
     assert (dict(h) if h else None) == ({"probe_id": pid, **r.hardware} if r.hardware else None)
     assert not conn.in_transaction
+    conn.close()
+
+
+def _serve_dgx_without_the_kv_line(monkeypatch, base_url: str) -> None:
+    """The dgx1-a captures with the ``vllm:kv_cache_usage_perc`` line deleted from /metrics
+    (story 2.2b ruling B's construction, from the 2.2a review's probe 2): the document lacks
+    the kv series, the other series stay. Served from the capture bytes via ``raw``."""
+    text = raw("vllm/dgx1-a_metrics_1.txt").decode()
+    no_kv = "\n".join(l for l in text.splitlines() if not l.startswith("vllm:kv_cache_usage_perc{"))
+    routes = {"/v1/models": raw("vllm/dgx1-a_models_1.json"), "/metrics": no_kv.encode()}
+
+    async def get(self, u, **kw):
+        req = httpx.Request("GET", u)
+        body = routes.get(u[len(base_url):])
+        if body is None:
+            return httpx.Response(404, content=b"not found", request=req)
+        return httpx.Response(200, content=body, request=req)
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+
+
+def test_a_vllm_doc_without_the_kv_series_stores_null_not_the_probers_zero(monkeypatch, tmp_path):
+    """Story 2.2b ruling B, over the real prober and a real ``collect.tick``: the dgx1-a
+    capture without its kv line. The prober's ``load`` copy carries only the series the
+    document has (no 0.0 default for the absent kv), and the row's ``kv_cache_usage`` stays
+    NULL — ``rows.probe_to_rows``'s load fallback now means the document AND the copy lack
+    the series, which is the schema's absent-is-NULL rule, not a stored zero.
+    running/waiting still come from the document."""
+    url = "http://10.0.0.70:8000"
+    _serve_dgx_without_the_kv_line(monkeypatch, url)
+    reg = Registry(path=None, endpoints={}, defaults=Defaults(), raw={}, local={})
+    ep = Endpoint(name="dgx1-a", base_url=url, backend="vllm")
+    probe = asyncio.run(reg.probe(ep))
+    assert probe["load"] == {"requests_running": 1, "requests_waiting": 0}  # the document's, kv absent
+    conn = db.open_db(tmp_path / "m.db")
+    eid = collect.endpoint_id(conn, ep)
+    pid = asyncio.run(collect.tick(reg, conn, ep, eid, T, "vllm"))
+    got = tuple(conn.execute(
+        "SELECT kv_cache_usage, requests_running, requests_waiting FROM probes WHERE id = ?",
+        (pid,)).fetchone())
+    assert got == (None, 1.0, 0.0)
     conn.close()
