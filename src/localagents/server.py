@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 from mcp.server.mcpserver import Context, MCPServer
 
-from . import db, derive, status
+from . import db, derive, jobs, status
 from .jobs import Job, JobStore, oldest_first, prune, state_dir
 from .registry import ModelUnavailable, Registry, config_path, local_path
 from .runner import run_job
@@ -227,10 +227,75 @@ def _ensure_sampler() -> None:
 # ---------------------------------------------------------------- agents
 
 
+# Foreign waits (story 1.10): another server's job has no task here, so it is waited on by
+# polling its row. The sweep interval is the wait's own dead-server detector (a dead server's
+# job turns `lost`); both are module attributes so tests can shorten them.
+FOREIGN_POLL_S = 2.0
+FOREIGN_SWEEP_S = 30.0
+
+# the row statuses that mean the job is over — Job.done's list, as list_jobs' unfinished filter
+_TERMINAL_STATUSES = ("succeeded", "failed", "timeout", "cancelled", "lost")
+
+
+async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> dict[str, Any]:
+    """Wait on another server's job by polling its row in the shared database: there is no
+    in-process task to await, so the row is the only signal (story 1.10 item 1). Every
+    FOREIGN_POLL_S re-read the row; a terminal status returns its _row_summary. Every
+    FOREIGN_SWEEP_S of waiting calls mark_lost_jobs, so a job whose server died resolves as
+    `lost` instead of running out the clock. Every jobs.PROGRESS_INTERVAL_S a line with the
+    same shape _progress_reporter's has (a failing derive read degrades the line, story 1.9
+    item 6). On timeout the row as it stands — status still `running`, the in-process wait's
+    timeout answer's equivalent. No guard inside: every read here is the database's, and the
+    caller turns sqlite3.Error/db.SchemaError into database_error."""
+    poll_s = FOREIGN_POLL_S  # read at call time so tests can shorten them
+    sweep_s = FOREIGN_SWEEP_S
+    progress_s = jobs.PROGRESS_INTERVAL_S
+    deadline = time.monotonic() + timeout_s
+    next_sweep = time.monotonic() + sweep_s
+    next_progress = time.monotonic() + progress_s
+    while True:
+        row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            # the row vanished mid-wait (nothing prunes job rows, so: a database rewritten under
+            # us). The honest answer is the same one wait_job gives for an id never seen.
+            return {"error": "unknown_job", "message": f"unknown job '{job_id}'"}
+        if row["status"] in _TERMINAL_STATUSES:
+            return _row_summary(row)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _row_summary(row)
+        if time.monotonic() >= next_sweep:
+            store.mark_lost_jobs()  # the spec's sweep, this time driven by the wait itself
+            next_sweep += sweep_s
+        if ctx is not None and time.monotonic() >= next_progress:
+            start = row["started_at"] or row["created_at"]  # summary_from_row's elapsed rule
+            elapsed = int(time.time() - start) if start is not None else 0
+            msg = f"{row['status']}: {elapsed}s, {row['num_turns']} turns"
+            try:
+                conn = store.conn
+                msg += f", {derive.tool_call_count(conn, job_id)} tool calls"
+                errors = derive.error_count(conn, job_id)
+                if errors:
+                    msg += f", {errors} errors"
+                last = derive.last_tool(conn, job_id)
+                if last:
+                    msg += f"; {last}"
+            except (sqlite3.Error, db.SchemaError) as e:
+                # same degrade rule as the in-process progress line: the line says what it can
+                print(f"localagents: progress line degraded: {type(e).__name__}: {e}", file=sys.stderr)
+            try:
+                await ctx.report_progress(elapsed, None, msg)
+            except Exception:  # a client without progress support must not break the wait
+                pass
+            next_progress += progress_s
+        await asyncio.sleep(min(remaining, poll_s))
+
+
 def _foreign_job_error(job_id: str) -> dict[str, str] | None:
     """The id exists in the shared database but not in this process: another server's job.
-    wait/cancel/resume need the in-process task and keep refusing it (spec "Tool contract
-    decisions"); job_status, job_log and list_jobs read any server's rows instead."""
+    cancel_job and run_agent(resume_job=) act on the process and keep refusing it (spec "Tool
+    contract decisions", corrected for the waits by story 1.10); job_status, job_log, list_jobs
+    and now the waits read any server's rows instead."""
     row = store.conn.execute("SELECT mcp_server_id FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if row is None:
         return None
@@ -244,8 +309,9 @@ def _foreign_job_error(job_id: str) -> dict[str, str] | None:
 
 
 def _foreign_or_unknown(job_id: str, e: KeyError) -> dict[str, Any]:
-    """The unknown-job answer shared by wait/cancel/resume: another server's job if the shared
-    row says so, plain unknown_job if it does not exist. A row read that fails answers
+    """The unknown-job answer shared by cancel/resume (the waits grew their own answer in
+    story 1.10): another server's job if the shared row says so, plain unknown_job if it does
+    not exist. A row read that fails answers
     database_error — "not found" would be a lie when the finding itself failed, so
     _foreign_job_error's error propagates here and is answered (story 1.9 item 6)."""
     try:
@@ -412,7 +478,10 @@ async def run_agent(
 async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = None) -> dict[str, Any]:
     """Block up to `timeout_s` seconds for a job to finish; returns its status/result either way.
 
-    Progress is reported every minute while waiting, so a long timeout is safe to pass.
+    Any server's job: this server's waits on its settle event, another server's is polled from
+    its row in the shared database (story 1.10); only `cancel_job` and `run_agent(resume_job=)`
+    still refuse another server's job. Progress is reported every minute while waiting, so a
+    long timeout is safe to pass.
     """
     try:
         job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx))
@@ -420,9 +489,22 @@ async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = Non
         # (story 1.9 item 6, made true here by 1.9a row 1 — it sat after the try)
         return job.summary()
     except KeyError as e:
-        return _foreign_or_unknown(job_id, e)
+        return await _wait_or_unknown(job_id, e, timeout_s, ctx)
     except (sqlite3.Error, db.SchemaError) as e:
         return _database_error(e)
+
+
+async def _wait_or_unknown(job_id: str, e: KeyError, timeout_s: float, ctx: Context | None) -> dict[str, Any]:
+    """wait_job's answer when the id is not in this process: the shared database has the row →
+    wait on it (`_wait_foreign`, story 1.10 item 1); no row anywhere → the plain unknown_job
+    with store.get's message. Every read here is the database's: its failure is
+    database_error, never unknown_job (story 1.9 item 6's rule)."""
+    try:
+        if store.conn.execute("SELECT id FROM jobs WHERE id = ?", (job_id,)).fetchone() is None:
+            return {"error": "unknown_job", "message": e.args[0]}
+        return await _wait_foreign(job_id, timeout_s, ctx)
+    except (sqlite3.Error, db.SchemaError) as db_e:
+        return _database_error(db_e)
 
 
 @mcp.tool()
@@ -435,6 +517,8 @@ async def wait_jobs(
     """Block for several jobs: all finished (mode="all"), first finished (mode="any"), or timeout_s.
     Fallback only: prefer one blocking run_agent per job (each notifies on its own finish).
     mode="any" must be re-armed after every return or the rest finish unseen.
+    Any server's ids mix (story 1.10): this server's jobs wait on their settle events, another
+    server's are polled from their rows.
     Returns done (final records) and running (ids, status, elapsed). Progress every minute.
     A done job's record is derived from the database: when that read fails, the whole call
     answers database_error — a partial record would be a lie about the jobs it leaves out.
@@ -443,46 +527,86 @@ async def wait_jobs(
         return {"error": "bad_argument", "message": "mode must be 'all' or 'any'"}
     if not job_ids:
         return {"error": "bad_argument", "message": "job_ids is empty"}
+    # split the ids: in-process wait on their events, foreign on their rows; an unknown id
+    # anywhere answers unknown_job before any waiting (as today)
     try:
-        for jid in job_ids:
-            if jid not in store.jobs:
-                foreign = _foreign_job_error(jid)
-                if foreign is not None:
-                    return foreign
+        foreign_ids = [jid for jid in job_ids if jid not in store.jobs]
+        for jid in foreign_ids:
+            if store.conn.execute("SELECT id FROM jobs WHERE id = ?", (jid,)).fetchone() is None:
+                try:
+                    store.get(jid)  # never returns: its message names the known jobs
+                except KeyError as e:
+                    return {"error": "unknown_job", "message": e.args[0]}
     except (sqlite3.Error, db.SchemaError) as e:
         return _database_error(e)  # a failed row read is never an unknown_job (story 1.9 item 6)
+    in_process_ids = [jid for jid in job_ids if jid not in foreign_ids]
+
+    tasks = []
+    if in_process_ids:
+        tasks.append(asyncio.ensure_future(store.wait_many(
+            in_process_ids, timeout_s, mode=mode, progress=_progress_reporter_many(ctx),
+        )))
+    tasks.extend(asyncio.ensure_future(_wait_foreign(jid, timeout_s, ctx)) for jid in foreign_ids)
     try:
-        jobs = await store.wait_many(job_ids, timeout_s, mode=mode, progress=_progress_reporter_many(ctx))
-    except KeyError as e:
-        return {"error": "unknown_job", "message": e.args[0]}
+        # mode="any" returns as soon as ANY task finishes and cancels the rest; mode="all"
+        # waits for all of them. Every task is internally bounded by timeout_s, so the
+        # asyncio.wait timeout is a belt. A cancelled wait_many is safe to drop: its finally
+        # cancels the _done.wait() futures and Event.wait discards its waiter on cancellation
+        # (jobs.wait_many), so no dangling waiter survives — and the gather below makes those
+        # finallys run before we classify.
+        await asyncio.wait(
+            tasks, timeout=timeout_s,
+            return_when=asyncio.FIRST_COMPLETED if mode == "any" else asyncio.ALL_COMPLETED,
+        )
+        for f in tasks:
+            if not f.done():
+                f.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for f in tasks:
+            exc = None if f.cancelled() else f.exception()
+            if isinstance(exc, (sqlite3.Error, db.SchemaError)):
+                return _database_error(exc)
+            if exc is not None:
+                raise exc  # not the database's failure and not a refusal: a bug, let it raise
+        # classify every id by where it stands now, not by the task returns: a cancelled or
+        # still-pending task says nothing about the job. settled as before: a job still in
+        # run_job's finally has an incomplete record (review of 1.7, finding 1)
+        done, running = [], []
+        for jid in job_ids:
+            if jid in store.jobs:
+                j = store.jobs[jid]
+                if j.settled:
+                    done.append(j.summary())
+                else:
+                    # elapsed from the timestamps (summary()'s formula, None-settled 0.0
+                    # included — story 1.9 item 2), not a whole summary's db reads
+                    running.append({"id": j.id, "status": j.status,
+                                    "elapsed_s": _elapsed(j), "num_turns": j.num_turns})
+            else:
+                row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (jid,)).fetchone()
+                if row is None:
+                    return {"error": "unknown_job", "message": f"unknown job '{jid}'"}
+                if row["status"] in _TERMINAL_STATUSES:
+                    done.append(_row_summary(row))
+                else:
+                    # the same entry keys an in-process running entry carries, read off the row
+                    start = row["started_at"] or row["created_at"]
+                    running.append({
+                        "id": row["id"], "status": row["status"],
+                        "elapsed_s": round(time.time() - start, 1) if start is not None else 0,
+                        "num_turns": row["num_turns"],
+                    })
     except (sqlite3.Error, db.SchemaError) as e:
+        # a done job's derive reads failing makes the whole record incomplete: answer
+        # database_error for the call rather than hand back a partial `done` (story 1.9a row 1)
         return _database_error(e)
-    # settled, as wait_many waits: a job still in run_job's finally has an incomplete record
-    done = [j for j in jobs if j.settled]
-    running = [j for j in jobs if not j.settled]
     if not running:
         outcome = "all_done"
     elif done:
         outcome = "some_done"
     else:
         outcome = "timeout"
-    try:
-        done_summaries = [j.summary() for j in done]
-    except (sqlite3.Error, db.SchemaError) as e:
-        # one done job's derive reads failing makes the whole record incomplete: answer
-        # database_error for the call rather than hand back a partial `done` (story 1.9a row 1)
-        return _database_error(e)
-    return {
-        "outcome": outcome,
-        "done": done_summaries,
-        "running": [
-            # elapsed from the timestamps (summary()'s formula, None-settled 0.0 included —
-            # story 1.9 item 2), not a whole summary's db reads
-            {"id": j.id, "status": j.status,
-             "elapsed_s": _elapsed(j), "num_turns": j.num_turns}
-            for j in running
-        ],
-    }
+    return {"outcome": outcome, "done": done, "running": running}
 
 
 def _database_error(e: Exception) -> dict[str, Any]:

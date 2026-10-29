@@ -184,6 +184,11 @@ user's process), so a stale heartbeat with a live pid of this user is spared as 
   jobs; `list_jobs` gains `all: bool = False` (default: this server's). `wait_job`,
   `wait_jobs`, `cancel_job` and `resume_job` need the in-process task and keep refusing
   another server's job with a clear error.
+  Correction 2026-10-29 (story 1.10, operator's rule): the waits act on any job. `wait_job`
+  and `wait_jobs` wait another server's job by polling its row (terminal status or timeout,
+  as for an in-process job), and `mark_lost_jobs` runs on the foreign wait's clock so a job
+  whose server died resolves as `lost`. Only `cancel_job` and `run_agent(resume_job=…)` keep
+  the `foreign_job` refusal — they act on the process, not the record.
 - `job_status.usage` is the request sums (above).
 - `job_log(tail_lines=0)` is the whole transcript (the contract, as `list_jobs(limit=0)` is); a
   negative `tail_lines` is `bad_argument` (story 1.9 item 7).

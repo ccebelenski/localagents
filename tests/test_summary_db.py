@@ -1,16 +1,17 @@
 """Story 1.5b: the summary read path and exposure (spec "Derivations" and "Tool contract
 decisions"). usage_totals, tool_counts, error_count and last_tool come from the rows;
 summary_from_row builds the full job_status dict for any server's job; summary() and
-summary_from_row agree for the same job; the read tools cross servers and the in-process
-tools refuse another server's job."""
+summary_from_row agree for the same job; the read tools cross servers, and since story 1.10
+so do the waits (row-polling); only cancel_job and run_agent(resume_job=) still refuse."""
 
 import asyncio
 import json
+import re
 import time
 
 import pytest
 
-from localagents import derive, jobs, server
+from localagents import db, derive, jobs, server
 
 
 def _store(monkeypatch, tmp_path):
@@ -248,21 +249,199 @@ def test_job_status_reads_a_foreign_jobs_row(monkeypatch, tmp_path):
     assert asyncio.run(server.job_status("no-such-job"))["error"] == "unknown_job"
 
 
-def test_in_process_tools_refuse_a_foreign_job(monkeypatch, tmp_path):
-    """wait_job, wait_jobs, cancel_job and resume need the in-process task: a clear foreign_job
-    error, not unknown_job (spec Tool contract decisions)."""
+def test_cancel_and_resume_refuse_a_foreign_job(monkeypatch, tmp_path):
+    """cancel_job and run_agent(resume_job=) act on the process, not the record: they keep the
+    clear foreign_job error, not unknown_job (operator rule 2026-10-29; story 1.10 moved the
+    waits to row-polling, tested below)."""
     other = jobs.JobStore()
     foreign = _new(other)
     foreign.status, foreign.started_at = "running", time.time() - 10
     foreign.changed()
 
-    wait = asyncio.run(server.wait_job(foreign.id, timeout_s=0.05))
-    assert wait["error"] == "foreign_job" and other.server_id in wait["message"]
-    assert "only job_status, job_log and list_jobs can read it" in wait["message"]
-    assert asyncio.run(server.cancel_job(foreign.id))["error"] == "foreign_job"
-    assert asyncio.run(server.wait_jobs([foreign.id], timeout_s=0.05))["error"] == "foreign_job"
+    cancel = asyncio.run(server.cancel_job(foreign.id))
+    assert cancel["error"] == "foreign_job" and other.server_id in cancel["message"]
+    assert "only job_status, job_log and list_jobs can read it" in cancel["message"]
     resumed = asyncio.run(server.run_agent(task="continue", resume_job=foreign.id))
     assert resumed["error"] == "foreign_job"
+
+
+class _Ctx:
+    """Stand-in for the MCP Context: records progress notifications."""
+
+    def __init__(self):
+        self.reports = []
+
+    async def report_progress(self, progress, total=None, message=None):
+        self.reports.append((progress, total, message))
+
+
+def test_wait_job_polls_a_foreign_row_until_the_timeout(monkeypatch, tmp_path):
+    """Story 1.10 item 1: a running foreign job is waited on by polling its row; the timeout
+    answer is the row as it stands (status still running), like the in-process timeout."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.05)
+    monkeypatch.setattr(server, "FOREIGN_SWEEP_S", 0.1)
+    other = jobs.JobStore()
+    foreign = _new(other)
+    foreign.status, foreign.started_at = "running", time.time() - 10
+    foreign.changed()
+
+    t0 = time.monotonic()
+    out = asyncio.run(server.wait_job(foreign.id, timeout_s=1))
+    waited = time.monotonic() - t0
+    assert out["status"] == "running" and out["id"] == foreign.id
+    assert out["name"] == foreign.name  # a row summary, not an error
+    assert 0.9 <= waited < 1.5
+    # and an id neither this process nor the database knows is still unknown_job
+    assert asyncio.run(server.wait_job("no-such-id", timeout_s=0.05))["error"] == "unknown_job"
+
+
+def test_wait_job_returns_when_a_foreign_row_turns_terminal(monkeypatch, tmp_path):
+    """Another server's UPDATE lands on the row; the next poll returns that server's record."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.05)
+    monkeypatch.setattr(server, "FOREIGN_SWEEP_S", 0.1)
+    other = jobs.JobStore()
+    foreign = _new(other)
+    foreign.status, foreign.started_at = "running", time.time() - 10
+    foreign.changed()
+
+    async def run():
+        task = asyncio.create_task(server.wait_job(foreign.id, timeout_s=10))
+        await asyncio.sleep(0.2)
+        with db.immediate(other.conn):
+            other.conn.execute("UPDATE jobs SET status = 'succeeded', result = 'their result' WHERE id = ?",
+                               (foreign.id,))
+        return await task
+
+    t0 = time.monotonic()
+    out = asyncio.run(run())
+    assert out["status"] == "succeeded" and out["result"] == "their result"
+    assert time.monotonic() - t0 < 0.5
+
+
+def test_wait_job_resolves_a_dead_servers_job_as_lost(monkeypatch, tmp_path):
+    """The lost sweep runs on the foreign wait's clock: a server whose row has `stopped` set
+    (its own mark at exit) is dead — its running job becomes `lost` within one sweep, not at
+    the timeout (spec Liveness, mark_lost_jobs)."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.05)
+    monkeypatch.setattr(server, "FOREIGN_SWEEP_S", 0.1)
+    other = jobs.JobStore()
+    foreign = _new(other)
+    foreign.status, foreign.started_at = "running", time.time() - 100
+    foreign.changed()
+    with db.immediate(other.conn):
+        other.conn.execute("UPDATE mcp_servers SET stopped = ? WHERE id = ?", (time.time(), other.server_id))
+
+    t0 = time.monotonic()
+    out = asyncio.run(server.wait_job(foreign.id, timeout_s=10))
+    assert out["status"] == "lost" and out["error"] == "server exited"
+    assert time.monotonic() - t0 < 1.0
+
+
+def test_foreign_wait_reports_the_same_progress_line(monkeypatch, tmp_path):
+    """The foreign wait's progress line has the shape _progress_reporter pins: "status: elapsed
+    s, turns turns, calls tool calls..." — elapsed from started_at, the counts derived from the
+    shared rows the other server recorded."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.05)
+    monkeypatch.setattr(server, "FOREIGN_SWEEP_S", 0.1)
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+    other = jobs.JobStore()
+    foreign = _new(other)
+    foreign.status, foreign.started_at = "running", time.time() - 10
+    foreign.changed()
+    foreign.record_tool_call(time.time(), "Bash", "u1", "ls")
+    foreign.record_tool_result("u1", time.time() + 1, False)
+    ctx = _Ctx()
+
+    out = asyncio.run(server.wait_job(foreign.id, timeout_s=0.15, ctx=ctx))
+    assert out["status"] == "running"
+    assert ctx.reports, "the foreign wait reported nothing"
+    line = re.compile(r"running: 1[01]s, 0 turns, 1 tool calls; Bash: ls")
+    assert any(line.fullmatch(m) for _, _, m in ctx.reports), ctx.reports
+
+
+def test_wait_jobs_mixes_in_process_and_foreign_ids(monkeypatch, tmp_path):
+    """Story 1.10 item 2: in-process ids wait as always, foreign ids join the same call. mode
+    all with a short timeout: the settled in-process job is done, the foreign one is running
+    with the same entry keys as an in-process one."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.05)
+    monkeypatch.setattr(server, "FOREIGN_SWEEP_S", 0.1)
+    mine = _new(server.store, task="mine")
+    mine.status, mine.started_at = "succeeded", time.time() - 5
+    mine._done.set()
+    mine.changed()
+    other = jobs.JobStore()
+    foreign = _new(other, task="theirs")
+    foreign.status, foreign.started_at, foreign.num_turns = "running", time.time() - 5, 3
+    foreign.changed()
+
+    out = asyncio.run(server.wait_jobs([mine.id, foreign.id], timeout_s=0.3))
+    assert out["outcome"] == "some_done"
+    assert [j["id"] for j in out["done"]] == [mine.id]
+    assert [j["id"] for j in out["running"]] == [foreign.id]
+    entry = out["running"][0]
+    assert set(entry) == {"id", "status", "elapsed_s", "num_turns"}  # same keys as in-process
+    assert entry["status"] == "running" and entry["num_turns"] == 3 and entry["elapsed_s"] >= 5
+    # an unknown id anywhere still answers unknown_job before any waiting
+    t0 = time.monotonic()
+    assert asyncio.run(server.wait_jobs([foreign.id, "nope"], timeout_s=10))["error"] == "unknown_job"
+    assert time.monotonic() - t0 < 0.5
+
+
+def test_wait_jobs_any_returns_when_the_foreign_job_finishes_first(monkeypatch, tmp_path):
+    """mode any: an UPDATE on the foreign row ends the call at once; the still-running
+    in-process job is reported running (and its wait_many waiter is cancelled cleanly)."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.05)
+    monkeypatch.setattr(server, "FOREIGN_SWEEP_S", 0.1)
+    mine = _new(server.store, task="mine")
+    mine.status, mine.started_at = "running", time.time() - 5
+    mine.changed()
+    other = jobs.JobStore()
+    foreign = _new(other, task="theirs")
+    foreign.status, foreign.started_at = "running", time.time() - 5
+    foreign.changed()
+
+    async def run():
+        task = asyncio.create_task(server.wait_jobs([mine.id, foreign.id], timeout_s=10, mode="any"))
+        await asyncio.sleep(0.2)
+        with db.immediate(other.conn):
+            other.conn.execute("UPDATE jobs SET status = 'succeeded', result = 'theirs' WHERE id = ?",
+                               (foreign.id,))
+        return await task
+
+    t0 = time.monotonic()
+    out = asyncio.run(run())
+    assert out["outcome"] == "some_done"
+    assert [j["id"] for j in out["done"]] == [foreign.id]
+    assert out["done"][0]["result"] == "theirs"
+    assert [j["id"] for j in out["running"]] == [mine.id]
+    assert time.monotonic() - t0 < 1.0  # first completion, not the timeout
+
+
+def test_wait_jobs_all_done_when_both_foreign_jobs_finish(monkeypatch, tmp_path):
+    """Both ids foreign: the call waits for both rows and returns both records."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.05)
+    monkeypatch.setattr(server, "FOREIGN_SWEEP_S", 0.1)
+    a_store, b_store = jobs.JobStore(), jobs.JobStore()
+    job_a, job_b = _new(a_store, task="a"), _new(b_store, task="b")
+    for j in (job_a, job_b):
+        j.status, j.started_at = "running", time.time() - 5
+        j.changed()
+
+    async def run():
+        task = asyncio.create_task(server.wait_jobs([job_a.id, job_b.id], timeout_s=10))
+        await asyncio.sleep(0.2)
+        with db.immediate(a_store.conn):
+            a_store.conn.execute("UPDATE jobs SET status = 'succeeded' WHERE id = ?", (job_a.id,))
+        await asyncio.sleep(0.1)
+        with db.immediate(b_store.conn):
+            b_store.conn.execute("UPDATE jobs SET status = 'failed', error = 'nope' WHERE id = ?", (job_b.id,))
+        return await task
+
+    out = asyncio.run(run())
+    assert out["outcome"] == "all_done"
+    assert [j["id"] for j in out["done"]] == [job_a.id, job_b.id]
+    assert out["done"][0]["status"] == "succeeded" and out["done"][1]["error"] == "nope"
+    assert out["running"] == []
 
 
 def test_list_jobs_all_reads_every_servers_jobs(monkeypatch, tmp_path):

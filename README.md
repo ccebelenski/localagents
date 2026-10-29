@@ -143,9 +143,9 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 |---|---|
 | `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
 | `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, … |
-| `wait_job` / `wait_jobs` / `cancel_job` | control jobs this server started; the waits report progress while they block, `wait_jobs` takes several ids (`mode` all/any) |
+| `wait_job` / `wait_jobs` / `cancel_job` | the waits block on any server's job — another server's is polled from its row in the shared database — reporting progress while they block; `wait_jobs` takes several ids (`mode` all/any); `cancel_job` stops a job this server started |
 | `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls and carries a `note` when the job's directory was pruned, `job_log(tail_lines=0)` returns the whole transcript, `list_jobs(all=True)` spans every server's, and the listing answers with the 50 newest by default (`limit=0` lists everything) |
-| `foreign_job` | the answer `wait_job`, `wait_jobs`, `cancel_job` and `run_agent(resume_job=…)` give for a job another server started; the three reads above work on any job |
+| `foreign_job` | the answer only `cancel_job` and `run_agent(resume_job=…)` give for a job another server started (they need its process); the waits and the three reads above work on any job |
 | `register_endpoint` | add a server from inside a session (written to `models.local.yaml`) |
 | `local_complete` | one-shot generation with no tools — summaries, drafts, classification |
 
@@ -299,8 +299,8 @@ the endpoints and models seen so far. The full schema is
 [`docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md`](docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md).
 Because the record is the database rather than a server's memory, it outlives the server
 that ran the job: any server's `job_status`, `job_log` and `list_jobs(all=True)` can
-read it after the original process is gone (the in-process tools cannot — see
-`foreign_job` above). `list_jobs` answers with the 50 newest by default; `limit=0`
+read it after the original process is gone, and the waits can wait on it too; only
+`cancel_job` and `run_agent(resume_job=…)` cannot — see `foreign_job` above). `list_jobs` answers with the 50 newest by default; `limit=0`
 lists the whole history. Rows are history: retention removes job directories, never rows.
 
 It lives on one machine — SQLite's WAL files do not work on a network filesystem, so
