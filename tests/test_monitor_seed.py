@@ -153,6 +153,30 @@ def test_node_dormant_flags_only_the_dormant_host(seeded):
     assert state.node_dormant([ep_state("llamacpp")]) is True
 
 
+def test_probes_carry_state_and_the_disk_columns(seeded):
+    """Story 3.1a ruling A in the seed: state follows the world's occupancy ("idle"/"busy" by
+    its slots; the last five busy minutes are the running job on ai1's slot), a down probe's is
+    NULL, and ai1's hardware rows carry the ai2 pass-2 capture's disk counters."""
+    conn, _ = seeded
+    ai1 = _endpoint_id(conn, "ai1")
+    assert {r[0] for r in conn.execute(
+        "SELECT DISTINCT state FROM probes WHERE endpoint_id = ? AND up = 1", (ai1,))} == {"idle", "busy"}
+    last = conn.execute("SELECT state FROM probes WHERE endpoint_id = ? ORDER BY t DESC LIMIT 1", (ai1,)).fetchone()[0]
+    assert last == "busy"  # the busy tail
+    for name in ("ai1", "dgx1-a", "llamacpp"):
+        assert conn.execute(
+            "SELECT COUNT(*) FROM probes WHERE endpoint_id = ? AND up = 0 AND state IS NOT NULL",
+            (_endpoint_id(conn, name),)).fetchone()[0] == 0, name
+    assert conn.execute(
+        "SELECT DISTINCT state FROM probes WHERE endpoint_id = ? AND up = 1", (_endpoint_id(conn, "dgx1-a"),)
+    ).fetchone()[0] == "busy"  # vLLM with requests_running 1 throughout its up hour
+    assert conn.execute(
+        "SELECT state FROM probes WHERE endpoint_id = ? AND up = 1", (_endpoint_id(conn, "llamacpp"),)
+    ).fetchone()[0] == "idle"  # llama.cpp 2 slots, neither busy
+    hw = conn.execute("SELECT disk_read_mb, disk_write_mb FROM probe_hardware ORDER BY probe_id DESC LIMIT 1").fetchone()
+    assert hw[0] == 0.0 and hw[1] == 0.00743732530467772  # the ai2 pass-2 capture's numbers
+
+
 def test_the_running_job_is_the_one_on_ai1(seeded):
     conn, _ = seeded
     ai1 = _endpoint_id(conn, "ai1")

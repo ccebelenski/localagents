@@ -138,6 +138,48 @@ def test_an_unknown_endpoint_is_404_before_the_range_is_read(client):
     assert client.get("/api/endpoints/nope/history", params={"range": "1w"}).status_code == 404
 
 
+# --- /api/fleet/history ------------------------------------------------------------------------
+
+
+def test_fleet_history_default_range_shape(client):
+    r = client.get("/api/fleet/history")
+    assert r.status_code == 200
+    fh = r.json()
+    assert set(fh) == {"t", "step", "endpoints"}
+    assert set(fh["endpoints"]) == {"ai1", "dgx1-a", "llamacpp"}  # every endpoint with a probe in the hour
+    assert 0 < len(fh["t"]) <= 600 and fh["t"][-1] == NOW
+    for name, body in fh["endpoints"].items():
+        assert set(body) == {"gen_tps", "prompt_tps", "occupancy"}, name
+        for key, values in body.items():
+            assert len(values) == len(fh["t"]), (name, key)
+
+
+# --- /api/endpoints/{name}/requests --------------------------------------------------------------
+
+
+def test_endpoint_requests_route(client):
+    r = client.get("/api/endpoints/ai1/requests")
+    assert r.status_code == 200
+    out = r.json()
+    assert set(out) == {"requests", "totals"}
+    assert len(out["requests"]) == 152
+    ts = [q["t"] for q in out["requests"]]
+    assert ts == sorted(ts, reverse=True) and out["requests"][0]["job_name"]
+    assert out["totals"]["count"] == 152 and out["totals"]["output_tokens"] > 0
+    empty = client.get("/api/endpoints/dgx1-a/requests").json()
+    assert empty["requests"] == [] and all(v == 0 for v in empty["totals"].values())
+    r = client.get("/api/endpoints/nope/requests")
+    assert r.status_code == 404 and r.json()["error"] == "unknown_endpoint"
+    r = client.get("/api/endpoints/ai1/requests", params={"range": "30s"})
+    assert r.status_code == 400 and r.json()["error"] == "bad_range"
+
+
+def test_fleet_history_range_and_errors(client):
+    assert client.get("/api/fleet/history", params={"range": "15m"}).status_code == 200
+    r = client.get("/api/fleet/history", params={"range": "8d"})
+    assert r.status_code == 400 and r.json()["error"] == "bad_range"
+
+
 def test_a_configured_endpoint_never_probed_is_an_empty_history(dbpath, tmp_path):
     from monitor_seeded import write_config
     from localagents.registry import Registry
@@ -174,7 +216,8 @@ def test_job_detail_route(client, dbpath):
     assert r.status_code == 200
     d = r.json()
     assert d["status"] == "succeeded"
-    assert len(d["requests"]) == 112 and len(d["tool_calls"]) == 142
+    assert len(d["requests"]) == 112
+    assert d["tool_calls"] == len(d["tool_call_log"]) == 142  # ruling E: count and list, separate keys
     assert d["transcript_tail"] is None and d["transcript_note"]
 
 
@@ -390,6 +433,25 @@ def _free_port():
         return s.getsockname()[1]
 
 
+def test_a_port_already_in_use_exits_2_with_the_sentence(tmp_path):
+    """Review of 3.1 (G1), ruling F: hold the port with a listening socket; the command exits 2
+    naming the port, with no traceback — the bind is tested before uvicorn starts."""
+    holder = socket.socket()
+    holder.bind(("127.0.0.1", 0))
+    holder.listen()
+    port = holder.getsockname()[1]
+    try:
+        cfg = write_config(tmp_path / "models.yaml")
+        out = subprocess.run([sys.executable, "-c", _cli(["--no-collect", "--port", str(port)])],
+                             capture_output=True, text=True, cwd=_SRC,
+                             env=_env(tmp_path, tmp_path / "x.db", cfg), timeout=60)
+    finally:
+        holder.close()
+    assert out.returncode == 2, out.stderr
+    assert f"localagents monitor: port {port} is already in use" in out.stderr
+    assert "Traceback" not in out.stderr
+
+
 def test_a_live_run_serves_the_seeded_file_and_stops_on_sigterm(tmp_path):
     """The command end to end over loopback: a seeded file (now = the wall clock, so the states
     are the seed's), --no-collect, a free port; /api/snapshot answers within 10 s with the
@@ -467,6 +529,11 @@ def test_spec_5a_names_every_key_the_routes_emit(client, dbpath):
     _keys(client.get("/api/snapshot").json(), keys)
     for name in ("ai1", "dgx1-a", "llamacpp"):
         _keys(client.get(f"/api/endpoints/{name}/history").json(), keys)
+    _keys(client.get("/api/endpoints/ai1/requests").json(), keys)
+    fh = client.get("/api/fleet/history").json()
+    _keys({k: v for k, v in fh.items() if k != "endpoints"}, keys)
+    for body in fh["endpoints"].values():  # the fleet dict is keyed by endpoint name: a value, not a shape key
+        _keys(body, keys)
     inner = ("worktree", "metrics", "tool_counts")
     for j in client.get("/api/jobs").json():
         keys |= set(j)

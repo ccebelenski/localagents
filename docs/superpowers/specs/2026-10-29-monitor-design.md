@@ -63,8 +63,10 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
   a cache of the fleet, not the record of truth: deleting it costs history only.
 
   Monitor tables, approved 2026-10-29 (schema version 3; version 2 is `jobs.compactions`,
-  story 1.11). Conventions as the MCP schema: epoch REAL timestamps, lookups by id, flat
-  nullable columns where the field set is fixed, nothing stored that is derived.
+  story 1.11; version 4, story 3.1a ruling A, appends `probes.state` and the two
+  `probe_hardware` disk columns in one step). Conventions as the MCP schema: epoch REAL
+  timestamps, lookups by id, flat nullable columns where the field set is fixed, nothing
+  stored that is derived.
 
   ```
   probes            one row per probe attempt (5 s when live, 60 s when dormant); monitor-owned
@@ -82,6 +84,10 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
     kv_cache_usage REAL                              vLLM, 0..1
     gen_tps       REAL                               live speed when the backend reports one (Strata)
     since         REAL                               server start epoch when known (Strata totals.since)
+    state         TEXT                               live state string (version 4): Strata's live.state
+                                                   verbatim; other backends "busy" when
+                                                   requests_running > 0 or slots_busy > 0, else "idle";
+                                                   NULL when the probe is down
     INDEX probes_endpoint_t (endpoint_id, t)
 
   probe_counters    the cumulative counters as parsed, one row per probe that reported counters
@@ -95,6 +101,7 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
     probe_id      INTEGER PRIMARY KEY REFERENCES probes(id)
     gpu_util, gpu_mem_used, gpu_mem_total, gpu_temp, gpu_power, gpu_power_limit,
     gpu_pcie_rx_mb, gpu_pcie_tx_mb, cpu, ram_used, ram_total          REAL
+    disk_read_mb, disk_write_mb (version 4)                           REAL
 
   endpoint_events   id INTEGER PRIMARY KEY, t REAL NOT NULL, endpoint_id INTEGER NOT NULL REFERENCES endpoints(id),
                     kind TEXT NOT NULL CHECK (kind IN ('up', 'down', 'restarted')), detail TEXT
@@ -181,6 +188,8 @@ illustrative.
 | `GET /static/{path}` | a file of the package's `monitor/static/` directory (`app.js`, vendored uPlot); 404 otherwise |
 | `GET /api/snapshot` | the snapshot object (below): what `/events` pushes, on demand |
 | `GET /api/endpoints/{name}/history?range=<r>` | the history object of the endpoint named `{name}` in models.yaml; `range` defaults to `1h` |
+| `GET /api/fleet/history?range=<r>` | the fleet history object (below): speed and occupancy for the whole fleet on one time grid; `range` defaults to `1h` |
+| `GET /api/endpoints/{name}/requests?range=<r>` | the endpoint's request table object (below): our jobs' requests that ran on it in the range, with totals; `range` defaults to `24h` |
 | `GET /api/jobs?range=<r>` | an array of job summaries, jobs **created** within the range, newest first, at most 500; `range` defaults to `24h` |
 | `GET /api/jobs/{id}` | the job detail object of the job with that `id` |
 | `GET /events` | the server-sent events stream (below) |
@@ -252,7 +261,8 @@ endpoint = {
   },
   "gen_tps_live": 9.8,              the last probe's own speed figure (Strata)
   "hardware": {gpu_util, gpu_mem_used, gpu_mem_total, gpu_temp, gpu_power, gpu_power_limit,
-               gpu_pcie_rx_mb, gpu_pcie_tx_mb, cpu, ram_used, ram_total} | null,
+               gpu_pcie_rx_mb, gpu_pcie_tx_mb, cpu, ram_used, ram_total,
+               disk_read_mb, disk_write_mb} | null,
                                     the LAST probe's probe_hardware row; null when that probe has
                                     none (a down probe never has one, so a stale reading is never
                                     shown as current)
@@ -299,7 +309,12 @@ collector's first tick does). Running jobs are listed whatever endpoint they ran
   "slots_busy": [ ... ],                                                      ← tier 2
   "requests_running": [ ... ], "requests_waiting": [ ... ],
   "kv_cache_usage": [ ... ],
-  "gpu_util": [ ... ], "gpu_mem_used": [ ... ], "gpu_temp": [ ... ], "gpu_power": [ ... ]   ← tier 3
+  "latency_ms": [ ... ],              each kept probe's own probe latency     ← tier 0 (ruling B)
+  "state": [ ... ],                   each kept probe's probes.state: "idle"/"busy" or Strata's
+                                      own string, null while down or before version 4  ← tier 0
+  "gpu_util": [ ... ], "gpu_mem_used": [ ... ], "gpu_temp": [ ... ], "gpu_power": [ ... ],
+  "gpu_pcie_rx_mb": [ ... ], "gpu_pcie_tx_mb": [ ... ], "cpu": [ ... ], "ram_used": [ ... ],
+  "disk_read_mb": [ ... ], "disk_write_mb": [ ... ]                                          ← tier 3
   "events": [ {"t", "kind", "detail"}, ... ],     the endpoint's events in the range, oldest first
   "jobs": [ {"name", "id", "status", "started_at", "finished_at", "model"}, ... ]
                                     jobs on the endpoint that overlap the range (started — or
@@ -312,20 +327,73 @@ collector's first tick does). Running jobs are listed whatever endpoint they ran
   report a figure (every down probe) is a `null` at its place.
 - **A series is absent, not empty, when its source holds no value in the range** (§5: "a tile
   with no source is absent"): a gauge or hardware series when every probe in the range has it
-  null; `prompt_tps` when no probe in the range has `prompt_tokens`, `gen_tps` when none has
+  null; `latency_ms` and `state` the same way (a range of only down probes has neither);
+  `prompt_tps` when no probe in the range has `prompt_tokens`, `gen_tps` when none has
   `generated_tokens`, `cache_hit` when none has `prompt_tokens_cached` or `prefix_hits`. So a
-  vLLM endpoint has no `gpu_*` or `slots_busy` keys, and Strata no `kv_cache_usage`.
+  vLLM endpoint has no `gpu_*`, `cpu`, `ram_used` or `slots_busy` keys, and Strata no
+  `kv_cache_usage`.
 - **Downsampling.** With `n` probes in the range and `n > max_points` (600), `k = ceil(n /
   600)` and every k-th probe is kept, counted back from the newest, which is always kept;
   otherwise `k = 1`. Gauges and hardware are the kept probe's own values.
-- **Rates.** A point's rates are `rates.rates` from the previous kept probe to this one (for
-  the first point: the probe `k` before it, or the newest probe before the range when that is
-  the one), so a downsampled rate is the average over its interval, not a 5 s sample. The
+- **Rates.** A point's rates are `rates.rates` from the previous kept probe to this one. For
+  the first kept point the reference is the probe `k` before it; when that lies before the
+  start of the range, the newest probe before the range stands in instead, if there is one;
+  the first point has no rate when neither exists — the endpoint's first probe ever, with
+  nothing before it. So a downsampled rate is the average over its interval, not a 5 s
+  sample. The
   rates are null when any raw interval between consecutive probes inside it is a **gap**
   (either probe has no counters row: a down probe, or a backend without `/metrics`) or a
   **reset** (`rates.reset_reason`: a counter went backwards or `since` changed; §6: no
   cliff). The first probe an endpoint ever wrote has no rate.
 - An endpoint configured but never seen answers `{"t": [], "step": 1, "events": [], "jobs": []}`.
+
+**Endpoint requests** (`GET /api/endpoints/{name}/requests`; review of 3.1, ruling D — §5's
+"per-request table for non-Strata endpoints … built from the `requests` table"):
+
+```
+{
+  "requests": [ a job detail request row — {"path", "t", "http_status", "ms", "gen_ms",
+                "tokens", "stream", "context_exceeded", "error"} — plus "job_id" and
+                "job_name", ... ]
+                                    the requests of jobs on this endpoint (joined through
+                                    jobs.endpoint_id) whose t is in the range, newest first,
+                                    at most 1000
+  "totals": {                       the whole range, capped list or not:
+    "count": 152,                   requests in the range
+    "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
+    "ms",                           the ms sum (NULLs skipped)
+    "errors"                        requests whose error column is not null
+  }
+}
+```
+
+**Fleet history** (`GET /api/fleet/history`; review of 3.1, ruling C):
+
+```
+{
+  "t": [ ... ],                     ONE grid for every endpoint: the union of the kept probe
+                                    times across the endpoints, each endpoint downsampled by
+                                    the endpoint-history rules first; the union itself kept
+                                    to at most 600 points by the same every-kth-from-the-
+                                    newest rule, oldest first
+  "step": 1,                        k for that union grid (1 when it already fits 600)
+  "endpoints": {
+    "<name>": {                     every CONFIGURED endpoint with at least one probe in the
+                                    range — a dormant one appears with all-null series; an
+                                    endpoint with no probe in the range is absent
+      "gen_tps": [ ... ], "prompt_tps": [ ... ],     the endpoint's own rates (as its history
+                                                     computes them), placed on the grid
+      "occupancy": [ ... ]          slots_busy for a backend that reports slots, else
+                                    requests_running (vLLM)
+    }, ...
+  }
+}
+```
+
+A value at a grid time is the endpoint's own value at its kept probe nearest that time, and
+**null where the endpoint has no kept probe within half a grid step of it**: the grid can be
+finer than one endpoint's cadence (or coarser, after the union is downsampled), and an
+endpoint's absent series (null throughout) is served as a column of nulls rather than dropped.
 
 **Job summaries** (`GET /api/jobs`): each is `derive.summary_from_row(include_result=False)`,
 the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoint`,
@@ -343,8 +411,8 @@ the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoin
   "requests": [ {"path", "t", "http_status", "ms", "gen_ms",
                  "tokens": {"input", "output", "cache_read", "cache_creation"},
                  "stream" (bool | null), "context_exceeded", "error"}, ... ]     time order
-  "tool_calls": [ {"t", "finished", "tool", "tool_use_id", "input",
-                   "is_error" (bool; null while the result has not arrived)}, ... ]   time order
+  "tool_call_log": [ {"t", "finished", "tool", "tool_use_id", "input",
+                      "is_error" (bool; null while the result has not arrived)}, ... ]   time order
   "transcript_tail": "...",         the last 80 lines of <state_dir>/jobs/<name>/transcript.txt,
                                     joined by "\n"; null when there is none
   "transcript_note": null           null when there is a tail; else the sentence saying why not
@@ -352,8 +420,9 @@ the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoin
                                     or never created on this machine — or it holds no transcript.txt)
 ```
 
-In the job detail `tool_calls` is the LIST of calls (its length is the count); in a job
-summary it is the count. Same key, two types: read it by route.
+In the job detail the LIST of calls lives under `tool_call_log` and `tool_calls` stays the
+count (its length is `len(tool_call_log)`); in a job summary `tool_calls` is the count. Named
+apart on purpose (review of 3.1, ruling E): one key, one type, on every route.
 
 **Server-sent events** (`GET /events`; `Content-Type: text/event-stream`, `Cache-Control:
 no-cache`):

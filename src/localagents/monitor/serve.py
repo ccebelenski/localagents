@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import errno
 import signal
+import socket
 import sqlite3
 import sys
 from pathlib import Path
@@ -46,6 +48,24 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--no-collect", action="store_true",
                     help="serve the database as it is, without probing (a seeded file: localagents seed)")
     return ap.parse_args(argv)
+
+
+def port_free(host: str, port: int) -> bool:
+    """Review of 3.1 (G1), ruling F: the port is checked before uvicorn starts, so an occupied
+    one is one clean sentence on stderr and exit 2, never a traceback out of uvicorn. The bind
+    test is not atomic with the server's own bind (another process can take the port in
+    between); that race still ends in uvicorn's own startup failure, which stays loud."""
+    for family, stype, proto, _, sa in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        s = socket.socket(family, stype, proto)
+        try:
+            s.bind(sa)
+            s.close()
+            return True  # at least one address for this host binds: the port is free
+        except OSError as e:
+            s.close()
+            if e.errno not in (errno.EADDRINUSE, errno.EADDRNOTAVAIL):
+                raise
+    return False
 
 
 def db_file(arg: str | None, settings: MonitorSettings) -> Path:
@@ -116,6 +136,14 @@ def main(argv: list[str]) -> None:
         db.open_db(path).close()  # create or migrate now: a bad file fails here, not in the first route
     except (db.SchemaError, sqlite3.Error, OSError) as e:
         print(f"localagents monitor: cannot open {path}: {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(2)
+    try:
+        free = port_free(a.host, port)
+    except OSError as e:  # an unresolvable host, a privileged port: the same one-sentence rule
+        print(f"localagents monitor: cannot bind {a.host}:{port}: {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(2)
+    if not free:
+        print(f"localagents monitor: port {port} is already in use", file=sys.stderr)
         sys.exit(2)
     n = len(reg.endpoints)
     mode = "" if not a.no_collect else " · not collecting"

@@ -468,11 +468,12 @@ def parse_strata_metrics(doc: dict[str, Any]) -> dict[str, float]:
     return out
 
 
-# The probe_hardware columns (schema version 3, db.py), read under the same names from strata's
-# ``hardware`` section.
+# The probe_hardware columns (db.py schema version 3, plus the two disk columns appended by
+# version 4, story 3.1a ruling A), read under the same names from strata's ``hardware`` section.
 STRATA_HARDWARE_KEYS = (
     "gpu_util", "gpu_mem_used", "gpu_mem_total", "gpu_temp", "gpu_power", "gpu_power_limit",
     "gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "ram_total",
+    "disk_read_mb", "disk_write_mb",
 )
 
 
@@ -486,12 +487,14 @@ def parse_strata_extra(doc: Any) -> dict[str, Any]:
 
     ``since``: ``totals.since``, the server's start epoch (a change means a restart).
     ``gen_tps``: ``hardware.tok_s``, else ``live.tok_s``, whichever is a number first; else None.
-    ``hardware``: the eleven ``probe_hardware`` columns from the ``hardware`` section as floats,
+    ``hardware``: the thirteen ``probe_hardware`` columns from the ``hardware`` section as floats,
     a missing or non-numeric one None; None when the section is absent or holds none of them
     (strata before 0.1.5x has no such section).
     ``requests_running``: 0 when ``live.state`` is ``"idle"``, 1 for any other state string
     (strata serves one request at a time), None when there is no state. Every captured state is
     ``"idle"`` (story 2.1's four captures and the 0.1.44.1 one).
+    ``state``: ``live.state`` verbatim when it is a string, else None (story 3.1a ruling A:
+    ``probes.state`` stores it as the backend writes it, never normalised).
     """
     d = doc if isinstance(doc, dict) else {}
     totals = d.get("totals") if isinstance(d.get("totals"), dict) else {}
@@ -509,6 +512,7 @@ def parse_strata_extra(doc: Any) -> dict[str, Any]:
         "gen_tps": tps,
         "hardware": hardware,
         "requests_running": (0 if state == "idle" else 1) if isinstance(state, str) else None,
+        "state": state if isinstance(state, str) else None,
     }
 
 

@@ -42,14 +42,17 @@ COLUMNS = {
 }
 # the monitor tables, every column in the spec's order (monitor-design §3, approved 2026-10-29)
 MONITOR_COLUMNS = {
+    # schema version 4 (story 3.1a, ruling A): probes.state appends after since,
+    # probe_hardware's disk columns after ram_total
     "probes": ["id", "t", "endpoint_id", "model_id", "up", "host", "error", "latency_ms", "context",
                "slots_total", "slots_busy", "requests_running", "requests_waiting", "kv_cache_usage",
-               "gen_tps", "since"],
+               "gen_tps", "since", "state"],
     "probe_counters": ["probe_id", "prompt_tokens", "prompt_tokens_cached", "prompt_seconds", "generated_tokens",
                        "generated_seconds", "spec_draft_tokens", "spec_accepted_tokens", "prefix_queries",
                        "prefix_hits", "preemptions"],
     "probe_hardware": ["probe_id", "gpu_util", "gpu_mem_used", "gpu_mem_total", "gpu_temp", "gpu_power",
-                       "gpu_power_limit", "gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "ram_total"],
+                       "gpu_power_limit", "gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "ram_total",
+                       "disk_read_mb", "disk_write_mb"],
     "endpoint_events": ["id", "t", "endpoint_id", "kind", "detail"],
 }
 
@@ -66,13 +69,14 @@ def _names(conn, kind):
     return {r["name"] for r in rows}
 
 
-def test_fresh_file_comes_up_at_version_3_with_every_table(dbfile):
-    """A fresh file runs the version-1 DDL, the version-2 step (story 1.11: jobs.compactions)
-    and the version-3 step (story 2.2: the monitor's tables), so it comes up at version 3."""
+def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
+    """A fresh file runs the version-1 DDL, the version-2 step (story 1.11: jobs.compactions),
+    the version-3 step (story 2.2: the monitor's tables) and the version-4 step (story 3.1a
+    ruling A: probes.state, probe_hardware's disk columns), so it comes up at version 4."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
-    assert db.SCHEMA_VERSION == 3 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert db.SCHEMA_VERSION == 4 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -90,6 +94,7 @@ def test_monitor_tables_carry_the_spec_types_keys_and_indexes(dbfile):
         "host": "TEXT", "error": "TEXT", "latency_ms": "INTEGER", "context": "INTEGER",
         "slots_total": "INTEGER", "slots_busy": "INTEGER", "requests_running": "INTEGER",
         "requests_waiting": "INTEGER", "kv_cache_usage": "REAL", "gen_tps": "REAL", "since": "REAL",
+        "state": "TEXT",
     }
     notnull = {r["name"] for r in conn.execute("PRAGMA table_info(probes)") if r["notnull"]}
     assert notnull == {"t", "endpoint_id", "up"}
@@ -205,12 +210,38 @@ def test_a_version_2_file_migrates_to_version_3_with_its_job_intact(dbfile):
     assert MONITOR_TABLES.isdisjoint(r[0] for r in raw.execute("SELECT name FROM sqlite_master"))
     raw.close()
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     row = conn.execute("SELECT name, status, updated, num_turns, compactions FROM jobs WHERE id = 'j1'").fetchone()
     assert tuple(row) == ("20261029-000000-00000000", "succeeded", 2.0, 7, 1)
     for table in MONITOR_TABLES:
         assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+    conn.close()
+
+
+def test_a_version_3_file_migrates_to_version_4_with_its_probe_rows_intact(dbfile):
+    """Story 3.1a ruling A: the version-4 step only appends columns. A file a 2.2-era
+    localagents left at version 3 (user_version 3, one probe with a hardware row) opens at
+    version 4 with the rows unchanged and the appended columns NULL on them."""
+    raw = sqlite3.connect(dbfile)
+    for step in db.MIGRATIONS[:3]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 3")
+    raw.execute("INSERT INTO endpoints (name, base_url, backend, host) VALUES ('ai1', 'http://ai1:8080', 'strata', 'ai1')")
+    raw.execute("INSERT INTO probes (t, endpoint_id, up, latency_ms) VALUES (1.0, 1, 1, 12)")
+    raw.execute("INSERT INTO probe_hardware (probe_id, gpu_util, ram_total) VALUES (1, 55.0, 1024.0)")
+    raw.commit()
+    assert "state" not in [r[1] for r in raw.execute("PRAGMA table_info(probes)")]  # raw has no Row factory
+    raw.close()
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert [r["name"] for r in conn.execute("PRAGMA table_info(probes)")] == MONITOR_COLUMNS["probes"]
+    assert [r["name"] for r in conn.execute("PRAGMA table_info(probe_hardware)")] == MONITOR_COLUMNS["probe_hardware"]
+    row = conn.execute("SELECT * FROM probes WHERE id = 1").fetchone()
+    assert row["t"] == 1.0 and row["up"] == 1 and row["latency_ms"] == 12 and row["state"] is None
+    h = conn.execute("SELECT * FROM probe_hardware WHERE probe_id = 1").fetchone()
+    assert h["gpu_util"] == 55.0 and h["ram_total"] == 1024.0
+    assert h["disk_read_mb"] is None and h["disk_write_mb"] is None
     conn.close()
 
 

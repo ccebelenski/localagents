@@ -46,6 +46,7 @@ def test_strata_probe_and_ai2_doc_give_the_pinned_columns(monkeypatch):
         "kv_cache_usage": None,  # strata reports no KV fill
         "gen_tps": 111.46877721920072,  # hardware.tok_s
         "since": 1793229893.2645304,  # totals.since
+        "state": "idle",  # ruling A: live.state verbatim
     }
     # ai2_metrics_1 totals: prompt_tokens 15631377, reused 15243241, output_tokens 220395,
     # prompt_ms 751563.9000000007, decode_ms 3207289.7000000016, drafts 184778 / 132173
@@ -64,6 +65,7 @@ def test_strata_probe_and_ai2_doc_give_the_pinned_columns(monkeypatch):
         "gpu_temp": 76.0, "gpu_power": 252.132, "gpu_power_limit": 260.0,
         "gpu_pcie_rx_mb": 90.2646484375, "gpu_pcie_tx_mb": 90.408203125,
         "cpu": 95.9, "ram_used": 98149974016.0, "ram_total": 338017230848.0,
+        "disk_read_mb": 0.0, "disk_write_mb": 0.0,  # the pass-1 capture's disk counters
     }
 
 
@@ -79,6 +81,7 @@ def test_vllm_probe_and_dgx1a_doc(monkeypatch):
         # (story 2.2a ruling A: the document wins, the probe dict's copy is the fallback)
         "kv_cache_usage": 0.16963064295485641,
         "gen_tps": None, "since": None,
+        "state": "busy",  # ruling A: no live.state in a vLLM document, so requests_running 1 > 0
     }
     assert r.counters == {
         "prompt_tokens": 17994028.0, "prompt_tokens_cached": None, "prompt_seconds": None,
@@ -99,6 +102,7 @@ def test_llamacpp_probe_takes_slots_from_the_probe_dict(monkeypatch):
         # llamacpp:requests_processing / :requests_deferred 0 in the capture (story 2.2a ruling D)
         "requests_running": 0.0, "requests_waiting": 0.0,
         "kv_cache_usage": None, "gen_tps": None, "since": None,
+        "state": "idle",  # ruling A: two slots, neither busy, nothing running
     }
     assert r.counters == {
         "prompt_tokens": 4705.0, "prompt_tokens_cached": 18341.0, "prompt_seconds": 2.90835,
@@ -145,7 +149,7 @@ def test_a_down_probe_is_a_row_with_the_failure_sentence_and_no_counters(monkeyp
             "t": T, "endpoint_id": 3, "model_id": None, "up": 0, "host": "up", "error": sentence,
             "latency_ms": None, "context": None, "slots_total": None, "slots_busy": None,
             "requests_running": None, "requests_waiting": None, "kv_cache_usage": None,
-            "gen_tps": None, "since": None,
+            "gen_tps": None, "since": None, "state": None,  # ruling A: NULL when down
         }
         assert r.counters is None and r.hardware is None
 

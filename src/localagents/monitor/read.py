@@ -223,7 +223,11 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float) ->
 # --- endpoint history --------------------------------------------------------------------------
 
 _GAUGES = ("slots_busy", "requests_running", "requests_waiting", "kv_cache_usage")
-_HW_SERIES = ("gpu_util", "gpu_mem_used", "gpu_temp", "gpu_power")
+# ruling B (review of 3.1): every hardware column but ram_total (a denominator, not a series)
+_HW_SERIES = ("gpu_util", "gpu_mem_used", "gpu_temp", "gpu_power",
+              "gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "disk_read_mb", "disk_write_mb")
+# the probe's own tier-0 figures, served as kept-probe series (state holds strings, not numbers)
+_PROBE_SERIES = ("latency_ms", "state")
 # a rate series exists when the counter it is computed from holds a value in the range
 _RATE_SOURCES = {
     "prompt_tps": ("prompt_tokens",),
@@ -277,7 +281,7 @@ def endpoint_history(
     picked = [i + offset for i in range(n) if (n - 1 - i) % k == 0]
     out["step"] = k
     out["t"] = [rows_[s]["t"] for s in picked]
-    series: dict[str, list] = {key: [] for key in (*_RATE_SOURCES, *_GAUGES, *_HW_SERIES)}
+    series: dict[str, list] = {key: [] for key in (*_RATE_SOURCES, *_GAUGES, *_PROBE_SERIES, *_HW_SERIES)}
     for s in picked:
         cur = rows_[s]
         ref = max(s - k, 0)
@@ -291,7 +295,7 @@ def endpoint_history(
         if r and r.cached_tps is not None and r.prompt_tps is not None and r.prompt_tps + r.cached_tps > 0:
             hit = r.cached_tps / (r.prompt_tps + r.cached_tps)
         series["cache_hit"].append(hit)
-        for g in _GAUGES:
+        for g in (*_GAUGES, *_PROBE_SERIES):
             series[g].append(cur[g])
         for h in _HW_SERIES:
             series[h].append(cur[h])
@@ -318,6 +322,63 @@ def endpoint_history(
     return out
 
 
+# --- fleet history -----------------------------------------------------------------------------
+
+
+def fleet_history(conn: sqlite3.Connection, reg: Any, since_t: float, now: float,
+                  max_points: int = 600) -> dict[str, Any]:
+    """The fleet's speed and occupancy on ONE time grid (review of 3.1, ruling C; shape §5a).
+
+    Each configured endpoint with at least one probe in the range is downsampled by its own
+    ``endpoint_history`` rules, and the grid is the union of their kept times — itself kept to
+    ``max_points`` by the same every-kth-from-the-newest rule (``step`` is that factor; 1 when
+    the union already fits). A series value at a grid time is the endpoint's value at its own
+    kept probe nearest that time, and null when no kept probe lies within half a grid step: an
+    endpoint that never probes at a grid time (or whose probes fall between the downsampled
+    grid's points) reads null, never another endpoint's figure. An endpoint's own absent
+    series (null throughout the range) stays absent: it is served as all-null on the shared
+    grid. ``occupancy`` is ``slots_busy`` for a backend that reports slots, else
+    ``requests_running`` (vLLM). An endpoint with no probe in the range is left out entirely."""
+    per: list[tuple[str, list, dict[str, list | None]]] = []
+    for ep in reg.endpoints.values():
+        eid = endpoint_row_id(conn, ep)
+        if eid is None or conn.execute(
+                "SELECT 1 FROM probes WHERE endpoint_id = ? AND t >= ? AND t <= ? LIMIT 1",
+                (eid, since_t, now)).fetchone() is None:
+            continue
+        h = endpoint_history(conn, eid, since_t, now, max_points)
+        occ = next((k for k in ("slots_busy", "requests_running") if k in h), None)
+        per.append((ep.name, h["t"], {
+            "gen_tps": h.get("gen_tps"), "prompt_tps": h.get("prompt_tps"),
+            "occupancy": h[occ] if occ is not None else None,
+        }))
+    grid = sorted({t for _, ts, _ in per for t in ts})
+    step = 1
+    if len(grid) > max_points:
+        step = math.ceil(len(grid) / max_points)
+        grid = [t for i, t in enumerate(grid) if (len(grid) - 1 - i) % step == 0]
+    # how far a kept probe may sit from a grid point and still answer for it (the grid can be
+    # coarser than the endpoint's own cadence); half the grid's finest interval
+    tol = min(b - a for a, b in zip(grid, grid[1:])) / 2.0 if len(grid) > 1 else 0.0
+    body: dict[str, Any] = {"t": grid, "step": step, "endpoints": {}}
+    for name, ts, entry in per:
+        cols: dict[str, list] = {key: [None] * len(grid) for key in ("gen_tps", "prompt_tps", "occupancy")}
+        j = 0
+        for i, t in enumerate(ts):  # ts and grid both ascend: one walk
+            while j < len(grid) and grid[j] < t - tol:
+                j += 1
+            best, dist = None, math.inf
+            for g in (j - 1, j):
+                if 0 <= g < len(grid) and abs(grid[g] - t) < dist:
+                    best, dist = g, abs(grid[g] - t)
+            if best is not None and dist <= tol:
+                for key, values in entry.items():
+                    if values is not None:
+                        cols[key][best] = values[i]
+        body["endpoints"][name] = cols
+    return body
+
+
 # --- jobs --------------------------------------------------------------------------------------
 
 
@@ -330,6 +391,44 @@ def jobs_in_range(conn: sqlite3.Connection, since_t: float, now: float, limit: i
             "SELECT * FROM jobs WHERE created_at >= ? AND created_at <= ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
             (since_t, now, limit))
     ]
+
+
+def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t: float, now: float,
+                      limit: int = 1000) -> dict[str, Any]:
+    """The endpoint's per-request table (review of 3.1, ruling D; shape §5a): the ``requests``
+    rows of jobs that ran on this endpoint (joined through ``jobs.endpoint_id``) with ``t`` in
+    the range, newest first, at most ``limit``. Each row is rendered exactly as ``job_detail``
+    renders its requests, plus ``job_id`` and ``job_name``. The ``totals`` object sums the
+    whole range (not just the capped list): count, the four token columns, the ms sum (NULLs
+    skipped) and the number of requests whose error column is not null."""
+    rows_ = ([] if endpoint_id is None else conn.execute(
+        "SELECT p.path, r.*, j.id AS job_id, j.name AS job_name FROM requests r"
+        " JOIN jobs j ON j.id = r.job_id LEFT JOIN paths p ON p.id = r.path_id"
+        " WHERE j.endpoint_id = ? AND r.t >= ? AND r.t <= ?"
+        " ORDER BY r.t DESC, r.rowid DESC LIMIT ?", (endpoint_id, since_t, now, limit)
+    ).fetchall())
+    out = [
+        {"path": r["path"], "t": r["t"], "http_status": r["http_status"], "ms": r["ms"],
+         "gen_ms": r["gen_ms"],
+         "tokens": {"input": r["input_tokens"], "output": r["output_tokens"],
+                    "cache_read": r["cache_read_tokens"], "cache_creation": r["cache_creation_tokens"]},
+         "stream": bool(r["stream"]) if r["stream"] is not None else None,
+         "context_exceeded": r["context_exceeded"], "error": r["error"],
+         "job_id": r["job_id"], "job_name": r["job_name"]}
+        for r in rows_
+    ]
+    sums = ([0] * 7 if endpoint_id is None else conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(r.input_tokens), 0), COALESCE(SUM(r.output_tokens), 0),"
+        " COALESCE(SUM(r.cache_read_tokens), 0), COALESCE(SUM(r.cache_creation_tokens), 0),"
+        " COALESCE(SUM(r.ms), 0), COALESCE(SUM(r.error IS NOT NULL), 0) FROM requests r"
+        " JOIN jobs j ON j.id = r.job_id WHERE j.endpoint_id = ? AND r.t >= ? AND r.t <= ?",
+        (endpoint_id, since_t, now)).fetchone()
+    )
+    return {"requests": out, "totals": {
+        "count": sums[0], "input_tokens": sums[1], "output_tokens": sums[2],
+        "cache_read_tokens": sums[3], "cache_creation_tokens": sums[4], "ms": sums[5],
+        "errors": sums[6],
+    }}
 
 
 def _transcript(name: str | None) -> tuple[str | None, str | None]:
@@ -368,7 +467,9 @@ def job_detail(conn: sqlite3.Connection, job_id: str) -> dict[str, Any] | None:
             "SELECT p.path, r.* FROM requests r LEFT JOIN paths p ON p.id = r.path_id"
             " WHERE r.job_id = ? ORDER BY r.t, r.rowid", (job_id,))
     ]
-    d["tool_calls"] = [
+    # ruling E (review of 3.1): the list is tool_call_log; tool_calls stays the count the
+    # summary carries (its length is len(tool_call_log))
+    d["tool_call_log"] = [
         {"t": r["t"], "finished": r["finished"], "tool": r["tool"], "tool_use_id": r["tool_use_id"],
          "input": r["input"], "is_error": bool(r["is_error"]) if r["is_error"] is not None else None}
         for r in conn.execute(

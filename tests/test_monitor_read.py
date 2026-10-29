@@ -212,7 +212,9 @@ def _within_truncation(values, key, k):
 
 
 SERIES = ("prompt_tps", "gen_tps", "cache_hit", "slots_busy", "requests_running", "requests_waiting",
-          "kv_cache_usage", "gpu_util", "gpu_mem_used", "gpu_temp", "gpu_power")
+          "kv_cache_usage", "latency_ms", "state",
+          "gpu_util", "gpu_mem_used", "gpu_temp", "gpu_power",
+          "gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "disk_read_mb", "disk_write_mb")
 
 
 def test_ai1_history_over_an_hour_is_downsampled_to_at_most_600(world):
@@ -263,6 +265,35 @@ def test_history_downsampling_takes_every_kth_probe_ending_at_the_newest(world):
     # the rate over a sampled interval (eight raw intervals) is the real rate within truncation
     assert _within_truncation(h["prompt_tps"][1:], "prompt_tokens", 8)
     assert _within_truncation(h["gen_tps"][1:], "generated_tokens", 8)
+
+
+def test_ai1_history_serves_the_state_latency_and_every_hardware_series(world):
+    """Ruling B (review of 3.1): the history serves every tier its probes carry — latency_ms and
+    state (the probes' own strings, no gauges) beside all ten hardware series."""
+    conn, _ = world
+    h = read.endpoint_history(conn, endpoint_id(conn, "ai1"), NOW - HOUR, NOW)
+    assert len(h["latency_ms"]) == len(h["t"]) and set(h["latency_ms"]) == {seed.LATENCY_MS}
+    assert len(h["state"]) == len(h["t"]) and set(h["state"]) == {"idle", "busy"}
+    assert h["state"][-1] == "busy" and h["state"][0] == "idle"  # the busy tail reads through
+    w = seed._load(FX)
+    for key in ("gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "disk_read_mb", "disk_write_mb"):
+        assert key in h and len(h[key]) == len(h["t"]), key
+        # the seed sweeps only gpu_util: every other hardware figure is the ai2 pass-2 capture's,
+        # stored as REAL and read back exactly
+        assert set(h[key]) == {w.ai1_hardware[key]}, key
+    assert h["disk_write_mb"][0] == 0.00743732530467772  # pinned from the capture, not derived
+
+
+def test_dgx_history_has_latency_and_state_but_no_hardware_series(world):
+    """Ruling B over the seeded world: a vLLM endpoint has latency_ms and state (strings while
+    up, null while down) but not one hardware series."""
+    conn, _ = world
+    h = read.endpoint_history(conn, endpoint_id(conn, "dgx1-a"), NOW - HOUR, NOW)
+    assert len(h["latency_ms"]) == len(h["t"]) and set(h["latency_ms"]) == {seed.LATENCY_MS, None}
+    assert set(h["state"]) == {"busy", None}  # busy while up, null while down
+    for key in ("gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "disk_read_mb", "disk_write_mb",
+                "gpu_util", "gpu_mem_used", "gpu_temp", "gpu_power"):
+        assert key not in h, key  # null throughout: absent, not a column of nulls
 
 
 def test_ai1_history_events_are_its_two(world):
@@ -345,6 +376,123 @@ def test_downsampled_rates_are_null_when_a_reset_lies_inside_the_interval(world)
     assert _within_truncation(h["prompt_tps"][-2:-1], "prompt_tokens", 8)
 
 
+# --- fleet history -------------------------------------------------------------------------
+
+
+def test_fleet_history_one_grid_for_the_configured_endpoints_with_probes(world):
+    """Ruling C (review of 3.1): one shared grid over the union of the endpoints' kept probe
+    times; every configured endpoint with ANY probe in the range appears — llamacpp's hour is
+    all down probes, so it appears with all-null series."""
+    conn, reg = world
+    fh = read.fleet_history(conn, reg, NOW - HOUR, NOW)
+    assert len(fh["t"]) <= 600 and fh["t"] == sorted(set(fh["t"]))
+    assert fh["t"][-1] == NOW  # the newest kept point is always kept
+    assert set(fh["endpoints"]) == {"ai1", "dgx1-a", "llamacpp"}
+    for name, body in fh["endpoints"].items():
+        assert set(body) == {"gen_tps", "prompt_tps", "occupancy"}, name
+        for key, values in body.items():
+            assert len(values) == len(fh["t"]), (name, key)
+    # llamacpp: down probes only -> present with null series
+    assert set(fh["endpoints"]["llamacpp"]["gen_tps"]) == {None}
+    assert set(fh["endpoints"]["llamacpp"]["occupancy"]) == {None}
+    # ai1's grid values are its own history's at the shared times, and null where it has no
+    # kept probe within half a grid step (NOW-3600 is dgx1-a's, not ai1's)
+    h_ai1 = read.endpoint_history(conn, endpoint_id(conn, "ai1"), NOW - HOUR, NOW)
+    own = dict(zip(h_ai1["t"], h_ai1["gen_tps"]))
+    at = {t: v for t, v in zip(fh["t"], fh["endpoints"]["ai1"]["gen_tps"]) if t in own}
+    assert at == {t: own[t] for t in own}
+    assert fh["endpoints"]["ai1"]["gen_tps"][fh["t"].index(NOW - 3600.0)] is None
+    # every ai1 value is either its history's or null: never a borrowed dgx1-a figure
+    assert all(v is None or v in {own[t] for t in own if t in fh["t"]}
+               for v in fh["endpoints"]["ai1"]["gen_tps"])
+
+
+def test_fleet_history_occupancy_follows_the_backend(world):
+    """Ruling C: occupancy is slots_busy for slot backends and requests_running for vLLM; the
+    series is null after the endpoint drops (a down probe reports neither)."""
+    conn, reg = world
+    fh = read.fleet_history(conn, reg, NOW - HOUR, NOW)
+    ai1 = fh["endpoints"]["ai1"]
+    # strata: its slots; None at grid times ai1 was never probed (the hour starts on dgx1-a's)
+    assert set(ai1["occupancy"]) == {0, 1, None}
+    assert ai1["occupancy"][-1] == 1
+    assert ai1["occupancy"][fh["t"].index(NOW - 3590.0)] == 0
+    assert ai1["occupancy"][fh["t"].index(NOW - 3600.0)] is None
+    dgx = fh["endpoints"]["dgx1-a"]
+    assert set(dgx["occupancy"]) == {1, None}
+    # null after its drop at NOW-20min: every grid point past the drop has no figure
+    i_last_up = max(i for i, t in enumerate(fh["t"]) if t <= NOW - 20 * 60.0)
+    assert dgx["occupancy"][i_last_up] == 1  # the last up probe is at exactly NOW-20min
+    assert all(v is None for v in dgx["occupancy"][i_last_up + 1:])
+
+
+def test_fleet_history_grid_capped_and_endpoints_without_probes_left_out(world, tmp_path):
+    conn, reg = world
+    # a 24 h grid: every endpoint's probes, the union downsampled to at most 600 points
+    fh = read.fleet_history(conn, reg, NOW - 24 * HOUR, NOW)
+    assert len(fh["t"]) <= 600 and fh["t"][-1] == NOW
+    # configured but never probed: no probes in any range -> not in endpoints at all
+    from localagents.registry import Registry
+    cfg = write_config(tmp_path / "four.yaml",
+                       "  fresh:\n    base_url: http://10.0.0.99:8080\n    host: ai1\n")
+    fh2 = read.fleet_history(conn, Registry.load(cfg), NOW - HOUR, NOW)
+    assert "fresh" not in fh2["endpoints"]
+
+
+# --- requests by endpoint -----------------------------------------------------------------------
+
+
+def test_endpoint_requests_holds_both_seeded_jobs_newest_first(world):
+    """Ruling D (review of 3.1): the requests of jobs that ran on the endpoint in the range,
+    joined through jobs.endpoint_id, newest first, each rendered as the job detail renders a
+    request plus job_id/job_name, with a totals line summing the range."""
+    conn, _ = world
+    names = {r["name"] for r in conn.execute("SELECT name FROM jobs")}
+    out = read.endpoint_requests(conn, endpoint_id(conn, "ai1"), NOW - 24 * HOUR, NOW)
+    reqs, tot = out["requests"], out["totals"]
+    assert len(reqs) == 152  # the finished job's 112 plus the running job's truncated 40
+    assert [r["t"] for r in reqs] == sorted((r["t"] for r in reqs), reverse=True)
+    assert {r["job_name"] for r in reqs} == names
+    assert set(reqs[0]) == {"path", "t", "http_status", "ms", "gen_ms", "tokens", "stream",
+                            "context_exceeded", "error", "job_id", "job_name"}
+    assert set(reqs[0]["tokens"]) == {"input", "output", "cache_read", "cache_creation"}
+    all_reqs = seed._load(FX).job_requests
+    both = all_reqs + all_reqs[:40]  # the running job is the same export, truncated to 40
+    assert tot == {
+        "count": 152,
+        "input_tokens": sum(r["input_tokens"] or 0 for r in both),
+        "output_tokens": sum(r["output_tokens"] or 0 for r in both),
+        "cache_read_tokens": sum(r["cache_read_tokens"] or 0 for r in both),
+        "cache_creation_tokens": sum(r["cache_creation_tokens"] or 0 for r in both),
+        "ms": sum(r["ms"] or 0 for r in both),
+        "errors": sum(1 for r in both if r["error"] is not None),
+    }
+
+
+def test_endpoint_requests_endpoint_without_jobs_is_empty_with_zero_totals(world):
+    conn, _ = world
+    out = read.endpoint_requests(conn, endpoint_id(conn, "dgx1-a"), NOW - 24 * HOUR, NOW)
+    assert out["requests"] == []
+    assert set(out["totals"]) == {"count", "input_tokens", "output_tokens", "cache_read_tokens",
+                                  "cache_creation_tokens", "ms", "errors"}
+    assert all(v == 0 for v in out["totals"].values())
+
+
+def test_endpoint_requests_caps_the_list_but_not_the_totals(world):
+    conn, _ = world
+    out = read.endpoint_requests(conn, endpoint_id(conn, "ai1"), NOW - 24 * HOUR, NOW, limit=5)
+    assert len(out["requests"]) == 5
+    assert out["totals"]["count"] == 152  # the totals are the range's, not the capped page's
+
+
+def test_endpoint_requests_range_excludes_older_traffic(world):
+    conn, _ = world
+    out = read.endpoint_requests(conn, endpoint_id(conn, "ai1"), NOW - 2 * 60.0, NOW)
+    assert 0 < len(out["requests"]) < 152  # only the running job's last minutes
+    assert all(r["t"] >= NOW - 2 * 60.0 for r in out["requests"])
+    assert out["totals"]["count"] == len(out["requests"])
+
+
 # --- job detail ----------------------------------------------------------------------------
 
 
@@ -358,13 +506,15 @@ def test_job_detail_of_the_finished_job(world):
     d = read.job_detail(conn, row["id"])
     assert d["id"] == row["id"] and d["status"] == "succeeded"
     assert len(d["requests"]) == 112
-    assert len(d["tool_calls"]) == 142
-    assert d["tool_calls"] == sorted(d["tool_calls"], key=lambda tc: tc["t"])
+    # ruling E (review of 3.1): the list lives under tool_call_log; tool_calls stays the count
+    assert len(d["tool_call_log"]) == 142
+    assert d["tool_calls"] == 142 == len(d["tool_call_log"])
+    assert d["tool_call_log"] == sorted(d["tool_call_log"], key=lambda tc: tc["t"])
     assert set(d["requests"][0]) == {"path", "t", "http_status", "ms", "gen_ms", "tokens", "stream",
                                      "context_exceeded", "error"}
     assert set(d["requests"][0]["tokens"]) == {"input", "output", "cache_read", "cache_creation"}
     assert {r["path"] for r in d["requests"]} <= {r["path"] for r in seed._load(FX).job_requests}
-    assert set(d["tool_calls"][0]) == {"t", "finished", "tool", "tool_use_id", "input", "is_error"}
+    assert set(d["tool_call_log"][0]) == {"t", "finished", "tool", "tool_use_id", "input", "is_error"}
     # the seed made no job directory: the tail is null and the note says why
     assert d["transcript_tail"] is None
     assert isinstance(d["transcript_note"], str) and row["name"] in d["transcript_note"]

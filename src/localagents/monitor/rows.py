@@ -1,5 +1,5 @@
 """One probe result becomes rows: a ``probes`` row, plus ``probe_counters`` and ``probe_hardware``
-rows when the backend reported them (monitor spec §3 "Storage", schema version 3).
+rows when the backend reported them (monitor spec §3 "Storage", schema version 4).
 
 Built from what ``Registry.probe`` returns and the raw ``/metrics`` document
 (``registry.fetch_metrics_doc``). Nothing derived is stored: rates come from consecutive
@@ -19,7 +19,7 @@ from ..registry import STRATA_HARDWARE_KEYS, parse_metrics, parse_strata_extra, 
 PROBE_COLUMNS = (
     "t", "endpoint_id", "model_id", "up", "host", "error", "latency_ms", "context",
     "slots_total", "slots_busy", "requests_running", "requests_waiting", "kv_cache_usage",
-    "gen_tps", "since",
+    "gen_tps", "since", "state",
 )
 COUNTER_COLUMNS = (
     "prompt_tokens", "prompt_tokens_cached", "prompt_seconds", "generated_tokens", "generated_seconds",
@@ -101,6 +101,13 @@ def probe_to_rows(
         gen_tps=extra.get("gen_tps"),
         since=extra.get("since"),
     )
+    # ruling A (review of 3.1): probes.state is Strata's live.state verbatim; other backends
+    # "busy" when requests_running or slots_busy is positive else "idle". A down probe returned
+    # earlier, leaving it NULL.
+    st = extra.get("state")
+    if not isinstance(st, str):
+        st = "busy" if (row["requests_running"] or 0) > 0 or (row["slots_busy"] or 0) > 0 else "idle"
+    row["state"] = st
     counters = None
     if any(k in parsed for k in COUNTER_COLUMNS):
         counters = {k: (float(parsed[k]) if k in parsed else None) for k in COUNTER_COLUMNS}

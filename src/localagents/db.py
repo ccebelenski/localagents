@@ -5,7 +5,8 @@ library only, because ``localagents statusline`` will read this on every status-
 (story 1.5a) and must not pull in the server stack (see ``localagents/__init__.py``).
 
 The monitor's tables (``probes``, ``probe_counters``, ``probe_hardware``, ``endpoint_events``;
-schema version 3, ``docs/superpowers/specs/2026-10-29-monitor-design.md`` §3) are monitor-owned:
+schema version 3, extended by version 4 — ``probes.state`` and the ``probe_hardware`` disk
+columns — per ``docs/superpowers/specs/2026-10-29-monitor-design.md`` §3) are monitor-owned:
 only ``localagents.monitor`` writes or prunes them. Their migration lives here because the file
 is shared and versioned as one, so the MCP server creates them too (an idle table costs nothing),
 but the MCP server never imports the monitor package.
@@ -240,8 +241,20 @@ _V3 = [
     "CREATE INDEX endpoint_events_endpoint_t ON endpoint_events(endpoint_id, t)",
 ]
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 3.
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_statements(_V1), _statements(_V2), _statements(_V3)]
+# Version 4 (story 3.1a, ruling A of the 3.1 review): the live-state string and the two disk
+# counters, appended through one step. probes.state is Strata's live.state verbatim; other
+# backends get "busy" when requests_running or slots_busy is positive else "idle"; NULL when
+# the probe is down. Nothing backfills: pre-v4 probes read NULL, like any unread figure.
+_V4 = [
+    "ALTER TABLE probes ADD COLUMN state TEXT",
+    "ALTER TABLE probe_hardware ADD COLUMN disk_read_mb REAL",
+    "ALTER TABLE probe_hardware ADD COLUMN disk_write_mb REAL",
+]
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 4.
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
+    _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4),
+]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

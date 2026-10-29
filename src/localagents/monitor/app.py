@@ -138,6 +138,31 @@ def make_app(
         return JSONResponse(await in_thread(body))
 
     @guarded
+    async def endpoint_requests(request: Request) -> Response:
+        name = request.path_params["name"]
+        ep = reg.endpoints.get(name)
+        if ep is None:
+            return _error(404, "unknown_endpoint", f"no endpoint named {name!r} in the config")
+        try:
+            span = range_s(request, JOBS_DEFAULT_RANGE)  # the requests table spans the job horizons: 24 h
+        except ValueError as e:
+            return _error(400, "bad_range", str(e))
+        t = now()
+
+        def body(conn: sqlite3.Connection) -> dict:
+            return read.endpoint_requests(conn, read.endpoint_row_id(conn, ep), t - span, t)
+        return JSONResponse(await in_thread(body))
+
+    @guarded
+    async def fleet_history(request: Request) -> Response:
+        try:
+            span = range_s(request, DEFAULT_RANGE)
+        except ValueError as e:
+            return _error(400, "bad_range", str(e))
+        t = now()
+        return JSONResponse(await in_thread(read.fleet_history, reg, t - span, t))
+
+    @guarded
     async def jobs(request: Request) -> Response:
         try:
             span = range_s(request, JOBS_DEFAULT_RANGE)
@@ -185,6 +210,8 @@ def make_app(
         Route("/", index),
         Route("/api/snapshot", snapshot),
         Route("/api/endpoints/{name}/history", endpoint_history),
+        Route("/api/endpoints/{name}/requests", endpoint_requests),
+        Route("/api/fleet/history", fleet_history),
         Route("/api/jobs", jobs),
         Route("/api/jobs/{id}", job),
         Route("/events", events),

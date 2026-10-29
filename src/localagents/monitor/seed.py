@@ -323,7 +323,8 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
             _probe_row(t, ai1, model, up=True, host="up", latency_ms=LATENCY_MS,
                        context=AI1_CONTEXT, slots_total=1, slots_busy=1 if busy else 0,
                        requests_running=1 if busy else 0, requests_waiting=0,
-                       gen_tps=world.ai1_gen_tps, since=since),
+                       gen_tps=world.ai1_gen_tps, since=since,
+                       state="busy" if busy else "idle"),  # ruling A: state by its own slots
             _interpolate(world.ai1_counters_1, world.ai1_counters_2, i / (AI1_PROBES - 1)),
             _ai1_hardware(world.ai1_hardware, i),
         )
@@ -339,7 +340,7 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
             conn,
             _probe_row(t, dgx, None, up=True, host="up", latency_ms=LATENCY_MS,
                        context=world.dgx_context, requests_running=1, requests_waiting=0,
-                       kv_cache_usage=0.17),
+                       kv_cache_usage=0.17, state="busy"),
             _interpolate(world.dgx_counters_1, world.dgx_counters_2, k / up_n),
             None,
         )
@@ -358,7 +359,7 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
         conn,
         _probe_row(lcpp_up_t, lcpp, None, up=True, host="up", latency_ms=LATENCY_MS,
                    context=LCPP_CONTEXT, slots_total=2, slots_busy=0,
-                   requests_running=0, requests_waiting=0),
+                   requests_running=0, requests_waiting=0, state="idle"),
         world.lcpp_counters_1,
         None,
     )

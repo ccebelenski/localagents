@@ -141,11 +141,14 @@ def test_parse_strata_extra_reads_since_speed_hardware_and_state_from_ai2_pass_2
     assert x["since"] == 1793229893.2645304  # totals.since
     assert x["gen_tps"] == 0.0  # hardware.tok_s is 0.0 (a number); live.tok_s is null
     assert x["requests_running"] == 0  # live.state "idle"
+    assert x["state"] == "idle"  # ruling A: live.state verbatim
     assert x["hardware"] == {
         "gpu_util": 99.0, "gpu_mem_used": 51178242048.0, "gpu_mem_total": 51539607552.0,
         "gpu_temp": 61.0, "gpu_power": 247.846, "gpu_power_limit": 260.0,
         "gpu_pcie_rx_mb": 193.357421875, "gpu_pcie_tx_mb": 63.8955078125,
         "cpu": 95.8, "ram_used": 98043719680.0, "ram_total": 338017230848.0,
+        # ruling A: the two disk columns, read from the capture's hardware section
+        "disk_read_mb": 0.0, "disk_write_mb": 0.00743732530467772,
     }
     assert all(type(v) is float for v in x["hardware"].values())
 
@@ -176,8 +179,10 @@ def test_parse_strata_extra_running_when_live_state_is_not_idle():
     busy = copy.deepcopy(doc("strata/ai2_metrics_2.json"))
     busy["live"]["state"] = "decode"
     assert parse_strata_extra(busy)["requests_running"] == 1
+    assert parse_strata_extra(busy)["state"] == "decode"  # ruling A: verbatim, not normalised
     del busy["live"]["state"]
     assert parse_strata_extra(busy)["requests_running"] is None
+    assert parse_strata_extra(busy)["state"] is None
     busy["live"]["tok_s"] = 93.0
     del busy["hardware"]["tok_s"]
     assert parse_strata_extra(busy)["gen_tps"] == 93.0
@@ -194,4 +199,5 @@ def test_parse_strata_extra_hardware_missing_keys_are_none_and_bools_are_not_num
 
 def test_parse_strata_extra_on_garbage_is_all_none():
     for bad in ({}, [], None, {"totals": "x", "live": 3, "hardware": []}):
-        assert parse_strata_extra(bad) == {"since": None, "gen_tps": None, "hardware": None, "requests_running": None}
+        assert parse_strata_extra(bad) == {"since": None, "gen_tps": None, "hardware": None,
+                                           "requests_running": None, "state": None}
