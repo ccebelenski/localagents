@@ -8,8 +8,8 @@ narrative out of the live plan.
 ## What shipped
 
 Version 0.2.0 on main, unpushed (operator rule: always hold, review together). Range
-0100fb6..<final>, 30+ files, ~4100 insertions. Suite 81 → 184+ tests. Nine stories (1.1–1.7
-plus two review folds, 1.8 in flight), three coordinator fold commits, one live smoke.
+0100fb6..<final>, 30+ files, ~4100 insertions. Suite 81 → 221 tests. Eight stories (1.1–1.8), three reviewer-built folds, three coordinator fold commits, two live
+smokes (after 1.5a and after the last fold; both clean).
 
 | story | built by | turns | wall | reviewed by | verdict |
 |---|---|---|---|---|---|
@@ -23,8 +23,9 @@ plus two review folds, 1.8 in flight), three coordinator fold commits, one live 
 | 1.6 docs, version | Qwen q4/ai2 | 50 | 14 min | (docs; every sentence cited to file:line) | caught the Bash-input discrepancy independently |
 | 1.7 review fold | Qwen iq3/ai1 | 94 | 6.4 min | Opus-high (52 tool uses, 11 min) | 2 NEW defects from the to_thread change, 2 pre-existing → reviewer folded 13 items |
 | Opus fold of 1.5b (47602e0) | Opus-high | 72 tool uses, 7.6 min | | DeepSeek (50 turns, 22 min) | no blocking defect, 10 items → 1.8 |
-| Opus fold of 1.7 (6005f94) | Opus-high | 180 tool uses, 27.5 min | | DeepSeek (pending) | pending |
-| 1.8 review fold | Qwen iq3/ai1 (pending) | | | DeepSeek (pending) | pending |
+| Opus fold of 1.7 (6005f94) | Opus-high | 180 tool uses, 27.5 min | | DeepSeek (41 turns, 17 min) | 1 DEFECT the builder had called unreachable (a cancel in the finally strands the row), 7 more |
+| 1.8 review fold | Qwen iq3/ai1 | 99 | 8 min | Opus-high (43 tool uses, 6.8 min) | 2 defects (vLLM-as-other arithmetic; partner-counter KeyError in the finally), declined one brief item with an EXPLAIN |
+| Opus fold of 1.8 + the 1.7-fold review (422deae) | Opus-high | 133 tool uses, 18 min, 16 items | | DeepSeek (pending at write time) | pending |
 
 Every local job succeeded; no caps, no DeepSeek trouble (the deployment the operator flagged as
 untested held four reviews of 48–50 turns each).
@@ -35,17 +36,20 @@ untested held four reviews of 48–50 turns each).
   key; normalise for consistency not space; `servers` is not the YAML and the YAML mutates;
   `path` is a lookup; timestamps question; "models reviewing other models". Eight design
   corrections, every one load-bearing.
-- **Cross-model reviews (7, all construct-it):** 2 real defects in the schema (Qwen), 1 low
+- **Cross-model reviews (10, all construct-it):** 2 real defects in the schema (Qwen), 1 low
   defect + 1 measured design risk in 1.2 (DeepSeek), 0 in 1.1/1.3/1.4/1.5a, 2 low in 1.5b
-  (Opus), 2 new + 2 pre-existing in 1.7 (Opus), 0 blocking in the 1.5b fold (DeepSeek).
-  Every review ran its probes rather than reading; 0 false defects.
+  (Opus), 2 new + 2 pre-existing in 1.7 (Opus), 0 blocking in the 1.5b fold (DeepSeek), 1
+  defect in the 1.7 fold that its builder had called unreachable (DeepSeek, via two concurrent
+  cancel_job calls), 2 defects in 1.8 (Opus: a backend regression and a KeyError in the
+  finally). Every review ran its probes rather than reading; 0 false defects. The builder of a
+  fix was wrong about reachability twice; the next model's probe settled it both times.
 - **Builders correcting briefs (8 of 8 lanes disclosed something):** the circular import
   1.2 would hit (1.1); the import-time real-database open (1.2); two write transactions per
   request (1.3); a test-order conflict in the brief (1.5a); the NULL-heartbeat hole in the
   brief's own SQL (1.5a); partial metrics disagreement (1.5b); the Bash-input vs commit-message
   discrepancy (1.6); conftest pinning only one env var (1.7).
-- **Reviewers fixing their own findings (2):** Opus folded 8 and 13 items, each test-first,
-  each item red before green, 147→159 and 167→184 tests.
+- **Reviewers fixing their own findings (3):** Opus folded 8, 13 and 16 items, each test-first,
+  each item red before green, 147→159, 167→184 and 191→221 tests.
 - **Coordinator reads:** the lazy open, the conftest generalisation, the `IS NULL` sweep
   case, `synchronous=NORMAL`, the composed both-sides-added conflict in jobs.py.
 - **The suites:** 1.1's own race tests found the WAL-switch "database is locked" on a fresh
@@ -72,24 +76,26 @@ untested held four reviews of 48–50 turns each).
 ## Ruling proposals (done repeatedly, with results)
 
 - **(a) The reviewer fixes its own verified findings, test-first, and a third model reviews
-  the fix.** Two rounds (8 and 13 items), every item red-then-green, zero skips, and the fix
-  reviews found no blocking defect. Cheapest precise builder on the record.
+  the fix.** Three rounds (8, 13 and 16 items), every item red-then-green, zero skips. The
+  review of a fix is not optional: the 13-item fold carried one real defect its builder had
+  reasoned away, found by the next model's probe.
 - **(b) A construct-it review brief holds at most four probes, one door each, "write the
-  report after each probe".** Seven reviews, 16–50 turns, 3.5–25 min, every probe reached,
+  report after each probe".** Ten reviews, 16–50 turns, 3.5–25 min, every probe reached,
   every finding with a reproduced scenario and a file:line. (Confirms the existing ≤3/≤5
   rules with tonight's numbers on Qwen, DeepSeek and Opus.)
 - **(c) A brief passed by path ("cat <file>, follow it") with the must-not-be-lost rules
   repeated inline.** Eight builds, eight followed; two lanes read the brief and corrected it.
-- **(d) A story that moves work off the event loop gets a cancel-mid-operation construct-it
-  probe before merge.** Once only (1.7's to_thread change introduced two defects the Opus
-  review found by cancelling mid-git): recorded as an EVENT, not lettered; propose a ruling
-  if it recurs.
+- **(d) A change to cancellation or thread hand-off gets a cancel-mid-operation and a
+  cancel-twice probe before merge.** Twice tonight with results: 1.7's to_thread change
+  (two defects found by cancelling mid-git) and its fold (one defect found by cancelling in
+  the finally). Proposed as a ruling.
 
 ## What cost
 
 - The real database was polluted twice by lanes' own isolation checks (a "poisoning" run that
   exported the real path) and deleted twice; the conftest now pins all three variables.
-- The 1.7 to_thread change was right and still introduced two defects; the review caught them.
+- The 1.7 to_thread change was right and still introduced two defects; its fold introduced a
+  third; three review rounds closed them. Cancellation is where this code is hardest.
 - DeepSeek reviews take 17–25 min each (vs 4–14 for Qwen); every one was worth the wait.
 - Opus lanes: ~1.0M subagent tokens over five dispatches (quota); local lanes: zero quota.
 
