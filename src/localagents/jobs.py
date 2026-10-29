@@ -111,15 +111,20 @@ class Job:
         the table, so there is nothing else to notify."""
         self._row_update()
 
-    def _row_update(self) -> None:
-        if self._conn is None:
-            return  # a Job built outside JobStore.new has no row
+    def _metric_values(self) -> list[Any]:
+        """The seven metrics column values, in _METRIC_COLUMNS order: a key metrics_delta omitted
+        is None, and a reset counter nulls the whole set (spec). The row and summary() both use
+        this, so in-process and row-derived summaries agree."""
         if self.metrics is None or any(
             isinstance(self.metrics.get(k), (int, float)) and self.metrics[k] < 0 for k in self._METRIC_COUNTERS
         ):
-            met: list[Any] = [None] * len(self._METRIC_COLUMNS)  # spec: a reset counter nulls the whole set
-        else:
-            met = [self.metrics.get(k) for k in self._METRIC_COLUMNS]
+            return [None] * len(self._METRIC_COLUMNS)
+        return [self.metrics.get(k) for k in self._METRIC_COLUMNS]
+
+    def _row_update(self) -> None:
+        if self._conn is None:
+            return  # a Job built outside JobStore.new has no row
+        met = self._metric_values()
         try:
             with db.immediate(self._conn):
                 self._conn.execute(
@@ -211,6 +216,8 @@ class Job:
         }
         d["elapsed_s"] = round((self.finished_at or time.time()) - (self.started_at or self.created_at), 1)
         d["task"] = self.task if len(self.task) < 300 else self.task[:300] + "…"
+        met = self._metric_values()  # the row's rule, as derive.summary_from_row reads it back
+        d["metrics"] = None if all(v is None for v in met) else dict(zip(self._METRIC_COLUMNS, met))
         if not include_result:
             d.pop("result", None)
         # the duplicated values come from the rows (spec "Derivations"); a Job built outside
@@ -410,10 +417,11 @@ class JobStore:
 
     def get(self, jid: str) -> Job:
         if jid not in self.jobs:
-            # names (newest first), not uuids: they are what a caller can actually match against
-            # list_jobs output or a job directory (DeepSeek review of 1.2)
-            newest = [j.name for j in sorted(self.jobs.values(), key=lambda j: j.created_at)][-10:][::-1]
-            raise KeyError(f"unknown job '{jid}'. Known (newest first): {newest}")
+            # "name (id)", newest first: the name is what a caller recognises from list_jobs or a
+            # job directory (DeepSeek review of 1.2), the id is what every tool takes (review of 1.5b)
+            newest = sorted(self.jobs.values(), key=lambda j: j.created_at)[-10:][::-1]
+            known = ", ".join(f"{j.name} ({j.id})" for j in newest)
+            raise KeyError(f"unknown job '{jid}'. Known (newest first): {known or 'none'}")
         return self.jobs[jid]
 
     async def wait_many(

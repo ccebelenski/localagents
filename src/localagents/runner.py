@@ -170,6 +170,11 @@ def _apply_message(job: Job, m: Any) -> None:
                 job.log_text(f"[tool] {b.name} {short[:400]}")
                 job.last_activity = f"{b.name} {short[:120]}"
                 input_text = short[:120]
+                command = b.input.get("command") if isinstance(b.input, dict) else None
+                if isinstance(command, str):
+                    # spec: a string `command` (Bash) stores the command itself, not the JSON
+                    # around it, so the progress line reads "Bash: uv run pytest -q"
+                    input_text = command[:120]
                 if b.name in EDIT_TOOLS:
                     # spec: edit tools store just the path (NULL when absent); the count of
                     # calls and the files touched are read back from the rows (story 1.5b).
@@ -221,6 +226,7 @@ async def run_job(
         if job.isolation == "worktree":
             job.worktree = make_worktree(job)
             job.run_cwd = job.worktree["path"]
+            job.changed()  # another server's job_status sees the tree before the first message
             job.log_text(
                 f"[worktree] {job.worktree['root']} branch={job.worktree['branch']}"
                 + (" (recreated at base; the previous tree had been removed)" if job.worktree.get("recreated") else "")

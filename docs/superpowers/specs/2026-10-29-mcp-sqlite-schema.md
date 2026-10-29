@@ -86,6 +86,10 @@ tool_calls                          -- one row per ToolUseBlock the runner saw
   input       TEXT                  -- edit tools (Edit, Write, MultiEdit, NotebookEdit): the
                                     --   file_path/notebook_path, NULL when absent; other
                                     --   tools: first 120 chars of the command/input
+                                    --   (corrected after the 1.5b review: an input with a
+                                    --   string `command` key, i.e. Bash, stores the first 120
+                                    --   chars of the command; any other tool the first 120
+                                    --   chars of its input JSON)
   is_error    INTEGER (0/1)         -- from the matching ToolResultBlock
 
 indexes

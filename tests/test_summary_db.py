@@ -261,3 +261,212 @@ def test_job_log_works_for_any_job_and_tails_the_tool_calls(monkeypatch, tmp_pat
     assert calls[1]["t"] == 1003.0 and calls[1]["is_error"] == 0
     assert "tool_calls" not in asyncio.run(server.job_log(foreign.id))  # tools=0: the key is absent
     assert asyncio.run(server.job_log("no-such-job"))["error"] == "unknown_job"
+
+
+# --- fold of the cross-model review of 1.5b ---
+
+
+def _row(store, job):
+    return store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job.id,)).fetchone()
+
+
+@pytest.mark.parametrize("before, after", [
+    # vLLM: prefix_queries present but unchanged, so metrics_delta omits cache_hit_ratio
+    ({"generated_tokens": 100, "prompt_tokens": 1000, "prefix_hits": 0, "prefix_queries": 50},
+     {"generated_tokens": 300, "prompt_tokens": 1500, "prefix_hits": 0, "prefix_queries": 50}),
+    # llama.cpp without the seconds counters: prompt_tps/generate_tps omitted
+    ({"generated_tokens": 1, "prompt_tokens": 1}, {"generated_tokens": 5, "prompt_tokens": 9}),
+    # a counter went backwards (backend restarted): the spec nulls the whole set
+    ({"generated_tokens": 500, "prompt_tokens": 10}, {"generated_tokens": 5, "prompt_tokens": 20}),
+])
+def test_summary_metrics_follow_the_row_rule(monkeypatch, tmp_path, before, after):
+    """Job.summary()["metrics"] is built by _row_update's rule: all seven keys, missing optional
+    keys as None, and None outright when any counter is negative — so summary() and
+    summary_from_row agree (review of 1.5b, findings 1 and 2)."""
+    from localagents.registry import metrics_delta
+
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    job.status, job.started_at, job.finished_at = "succeeded", 1000.0, 1060.0
+    job.metrics = metrics_delta(before, after)
+    job.changed()
+    s = job.summary()
+    assert s == derive.summary_from_row(store.conn, _row(store, job))
+    if job.metrics["generated_tokens"] < 0:
+        assert s["metrics"] is None
+    else:
+        assert set(s["metrics"]) == set(derive._METRICS_COLUMNS)
+
+
+def test_summary_metrics_none_when_unset(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    job.changed()
+    assert job.summary()["metrics"] is None
+    assert jobs.Job(id="x", name="n", task="t", model="m", endpoint="e", base_url="b", cwd="c",
+                    run_cwd="c", isolation="none").summary()["metrics"] is None
+
+
+def test_unknown_job_hint_pairs_names_with_ids(monkeypatch, tmp_path):
+    """The tools take ids; the hint shows ``name (id)`` for the ten newest jobs, newest first,
+    so a caller can copy the id it needs (review of 1.5b, finding 3)."""
+    store = _store(monkeypatch, tmp_path)
+    made = [_new(store, created_at=1000.0 + i) for i in range(12)]
+    with pytest.raises(KeyError) as e:
+        store.get("nosuch")
+    msg = e.value.args[0]
+    newest = made[-1]
+    assert f"{newest.name} ({newest.id})" in msg
+    assert msg.index(made[-1].id) < msg.index(made[-2].id)  # newest first
+    assert made[1].id not in msg and made[0].id not in msg  # ten newest only
+
+
+def test_run_job_writes_the_worktree_before_the_first_message(monkeypatch, tmp_path):
+    """run_job flushes job.worktree/run_cwd to the row as soon as the tree exists, so another
+    server's job_status sees it before the session's first SDK message (review of 1.5b,
+    finding 5). The query stub reads the row at the moment the session would start."""
+    from localagents import runner
+    from localagents.registry import Defaults, Endpoint, Registry, Resolution
+
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store, isolation="worktree")
+    wt = {"repo": "/repo", "path": "/wt/sub", "root": "/wt", "branch": f"local-agent/{job.name}", "base": "abc"}
+    seen = {}
+
+    async def no_metrics(*a, **kw):
+        return None
+
+    def fake_query(prompt, options):
+        row = _row(store, job)
+        seen["worktree"] = row["worktree"]
+        seen["run_cwd"] = derive.summary_from_row(store.conn, row)["run_cwd"]
+
+        async def nothing():
+            return
+            yield  # an async generator that yields no message
+
+        return nothing()
+
+    monkeypatch.setattr(runner, "make_worktree", lambda j: dict(wt))
+    monkeypatch.setattr(runner, "finish_worktree", lambda j: None)
+    monkeypatch.setattr(runner, "fetch_metrics", no_metrics)
+    monkeypatch.setattr(runner, "query", fake_query)
+    ep = Endpoint(name="llamacpp", base_url="http://x:8080", backend="llama.cpp")
+    reg = Registry(path=None, endpoints={"llamacpp": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
+    asyncio.run(runner.run_job(
+        job, reg, Resolution(ep, "served-model"), permission_mode=None, max_turns=None, allowed_tools=None,
+        system_prompt_append=None, resume_session=None, timeout_s=5, shim_base_url="http://127.0.0.1:1/job/x",
+    ))
+    assert seen["worktree"] is not None and json.loads(seen["worktree"]) == wt
+    assert seen["run_cwd"] == "/wt/sub"
+
+
+def test_list_jobs_limit_keeps_the_newest(monkeypatch, tmp_path):
+    """list_jobs returns the ``limit`` newest jobs (default 50; 0 = all), still newest last; the
+    history never shrinks, so all=True must not grow without bound (review of 1.5b)."""
+    other = jobs.JobStore()
+    made = [_new(other, created_at=1000.0 + i) for i in range(60)]
+    out = asyncio.run(server.list_jobs(all=True))
+    assert [j["id"] for j in out] == [j.id for j in made[-50:]]
+    assert [j["id"] for j in asyncio.run(server.list_jobs(all=True, limit=0))] == [j.id for j in made]
+    assert [j["id"] for j in asyncio.run(server.list_jobs(all=True, limit=3))] == [j.id for j in made[-3:]]
+    assert all("result" not in j for j in out)
+    # this server's own list honours the same parameter
+    mine = [_new(server.store, created_at=2000.0 + i) for i in range(4)]
+    assert [j["id"] for j in asyncio.run(server.list_jobs(limit=2))] == [j.id for j in mine[-2:]]
+    assert len(asyncio.run(server.list_jobs(limit=0))) == 4
+
+
+def _insert_row(**cols):
+    """A jobs row written straight to the table: the schema has no NOT NULL, so another writer
+    (or an older one) can leave any column NULL."""
+    from localagents import db
+
+    conn = server.store.conn
+    jid = db.new_uuid()
+    base = dict(id=jid, name=db.job_name(time.time(), jid), mcp_server_id=server.store.server_id,
+                task="x", cwd="/c", isolation="none", status="succeeded", created_at=time.time())
+    base.update(cols)
+    with db.immediate(conn):
+        conn.execute(f"INSERT INTO jobs ({', '.join(base)}) VALUES ({', '.join('?' * len(base))})", tuple(base.values()))
+    return jid
+
+
+def test_summary_from_row_reads_nullable_columns_defensively(monkeypatch, tmp_path):
+    """name NULL -> log_dir None; created_at (and started_at) NULL -> elapsed_s 0; a worktree
+    JSON without a path -> run_cwd is cwd; and one bad row never breaks list_jobs(all=True)
+    (review of 1.5b)."""
+    no_name = _insert_row(name=None)
+    no_created = _insert_row(created_at=None, finished_at=None)
+    no_path = _insert_row(worktree=json.dumps({"repo": "/r"}), isolation="worktree")
+    garbled = _insert_row(worktree="{not json")
+
+    s = asyncio.run(server.job_status(no_name))
+    assert s["name"] is None and s["log_dir"] is None
+    assert asyncio.run(server.job_status(no_created))["elapsed_s"] == 0
+    s = asyncio.run(server.job_status(no_path))
+    assert s["run_cwd"] == "/c" and s["worktree"] == {"repo": "/r"}
+
+    out = asyncio.run(server.list_jobs(all=True, limit=0))
+    by_id = {j["id"]: j for j in out}
+    assert {no_name, no_created, no_path, garbled} <= set(by_id)
+    assert "row_error" in by_id[garbled] and by_id[garbled]["status"] == "succeeded"
+    assert all("row_error" not in by_id[j] for j in (no_name, no_created, no_path))
+
+
+def test_job_log_says_when_the_directory_is_gone(monkeypatch, tmp_path):
+    """A pruned (or never written) job directory is said, not just an empty transcript
+    (review of 1.5b): foreign and in-process jobs alike; a present directory has no note."""
+    import shutil
+
+    other = jobs.JobStore()
+    foreign = _new(other)
+    foreign.record_tool_call(1000.0, "Bash", "u1", "ls")
+    present = asyncio.run(server.job_log(foreign.id))
+    assert "note" not in present
+    shutil.rmtree(foreign.log_dir)
+    out = asyncio.run(server.job_log(foreign.id, tools=1))
+    assert out["transcript"] == ""
+    assert out["note"] == f"transcript pruned or never written ({foreign.log_dir})"
+    assert [c["tool"] for c in out["tool_calls"]] == ["Bash"]  # the rows outlive the directory
+
+    mine = _new(server.store)
+    shutil.rmtree(mine.log_dir)
+    out = asyncio.run(server.job_log(mine.id))
+    assert out["transcript"] == "" and out["note"] == f"transcript pruned or never written ({mine.log_dir})"
+
+    no_name = _insert_row(name=None)
+    out = asyncio.run(server.job_log(no_name))
+    assert out["log_dir"] is None and out["transcript"] == "" and "note" in out
+
+
+def test_unknown_job_answers_are_uniform_and_unquoted(monkeypatch, tmp_path):
+    """Every tool answers an id that exists nowhere with unknown_job, resume_job included, and
+    the message is the KeyError's text, not its repr in quotes (review of 1.5b, nits)."""
+    run = asyncio.run
+    answers = {
+        "job_status": run(server.job_status("nosuch")),
+        "job_log": run(server.job_log("nosuch")),
+        "wait_job": run(server.wait_job("nosuch", timeout_s=0.01)),
+        "wait_jobs": run(server.wait_jobs(["nosuch"], timeout_s=0.01)),
+        "cancel_job": run(server.cancel_job("nosuch")),
+        "run_agent": run(server.run_agent(task="x", resume_job="nosuch")),
+    }
+    for tool, out in answers.items():
+        assert out["error"] == "unknown_job", (tool, out)
+        assert out["message"].startswith("unknown job 'nosuch'"), (tool, out["message"])
+
+
+def test_wait_jobs_running_elapsed_does_not_build_a_summary(monkeypatch, tmp_path):
+    """The running list's elapsed_s comes from the timestamps: building a whole summary (eight
+    database reads) for one number is not needed (review of 1.5b, nit)."""
+    job = _new(server.store)
+    job.status, job.started_at = "running", time.time() - 30
+
+    def no_summary(self, include_result=True):
+        raise AssertionError("summary() built for a running job")
+
+    monkeypatch.setattr(jobs.Job, "summary", no_summary)
+    out = asyncio.run(server.wait_jobs([job.id], timeout_s=0.01))
+    assert out["outcome"] == "timeout"
+    assert out["running"][0]["id"] == job.id and 29.0 <= out["running"][0]["elapsed_s"] <= 40.0

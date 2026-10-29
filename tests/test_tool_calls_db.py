@@ -90,7 +90,8 @@ def _row_vals(store, job):
 
 def test_tool_use_rows(monkeypatch, tmp_path):
     """One row per ToolUseBlock in t order; input per the spec: edit tools store the path
-    (NULL when absent), every other tool the first 120 chars of the input JSON."""
+    (NULL when absent), a tool with a string ``command`` (Bash) the first 120 chars of the
+    command, every other tool the first 120 chars of the input JSON."""
     store = _store(monkeypatch, tmp_path)
     job = _new(store)
     _feed(store, monkeypatch, job, [1000.0, 1001.0, 1002.0, 1003.0])
@@ -100,8 +101,8 @@ def test_tool_use_rows(monkeypatch, tmp_path):
     assert [r["tool_use_id"] for r in rows] == ["tu-read", "tu-bash", "tu-edit", "tu-write"]
     # Read is not an edit tool: input is its JSON (shorter than 120 chars, so the whole thing)
     assert rows[0]["input"] == json.dumps({"file_path": "/a.py"})[:120]
-    # Bash: exactly the first 120 chars of its input JSON
-    assert rows[1]["input"] == json.dumps({"command": "uv run pytest -q " + "x" * 200})[:120]
+    # Bash: exactly the first 120 chars of its command (review of 1.5b: not of the input JSON)
+    assert rows[1]["input"] == ("uv run pytest -q " + "x" * 200)[:120]
     assert len(rows[1]["input"]) == 120
     # edit tools: the path, or NULL when the input has none
     assert rows[2]["input"] == "/a.py"

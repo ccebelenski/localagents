@@ -132,6 +132,9 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         if row["endpoint_id"] is not None else None
     )
     worktree = json.loads(row["worktree"]) if row["worktree"] is not None else None
+    # the schema has no NOT NULL: name, created_at and worktree.path are read defensively
+    wt_path = worktree.get("path") if isinstance(worktree, dict) else None
+    start = row["started_at"] or row["created_at"]
     d: dict = {
         "id": job_id,
         "name": row["name"],
@@ -140,7 +143,7 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "endpoint": ep["name"] if ep is not None else None,
         "base_url": ep["base_url"] if ep is not None else None,
         "cwd": row["cwd"],
-        "run_cwd": worktree["path"] if worktree is not None else row["cwd"],
+        "run_cwd": wt_path or row["cwd"],
         "isolation": row["isolation"],
         "status": row["status"],
         "created_at": row["created_at"],
@@ -152,7 +155,7 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "num_turns": row["num_turns"],
         "worktree": worktree,
         "last_activity": row["last_activity"],
-        "log_dir": str(state_dir() / "jobs" / row["name"]),
+        "log_dir": str(state_dir() / "jobs" / row["name"]) if row["name"] else None,
         "dump": bool(row["dump"]),
         "log_events": bool(row["log_events"]),
         "context": row["context"],
@@ -167,7 +170,7 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "ctx_tokens": ctx_tokens(conn, job_id),
         "gen_tps": gen_tps(conn, job_id),
     }
-    d["elapsed_s"] = round((row["finished_at"] or time.time()) - (row["started_at"] or row["created_at"]), 1)
+    d["elapsed_s"] = round((row["finished_at"] or time.time()) - start, 1) if start is not None else 0
     if not include_result:
         d.pop("result")
     return d

@@ -287,7 +287,7 @@ async def run_agent(
             foreign = _foreign_job_error(resume_job)
             if foreign is not None:
                 return foreign
-            return {"error": "bad_argument", "message": str(e)}
+            return {"error": "unknown_job", "message": e.args[0]}
         if not prev.session_id:
             return {"error": "bad_argument", "message": f"job {resume_job} has no session to resume"}
         resume_session = prev.session_id
@@ -359,7 +359,7 @@ async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = Non
     try:
         job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx))
     except KeyError as e:
-        return _foreign_job_error(job_id) or {"error": "unknown_job", "message": str(e)}
+        return _foreign_job_error(job_id) or {"error": "unknown_job", "message": e.args[0]}
     return job.summary()
 
 
@@ -387,7 +387,7 @@ async def wait_jobs(
     try:
         jobs = await store.wait_many(job_ids, timeout_s, mode=mode, progress=_progress_reporter_many(ctx))
     except KeyError as e:
-        return {"error": "unknown_job", "message": str(e)}
+        return {"error": "unknown_job", "message": e.args[0]}
     done = [j for j in jobs if j.done]
     running = [j for j in jobs if not j.done]
     if not running:
@@ -400,10 +400,22 @@ async def wait_jobs(
         "outcome": outcome,
         "done": [j.summary() for j in done],
         "running": [
-            {"id": j.id, "status": j.status, "elapsed_s": j.summary()["elapsed_s"], "num_turns": j.num_turns}
+            # elapsed from the timestamps (summary()'s formula), not a whole summary's db reads
+            {"id": j.id, "status": j.status,
+             "elapsed_s": round(time.time() - (j.started_at or j.created_at), 1), "num_turns": j.num_turns}
             for j in running
         ],
     }
+
+
+def _row_summary(row: Any, include_result: bool = True) -> dict[str, Any]:
+    """derive.summary_from_row, but a row it cannot read (another writer's garbled worktree
+    JSON, say) answers with what the row does say plus ``row_error``, never an exception: one
+    bad row must not break list_jobs(all=True) for every caller."""
+    try:
+        return derive.summary_from_row(store.conn, row, include_result=include_result)
+    except Exception as e:  # noqa: BLE001
+        return {"id": row["id"], "name": row["name"], "status": row["status"], "row_error": f"{type(e).__name__}: {e}"}
 
 
 @mcp.tool()
@@ -417,27 +429,29 @@ async def job_status(job_id: str) -> dict[str, Any]:
     except KeyError as e:
         row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if row is None:
-            return {"error": "unknown_job", "message": str(e)}
-        return derive.summary_from_row(store.conn, row)
+            return {"error": "unknown_job", "message": e.args[0]}
+        return _row_summary(row)
 
 
 @mcp.tool()
-async def list_jobs(include_finished: bool = True, all: bool = False) -> list[dict[str, Any]]:
+async def list_jobs(include_finished: bool = True, all: bool = False, limit: int = 50) -> list[dict[str, Any]]:
     """List jobs (newest last). This server session's; with all=True, every localagents
-    server's jobs read from the shared database."""
+    server's jobs read from the shared database.
+
+    limit: the newest N jobs only (default 50; 0 = no limit). The database keeps every job
+    ever run, so all=True without a limit grows with the whole history."""
     if not all:
-        return [
-            j.summary(include_result=False)
-            for j in store.jobs.values()
-            if include_finished or not j.done
-        ]
+        mine = [j for j in sorted(store.jobs.values(), key=lambda j: j.created_at) if include_finished or not j.done]
+        return [j.summary(include_result=False) for j in (mine[-limit:] if limit > 0 else mine)]
+    # the newest `limit` rows, returned oldest first (newest last, as the in-process list)
     rows = store.conn.execute(
-        "SELECT * FROM jobs"
+        "SELECT * FROM (SELECT *, rowid AS _rowid FROM jobs"
         + ("" if include_finished
            else " WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'timeout', 'lost')")
-        + " ORDER BY created_at, rowid",
+        + " ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, _rowid",
+        (limit if limit > 0 else -1,),  # SQLite: a negative LIMIT is no limit
     ).fetchall()
-    return [derive.summary_from_row(store.conn, r, include_result=False) for r in rows]
+    return [_row_summary(r, include_result=False) for r in rows]
 
 
 @mcp.tool()
@@ -452,13 +466,18 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
     except KeyError as e:
         row = store.conn.execute("SELECT status, name FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if row is None:
-            return {"error": "unknown_job", "message": str(e)}
+            return {"error": "unknown_job", "message": e.args[0]}
         # another server's job: its log directory follows from its name (spec derivation)
-        status_, log_dir = row["status"], str(state_dir() / "jobs" / row["name"])
-        p = Path(log_dir) / "transcript.txt"
-        lines = p.read_text(errors="replace").splitlines() if p.exists() else []
+        status_ = row["status"]
+        log_dir = str(state_dir() / "jobs" / row["name"]) if row["name"] else None
+        p = Path(log_dir) / "transcript.txt" if log_dir else None
+        lines = p.read_text(errors="replace").splitlines() if p is not None and p.exists() else []
         transcript = "\n".join(lines[-tail_lines:])
     out: dict[str, Any] = {"job_id": job_id, "status": status_, "log_dir": log_dir, "transcript": transcript}
+    if not log_dir or not Path(log_dir).is_dir():
+        # retention removed it (or it never existed): say so rather than an unexplained ""
+        out["transcript"] = ""
+        out["note"] = f"transcript pruned or never written ({log_dir})"
     if tools > 0:
         rows = store.conn.execute(
             "SELECT t, finished, tool, input, is_error FROM tool_calls WHERE job_id = ?"
@@ -475,7 +494,7 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
     try:
         job = store.get(job_id)
     except KeyError as e:
-        return _foreign_job_error(job_id) or {"error": "unknown_job", "message": str(e)}
+        return _foreign_job_error(job_id) or {"error": "unknown_job", "message": e.args[0]}
     if job.done:
         return job.summary()
     if job._task:
