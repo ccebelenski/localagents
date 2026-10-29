@@ -254,7 +254,7 @@ the duplicates go), then docs.
 
 ## Epic 3: monitor web
 
-- ☑ **3.1 App and routes.** (Opus-high, 79 tool uses, 514 tests; §5a is the JSON contract with
+- ☑ **3.1 App and routes.** (Opus-high agent worktree-agent-a3b046dcb938bfd95, 79 tool uses, 514 tests; §5a is the JSON contract with
   a spec-vs-code key test; SSE verified over real HTTP in a subprocess; uvicorn's signal
   capture overridden so SIGTERM exits 0. Corrected the brief: Starlette's TestClient buffers a
   stream, so the SSE tests drive the ASGI app directly. Decisions: overview rates from the
@@ -293,7 +293,7 @@ the duplicates go), then docs.
   the probe), so `node_state`'s `fallback` argument has a source; §3's rule becomes code.
   Lane: Qwen, after the 3.1 review.
 
-- ☑ **3.2 Overview page.** (Opus-high, 133 tool uses, 574 tests; browser smoke in a headless
+- ☑ **3.2 Overview page.** (Opus-high agent worktree-agent-aaf4a8a6c26f1fd77, 133 tool uses, 574 tests; browser smoke in a headless
   Chromium driven over the DevTools protocol with node, which the brief wrongly said was absent:
   every state class, one job row, three canvases, phone width clean, error banner, reconnect
   backoff measured. Corrected the brief: the snapshot's `state` is live/down/dormant, the probe
@@ -310,10 +310,22 @@ the duplicates go), then docs.
   endpoint, §5 says per live endpoint; confirmed `port_free`'s TIME-WAIT refusal for ~60 s;
   notes: a node-down card repeats each endpoint's sentence under the card note; the field gate
   cannot see bracket reads. Folded in 3.2a.)
-- ☐ **3.2a Fold of the 3.2 build notes and the page reviews.** Split: 3.2a-server ☑ (Qwen/ai1
+- ☑ **3.2a Fold of the 3.2 build notes and the page reviews.** Split: 3.2a-server ☑ (Qwen/ai1
   job 20261029-153853-bcc9fa21, 123 turns, 594 tests: port_free with SO_REUSEADDR, static
   no-cache, the snapshot fields, relativised tool text, the seed's up-probe models corrected;
-  review folded into the 3.3a review) and 3.2a-page ☑ (Opus-high, 110 tool uses, 600 tests: rulings A-G built with browser evidence per row; a cold load of a malformed hash used to kill the whole page, fixed; one field walker with a named allow-list of variable-key reads). Both halves reviewed with 3.3a. Page items from the reviews: fleet charts for live
+  review folded into the 3.3a review) and 3.2a-page ☑ (Opus-high agent worktree-agent-ac5542fc396e8ec29, 110 tool uses, 600 tests: rulings A-G built with browser evidence per row; a cold load of a malformed hash used to kill the whole page, fixed; one field walker with a named allow-list of variable-key reads). Both halves, 3.3a and 3.2b reviewed together by DeepSeek/dgx1-a job 20261029-160736-e72f7f88,
+  122 turns, 32 min: every server rule by construction over a mutated copy of the seed, the
+  fan-out under SIGTERM with two open streams, every page rule in the browser with hand-edited
+  snapshots through render(), the gates and the record (146 emitted keys named, no dead spec
+  key). Defects: `_Fanout.close()` has no caller, so a stop on a loop that outlives shutdown
+  leaves the drain task pending (masked in the shipped command by asyncio.run); job.js's totals
+  still count `error = ''` (the handoff 3.2b did not pick up). Record: the Opus build lanes'
+  agent ids were missing from these bullets, added. Observations: `/` carries no Cache-Control;
+  `port_free` answers on the first address of a multi-address host; the overview's history
+  fetch is N+1 per refresh. Folded in 3.2c.
+- ☐ **3.2c Fold of the combined review**: `_Fanout.close()` runs when `stop` is set; job.js
+  counts `error != ''` in its totals; `/` answers `Cache-Control: no-cache`; `port_free` is
+  true only when every resolved address binds. Lane: Qwen (ai2). Page items from the reviews: fleet charts for live
   endpoints only; a node-down card does not repeat each endpoint's sentence; the field gate
   sees bracket reads with a literal key. `port_free` with SO_REUSEADDR; snapshot gains
   `db_path`, `endpoint.probe_state` and `dropped_job_id`; the page uses them; the header's
@@ -325,7 +337,7 @@ the duplicates go), then docs.
   last-known `model`/`context` of a down endpoint; the endpoint.js field-name test walks `state.`
   chains as the shared gate now does. Lane: with the 3.2 review's findings.
 
-- ☑ **3.3 Endpoint detail.** (Opus-high, 88 tool uses, 584 tests; one file `endpoint.js` through
+- ☑ **3.3 Endpoint detail.** (Opus-high agent worktree-agent-a330c647b7d550fb9, 88 tool uses, 584 tests; one file `endpoint.js` through
   the pages hook, plus a fix to the hook itself: teardown now runs on every route change;
   browser smoke over all three states with zero console errors. Corrected the brief: no
   snapshot callback exists in app.js, so the page observes the nodes the overview rewrites;
