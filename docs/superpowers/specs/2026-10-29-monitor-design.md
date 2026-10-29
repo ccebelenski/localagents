@@ -165,6 +165,215 @@ touched; a tool-call timeline strip across the job's duration (one mark per call
 tool, errors red, context fill drawn over it) and a breakdown by tool; transcript tail with a
 link to the directory.
 
+## 5a. Routes and JSON shapes (story 3.1)
+
+The contract between the server (`localagents/monitor/app.py`, `read.py`, `ranges.py`) and the
+page (stories 3.2-3.4). Field names are exactly what the code emits; a change to either side
+changes this section in the same commit. Times are epoch seconds (REAL); every number not
+stated otherwise may be `null` when its source did not report it. Values in the examples are
+illustrative.
+
+**Routes.**
+
+| route | answer |
+|---|---|
+| `GET /` | the page: `monitor/static/index.html` from the package |
+| `GET /static/{path}` | a file of the package's `monitor/static/` directory (`app.js`, vendored uPlot); 404 otherwise |
+| `GET /api/snapshot` | the snapshot object (below): what `/events` pushes, on demand |
+| `GET /api/endpoints/{name}/history?range=<r>` | the history object of the endpoint named `{name}` in models.yaml; `range` defaults to `1h` |
+| `GET /api/jobs?range=<r>` | an array of job summaries, jobs **created** within the range, newest first, at most 500; `range` defaults to `24h` |
+| `GET /api/jobs/{id}` | the job detail object of the job with that `id` |
+| `GET /events` | the server-sent events stream (below) |
+
+**Errors** are `{"error": "<code>", "message": "<sentence>"}`:
+
+| code | status | when |
+|---|---|---|
+| `bad_range` | 400 | `range` is malformed or outside 15m..7d; the message names the text |
+| `unknown_endpoint` | 404 | `{name}` is not an endpoint in models.yaml (checked before the range) |
+| `unknown_job` | 404 | no `jobs` row has that id |
+| `database_error` | 503 | any `sqlite3.Error` or `db.SchemaError` in the route; message `"<ExceptionName>: <text>"` |
+
+Every route's database work runs on a worker thread (`asyncio.to_thread`) with its own
+connection from the factory, closed when the call ends; a connection is never shared across
+threads.
+
+**Range grammar.** A whole number and one unit letter, nothing else: `<n>m`, `<n>h`, `<n>d`
+(`15m`, `90m`, `6h`, `2d`); no spaces, sign, fraction, upper case or other unit (`1w`, `30s`,
+`"1h "` are malformed). From 15 minutes to 7 days, both included (7 days is the probe
+retention). The page offers `15m`, `1h`, `6h`, `24h`, `7d` (`ranges.RANGES`). A range `r`
+covers `[now - r, now]`, both ends included.
+
+**Snapshot** (`GET /api/snapshot`, and the data of every `snapshot` event):
+
+```
+{
+  "now": 1793288065.0,              the server's clock when it was built
+  "window_s": 86400.0,              the attention window: monitor: attention_hours × 3600
+  "hosts": [ host, ... ],           models.yaml order: endpoints grouped by `host`, first-seen order
+  "jobs": [ running_job, ... ],     every queued or running job, oldest first
+  "events": [ event, ... ]          the newest 20 endpoint_events, newest first
+}
+
+host = {
+  "name": "ai1",                    the endpoints' `host` (config default "local")
+  "state": "up" | "down" | "unknown",   state.node_state over each endpoint's LAST probe
+                                    (endpoints with no probe are left out; no port-22 fallback is
+                                    stored, so "unknown" stays unknown)
+  "dormant": false,                 state.node_dormant: every endpoint dormant (collapse the card)
+  "endpoints": [ endpoint, ... ]    config order
+}
+
+endpoint = {
+  "name": "ai1",
+  "backend": "strata",              as configured
+  "base_url": "http://10.0.0.50:8080",   no trailing slash
+  "state": "live" | "down" | "dormant",  state.endpoint_state (§4)
+  "last_seen": 1793288065.0,        t of the newest up probe, or null (never seen up)
+  "model": "qwen3.8-flash-next-iq3_s",   the last probe's served id, or null
+  "context": 131072,                the last probe's per-slot window
+  "slots": {"total": 1, "busy": 1} | null,          null when the last probe has no slot count
+  "requests": {"running": 1, "waiting": 0} | null,  null when it has neither figure
+  "kv_cache_usage": 0.17,           vLLM, 0..1
+  "latency_ms": 12,
+  "since": 1793028865.0,            the server's start epoch when known (Strata)
+  "error": "...",                   the last probe's failure sentence when it is down, else null
+  "dropped_job": "20261029-...",    state "down" only: the `name` of the job that was running on
+                                    it at its first down probe after last_seen
+                                    (jobs.running_job_at); else null
+  "rates": {                        rates.rates between the LAST TWO probes
+    "prompt_tps": 1.2, "gen_tps": 0.6, "cached_tps": 134.8, "spec_acceptance": 0.822,
+    "reason": null                  null when computed; else why the four are null: "no probes",
+                                    "one probe: no interval yet", "the last probe has no counters",
+                                    "the probe before the last has no counters" (a gap), or the
+                                    reset sentence from rates.reset_reason. A single value
+                                    may still be null with reason null when the counters do not
+                                    carry its series (spec_acceptance with no drafts)
+  },
+  "gen_tps_live": 9.8,              the last probe's own speed figure (Strata)
+  "hardware": {gpu_util, gpu_mem_used, gpu_mem_total, gpu_temp, gpu_power, gpu_power_limit,
+               gpu_pcie_rx_mb, gpu_pcie_tx_mb, cpu, ram_used, ram_total} | null,
+                                    the LAST probe's probe_hardware row; null when that probe has
+                                    none (a down probe never has one, so a stale reading is never
+                                    shown as current)
+  "jobs_running": 1                 queued/running jobs whose endpoint row is this endpoint's
+}
+
+running_job = {
+  "id", "name", "model", "endpoint", "status" ("queued" | "running"),
+  "started_at",                     started_at, or created_at when it has not started
+  "finished_at",                    null while running
+  "elapsed_s",                      now - started_at, 1 decimal
+  "num_turns", "tool_calls" (count), "errors" (tool calls with is_error),
+  "last_tool",                      derive.last_tool: "<tool>: <input>" or the tool name, or null
+  "last_activity",                  the raw jobs.last_activity text
+  "ctx_tokens", "context", "ctx_pct" (round(100 × ctx_tokens / context), or null),
+  "gen_tps",                        derive.gen_tps rounded to 1 decimal, or null
+  "compactions",
+  "files",                          count of distinct files touched (derive.files_touched)
+  "owner",                          the job's MCP server's owner pid (the Claude Code session)
+  "server_live"                     true when that server is alive: not stopped, a heartbeat
+                                    within 60 s, its pid alive (the status line's rule); false
+                                    means the job's record says running but nothing is running
+                                    it (spec §6 "lost")
+}
+
+event = {"t", "endpoint" (its name), "kind" ("up" | "down" | "restarted"), "detail"}
+```
+
+An endpoint in the database but not in models.yaml is ignored: it has no host card and its
+events are left out of `events`. A configured endpoint with no `endpoints` row yet (never
+probed, never ran a job) is listed, dormant, every figure null; the read creates no row (the
+collector's first tick does). Running jobs are listed whatever endpoint they ran on.
+
+**Endpoint history** (`GET /api/endpoints/{name}/history`):
+
+```
+{
+  "t": [ ... ],                     the probes' times in the range, oldest first
+  "step": 2,                        k: every k-th probe was kept (1 = every probe)
+  "prompt_tps": [ ... ],            prompt tokens processed per second       ← tier 1
+  "gen_tps": [ ... ],               tokens generated per second               ← tier 1
+  "cache_hit": [ ... ],             cached / (processed + cached) over the interval, 0..1;
+                                    null when the interval had no prompt tokens
+  "slots_busy": [ ... ],                                                      ← tier 2
+  "requests_running": [ ... ], "requests_waiting": [ ... ],
+  "kv_cache_usage": [ ... ],
+  "gpu_util": [ ... ], "gpu_mem_used": [ ... ], "gpu_temp": [ ... ], "gpu_power": [ ... ]   ← tier 3
+  "events": [ {"t", "kind", "detail"}, ... ],     the endpoint's events in the range, oldest first
+  "jobs": [ {"name", "id", "status", "started_at", "finished_at", "model"}, ... ]
+                                    jobs on the endpoint that overlap the range (started — or
+                                    created, if never started — by `now`, not finished before
+                                    the range starts), oldest first
+}
+```
+
+- Every series present has exactly `len(t)` values, aligned with `t`; a probe that did not
+  report a figure (every down probe) is a `null` at its place.
+- **A series is absent, not empty, when its source holds no value in the range** (§5: "a tile
+  with no source is absent"): a gauge or hardware series when every probe in the range has it
+  null; `prompt_tps` when no probe in the range has `prompt_tokens`, `gen_tps` when none has
+  `generated_tokens`, `cache_hit` when none has `prompt_tokens_cached` or `prefix_hits`. So a
+  vLLM endpoint has no `gpu_*` or `slots_busy` keys, and Strata no `kv_cache_usage`.
+- **Downsampling.** With `n` probes in the range and `n > max_points` (600), `k = ceil(n /
+  600)` and every k-th probe is kept, counted back from the newest, which is always kept;
+  otherwise `k = 1`. Gauges and hardware are the kept probe's own values.
+- **Rates.** A point's rates are `rates.rates` from the previous kept probe to this one (for
+  the first point: the probe `k` before it, or the newest probe before the range when that is
+  the one), so a downsampled rate is the average over its interval, not a 5 s sample. The
+  rates are null when any raw interval between consecutive probes inside it is a **gap**
+  (either probe has no counters row: a down probe, or a backend without `/metrics`) or a
+  **reset** (`rates.reset_reason`: a counter went backwards or `since` changed; §6: no
+  cliff). The first probe an endpoint ever wrote has no rate.
+- An endpoint configured but never seen answers `{"t": [], "step": 1, "events": [], "jobs": []}`.
+
+**Job summaries** (`GET /api/jobs`): each is `derive.summary_from_row(include_result=False)`,
+the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoint`,
+`base_url`, `cwd`, `run_cwd`, `isolation`, `status`, `created_at`, `started_at`,
+`finished_at`, `session_id`, `error`, `num_turns`, `compactions`, `worktree`,
+`last_activity`, `log_dir`, `dump`, `log_events`, `context`, `metrics` (the seven-column
+`/metrics` delta, or null), `usage` (`input_tokens`, `output_tokens`,
+`cache_read_input_tokens`, `cache_creation_input_tokens`), `tool_calls` (count),
+`tool_counts` (`{tool: {"calls", "errors"}}`), `errors`, `last_tool`, `files_touched` (list),
+`ctx_tokens`, `gen_tps`, `elapsed_s` (to the wall clock while unfinished). No `result`.
+
+**Job detail** (`GET /api/jobs/{id}`): the same dict **with** `result`, and:
+
+```
+  "requests": [ {"path", "t", "http_status", "ms", "gen_ms",
+                 "tokens": {"input", "output", "cache_read", "cache_creation"},
+                 "stream" (bool | null), "context_exceeded", "error"}, ... ]     time order
+  "tool_calls": [ {"t", "finished", "tool", "tool_use_id", "input",
+                   "is_error" (bool; null while the result has not arrived)}, ... ]   time order
+  "transcript_tail": "...",         the last 80 lines of <state_dir>/jobs/<name>/transcript.txt,
+                                    joined by "\n"; null when there is none
+  "transcript_note": null           null when there is a tail; else the sentence saying why not
+                                    (the job directory is gone — pruned after the retention days,
+                                    or never created on this machine — or it holds no transcript.txt)
+```
+
+In the job detail `tool_calls` is the LIST of calls (its length is the count); in a job
+summary it is the count. Same key, two types: read it by route.
+
+**Server-sent events** (`GET /events`; `Content-Type: text/event-stream`, `Cache-Control:
+no-cache`):
+
+- on connect: one `event: snapshot` whose `data:` is the snapshot object as one JSON line;
+- then one `event: snapshot` each time the collector ticks (`collect.run(on_tick=...)` sets
+  the app's tick after each endpoint's tick that wrote its rows). Ticks that arrive while a
+  stream is building or sending a snapshot wake it once more: one next snapshot carries them all;
+- `event: error` with data `{"error": "database_error", "message": ...}` in place of a
+  snapshot the database could not answer; the stream goes on;
+- a `: keepalive` comment line after 15 s with nothing sent;
+- the stream ends when the server stops (SIGINT/SIGTERM).
+
+**The command.** `localagents monitor [--port N] [--host 127.0.0.1] [--db PATH] [--config PATH]
+[--no-collect]`: the port is `--port`, else `monitor: port`, else 8765; the database is
+`--db`, else `monitor: db`, else `db.db_path()` (`LOCALAGENTS_DB`, else the state dir). The
+collector (`collect.run`, with `monitor: retention_days` pruning and `attention_hours` as the
+window) and uvicorn run on one loop; SIGINT or SIGTERM sets one stop event that ends both.
+`--no-collect` serves the file as it is (no probes, no pruning): the seeded demo.
+
 ## 6. Failure handling
 
 - A failed probe is a row with its failure sentence, never a gap.

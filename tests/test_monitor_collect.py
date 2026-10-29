@@ -440,3 +440,39 @@ def test_run_passes_the_attention_window_to_the_cadence(monkeypatch, conn):
     stop = asyncio.Event()
     asyncio.run(collect.run(reg, conn, [ep], stop, now=lambda: 1000.0, window_s=1))
     assert 60 in sleeps and 5 not in sleeps
+
+
+def test_on_tick_is_called_after_each_written_tick_and_its_error_is_one_line(monkeypatch, conn, capsys):
+    """Story 3.1: ``run(on_tick=...)`` calls the listener after each endpoint tick that wrote
+    its rows (the web app's ``tick`` event); a failed tick does not call it, and a raising
+    listener is one stderr line, never the loop's end."""
+    up = _real_probe(monkeypatch, STRATA_AI2, "strata")
+    reg = FakeRegistry({"a": [RuntimeError("database is locked"), up, up]})
+    _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json"), _strata("strata/ai2_metrics_2.json")])
+    monkeypatch.setattr(state, "interval_s", lambda *a, **k: 0)
+    _parking_sleeps(monkeypatch)
+    ep = Endpoint(name="a", base_url=URL, backend="strata")
+    calls = []
+
+    def on_tick():
+        calls.append(_count(conn, "probes"))  # the rows are written before the listener runs
+        if len(calls) == 1:
+            raise ValueError("listener broke")
+
+    async def main():
+        stop = asyncio.Event()
+        orig = reg.probe
+
+        async def probe(e):
+            try:
+                return await orig(e)
+            finally:
+                if reg.calls["a"] >= 3:
+                    stop.set()
+        reg.probe = probe
+        await asyncio.wait_for(collect.run(reg, conn, [ep], stop, on_tick=on_tick), 10)
+    asyncio.run(main())
+    assert calls == [1, 2]  # the failed first attempt called nothing
+    err = capsys.readouterr().err
+    assert "a: on_tick failed: ValueError: listener broke" in err
+    assert _count(conn, "probes") == 2

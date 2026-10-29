@@ -67,6 +67,12 @@ def main() -> None:
             print(f"{table}: {n}")
         print(path)
         return
+    if sys.argv[1:2] == ["monitor"]:
+        # lazy, as the seed: the monitor package (starlette, uvicorn) loads only for this command
+        from .monitor.serve import main as monitor
+
+        monitor(sys.argv[2:])
+        return
     from .server import main as serve
 
     serve()

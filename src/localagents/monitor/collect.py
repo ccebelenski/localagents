@@ -131,6 +131,7 @@ async def run(
     retention_days: float = retention.RETENTION_DAYS,
     retention_every_s: float = 3600,
     window_s: float = state.ATTENTION_WINDOW_S,
+    on_tick: Callable[[], None] | None = None,
 ) -> None:
     """Probe every endpoint until ``stop`` is set: one task per endpoint, all concurrent. Each
     task ticks, then sleeps ``state.interval_s`` (5 s within ``window_s`` of its newest up
@@ -140,7 +141,9 @@ async def run(
     between ticks it was the cadence computation) — is one stderr line and a dormant back-off;
     the loop outlives it (ruling 2026-10-29). One more task prunes the monitor's tables at
     start and then every ``retention_every_s`` (``retention.prune_probes``,
-    ``retention_days``)."""
+    ``retention_days``). ``on_tick``, when given, is called after each endpoint's tick that
+    wrote its rows (story 3.1: the web app's ``tick`` event, so the page's stream pushes a
+    snapshot); an exception from it is one stderr line, never the loop's end."""
 
     async def prune() -> None:
         while not stop.is_set():
@@ -159,6 +162,11 @@ async def run(
                 if eid is None:
                     eid = endpoint_id(conn, ep)
                 await tick(reg, conn, ep, eid, now(), kind)
+                if on_tick is not None:
+                    try:
+                        on_tick()
+                    except Exception as e:  # noqa: BLE001 — a listener never stops collection
+                        _log(f"{ep.name}: on_tick failed: {type(e).__name__}: {e}")
                 # inside the tick's guard (ruling 2026-10-29, review 2.3): nothing between
                 # ticks may raise — a TypeError here once escaped the task and gather's
                 # return_exceptions=False turned it into the process exiting. The cost of

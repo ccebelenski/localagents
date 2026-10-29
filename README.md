@@ -344,6 +344,49 @@ needs a model actually running on that endpoint (it runs a real job there, Bash 
 and it writes real rows — into `LOCALAGENTS_DB` when set, otherwise this same shared
 database; point it at a throwaway file to rehearse.
 
+## Monitor
+
+`localagents monitor` is a web dashboard for the endpoints in `models.yaml` and the jobs
+localagents runs on them: one process that probes every endpoint (every 5 s; a dormant one
+every 60 s) into the shared database and serves a page that redraws from a server-sent
+events stream after each probe. (The page itself is a placeholder until the overview story
+lands; the routes and their JSON below are complete.)
+
+```bash
+localagents monitor                 # http://127.0.0.1:8765/
+localagents monitor --port 9000 --config ~/.config/localagents/models.yaml
+```
+
+Flags: `--port N` (default: the `monitor:` section's `port`, else **8765**), `--host`
+(default `127.0.0.1` — the page has no authentication, so bind another address only on a
+network you trust), `--db PATH` (default: `monitor: db`, else `LOCALAGENTS_DB`, else the state
+directory's `localagents.db`), `--config PATH`, and `--no-collect` (serve the database as it
+is, without probing or pruning). It prints one line at start — the URL, the database path and
+the endpoint count — and stops on Ctrl-C or SIGTERM.
+
+An optional top-level `monitor:` section in `models.yaml` holds its settings; the MCP server
+ignores it, and an unknown key or a bad value in it is an error naming the key:
+
+```yaml
+monitor:
+  port: 8765
+  attention_hours: 24     # an endpoint seen up within this window and down now is an alert; older is dormant
+  retention_days: 7       # probe rows older than this are deleted (job rows never are)
+  # db: /path/to/localagents.db
+```
+
+To see every display state without a fleet, serve a seeded database (above) without
+collecting:
+
+```bash
+LOCALAGENTS_DB=/tmp/x localagents seed && LOCALAGENTS_DB=/tmp/x localagents monitor --no-collect
+```
+
+The routes and their JSON (`/api/snapshot`, `/api/endpoints/<name>/history?range=1h`,
+`/api/jobs?range=24h`, `/api/jobs/<id>`, `/events`) are specified in
+[`docs/superpowers/specs/2026-10-29-monitor-design.md`](docs/superpowers/specs/2026-10-29-monitor-design.md)
+§5a. Ranges run from `15m` to `7d`.
+
 ## Config: `models.yaml`
 
 Start from `models.example.yaml`. It's re-read on every call, so edits take effect
