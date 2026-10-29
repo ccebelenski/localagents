@@ -14,7 +14,7 @@ import sqlite3
 from collections import deque
 from typing import Any
 
-from .. import db, derive
+from .. import db, derive, status
 from ..registry import Endpoint, backend_kind
 from . import jobs as monitor_jobs
 from . import rates, state
@@ -24,6 +24,9 @@ EVENTS_LIMIT = 20  # the overview's newest endpoint events
 TRANSCRIPT_LINES = 80  # job detail's transcript tail (job_log's default)
 JOBS_LIMIT = 500  # /api/jobs: the newest jobs created in the range, at most this many
 SERVER_LIVE_S = 60.0  # a server's heartbeat is fresh this long (status.collect's rule)
+# story 3.2a row 5: the snapshot's running-job rows carry the status bar's display form of the
+# tool text, on the page's wider row than the status line's 60 (status.MAX_ACTIVITY)
+SNAPSHOT_ACTIVITY_LIMIT = 120
 # The node fallback's answer is fresh this long (story 3.1b): the collector asks port 22 at
 # most once a minute, so a row up to two ask-intervals old still says what the box is doing.
 FALLBACK_FRESH_S = 120.0
@@ -108,6 +111,10 @@ def _running_jobs(conn: sqlite3.Connection, now: float) -> list[tuple[int | None
         start = j["started_at"] or j["created_at"]
         ctx = derive.ctx_tokens(conn, jid)
         tps = derive.gen_tps(conn, jid)
+        # row 5 (3.2 review): the row carries the DISPLAY form the status bar shows — one line,
+        # relative to the job's root (1.11b's rule; status.py is stdlib-only, so the monitor may
+        # import it). The raw text stays on the job detail and the /api/jobs summaries.
+        root = status._job_root(j)
         out.append((j["endpoint_id"], {
             "id": jid,
             "name": j["name"],
@@ -120,8 +127,8 @@ def _running_jobs(conn: sqlite3.Connection, now: float) -> list[tuple[int | None
             "num_turns": j["num_turns"],
             "tool_calls": derive.tool_call_count(conn, jid),
             "errors": derive.error_count(conn, jid),
-            "last_tool": derive.last_tool(conn, jid),
-            "last_activity": j["last_activity"],
+            "last_tool": status.display_activity(derive.last_tool(conn, jid), root, limit=SNAPSHOT_ACTIVITY_LIMIT),
+            "last_activity": status.display_activity(j["last_activity"], root, limit=SNAPSHOT_ACTIVITY_LIMIT),
             "ctx_tokens": ctx,
             "context": j["context"],
             "ctx_pct": round(100 * ctx / j["context"]) if ctx and j["context"] else None,
@@ -145,25 +152,37 @@ def _endpoint(conn: sqlite3.Connection, ep: Endpoint, eid: int | None, now: floa
                           (eid,)).fetchall() if eid is not None else [])
     last = last2[0] if last2 else None
     prev = last2[1] if len(last2) > 1 else None
-    last_up = (conn.execute("SELECT MAX(t) FROM probes WHERE endpoint_id = ? AND up = 1", (eid,)).fetchone()[0]
-               if eid is not None else None)
+    # story 3.2a row 3: not MAX(t) — the newest UP probe whole, so a down or dormant endpoint
+    # can name what it last served (3.3's gap: the card showed nothing after the last probe's
+    # gauges went null)
+    last_up_row = (conn.execute(_PROBE_SELECT + " WHERE p.endpoint_id = ? AND p.up = 1"
+                                " ORDER BY p.t DESC, p.id DESC LIMIT 1", (eid,)).fetchone()
+                   if eid is not None else None)
+    last_up = last_up_row["t"] if last_up_row is not None else None
     st = state.endpoint_state(last, last_up, now, window_s)
     dropped = None
+    dropped_id = None
     if st == "down":
         first_down = conn.execute(
             "SELECT MIN(t) FROM probes WHERE endpoint_id = ? AND up = 0 AND t > ?", (eid, last_up)).fetchone()[0]
         if first_down is not None:
             job = monitor_jobs.running_job_at(conn, eid, first_down)
-            dropped = job["name"] if job is not None else None
+            if job is not None:  # row 3: dropped_job needed its id to click through to
+                dropped, dropped_id = job["name"], job["id"]
+    known = last_up_row is not None and st in ("down", "dormant")
     up = bool(last["up"]) if last is not None else False
     entry = {
         "name": ep.name,
         "backend": ep.backend,
         "base_url": ep.url,
+        "host": ep.host,  # row 3: which card this endpoint sits under, for a page that re-sorts
         "state": st,
         "last_seen": last_up,
         "model": last["model_served"] if last is not None else None,
         "context": last["context"] if last is not None else None,
+        "probe_state": last["state"] if last is not None else None,  # row 3: idle/busy, null on a down probe
+        "last_model": last_up_row["model_served"] if known else None,
+        "last_context": last_up_row["context"] if known else None,
         "slots": ({"total": last["slots_total"], "busy": last["slots_busy"]}
                   if last is not None and last["slots_total"] is not None else None),
         "requests": ({"running": last["requests_running"], "waiting": last["requests_waiting"]}
@@ -174,6 +193,7 @@ def _endpoint(conn: sqlite3.Connection, ep: Endpoint, eid: int | None, now: floa
         "since": last["since"] if last is not None else None,
         "error": last["error"] if last is not None and not up else None,
         "dropped_job": dropped,
+        "dropped_job_id": dropped_id,
         "rates": _pair_rates(prev, last, backend_kind(ep.backend)),
         "gen_tps_live": last["gen_tps"] if last is not None else None,
         "hardware": ({k: last[k] for k in HARDWARE_COLUMNS}
@@ -194,12 +214,15 @@ def _fallback(conn: sqlite3.Connection, host: str, now: float) -> tuple[str | No
     return row["answer"], row["t"]
 
 
-def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float) -> dict[str, Any]:
+def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
+             db_path: str | None = None) -> dict[str, Any]:
     """The SSE snapshot (spec §5 "Overview"; shape §5a): hosts in models.yaml order (endpoints
     grouped by ``host``, config order within), each with its node state (resolved from the
     newest fresh port-22 fallback row, story 3.1b), its fallback fields and endpoints; the
-    running jobs; the newest ``EVENTS_LIMIT`` endpoint events. An endpoint in the database but
-    not in the config is ignored (its events too)."""
+    running jobs; the newest ``EVENTS_LIMIT`` endpoint events. ``db_path`` (story 3.2a row 3) is
+    the database file this server opened, passed in by the route (serve knows it: ``--db``, the
+    ``monitor:`` section's db, else ``db.db_path()``); null when the app was built without one.
+    An endpoint in the database but not in the config is ignored (its events too)."""
     running = _running_jobs(conn, now)
     groups: dict[str, list[Endpoint]] = {}
     for ep in reg.endpoints.values():
@@ -239,7 +262,8 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float) ->
                 (*configured_ids, EVENTS_LIMIT),
             )
         ]
-    return {"now": now, "window_s": window_s, "hosts": hosts, "jobs": [j for _, j in running], "events": events}
+    return {"now": now, "window_s": window_s, "db_path": db_path, "hosts": hosts,
+            "jobs": [j for _, j in running], "events": events}
 
 
 # --- endpoint history --------------------------------------------------------------------------

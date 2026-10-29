@@ -47,7 +47,10 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
 - **Process:** `localagents monitor [--port 8765]`, its own Starlette app under uvicorn (already
   dependencies). Endpoints and `host` grouping come from `models.yaml` through the existing
   registry code. An optional top-level `monitor:` section (port, attention window hours,
-  database path) is ignored by the MCP server, which ignores unknown top-level keys.
+  database path) is ignored by the MCP server, which ignores unknown top-level keys. The port
+  is checked before uvicorn starts (`port_free`), binding with `SO_REUSEADDR` like uvicorn does:
+  a TIME-WAIT socket from a just-closed session does not refuse a restart, but an occupied port
+  still exits 2 with one sentence (story 3.1 ruling F, the 3.2 review).
 - **Collection loop:** every 5 s probe each endpoint with `Registry.probe` and `fetch_metrics`;
   a dormant endpoint every 60 s. Each probe writes one `probes` row: time, endpoint, up, host
   state, served ids, context, slot/queue numbers, raw counters, failure sentence. Strata's
@@ -200,7 +203,7 @@ illustrative.
 | route | answer |
 |---|---|
 | `GET /` | the page: `monitor/static/index.html` from the package |
-| `GET /static/{path}` | a file of the package's `monitor/static/` directory (`app.js`, vendored uPlot); 404 otherwise |
+| `GET /static/{path}` | a file of the package's `monitor/static/` directory (`app.js`, vendored uPlot); 404 otherwise; every answer carries `Cache-Control: no-cache` (story 3.2a: the browser revalidates against the ETag/Last-Modified StaticFiles computes, so an upgrade never runs stale page code) |
 | `GET /api/snapshot` | the snapshot object (below): what `/events` pushes, on demand |
 | `GET /api/endpoints/{name}/history?range=<r>` | the history object of the endpoint named `{name}` in models.yaml; `range` defaults to `1h` |
 | `GET /api/fleet/history?range=<r>` | the fleet history object (below): speed and occupancy for the whole fleet on one time grid; `range` defaults to `1h` |
@@ -234,6 +237,11 @@ covers `[now - r, now]`, both ends included.
 {
   "now": 1793288065.0,              the server's clock when it was built
   "window_s": 86400.0,              the attention window: monitor: attention_hours × 3600
+  "db_path": "/home/op/.local/state/localagents/localagents.db",
+                                    the database file this server opened (serve's --db, else the
+                                    `monitor:` section's `db`, else `db.db_path()`); named by the
+                                    snapshot so the page can say what it is showing (story 3.2a);
+                                    null only when the app was built without one
   "hosts": [ host, ... ],           models.yaml order: endpoints grouped by `host`, first-seen order
   "jobs": [ running_job, ... ],     every queued or running job, oldest first
   "events": [ event, ... ]          the newest 20 endpoint_events, newest first
@@ -257,10 +265,21 @@ endpoint = {
   "name": "ai1",
   "backend": "strata",              as configured
   "base_url": "http://10.0.0.50:8080",   no trailing slash
+  "host": "ai1",                    the endpoint's `host` from models.yaml: the card it lives
+                                    under (story 3.2a: a page that re-sorts needs it beside it)
   "state": "live" | "down" | "dormant",  state.endpoint_state (§4)
   "last_seen": 1793288065.0,        t of the newest up probe, or null (never seen up)
   "model": "qwen3.8-flash-next-iq3_s",   the last probe's served id, or null
   "context": 131072,                the last probe's per-slot window
+  "probe_state": "busy",            the newest probe's own `state` string (idle/busy; the
+                                    history series' same value), null on a down probe or with
+                                    no probe (story 3.2a: the strip used to pay a history call
+                                    per live endpoint for this one word)
+  "last_model": "DeepSeek-V4.1-Flash-1017", "last_context": 307712,
+                                    state "down" or "dormant" only: the newest UP probe's
+                                    served id and per-slot window — what the engine last served
+                                    here, shown while the live pair above is null (3.3's gap);
+                                    null while live, and when it was never seen up
   "slots": {"total": 1, "busy": 1} | null,          null when the last probe has no slot count
   "requests": {"running": 1, "waiting": 0} | null,  null when it has neither figure
   "kv_cache_usage": 0.17,           vLLM, 0..1
@@ -270,6 +289,8 @@ endpoint = {
   "dropped_job": "20261029-...",    state "down" only: the `name` of the job that was running on
                                     it at its first down probe after last_seen
                                     (jobs.running_job_at); else null
+  "dropped_job_id": "0f9c…",        that job's id beside its name, so the sentence is clickable
+                                    (3.3's gap, story 3.2a); null with dropped_job
   "rates": {                        rates.rates between the LAST TWO probes
     "prompt_tps": 1.2, "gen_tps": 0.6, "cached_tps": 134.8, "spec_acceptance": 0.822,
     "reason": null                  null when computed; else why the four are null: "no probes",
@@ -295,8 +316,15 @@ running_job = {
   "finished_at",                    null while running
   "elapsed_s",                      now - started_at, 1 decimal
   "num_turns", "tool_calls" (count), "errors" (tool calls with is_error),
-  "last_tool",                      derive.last_tool: "<tool>: <input>" or the tool name, or null
-  "last_activity",                  the raw jobs.last_activity text
+  "last_tool",                      the DISPLAY form of derive.last_tool — "<tool>: <input>" or
+                                    the tool name, ONE line with whitespace collapsed, paths
+                                    under the job's root relative to it (its worktree path, else
+                                    its cwd), cut to 120 chars after relativising: exactly what
+                                    the status bar shows (status.display_activity, story 1.11b's
+                                    rule, story 3.2a); null in, null out
+  "last_activity",                  the same display form of jobs.last_activity; the RAW text
+                                    stays on the job summaries (`GET /api/jobs`) and on
+                                    `GET /api/jobs/{id}` (the detail route's summary)
   "ctx_tokens", "context", "ctx_pct" (round(100 × ctx_tokens / context), or null),
   "gen_tps",                        derive.gen_tps rounded to 1 decimal, or null
   "compactions",

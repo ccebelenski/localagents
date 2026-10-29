@@ -153,7 +153,9 @@ class _World:
     dgx_counters_1: dict[str, float]
     dgx_counters_2: dict[str, float]
     dgx_context: int
+    dgx_served: str
     lcpp_counters_1: dict[str, float]
+    lcpp_served: str
     job: dict
     job_requests: list[dict]
     job_tool_calls: list[dict]
@@ -172,6 +174,7 @@ def _load(fixtures_dir: Path) -> _World:
     ai2_2 = json.loads((strata / "ai2_metrics_2.json").read_text())
     export = json.loads((fixtures_dir / "db" / "job_20261029-110844-8fd14e0e.json").read_text())
     dgx_model = json.loads((vllm / "dgx1-a_models_1.json").read_text())
+    lcpp_model = json.loads((lcpp / "llamacpp_models_1.json").read_text())
     return _World(
         ai1_counters_1=parse_strata_metrics(ai2_1),
         ai1_counters_2=parse_strata_metrics(ai2_2),
@@ -180,7 +183,12 @@ def _load(fixtures_dir: Path) -> _World:
         dgx_counters_1=parse_metrics((vllm / "dgx1-a_metrics_1.txt").read_text()),
         dgx_counters_2=parse_metrics((vllm / "dgx1-a_metrics_2.txt").read_text()),
         dgx_context=next(m["max_model_len"] for m in dgx_model["data"] if isinstance(m.get("max_model_len"), int)),
+        # story 3.2a row 3: the first served id is what Registry.probe's models[0] and
+        # collect.tick record on an UP probe; the seed had one only for ai1, so the world could
+        # not show a down or dormant endpoint's last-known model
+        dgx_served=next(m["id"] for m in dgx_model["data"] if isinstance(m.get("id"), str)),
         lcpp_counters_1=parse_metrics((lcpp / "llamacpp_metrics_1.txt").read_text()),
+        lcpp_served=next(m["id"] for m in lcpp_model["data"] if isinstance(m.get("id"), str)),
         job=export["job"],
         job_requests=export["requests"],
         job_tool_calls=export["tool_calls"],
@@ -306,6 +314,10 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
     lcpp = db.lookup_id(conn, "endpoints", now=now, name="llamacpp", base_url="http://127.0.0.1:8080",
                         backend="llama.cpp", host="local")
     model = db.lookup_id(conn, "models", served_id="qwen3.8-flash-next-iq3_s")
+    # story 3.2a row 3: the ids collect.tick would record on the UP probes of the other two
+    # endpoints (models[0] of their captured /v1/models)
+    dgx_model_id = db.lookup_id(conn, "models", served_id=world.dgx_served)
+    lcpp_model_id = db.lookup_id(conn, "models", served_id=world.lcpp_served)
 
     # the seed's own live server row: stopped NULL, a fresh heartbeat, a live pid — the status
     # line reads it as a live server so its jobs show on the line
@@ -390,7 +402,7 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
         t = now - DGX_UP_S + k * AI1_DT
         _insert_probe(
             conn,
-            _probe_row(t, dgx, None, up=True, host="up", latency_ms=LATENCY_MS,
+            _probe_row(t, dgx, dgx_model_id, up=True, host="up", latency_ms=LATENCY_MS,
                        context=world.dgx_context, requests_running=1, requests_waiting=0,
                        kv_cache_usage=0.17, state="busy"),
             _interpolate(world.dgx_counters_1, world.dgx_counters_2, k / up_n),
@@ -412,7 +424,7 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
     lcpp_down_event_t = now - LLAMACPP_DOWN_SPAN_S
     _insert_probe(
         conn,
-        _probe_row(lcpp_up_t, lcpp, None, up=True, host="up", latency_ms=LATENCY_MS,
+        _probe_row(lcpp_up_t, lcpp, lcpp_model_id, up=True, host="up", latency_ms=LATENCY_MS,
                    context=LCPP_CONTEXT, slots_total=2, slots_busy=0,
                    requests_running=0, requests_waiting=0, state="idle"),
         world.lcpp_counters_1,

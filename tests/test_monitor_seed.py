@@ -50,7 +50,7 @@ EXPECTED_COUNTS = {
     "endpoint_events": 3,
     "endpoint_load": 1,
     "endpoints": 3,
-    "models": 1,
+    "models": 3,  # one per endpoint: the served id its UP probes carry (story 3.2a row 3)
     "mcp_servers": 1,
     "jobs": 2,
     "requests": 152,
@@ -62,6 +62,24 @@ EXPECTED_COUNTS = {
 def test_seed_counts_match_the_world(tmp_path):
     _, counts = _seed(tmp_path)
     assert counts == EXPECTED_COUNTS
+
+
+def test_up_probes_carry_their_served_model_like_the_collector_does(tmp_path):
+    """Story 3.2a row 3: ``collect.tick`` records ``models[0]`` (``Registry.probe``'s first
+    served id) on every UP probe, but the seed wrote a model only for ai1 — the world could
+    not show a down or dormant endpoint's last-known model. Now every endpoint's UP probes carry
+    their fixture's served id, and DOWN probes carry none, as a collector's never do."""
+    conn, _ = _seed(tmp_path)
+    for ep, served in (("ai1", "qwen3.8-flash-next-iq3_s"),
+                       ("dgx1-a", "DeepSeek-V4.1-Flash-1017"),
+                       ("llamacpp", "esatapedico/Qwen3.8-27B-NVFP4-MTP-GGUF")):
+        up = conn.execute(
+            "SELECT DISTINCT m.served_id FROM probes p JOIN models m ON m.id = p.model_id"
+            " JOIN endpoints e ON e.id = p.endpoint_id WHERE e.name = ? AND p.up = 1", (ep,)).fetchall()
+        assert [r[0] for r in up] == [served], ep
+        assert conn.execute(
+            "SELECT COUNT(*) FROM probes p JOIN models m ON m.id = p.model_id"
+            " JOIN endpoints e ON e.id = p.endpoint_id WHERE e.name = ? AND p.up = 0", (ep,)).fetchone()[0] == 0
 
 
 def test_second_seed_refuses_without_force(tmp_path):

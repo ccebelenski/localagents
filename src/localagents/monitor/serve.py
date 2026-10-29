@@ -58,6 +58,10 @@ def port_free(host: str, port: int) -> bool:
     for family, stype, proto, _, sa in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
         s = socket.socket(family, stype, proto)
         try:
+            # story 3.2a row 1: SO_REUSEADDR, as uvicorn's own bind uses — a TIME-WAIT socket
+            # left by a just-closed browser session must not refuse a restart for ~60 s. A live
+            # LISTENing socket still binds to nothing: EADDRINUSE stands (the 3.1 ruling F test).
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(sa)
             s.close()
             return True  # at least one address for this host binds: the port is free
@@ -97,7 +101,7 @@ async def serve(reg: Registry, settings: MonitorSettings, path: Path, host: str,
         def capture_signals(self) -> Iterator[None]:
             yield
 
-    app = make_app(lambda: db.open_db(path), reg, settings, tick, stop=stop)
+    app = make_app(lambda: db.open_db(path), reg, settings, tick, stop=stop, db_path=path)
     server = Server(uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False,
                                    timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_S))
 

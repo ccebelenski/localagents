@@ -25,6 +25,7 @@ from starlette.testclient import TestClient
 
 from localagents import db
 from localagents.monitor import app as app_mod
+from localagents.monitor import serve as serve_mod
 from localagents.monitor.config import MonitorSettings
 
 from monitor_seeded import NOW, registry, seed_file, write_config
@@ -41,7 +42,7 @@ def dbpath(tmp_path):
 
 def _app(dbpath, tmp_path, tick=None, **kw):
     return app_mod.make_app(lambda: db.open_db(dbpath), registry(tmp_path), MonitorSettings(),
-                            tick or asyncio.Event(), now=lambda: NOW, **kw)
+                            tick or asyncio.Event(), now=lambda: NOW, db_path=dbpath, **kw)
 
 
 @pytest.fixture
@@ -76,14 +77,27 @@ def test_static_serves_the_package_files(client):
     assert client.get("/static/nope.js").status_code == 404
 
 
+def test_static_files_revalidate_on_every_load(client):
+    """Story 3.2a row 2 (the 3.3 build saw Chromium reuse an old app.js after an upgrade): the
+    mount answers Cache-Control: no-cache, so the browser revalidates with the ETag StaticFiles
+    already computes; a fresh file still answers 200, an unchanged one 304."""
+    r = client.get("/static/app.js")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache"
+    r2 = client.get("/static/app.js", headers={"If-None-Match": r.headers["etag"]})
+    assert r2.status_code == 304
+    assert r2.headers["cache-control"] == "no-cache"
+
+
 # --- /api/snapshot ----------------------------------------------------------------------------
 
 
-def test_snapshot_is_the_overview(client):
+def test_snapshot_is_the_overview(client, dbpath):
     r = client.get("/api/snapshot")
     assert r.status_code == 200
     ov = r.json()
     assert ov["now"] == NOW and ov["window_s"] == 24 * 3600.0
+    assert ov["db_path"] == str(dbpath)  # story 3.2a row 3: the file this server reads
     assert [h["name"] for h in ov["hosts"]] == ["ai1", "dgx1", "local"]
     assert [e["state"] for h in ov["hosts"] for e in h["endpoints"]] == ["live", "down", "dormant"]
     assert [j["tool_calls"] for j in ov["jobs"]] == [50]
@@ -431,6 +445,42 @@ def _free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+# --- port_free (story 3.2a row 1) --------------------------------------------------------------
+
+
+def test_port_free_reads_a_time_wait_socket_as_free():
+    """Review of 3.2 (both builds): a browser session just closed leaves a TIME-WAIT socket on
+    the port, and a plain bind refuses it for ~60 s: a restart exits 2 where uvicorn — which
+    binds with SO_REUSEADDR — would have served. port_free binds with SO_REUSEADDR too, so it
+    calls such a port free. (A TIME-WAIT quad only exists after a real connection: listen,
+    connect, close both. The holder listens with SO_REUSEADDR as uvicorn does, so the accepted
+    socket — and the TIME-WAIT it leaves — carries the flag: on a current kernel plain bind
+    fails against TIME-WAIT, and reuse-bind only succeeds when both sides ask for it.)"""
+    holder = socket.socket()
+    holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    client_sock = socket.socket()
+    client_sock.connect(("127.0.0.1", port))
+    accepted, _ = holder.accept()
+    accepted.close()  # the server side closes first: the quad goes TIME-WAIT on this port
+    holder.close()
+    client_sock.close()
+    assert serve_mod.port_free("127.0.0.1", port)
+
+
+def test_port_free_is_false_for_a_listening_socket():
+    """SO_REUSEADDR does not make a live listener look free: the 3.1 ruling F sentence stands."""
+    holder = socket.socket()
+    holder.bind(("127.0.0.1", 0))
+    holder.listen()
+    try:
+        assert not serve_mod.port_free("127.0.0.1", holder.getsockname()[1])
+    finally:
+        holder.close()
 
 
 def test_a_port_already_in_use_exits_2_with_the_sentence(tmp_path):

@@ -35,6 +35,18 @@ KEEPALIVE_S = 15.0
 JOBS_DEFAULT_RANGE = "24h"
 
 
+class _RevalidatingStatic(StaticFiles):
+    """Story 3.2a row 2 (the 3.3 build saw Chromium reuse an old app.js after an upgrade): every
+    answer — 200 or the 304 of its own ETag/Last-Modified revalidation — carries
+    ``Cache-Control: no-cache``, so the browser asks on every load and an upgrade never runs
+    stale page code; the files are tiny and local, so the round-trip costs nothing."""
+
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def _error(status: int, error: str, message: str) -> JSONResponse:
     return JSONResponse({"error": error, "message": message}, status_code=status)
 
@@ -85,13 +97,16 @@ def make_app(
     now: Callable[[], float] = time.time,
     stop: asyncio.Event | None = None,
     keepalive_s: float = KEEPALIVE_S,
+    db_path: Any = None,
 ) -> Starlette:
     """The monitor app. ``reg`` is the ``Registry`` whose endpoints the overview lists (config
     order); ``settings`` a ``MonitorSettings`` (``attention_hours`` is the attention window);
     ``tick`` is set by the collector after each endpoint's tick (``collect.run``'s ``on_tick``).
     ``now`` is the clock (a test pins it to the seeded world's); ``stop``, when set (and ``tick``
-    set to wake the streams), ends every open event stream so the server can shut down."""
+    set to wake the streams), ends every open event stream so the server can shut down;
+    ``db_path`` (story 3.2a row 3) is the database file serve opened — the snapshot names it."""
     window_s = float(settings.attention_hours) * 3600.0
+    db_path_s = str(db_path) if db_path is not None else None
     fan = _Fanout(tick)
 
     async def in_thread(fn: Callable[..., Any], *args: Any) -> Any:
@@ -119,7 +134,7 @@ def make_app(
 
     @guarded
     async def snapshot(request: Request) -> Response:
-        return JSONResponse(await in_thread(read.overview, reg, now(), window_s))
+        return JSONResponse(await in_thread(read.overview, reg, now(), window_s, db_path_s))
 
     @guarded
     async def endpoint_history(request: Request) -> Response:
@@ -182,7 +197,7 @@ def make_app(
 
     async def snapshot_event() -> str:
         try:
-            return _sse("snapshot", await in_thread(read.overview, reg, now(), window_s))
+            return _sse("snapshot", await in_thread(read.overview, reg, now(), window_s, db_path_s))
         except (sqlite3.Error, db.SchemaError) as e:
             return _sse("error", {"error": "database_error", "message": f"{type(e).__name__}: {e}"})
 
@@ -216,7 +231,7 @@ def make_app(
         Route("/api/jobs", jobs),
         Route("/api/jobs/{id}", job),
         Route("/events", events),
-        Mount("/static", app=StaticFiles(directory=STATIC_DIR), name="static"),
+        Mount("/static", app=_RevalidatingStatic(directory=STATIC_DIR), name="static"),
     ])
     app.state.fanout = fan
     return app

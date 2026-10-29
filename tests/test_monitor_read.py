@@ -42,10 +42,20 @@ def _ep(ov, name):
 def test_overview_top_level_keys(world):
     conn, reg = world
     ov = read.overview(conn, reg, NOW, WINDOW_S)
-    assert set(ov) == {"now", "window_s", "hosts", "jobs", "events"}
+    assert set(ov) == {"now", "window_s", "db_path", "hosts", "jobs", "events"}
     assert ov["now"] == NOW and ov["window_s"] == WINDOW_S
     # json-serialisable as is: it is the SSE snapshot's body
     json.dumps(ov)
+
+
+def test_overview_names_the_database_file_it_reads(world):
+    """Story 3.2a row 3 (the 3.2 review's §5a gap): the snapshot says which database the server
+    opened, so the page can name the file it is showing. app.py passes it in (serve's --db, the
+    monitor: section's db, else db.db_path()); a read that was not told one says null."""
+    conn, reg = world
+    assert read.overview(conn, reg, NOW, WINDOW_S)["db_path"] is None
+    ov = read.overview(conn, reg, NOW, WINDOW_S, db_path="/home/operator/.state/localagents.db")
+    assert ov["db_path"] == "/home/operator/.state/localagents.db"
 
 
 def test_overview_hosts_in_config_order_with_their_states(world):
@@ -100,9 +110,9 @@ def test_fallback_resolves_an_all_timeout_host(world):
 
 
 ENDPOINT_KEYS = {
-    "name", "backend", "base_url", "state", "last_seen", "model", "context", "slots", "requests",
-    "kv_cache_usage", "latency_ms", "since", "error", "dropped_job", "rates", "gen_tps_live",
-    "hardware", "jobs_running",
+    "name", "backend", "base_url", "host", "state", "last_seen", "model", "context", "probe_state",
+    "last_model", "last_context", "slots", "requests", "kv_cache_usage", "latency_ms", "since",
+    "error", "dropped_job", "dropped_job_id", "rates", "gen_tps_live", "hardware", "jobs_running",
 }
 
 
@@ -111,6 +121,10 @@ def test_the_live_endpoint_carries_its_gauges_rates_and_hardware(world):
     ai1 = _ep(read.overview(conn, reg, NOW, WINDOW_S), "ai1")
     assert set(ai1) == ENDPOINT_KEYS
     assert ai1["backend"] == "strata" and ai1["base_url"] == "http://10.0.0.50:8080"
+    # story 3.2a row 3: the config host, and the last-known pair is a down/dormant story only
+    assert ai1["host"] == "ai1"
+    assert ai1["last_model"] is None and ai1["last_context"] is None
+    assert ai1["probe_state"] == "busy"  # the newest probe's own state string
     assert ai1["last_seen"] == NOW
     assert ai1["model"] == "qwen3.8-flash-next-iq3_s"
     assert ai1["context"] == seed.AI1_CONTEXT
@@ -142,10 +156,17 @@ def test_the_down_endpoint_names_its_sentence_and_no_dropped_job(world):
     assert dgx["error"] == seed._refused_sentence("http://10.0.0.70:8000")
     assert "refused" in dgx["error"] or "nothing" in dgx["error"]
     assert dgx["dropped_job"] is None  # the seed's jobs ran on ai1
+    assert dgx["dropped_job_id"] is None
     assert dgx["last_seen"] == pytest.approx(NOW - 20 * 60.0)
     # a down probe has no gauges, no counters, no hardware
     assert dgx["model"] is None and dgx["slots"] is None and dgx["requests"] is None
     assert dgx["hardware"] is None
+    # story 3.2a row 3 (3.3's gap: a down endpoint's last-known model and context): the newest
+    # UP probe's served id and window, while the live model/context above stay null
+    assert dgx["host"] == "dgx1"
+    assert dgx["probe_state"] is None  # the newest probe is a down one: it has no state string
+    assert dgx["last_model"] == "DeepSeek-V4.1-Flash-1017"
+    assert dgx["last_context"] == 307712
     assert dgx["rates"]["prompt_tps"] is None and dgx["rates"]["reason"] is not None
     assert dgx["jobs_running"] == 0
 
@@ -156,6 +177,10 @@ def test_the_dormant_endpoint_is_last_seen_a_week_ago(world):
     assert lcpp["state"] == "dormant"
     assert lcpp["last_seen"] == pytest.approx(NOW - seed.LCPP_UP_AGO_S)
     assert lcpp["dropped_job"] is None  # named only for a down-recent endpoint
+    assert lcpp["dropped_job_id"] is None
+    # dormant too gets the last-known pair: its one UP probe a week ago
+    assert lcpp["last_model"] == "esatapedico/Qwen3.8-27B-NVFP4-MTP-GGUF"
+    assert lcpp["last_context"] == seed.LCPP_CONTEXT
 
 
 def test_dropped_job_names_the_job_running_when_the_endpoint_dropped(world):
@@ -167,10 +192,53 @@ def test_dropped_job_names_the_job_running_when_the_endpoint_dropped(world):
         rows.insert(conn, rows.ProbeRows(
             {**dict.fromkeys(rows.PROBE_COLUMNS), "t": NOW + 5, "endpoint_id": ai1, "up": 0, "host": "up",
              "error": seed._refused_sentence("http://10.0.0.50:8080")}, None, None))
-    running = conn.execute("SELECT name FROM jobs WHERE status = 'running'").fetchone()[0]
+    running = conn.execute("SELECT id, name FROM jobs WHERE status = 'running'").fetchone()
     ep = _ep(read.overview(conn, reg, NOW + 10, WINDOW_S), "ai1")
     assert ep["state"] == "down"
-    assert ep["dropped_job"] == running
+    assert ep["dropped_job"] == running["name"]
+    # story 3.2a row 3 (3.3's gap: dropped_job had no id to click through to)
+    assert ep["dropped_job_id"] == running["id"]
+
+
+def test_snapshot_running_job_tool_text_is_the_status_bar_display_form(world):
+    """Story 3.2a row 5 (the 3.2 review: the job row showed the raw worktree-prefixed text the
+    status bar never shows): ``last_tool`` and ``last_activity`` in the snapshot carry the
+    DISPLAY form — one line, whitespace collapsed, paths relative to the job's root (its
+    worktree path, the way status._job_root derives it), cut after relativising, exactly as
+    ``status.display_activity`` renders a status row (1.11b's rule). The raw text stays on the
+    job detail (and the /api/jobs summaries)."""
+    conn, reg = world
+    row = conn.execute("SELECT id FROM jobs WHERE status = 'running'").fetchone()
+    jid = row["id"]
+    root = "/home/op/.local/state/localagents/worktrees/demo/20261029-120000-deadbeef"
+    with db.immediate(conn):
+        conn.execute("UPDATE jobs SET worktree = ?, last_activity = ? WHERE id = ?",
+                     (json.dumps({"path": root}), "Bash: uv run pytest -q\n   && echo done\ttwice", jid))
+        conn.execute(
+            "UPDATE tool_calls SET tool = 'Edit', input = ? WHERE rowid ="
+            " (SELECT rowid FROM tool_calls WHERE job_id = ? ORDER BY t DESC, rowid DESC LIMIT 1)",
+            (f"{root}/tests/x.py", jid))
+    j = read.overview(conn, reg, NOW, WINDOW_S)["jobs"][0]
+    assert j["last_tool"] == "Edit: tests/x.py"  # root prefix gone, one line
+    assert j["last_activity"] == "Bash: uv run pytest -q && echo done twice"
+    d = read.job_detail(conn, jid)
+    assert d["last_tool"] == f"Edit: {root}/tests/x.py"  # raw on the detail route
+    assert d["last_activity"] == "Bash: uv run pytest -q\n   && echo done\ttwice"
+
+
+def test_snapshot_running_job_tool_text_falls_back_to_the_cwd(world):
+    """A job with no worktree relativises against its cwd (status._job_root's rule, story
+    1.11b): the cwd prefix goes from the snapshot row's text too."""
+    conn, reg = world
+    row = conn.execute("SELECT id, cwd FROM jobs WHERE status = 'running'").fetchone()
+    with db.immediate(conn):
+        conn.execute("UPDATE jobs SET worktree = NULL WHERE id = ?", (row["id"],))
+        conn.execute(
+            "UPDATE tool_calls SET tool = 'Edit', input = ? WHERE rowid ="
+            " (SELECT rowid FROM tool_calls WHERE job_id = ? ORDER BY t DESC, rowid DESC LIMIT 1)",
+            (f"{row['cwd']}/src/app.py", row["id"]))
+    j = read.overview(conn, reg, NOW, WINDOW_S)["jobs"][0]
+    assert j["last_tool"] == "Edit: src/app.py"
 
 
 def test_overview_running_jobs_carry_the_status_line_entry(world):
