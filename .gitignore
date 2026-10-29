@@ -4,3 +4,4 @@ __pycache__/
 .claude/settings.local.json
 models.yaml
 models.local.yaml
+.claude/worktrees/
