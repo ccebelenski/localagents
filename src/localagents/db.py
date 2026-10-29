@@ -4,9 +4,10 @@ Schema and write rules: ``docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md
 library only, because ``localagents statusline`` will read this on every status-bar refresh
 (story 1.5a) and must not pull in the server stack (see ``localagents/__init__.py``).
 
-The monitor's tables (``probes``, ``probe_counters``, ``probe_hardware``, ``endpoint_events``;
-schema version 3, extended by version 4 — ``probes.state`` and the ``probe_hardware`` disk
-columns — per ``docs/superpowers/specs/2026-10-29-monitor-design.md`` §3) are monitor-owned:
+The monitor's tables (``probes``, ``probe_counters``, ``probe_hardware``, ``endpoint_events``,
+``host_probes``; schema version 3, extended by version 4 — ``probes.state`` and the
+``probe_hardware`` disk columns — and version 5 — ``host_probes``, the node fallback's answers
+— per ``docs/superpowers/specs/2026-10-29-monitor-design.md`` §3) are monitor-owned:
 only ``localagents.monitor`` writes or prunes them. Their migration lives here because the file
 is shared and versioned as one, so the MCP server creates them too (an idle table costs nothing),
 but the MCP server never imports the monitor package.
@@ -251,9 +252,24 @@ _V4 = [
     "ALTER TABLE probe_hardware ADD COLUMN disk_write_mb REAL",
 ]
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 4.
+# Version 5 (story 3.1b): the node fallback's answers, appended through one step. One row per
+# port-22 ask (at most one per host per minute: asked only when every endpoint on the host
+# timed out); the reader resolves an all-timeout node from the newest fresh row, so a restart
+# reconstructs the node state from rows. Monitor-owned, pruned with the probes (retention).
+_V5 = [
+    """CREATE TABLE host_probes (
+        id          INTEGER PRIMARY KEY,
+        t           REAL NOT NULL,
+        host        TEXT NOT NULL,
+        address     TEXT NOT NULL,
+        answer      TEXT NOT NULL CHECK (answer IN ('answered', 'refused', 'nothing'))
+    )""",
+    "CREATE INDEX host_probes_host_t ON host_probes (host, t)",
+]
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 5.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
-    _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4),
+    _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5),
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 

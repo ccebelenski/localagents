@@ -59,14 +59,15 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
   context fill and speed; finished records for history).
 - **Storage:** `probes` (monitor-owned) in the shared database; probe rows older than 7 days
   deleted on the same schedule as job directories, per endpoint through the `(endpoint_id, t)`
-  index; event rows share the probe horizon. Schema migrated by version number. The database is
+  index; event rows share the probe horizon; `host_probes` rows share it too, per host through
+  the `(host, t)` index. Schema migrated by version number. The database is
   a cache of the fleet, not the record of truth: deleting it costs history only.
 
   Monitor tables, approved 2026-10-29 (schema version 3; version 2 is `jobs.compactions`,
   story 1.11; version 4, story 3.1a ruling A, appends `probes.state` and the two
-  `probe_hardware` disk columns in one step). Conventions as the MCP schema: epoch REAL
-  timestamps, lookups by id, flat nullable columns where the field set is fixed, nothing
-  stored that is derived.
+  `probe_hardware` disk columns in one step; version 5, story 3.1b, appends `host_probes`
+  in one step). Conventions as the MCP schema: epoch REAL timestamps, lookups by id, flat
+  nullable columns where the field set is fixed, nothing stored that is derived.
 
   ```
   probes            one row per probe attempt (5 s when live, 60 s when dormant); monitor-owned
@@ -106,6 +107,17 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
   endpoint_events   id INTEGER PRIMARY KEY, t REAL NOT NULL, endpoint_id INTEGER NOT NULL REFERENCES endpoints(id),
                     kind TEXT NOT NULL CHECK (kind IN ('up', 'down', 'restarted')), detail TEXT
     INDEX endpoint_events_endpoint_t (endpoint_id, t)
+
+  host_probes     (version 5, story 3.1b) the node fallback's answers, monitor-owned, pruned with
+                    the probes: one row per port-22 ask, at most one per host per minute — asked
+                    only when every endpoint on the host timed out, so a restart reconstructs the
+                    node state from these rows
+    id            INTEGER PRIMARY KEY
+    t             REAL NOT NULL
+    host          TEXT NOT NULL                     the endpoints' `host` (the grouping key)
+    address       TEXT NOT NULL                     the first endpoint's base_url hostname (config order)
+    answer        TEXT NOT NULL                     'answered' | 'refused' | 'nothing'
+    INDEX host_probes_host_t (host, t)
   ```
 
   Rates are computed between consecutive `probe_counters` rows at read time, never stored. A
@@ -227,9 +239,14 @@ covers `[now - r, now]`, both ends included.
 host = {
   "name": "ai1",                    the endpoints' `host` (config default "local")
   "state": "up" | "down" | "unknown",   state.node_state over each endpoint's LAST probe
-                                    (endpoints with no probe are left out; no port-22 fallback is
-                                    stored, so "unknown" stays unknown)
+                                    (endpoints with no probe are left out), the all-timeout case
+                                    resolved by the port-22 fallback below: "answered"/"refused"
+                                    -> up (the box answers), "nothing" -> down, absent or stale ->
+                                    "unknown"
   "dormant": false,                 state.node_dormant: every endpoint dormant (collapse the card)
+  "fallback": "refused",            the newest host_probes.answer within 120 s of now (story 3.1b:
+                                    the port-22 ask, at most one per host per minute), else null
+  "fallback_t": 1793288055.0,      its t, null with fallback
   "endpoints": [ endpoint, ... ]    config order
 }
 

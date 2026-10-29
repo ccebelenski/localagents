@@ -1,6 +1,6 @@
-"""Story 2.2 item 7: probe retention. The monitor's four tables lose rows older than the cutoff
-(children first); the job tables are never touched (monitor spec §3: retention deletes only the
-monitor's tables)."""
+"""Story 2.2 item 7: probe retention. The monitor's tables lose rows older than the cutoff
+(children first; host_probes shares the horizon, per host, story 3.1b); the job tables are never
+touched (monitor spec §3: retention deletes only the monitor's tables)."""
 import asyncio
 import time
 
@@ -22,12 +22,15 @@ def conn(tmp_path):
 
 
 def _seed(conn, t):
-    """One probe with its counters and hardware rows, and one event, at time t; one job row."""
+    """One probe with its counters and hardware rows, one event and one host fallback row, at
+    time t; one job row."""
     eid = db.lookup_id(conn, "endpoints", name="ai2", base_url="http://ai2:8080", backend="strata", host="ai2")
     pid = conn.execute("INSERT INTO probes (t, endpoint_id, up) VALUES (?, ?, 1)", (t, eid)).lastrowid
     conn.execute("INSERT INTO probe_counters (probe_id, prompt_tokens) VALUES (?, 1.0)", (pid,))
     conn.execute("INSERT INTO probe_hardware (probe_id, cpu) VALUES (?, 1.0)", (pid,))
     conn.execute("INSERT INTO endpoint_events (t, endpoint_id, kind) VALUES (?, ?, 'up')", (t, eid))
+    conn.execute("INSERT INTO host_probes (t, host, address, answer) VALUES (?, 'ai2', '10.0.0.62', 'refused')",
+                 (t,))
     conn.execute("INSERT INTO jobs (id, endpoint_id, status, created_at, finished_at) VALUES (?, ?, 'succeeded', ?, ?)",
                  (f"job-{t}", eid, t, t))
     return pid
@@ -35,7 +38,8 @@ def _seed(conn, t):
 
 def _counts(conn):
     return {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-            for t in ("probes", "probe_counters", "probe_hardware", "endpoint_events", "jobs", "endpoints")}
+            for t in ("probes", "probe_counters", "probe_hardware", "endpoint_events", "host_probes",
+                      "jobs", "endpoints")}
 
 
 def test_rows_older_than_the_cutoff_go_newer_stay_and_jobs_are_untouched(conn):
@@ -43,7 +47,7 @@ def test_rows_older_than_the_cutoff_go_newer_stay_and_jobs_are_untouched(conn):
     new = _seed(conn, NOW - 6 * DAY)
     assert retention.prune_probes(conn, days=7, now=NOW) == 1
     assert _counts(conn) == {"probes": 1, "probe_counters": 1, "probe_hardware": 1, "endpoint_events": 1,
-                             "jobs": 2, "endpoints": 1}
+                             "host_probes": 1, "jobs": 2, "endpoints": 1}
     assert [r[0] for r in conn.execute("SELECT id FROM probes")] == [new]
     for child in ("probe_counters", "probe_hardware"):
         assert conn.execute(f"SELECT COUNT(*) FROM {child} WHERE probe_id = ?", (old,)).fetchone()[0] == 0
@@ -73,12 +77,24 @@ def test_the_events_delete_uses_the_endpoint_t_index(conn):
     assert "INDEX" in plan, plan
 
 
+def test_the_host_probes_delete_uses_the_host_t_index(conn):
+    """Story 3.1b: host_probes shares the probe horizon and is deleted per host through the
+    ``(host, t)`` index, as for the (endpoint_id, t) deletes. The plan for the exact
+    statement the pruner runs must name ``host_probes_host_t``."""
+    plan = " | ".join(str(row[3]) for row in
+                      conn.execute("EXPLAIN QUERY PLAN " + retention._DELETE_OLD_HOST_PROBES, ("x", 0)))
+    assert "host_probes_host_t" in plan, plan
+    assert "INDEX" in plan, plan
+
+
 def test_discovery_is_bounded_to_the_endpoints_table(conn):
     """Story 2.2b ruling C (review: the old discovery, ``SELECT DISTINCT endpoint_id FROM
     probes WHERE t < ?``, walked the whole ``probes_endpoint_t`` index): the pruner iterates
     the small ``endpoints`` table and deletes per endpoint, so no statement scans a monitor
-    table or its whole index."""
+    table or its whole index. Story 3.1b: the per-host host_probes discovery reads the same
+    small table (its host column), never host_probes."""
     assert retention._ENDPOINT_IDS == "SELECT id FROM endpoints"
+    assert retention._HOSTS == "SELECT DISTINCT host FROM endpoints"
 
 
 def test_pruning_three_endpoints_of_a_thousand_old_probes_each_stays_under_a_second(conn):
@@ -118,7 +134,7 @@ def test_pruning_three_endpoints_of_a_thousand_old_probes_each_stays_under_a_sec
     assert retention.prune_probes(conn, days=retention.RETENTION_DAYS, now=NOW) == 3000
     assert time.monotonic() - t0 < 1.0
     assert _counts(conn) == {"probes": 15, "probe_counters": 15, "probe_hardware": 15,
-                             "endpoint_events": 3, "jobs": 1, "endpoints": 3}
+                             "endpoint_events": 3, "host_probes": 0, "jobs": 1, "endpoints": 3}
     assert conn.execute("SELECT COUNT(*) FROM probes WHERE t < ?", (cutoff,)).fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM endpoint_events WHERE t < ?", (cutoff,)).fetchone()[0] == 0
 

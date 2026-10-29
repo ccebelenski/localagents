@@ -15,13 +15,13 @@ from localagents import db
 
 TABLES = {"mcp_servers", "endpoints", "endpoint_load", "models", "paths", "jobs", "requests", "tool_calls"}
 # version 3 (story 2.2): the monitor's tables, monitor-design spec §3 "Storage"
-MONITOR_TABLES = {"probes", "probe_counters", "probe_hardware", "endpoint_events"}
+MONITOR_TABLES = {"probes", "probe_counters", "probe_hardware", "endpoint_events", "host_probes"}
 INDEXES = {
     "jobs_name", "jobs_mcp_server_id", "jobs_endpoint_id", "jobs_model_id", "jobs_status_finished_at",
     "jobs_created_at",
     "mcp_servers_updated", "requests_job_id_t", "tool_calls_job_id_t",
 }
-MONITOR_INDEXES = {"probes_endpoint_t", "endpoint_events_endpoint_t"}
+MONITOR_INDEXES = {"probes_endpoint_t", "endpoint_events_endpoint_t", "host_probes_host_t"}
 # every column of every table, in the spec's order
 COLUMNS = {
     "mcp_servers": ["id", "pid", "owner", "cwd", "config", "version", "transport", "shim_port",
@@ -54,6 +54,8 @@ MONITOR_COLUMNS = {
                        "gpu_power_limit", "gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "ram_total",
                        "disk_read_mb", "disk_write_mb"],
     "endpoint_events": ["id", "t", "endpoint_id", "kind", "detail"],
+    # schema version 5 (story 3.1b): the node fallback's answers, one row per port-22 ask
+    "host_probes": ["id", "t", "host", "address", "answer"],
 }
 
 
@@ -71,12 +73,13 @@ def _names(conn, kind):
 
 def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     """A fresh file runs the version-1 DDL, the version-2 step (story 1.11: jobs.compactions),
-    the version-3 step (story 2.2: the monitor's tables) and the version-4 step (story 3.1a
-    ruling A: probes.state, probe_hardware's disk columns), so it comes up at version 4."""
+    the version-3 step (story 2.2: the monitor's tables), the version-4 step (story 3.1a
+    ruling A: probes.state, probe_hardware's disk columns) and the version-5 step (story 3.1b:
+    host_probes), so it comes up at version 5 with the table."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
-    assert db.SCHEMA_VERSION == 4 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert db.SCHEMA_VERSION == 5 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -222,7 +225,7 @@ def test_a_version_2_file_migrates_to_version_3_with_its_job_intact(dbfile):
 def test_a_version_3_file_migrates_to_version_4_with_its_probe_rows_intact(dbfile):
     """Story 3.1a ruling A: the version-4 step only appends columns. A file a 2.2-era
     localagents left at version 3 (user_version 3, one probe with a hardware row) opens at
-    version 4 with the rows unchanged and the appended columns NULL on them."""
+    the current version with the rows unchanged and the appended columns NULL on them."""
     raw = sqlite3.connect(dbfile)
     for step in db.MIGRATIONS[:3]:
         step(raw)
@@ -234,7 +237,8 @@ def test_a_version_3_file_migrates_to_version_4_with_its_probe_rows_intact(dbfil
     assert "state" not in [r[1] for r in raw.execute("PRAGMA table_info(probes)")]  # raw has no Row factory
     raw.close()
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert [r["name"] for r in conn.execute("PRAGMA table_info(probes)")] == MONITOR_COLUMNS["probes"]
     assert [r["name"] for r in conn.execute("PRAGMA table_info(probe_hardware)")] == MONITOR_COLUMNS["probe_hardware"]
     row = conn.execute("SELECT * FROM probes WHERE id = 1").fetchone()
@@ -242,6 +246,50 @@ def test_a_version_3_file_migrates_to_version_4_with_its_probe_rows_intact(dbfil
     h = conn.execute("SELECT * FROM probe_hardware WHERE probe_id = 1").fetchone()
     assert h["gpu_util"] == 55.0 and h["ram_total"] == 1024.0
     assert h["disk_read_mb"] is None and h["disk_write_mb"] is None
+    conn.close()
+
+
+def test_a_version_4_file_migrates_to_version_5_with_its_rows_intact(dbfile):
+    """Story 3.1b: the version-5 step only adds the host_probes table. A file a 3.1a-era
+    localagents left at version 4 (user_version 4, a probe carrying the v4 state string and a
+    hardware row with the v4 disk columns) opens at version 5 with the rows unchanged,
+    host_probes present and empty, and its index on (host, t)."""
+    raw = sqlite3.connect(dbfile)
+    for step in db.MIGRATIONS[:4]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 4")
+    raw.execute("INSERT INTO endpoints (name, base_url, backend, host) VALUES ('ai1', 'http://ai1:8080', 'strata', 'ai1')")
+    raw.execute("INSERT INTO probes (t, endpoint_id, up, state) VALUES (1.0, 1, 1, 'busy')")
+    raw.execute("INSERT INTO probe_hardware (probe_id, disk_read_mb) VALUES (1, 42.0)")
+    raw.commit()
+    assert "host_probes" not in (r[0] for r in raw.execute("SELECT name FROM sqlite_master"))
+    raw.close()
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert _names(conn, "table") == TABLES | MONITOR_TABLES
+    assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
+    row = conn.execute("SELECT * FROM probes WHERE id = 1").fetchone()
+    assert row["t"] == 1.0 and row["up"] == 1 and row["state"] == "busy"
+    h = conn.execute("SELECT * FROM probe_hardware WHERE probe_id = 1").fetchone()
+    assert h["disk_read_mb"] == 42.0
+    assert [r["name"] for r in conn.execute("PRAGMA table_info(host_probes)")] == MONITOR_COLUMNS["host_probes"]
+    assert [r["name"] for r in conn.execute("PRAGMA index_info(host_probes_host_t)")] == ["host", "t"]
+    assert conn.execute("SELECT COUNT(*) FROM host_probes").fetchone()[0] == 0
+    conn.close()
+
+
+def test_host_probes_answer_check_accepts_the_three_answers_and_nothing_else(dbfile):
+    """Spec §3: answer is one of the three probe_port results; host and address are NOT NULL
+    (the row names the ask: when, on which host's address, with which answer)."""
+    conn = db.open_db()
+    for answer in ("answered", "refused", "nothing"):
+        conn.execute("INSERT INTO host_probes (t, host, address, answer) VALUES (1.0, 'ai1', '10.0.0.50', ?)",
+                     (answer,))
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO host_probes (t, host, address, answer) VALUES (1.0, 'ai1', '10.0.0.50', 'bogus')")
+    with pytest.raises(sqlite3.IntegrityError):  # host is NOT NULL
+        conn.execute("INSERT INTO host_probes (t, host, address, answer) VALUES (1.0, NULL, '10.0.0.50', 'answered')")
+    assert conn.execute("SELECT COUNT(*) FROM host_probes").fetchone()[0] == 3
     conn.close()
 
 

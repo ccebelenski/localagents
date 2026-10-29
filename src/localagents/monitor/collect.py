@@ -1,6 +1,9 @@
 """The collection loop (monitor spec §3 "Collection loop", §6): probe every endpoint, write one
-``probes`` row per probe (a failed probe is a row with its sentence, never a gap), and record
-``endpoint_events`` on up/down transitions and restarts.
+``probes`` row per probe (a failed probe is a row with its sentence, never a gap), record
+``endpoint_events`` on up/down transitions and restarts, and ask the port-22 node fallback
+(spec §3 "Node fallback probe") when every endpoint of a host has timed out, storing the
+answer as a ``host_probes`` row (schema version 5) so a restart reconstructs the node state
+from rows.
 
 Everything runs on the event loop thread with one connection: each tick's database work is a
 single ``immediate()`` block with no ``await`` inside, so ticks of different endpoints never
@@ -14,10 +17,14 @@ import sqlite3
 import sys
 import time
 from typing import Any, Callable, Iterable
+from urllib.parse import urlsplit
 
 from .. import db
 from ..registry import Endpoint, backend_kind, fetch_metrics_doc
 from . import rates, retention, rows, state
+
+# The rule (2026-10-29): the fallback is asked at most once per host per minute.
+HOST_PROBE_INTERVAL_S = 60
 
 
 def endpoint_id(conn: sqlite3.Connection, ep: Endpoint) -> int:
@@ -133,6 +140,42 @@ async def probe_port(host: str, port: int = 22, timeout_s: float = 2.0) -> str:
         return "nothing"
 
 
+_NEWEST_PROBE_HOST = "SELECT host FROM probes WHERE endpoint_id = ? ORDER BY t DESC, id DESC LIMIT 1"
+_NEWEST_HOST_PROBE = "SELECT t FROM host_probes WHERE host = ? ORDER BY t DESC, id DESC LIMIT 1"
+_INSERT_HOST_PROBE = "INSERT INTO host_probes (t, host, address, answer) VALUES (?, ?, ?, ?)"
+_PROBE_HOST_BY_ID = "SELECT host FROM probes WHERE id = ?"
+
+
+async def maybe_probe_host(conn: sqlite3.Connection, eps: list[Endpoint], now: float) -> None:
+    """The node fallback ask (spec §3 "Node fallback probe", the rule 2026-10-29): one TCP
+    connect to port 22 on the host, stored as a ``host_probes`` row. Asked only when every
+    endpoint on the host has its newest probe timed out (``host = "unknown"``, ``up = 0``)
+    and the host's newest ``host_probes`` row is at least ``HOST_PROBE_INTERVAL_S`` old (or
+    absent); never when any endpoint answered or refused (a refusal already proves the box is
+    up). An endpoint without a probe row yet does not count as timed out: the ask waits for
+    its first tick.
+
+    The address is the first endpoint's ``base_url`` hostname (config order). The ``probe_port``
+    await is outside any transaction; the insert is one ``immediate()`` that re-checks the
+    recency under the write lock, so the two endpoint tasks of a host (or a restart's first
+    ticks) cannot both store a row in the same minute."""
+    host = eps[0].host
+    for ep in eps:
+        row = conn.execute(_NEWEST_PROBE_HOST, (endpoint_id(conn, ep),)).fetchone()
+        if row is None or row[0] != "unknown":
+            return
+    last = conn.execute(_NEWEST_HOST_PROBE, (host,)).fetchone()
+    if last is not None and now - last[0] < HOST_PROBE_INTERVAL_S:
+        return
+    address = urlsplit(eps[0].base_url).hostname
+    answer = await probe_port(address)
+    with db.immediate(conn):
+        last = conn.execute(_NEWEST_HOST_PROBE, (host,)).fetchone()
+        if last is not None and now - last[0] < HOST_PROBE_INTERVAL_S:
+            return
+        conn.execute(_INSERT_HOST_PROBE, (now, host, address, answer))
+
+
 async def run(
     reg: Any,
     conn: sqlite3.Connection,
@@ -154,7 +197,14 @@ async def run(
     start and then every ``retention_every_s`` (``retention.prune_probes``,
     ``retention_days``). ``on_tick``, when given, is called after each endpoint's tick that
     wrote its rows (story 3.1: the web app's ``tick`` event, so the page's stream pushes a
-    snapshot); an exception from it is one stderr line, never the loop's end."""
+    snapshot); an exception from it is one stderr line, never the loop's end. The node
+    fallback (story 3.1b) rides the loop: after each endpoint's tick whose probe timed out
+    (``host = "unknown"``), ``maybe_probe_host`` asks the port-22 connect for the host — at
+    most once a minute, only while every endpoint on the host has its newest probe timed out
+    — and stores the answer as a ``host_probes`` row; a failed ask is one stderr line and the
+    loop goes on. ``endpoints`` is the registry's endpoints in config order (``serve`` passes
+    ``list(reg.endpoints.values())``), which is the order the host's fallback address (its
+    first endpoint's ``base_url`` hostname) is read in."""
 
     async def prune() -> None:
         while not stop.is_set():
@@ -164,6 +214,12 @@ async def run(
                 _log(f"probe retention failed: {type(e).__name__}: {e}")
             await _sleep_or_stop(stop, retention_every_s)
 
+    eps = list(endpoints)
+    # host -> its endpoints in config order: the node fallback is asked per host (story 3.1b)
+    hosts: dict[str, list[Endpoint]] = {}
+    for ep in eps:
+        hosts.setdefault(ep.host, []).append(ep)
+
     async def one(ep: Endpoint) -> None:
         kind = backend_kind(ep.backend)
         eid: int | None = None
@@ -172,12 +228,21 @@ async def run(
             try:
                 if eid is None:
                     eid = endpoint_id(conn, ep)
-                await tick(reg, conn, ep, eid, now(), kind)
+                probe_id = await tick(reg, conn, ep, eid, now(), kind)
                 if on_tick is not None:
                     try:
                         on_tick()
                     except Exception as e:  # noqa: BLE001 — a listener never stops collection
                         _log(f"{ep.name}: on_tick failed: {type(e).__name__}: {e}")
+                # the node fallback (story 3.1b): this probe timed out — ask the port-22
+                # connect for the host (at most once a minute, stored as a host_probes row)
+                host_class = conn.execute(_PROBE_HOST_BY_ID, (probe_id,)).fetchone()[0]
+                if host_class == "unknown":
+                    try:
+                        await maybe_probe_host(conn, hosts[ep.host], now())
+                    except Exception as e:  # noqa: BLE001 — a failed ask is one line; the
+                        # loop goes on, as a failed tick does
+                        _log(f"{ep.name}: host probe failed: {type(e).__name__}: {e}")
                 # inside the tick's guard (ruling 2026-10-29, review 2.3): nothing between
                 # ticks may raise — a TypeError here once escaped the task and gather's
                 # return_exceptions=False turned it into the process exiting. The cost of
@@ -189,4 +254,4 @@ async def run(
                 _log(f"{ep.name}: tick failed: {type(e).__name__}: {e}")
             await _sleep_or_stop(stop, seconds)
 
-    await asyncio.gather(prune(), *(one(ep) for ep in endpoints))
+    await asyncio.gather(prune(), *(one(ep) for ep in eps))

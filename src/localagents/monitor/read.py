@@ -24,6 +24,12 @@ EVENTS_LIMIT = 20  # the overview's newest endpoint events
 TRANSCRIPT_LINES = 80  # job detail's transcript tail (job_log's default)
 JOBS_LIMIT = 500  # /api/jobs: the newest jobs created in the range, at most this many
 SERVER_LIVE_S = 60.0  # a server's heartbeat is fresh this long (status.collect's rule)
+# The node fallback's answer is fresh this long (story 3.1b): the collector asks port 22 at
+# most once a minute, so a row up to two ask-intervals old still says what the box is doing.
+FALLBACK_FRESH_S = 120.0
+_FALLBACK_ROW = (
+    "SELECT answer, t FROM host_probes WHERE host = ? AND t >= ? ORDER BY t DESC, id DESC LIMIT 1"
+)
 
 # one probe with its counters and hardware rows (LEFT JOIN: either may be absent) and its model
 _PROBE_SELECT = (
@@ -178,9 +184,20 @@ def _endpoint(conn: sqlite3.Connection, ep: Endpoint, eid: int | None, now: floa
     return entry, node_input
 
 
+def _fallback(conn: sqlite3.Connection, host: str, now: float) -> tuple[str | None, float | None]:
+    """The host's node-fallback answer for the overview (story 3.1b): the newest
+    ``host_probes`` row within ``FALLBACK_FRESH_S`` of ``now`` — ``(answer, t)``, or
+    ``(None, None)`` when there is none, so an all-timeout node stays ``"unknown"``."""
+    row = conn.execute(_FALLBACK_ROW, (host, now - FALLBACK_FRESH_S)).fetchone()
+    if row is None:
+        return None, None
+    return row["answer"], row["t"]
+
+
 def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float) -> dict[str, Any]:
     """The SSE snapshot (spec §5 "Overview"; shape §5a): hosts in models.yaml order (endpoints
-    grouped by ``host``, config order within), each with its node state and endpoints; the
+    grouped by ``host``, config order within), each with its node state (resolved from the
+    newest fresh port-22 fallback row, story 3.1b), its fallback fields and endpoints; the
     running jobs; the newest ``EVENTS_LIMIT`` endpoint events. An endpoint in the database but
     not in the config is ignored (its events too)."""
     running = _running_jobs(conn, now)
@@ -199,10 +216,15 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float) ->
             entries.append(entry)
             if node_input is not None:
                 nodes.append(node_input)
+        # the node fallback (story 3.1b): the host's newest host_probes answer within
+        # FALLBACK_FRESH_S of now resolves an all-timeout node (spec §4); else unknown stays
+        fallback, fallback_t = _fallback(conn, host, now)
         hosts.append({
             "name": host,
-            "state": state.node_state(nodes),
+            "state": state.node_state(nodes, fallback),
             "dormant": state.node_dormant([e["state"] for e in entries]),
+            "fallback": fallback,
+            "fallback_t": fallback_t,
             "endpoints": entries,
         })
     events = []

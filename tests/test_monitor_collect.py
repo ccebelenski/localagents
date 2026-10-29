@@ -541,3 +541,142 @@ def test_on_tick_is_called_after_each_written_tick_and_its_error_is_one_line(mon
     err = capsys.readouterr().err
     assert "a: on_tick failed: ValueError: listener broke" in err
     assert _count(conn, "probes") == 2
+
+
+# --- item 2: the node fallback (story 3.1b) -------------------------------------------------
+
+_TIMEOUT = {"up": False, "models": [], "host": "unknown",
+            "error": "x timed out (host off, or a firewall dropping packets)"}
+_REFUSED = {"up": False, "models": [], "host": "up",
+            "error": "x is reachable but nothing is listening on x:8080 "
+                     "(nothing started there, or the port in models.yaml is wrong)"}
+
+
+def _fallback_calls(monkeypatch, answer="refused"):
+    """collect.probe_port replaced by a recorder that returns the canned answer; each call is
+    recorded as (address, port, timeout_s)."""
+    calls = []
+
+    async def fake(host, port=22, timeout_s=2.0):
+        calls.append((host, port, timeout_s))
+        return answer
+    monkeypatch.setattr(collect, "probe_port", fake)
+    return calls
+
+
+def test_two_timeouts_ask_the_fallback_once_and_a_fresh_row_silences_the_next_round(monkeypatch, conn):
+    """Story 3.1b: both endpoints of host x time out (host 'unknown', up 0) -> the port-22
+    fallback is asked exactly once and stored as a host_probes row (the answer, the host, and
+    the first endpoint's base_url hostname in config order). A second round within 60 s sees
+    the fresh row and asks again not (at most one ask per host per minute)."""
+    e1 = Endpoint(name="e1", base_url="http://x:8080", backend="strata", host="x")
+    e2 = Endpoint(name="e2", base_url="http://x:9000", backend="strata", host="x")
+    reg = FakeRegistry({"e1": [_TIMEOUT], "e2": [_TIMEOUT]})
+    calls = _fallback_calls(monkeypatch)
+    monkeypatch.setattr(state, "interval_s", lambda *a, **k: 0)
+    t = [T0]
+
+    async def main():
+        stop = asyncio.Event()
+        orig = reg.probe
+
+        async def probe(ep):
+            out = await orig(ep)
+            if reg.calls.get("e1", 0) >= 2 and reg.calls.get("e2", 0) >= 2:
+                t[0] = T0 + 10  # the second round, 10 s on
+                stop.set()
+            return out
+        reg.probe = probe
+        await asyncio.wait_for(collect.run(reg, conn, [e1, e2], stop, now=lambda: t[0]), 10)
+    asyncio.run(main())
+    assert reg.calls == {"e1": 2, "e2": 2}
+    assert calls == [("x", 22, 2.0)]  # one ask: the first endpoint's hostname, config order
+    rows_ = conn.execute("SELECT t, host, address, answer FROM host_probes ORDER BY id").fetchall()
+    assert len(rows_) == 1
+    assert (rows_[0]["t"], rows_[0]["host"], rows_[0]["address"], rows_[0]["answer"]) == (T0, "x", "x", "refused")
+    assert _count(conn, "probes") == 4  # both rounds probed both endpoints
+    assert _events(conn) == []  # down -> down is no transition
+
+
+def test_a_host_with_a_refusing_endpoint_never_asks_the_fallback(monkeypatch, conn):
+    """Never when any endpoint on the host answered or refused: a refusal proves the box is up
+    (its row's host is 'up'), so the timed-out endpoint's tick asks nothing and stores nothing."""
+    e1 = Endpoint(name="e1", base_url="http://x:8080", backend="strata", host="x")
+    e2 = Endpoint(name="e2", base_url="http://x:9000", backend="strata", host="x")
+    reg = FakeRegistry({"e1": [_TIMEOUT], "e2": [_REFUSED]})
+    calls = _fallback_calls(monkeypatch)
+    monkeypatch.setattr(state, "interval_s", lambda *a, **k: 0)
+
+    async def main():
+        stop = asyncio.Event()
+        orig = reg.probe
+
+        async def probe(ep):
+            out = await orig(ep)
+            if reg.calls.get("e1", 0) >= 1 and reg.calls.get("e2", 0) >= 1:
+                stop.set()
+            return out
+        reg.probe = probe
+        await asyncio.wait_for(collect.run(reg, conn, [e1, e2], stop, now=lambda: T0), 10)
+    asyncio.run(main())
+    assert reg.calls == {"e1": 1, "e2": 1}
+    assert calls == []
+    assert _count(conn, "host_probes") == 0
+    assert _count(conn, "probes") == 2
+
+
+def test_a_host_with_one_timing_out_endpoint_gets_one_fallback_row(monkeypatch, conn):
+    """A host with a single endpoint: its timeout is the every-endpoint-timed-out case, so the
+    first tick asks the fallback and stores one row."""
+    ep = Endpoint(name="solo", base_url="http://solo:8080", backend="strata", host="solo")
+    reg = FakeRegistry({"solo": [_TIMEOUT]})
+    calls = _fallback_calls(monkeypatch, "answered")
+    monkeypatch.setattr(state, "interval_s", lambda *a, **k: 0)
+
+    async def main():
+        stop = asyncio.Event()
+        orig = reg.probe
+
+        async def probe(e):
+            out = await orig(e)
+            if reg.calls["solo"] >= 1:
+                stop.set()
+            return out
+        reg.probe = probe
+        await asyncio.wait_for(collect.run(reg, conn, [ep], stop, now=lambda: T0), 10)
+    asyncio.run(main())
+    assert calls == [("solo", 22, 2.0)]
+    rows_ = conn.execute("SELECT t, host, address, answer FROM host_probes ORDER BY id").fetchall()
+    assert len(rows_) == 1
+    assert (rows_[0]["t"], rows_[0]["host"], rows_[0]["address"], rows_[0]["answer"]) == (T0, "solo", "solo", "answered")
+
+
+def test_a_failing_fallback_ask_is_one_line_per_ask_no_row_and_the_loop_goes_on(monkeypatch, conn, capsys):
+    """probe_port raising is one stderr line per failed ask (never the loop's end, like a
+    failed tick) and stores no row: the ask is retried on the next round, still unanswered."""
+    ep = Endpoint(name="solo", base_url="http://solo:8080", backend="strata", host="solo")
+    reg = FakeRegistry({"solo": [_TIMEOUT]})
+
+    async def boom(host, port=22, timeout_s=2.0):
+        raise RuntimeError("connector died")
+    monkeypatch.setattr(collect, "probe_port", boom)
+    monkeypatch.setattr(state, "interval_s", lambda *a, **k: 0)
+
+    async def main():
+        stop = asyncio.Event()
+        orig = reg.probe
+
+        async def probe(e):
+            out = await orig(e)
+            if reg.calls["solo"] >= 2:
+                stop.set()
+            return out
+        reg.probe = probe
+        await asyncio.wait_for(collect.run(reg, conn, [ep], stop, now=lambda: T0), 10)
+    asyncio.run(main())
+    err = capsys.readouterr().err
+    assert err.count("solo: host probe failed: RuntimeError: connector died") == 2  # one line per ask
+    assert "tick failed" not in err  # the ticks themselves succeeded
+    assert _count(conn, "host_probes") == 0
+    assert _count(conn, "probes") == 2  # the loop went on: both rounds probed
+    assert reg.calls == {"solo": 2}

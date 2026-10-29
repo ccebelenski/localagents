@@ -1,6 +1,6 @@
-"""Probe retention (monitor spec §3 "Storage"): seven days of probes. Deletes only the monitor's
-tables; job, request and tool-call rows are kept (the MCP server's prune removes job directories,
-never rows)."""
+"""Probe retention (monitor spec §3 "Storage"): seven days of probes and host fallback answers.
+Deletes only the monitor's tables; job, request and tool-call rows are kept (the MCP server's
+prune removes job directories, never rows)."""
 
 from __future__ import annotations
 
@@ -16,9 +16,11 @@ RETENTION_DAYS = 7
 # endpoint_events and bounds the discovery to the endpoints table, so no statement scans a
 # monitor table or its whole index).
 _ENDPOINT_IDS = "SELECT id FROM endpoints"
+_HOSTS = "SELECT DISTINCT host FROM endpoints"  # the host_probes discovery rides the same small table (story 3.1b)
 _OLD_PROBE_IDS = "SELECT id FROM probes WHERE endpoint_id = ? AND t < ?"
 _DELETE_OLD_PROBES = "DELETE FROM probes WHERE endpoint_id = ? AND t < ?"
 _DELETE_OLD_EVENTS = "DELETE FROM endpoint_events WHERE endpoint_id = ? AND t < ?"
+_DELETE_OLD_HOST_PROBES = "DELETE FROM host_probes WHERE host = ? AND t < ?"
 
 
 def prune_probes(conn: sqlite3.Connection, days: float = RETENTION_DAYS, now: float | None = None) -> int:
@@ -27,8 +29,9 @@ def prune_probes(conn: sqlite3.Connection, days: float = RETENTION_DAYS, now: fl
     older than ``days`` before ``now``, in one ``immediate()`` transaction. Children go
     first: the foreign keys are enforced. Every delete is ``WHERE endpoint_id = ? AND t < ?``
     so it uses the ``(endpoint_id, t)`` indexes (``probes_endpoint_t``,
-    ``endpoint_events_endpoint_t``); event rows share the probe horizon. Returns the number
-    of probes rows deleted. ``days <= 0`` disables pruning, as ``jobs.prune`` does."""
+    ``endpoint_events_endpoint_t``); event rows share the probe horizon. The ``host_probes``
+    rows share it too (story 3.1b), per host through the ``(host, t)`` index. Returns the
+    number of probes rows deleted. ``days <= 0`` disables pruning, as ``jobs.prune`` does."""
     if days <= 0:
         return 0
     cutoff = (now if now is not None else time.time()) - days * 86400
@@ -42,4 +45,6 @@ def prune_probes(conn: sqlite3.Connection, days: float = RETENTION_DAYS, now: fl
                          (endpoint_id, cutoff))
             n += conn.execute(_DELETE_OLD_PROBES, (endpoint_id, cutoff)).rowcount
             conn.execute(_DELETE_OLD_EVENTS, (endpoint_id, cutoff))
+        for host in (r[0] for r in conn.execute(_HOSTS)):
+            conn.execute(_DELETE_OLD_HOST_PROBES, (host, cutoff))
     return n

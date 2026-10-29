@@ -57,7 +57,46 @@ def test_overview_hosts_in_config_order_with_their_states(world):
     # a refusal proves the box is up (the seed's node test): every node is up
     assert [h["state"] for h in ov["hosts"]] == ["up", "up", "up"]
     assert [h["dormant"] for h in ov["hosts"]] == [False, False, True]
-    assert set(ov["hosts"][0]) == {"name", "state", "dormant", "endpoints"}
+    assert set(ov["hosts"][0]) == {"name", "state", "dormant", "fallback", "fallback_t", "endpoints"}
+    # the seed's world holds no host_probes row: the fallback is null on every host
+    assert [h["fallback"] for h in ov["hosts"]] == [None, None, None]
+    assert [h["fallback_t"] for h in ov["hosts"]] == [None, None, None]
+
+
+def _unknown_latest_probe(conn, name):
+    """Make the endpoint's LAST probe a timeout (host 'unknown') at NOW: the node is all-timeout."""
+    eid = endpoint_id(conn, name)
+    with db.immediate(conn):
+        rows.insert(conn, rows.ProbeRows(
+            {**dict.fromkeys(rows.PROBE_COLUMNS), "t": NOW, "endpoint_id": eid, "up": 0,
+             "host": "unknown",
+             "error": "127.0.0.1:8080 timed out (host off, or a firewall dropping packets)"},
+            None, None))
+
+
+def test_fallback_resolves_an_all_timeout_host(world):
+    """Story 3.1b: a host whose endpoints' last probes are all timeouts (host 'unknown') is
+    resolved from the newest host_probes row within 120 s of now (the port-22 ask's answer):
+    refused (the box answers port 22) -> up; nothing (silent) -> down; a row older than 120 s
+    is stale, so the state stays unknown and the fallback fields are null."""
+    conn, reg = world
+    _unknown_latest_probe(conn, "llamacpp")
+    with db.immediate(conn):
+        conn.execute("INSERT INTO host_probes (t, host, address, answer) VALUES (?, 'local', '127.0.0.1', 'refused')",
+                     (NOW - 10,))
+    host = _host(read.overview(conn, reg, NOW, WINDOW_S), "local")
+    assert host["state"] == "up"
+    assert host["fallback"] == "refused" and host["fallback_t"] == NOW - 10
+    # the other hosts hold no host_probes row: the fields are null
+    assert _host(read.overview(conn, reg, NOW, WINDOW_S), "ai1")["fallback"] is None
+    with db.immediate(conn):
+        conn.execute("UPDATE host_probes SET answer = 'nothing'")
+    host = _host(read.overview(conn, reg, NOW, WINDOW_S), "local")
+    assert host["state"] == "down" and host["fallback"] == "nothing"
+    with db.immediate(conn):
+        conn.execute("UPDATE host_probes SET t = ?", (NOW - 200,))
+    host = _host(read.overview(conn, reg, NOW, WINDOW_S), "local")
+    assert host["state"] == "unknown" and host["fallback"] is None and host["fallback_t"] is None
 
 
 ENDPOINT_KEYS = {
