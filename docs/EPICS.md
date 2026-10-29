@@ -323,7 +323,7 @@ the duplicates go), then docs.
   agent ids were missing from these bullets, added. Observations: `/` carries no Cache-Control;
   `port_free` answers on the first address of a multi-address host; the overview's history
   fetch is N+1 per refresh. Folded in 3.2c.
-- ☐ **3.2c Fold of the combined review**: `_Fanout.close()` runs when `stop` is set; job.js
+- ☑ **3.2c Fold of the combined review** (Qwen/ai2 job 20261029-164053-f1b3a874, 55 turns, 611 tests; the brief had placed the stop await in the drain loop, it is in the stream loop, the lane closed from both there and the command's stopper; subscribe after close ends at once rather than raising; Epic 3 is closed: every story and fold reviewed by another model, the live gate green): `_Fanout.close()` runs when `stop` is set; job.js
   counts `error != ''` in its totals; `/` answers `Cache-Control: no-cache`; `port_free` is
   true only when every resolved address binds. Lane: Qwen (ai2). Page items from the reviews: fleet charts for live
   endpoints only; a node-down card does not repeat each endpoint's sentence; the field gate

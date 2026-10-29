@@ -3,16 +3,15 @@
 Scope: stories 3.1 through 3.6 with their folds, built between 11:40 and 17:00 on 2026-10-29
 in the same lane process as Epics 1 and 2 (retros `2026-10-29-epic1-mcp-sqlite.md` and
 `2026-10-29-epic2-monitor-core.md`). Counts are from `docs/EPICS.md` and the git log; story 3.2c
-(the fold of the combined review) was running when this was written and is recorded in EPICS
-when it lands.
+(the fold of the combined review) landed after this was written: 611 tests, Epic 3 closed.
 
 ## What shipped
 
 | | |
 |---|---|
-| Stories and folds in Epic 3 | 15 (14 ticked, 3.2c in flight) |
+| Stories and folds in Epic 3 | 15, all ticked |
 | Story commits on main | 15 |
-| Tests | 431 → 603, all passing at every merge |
+| Tests | 431 → 611, all passing at every merge |
 | Local lane jobs named in EPICS | 17 named jobs, 1,492 turns where counted, plus the two DeepSeek jobs of the 3.2 review and the 3.6 gate |
 | Opus-high lanes | 4 builds (3.1, 3.2, 3.3, 3.2a-page) |
 | Cross-model reviews | 8 plus the combined review of four folds; two found no defect at all |
@@ -108,4 +107,4 @@ smoke` is the online acceptance run; the MCP server imports nothing from the mon
 
 `docs/EPICS.md` keeps one line per story with its commit, job id and review; this file holds the
 story; `docs/gates/2026-10-29-epic3-live-gate.md` holds the live run's evidence. The MVP is
-feature complete once 3.2c lands; the push is the operator's call.
+feature complete; the push is the operator's call.
