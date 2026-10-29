@@ -277,7 +277,18 @@ the duplicates go), then docs.
   on one time grid; a requests-by-endpoint route; job detail's list is `tool_call_log`; a port in
   use exits 2 with one sentence; §5a follows. Lane: Qwen (ai1), review by DeepSeek. 3.2 waits
   for it.
-- ☑ **3.1b Node fallback wired.** (Qwen3.8-27B/llamacpp job 20261029-141437-0b7aa654, 94 turns, 562 tests; schema v5 `host_probes`; a re-check inside the insert's transaction; an unprobed sibling blocks the ask, conservatively; the fallback address is the first endpoint's hostname. Review: Qwen/ai1, pending.) `collect.run` asks `probe_port` when every endpoint of a
+- ☑ **3.1b Node fallback wired.** (Qwen3.8-27B/llamacpp job 20261029-141437-0b7aa654, 94 turns, 562 tests; schema v5 `host_probes`; a re-check inside the insert's transaction; an unprobed sibling blocks the ask, conservatively; the fallback address is the first endpoint's hostname. Reviewed by Qwen/ai1 job
+  20261029-143644-36a3b90b, 54 turns, 17 probe tests: the rule over every shape, cancel-twice
+  mid-connect clean, the same-round race measured (one row, endpoints-per-host minus one
+  connects), the freshness boundary, retention through the index, the merge intact; NO code
+  defects. Ruling taken: a name that does not resolve is not "nothing" (the box may be fine,
+  the name is wrong), so the ask fails loudly and the node stays unknown. Folded in 3.1c.)
+- ☐ **3.1c Fold of the 3.1b review** (reviewer fixes its own findings): `probe_port` lets a
+  `socket.gaierror` propagate so the ask fails with one stderr line and no row; the re-check
+  docstring states the duplicate-connect bound as endpoints-per-host minus one; spec §3 says
+  out loud that a shared `host` key with two boxes gets one fallback aimed at the first
+  endpoint's box, and that an endpoint whose ticks never write a row blocks its host's
+  fallback. Lane: Qwen (ai1). `collect.run` asks `probe_port` when every endpoint of a
   host timed out in the same round and stores the answer (a `host_probes` row or a column on
   the probe), so `node_state`'s `fallback` argument has a source; §3's rule becomes code.
   Lane: Qwen, after the 3.1 review.
