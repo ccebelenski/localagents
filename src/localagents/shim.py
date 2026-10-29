@@ -260,14 +260,19 @@ class Shim:
             self._log(job, path, body, note, status=0, ms=int((time.monotonic() - t0) * 1000), error=str(e))
             return JSONResponse({"error": {"type": "api_error", "message": f"backend unreachable: {e}"}}, status_code=502)
 
-        if path.endswith("/count_tokens") and resp.status_code == 404:
+        # "this backend has no count_tokens" is not one status: llama.cpp answers 404, vLLM
+        # 405, a gateway may say 501 (review of 3.5, F4: latent robustness; no backend here
+        # answered 501 to count_tokens, the 501 row every job carries is Claude Code's
+        # /api/hello handshake). Any other status — a 500 is a real failure — forwards
+        # untouched: hiding a failure behind a plausible token count is worse than the failure.
+        if path.endswith("/count_tokens") and resp.status_code in (404, 405, 501):
             await resp.aclose()
             est = max(1, len(raw) // 4)
             # the row records the backend's own status: http_status is always what the backend
             # answered, even though the reply to Claude Code is our 200 with the estimate
             # (story 1.9 item 8), and its own ms, not a 0 that says the round-trip was instant
             # (story 1.9a row 2)
-            self._log(job, path, body, note, status=404,
+            self._log(job, path, body, note, status=resp.status_code,
                       ms=int((time.monotonic() - t0) * 1000), error="count_tokens unsupported; estimated")
             return JSONResponse({"input_tokens": est})
 

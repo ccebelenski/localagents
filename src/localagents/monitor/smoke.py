@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import re
 import sys
@@ -23,7 +24,7 @@ from typing import Any
 
 import httpx
 
-from .. import db, derive
+from .. import db, derive, server
 from ..jobs import JobStore
 from ..registry import Endpoint, ModelUnavailable, Registry, backend_kind, classify_connect_failure
 from ..runner import run_job
@@ -162,16 +163,32 @@ async def real_job(
         log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",
         context=res.context,
     )
-    await run_job(
-        job, reg, res,
-        permission_mode=None,
-        max_turns=4,
-        allowed_tools=["Bash"],
-        system_prompt_append=None,
-        resume_session=None,
-        timeout_s=timeout_s,
-        shim_base_url=shim.base_url_for(job.id),
-    )
+    # 3.5 review F2: the heartbeat sampler lives in server.py and the smoke command never
+    # starts it, so this process's mcp_servers row sat stale for the whole (minutes-long)
+    # job — the status line called the live job's server lost-adjacent. Beat the row for the
+    # duration of run_job, at the sampler's own interval (server.LOAD_SAMPLE_S, read where it
+    # is defined, re-read each beat), and cancel the task when the job returns.
+    async def _beat() -> None:
+        while True:
+            store.heartbeat()
+            await asyncio.sleep(server.LOAD_SAMPLE_S)
+
+    heart = asyncio.create_task(_beat())
+    try:
+        await run_job(
+            job, reg, res,
+            permission_mode=None,
+            max_turns=4,
+            allowed_tools=["Bash"],
+            system_prompt_append=None,
+            resume_session=None,
+            timeout_s=timeout_s,
+            shim_base_url=shim.base_url_for(job.id),
+        )
+    finally:
+        heart.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heart
 
     conn = store.conn
     row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job.id,)).fetchone()
@@ -305,21 +322,32 @@ async def _run(a: argparse.Namespace) -> int:
         f"serving {res.served_model} at {res.endpoint.url}",
     ))
 
-    cl.extend(await direct_requests(res.endpoint, res.served_model, n=a.requests))
-
-    store = JobStore()
-    conn = store.conn
-    cl.extend(await down_state(conn, reg=reg))
-    cl.extend(await live_tick(conn, reg, res.endpoint))
-    if not a.skip_job:
-        shim = Shim(lambda jid: store.jobs.get(jid), endpoint_lookup=lambda name: reg.endpoints.get(name))
-        cl.extend(await real_job(reg, store, shim, a.endpoint, a.model, a.timeout_s))
+    if a.requests == 0:
+        # 3.5 review F3: zero used to print nothing about the direct requests, which read as
+        # a crash before them; a deliberate skip gets its own ok line.
+        cl.append(Check("direct requests", True, "skipped (--requests 0)"))
     else:
-        cl.append(Check("real job through run_job", True, "skipped (--skip-job): rows checked are the requests and states only"))
+        cl.extend(await direct_requests(res.endpoint, res.served_model, n=a.requests))
 
-    print()
-    print(cl.render(), flush=True)
-    return exit_code(cl)
+    # 3.5 review F2: the store's mcp_servers row must read stopped on every exit path —
+    # including a raise out of the checks — or it ages out by heartbeat and the status line
+    # calls a finished smoke live for 60 s. close() is idempotent and never raises.
+    store = JobStore()
+    try:
+        conn = store.conn
+        cl.extend(await down_state(conn, reg=reg))
+        cl.extend(await live_tick(conn, reg, res.endpoint))
+        if not a.skip_job:
+            shim = Shim(lambda jid: store.jobs.get(jid), endpoint_lookup=lambda name: reg.endpoints.get(name))
+            cl.extend(await real_job(reg, store, shim, a.endpoint, a.model, a.timeout_s))
+        else:
+            cl.append(Check("real job through run_job", True, "skipped (--skip-job): rows checked are the requests and states only"))
+
+        print()
+        print(cl.render(), flush=True)
+        return exit_code(cl)
+    finally:
+        store.close()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -334,10 +362,17 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--endpoint", required=True, help="endpoint name from models.yaml")
     ap.add_argument("--model", required=True, help="served model id to run against")
     ap.add_argument("--db", help="database path (default: LOCALAGENTS_DB or the shared file)")
-    ap.add_argument("--requests", type=int, default=3, help="number of direct /v1/messages requests (default 3)")
+    ap.add_argument("--requests", type=int, default=3, help="number of direct /v1/messages requests (default 3; 0 skips them)")
     ap.add_argument("--timeout-s", type=int, default=180, help="wall-clock cap for the real job (default 180)")
     ap.add_argument("--skip-job", action="store_true", help="skip the real job: requests and states only")
     a = ap.parse_args(argv)
+    if a.requests < 0:
+        # 3.5 review F3: a negative count used to run zero requests silently, a typo
+        # masquerading as the deliberate --requests 0. One line and exit 2, before the
+        # resolve, the database or any request. (ap.error() would add its usage banner:
+        # the story asks for one line.)
+        print(f"localagents smoke: --requests must not be negative (got {a.requests})", file=sys.stderr)
+        sys.exit(2)
     if a.db:
         os.environ["LOCALAGENTS_DB"] = str(Path(a.db).expanduser().resolve())
     sys.exit(asyncio.run(_run(a)))

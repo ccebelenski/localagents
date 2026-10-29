@@ -334,11 +334,15 @@ llamacpp:prompt_tokens_total 5
     assert d["prompt_tokens_cached"] == 450 and d["prompt_tokens_processed"] == 755 and d["cache_hit_ratio"] == 0.5
 
 
-def test_count_tokens_fallback_records_the_backends_404(tmp_path, monkeypatch):
+@pytest.mark.parametrize("status", [404, 405, 501])
+def test_count_tokens_fallback_records_the_backends_status(tmp_path, monkeypatch, status):
     """Story 1.9 item 8: the count_tokens fallback logged status=200 although the backend
     answered 404 — a request row that claimed a status the backend never sent. The row records
-    http_status=404 with the estimate's error note; the shim's reply to Claude Code stays 200
-    with the estimate (that reply is the shim's own contract, unchanged)."""
+    http_status=<what the backend actually answered> with the estimate's error note; the shim's
+    reply to Claude Code stays 200 with the estimate (that reply is the shim's own contract,
+    unchanged). Story 3.5 review F4: "no count_tokens" is not one status — llama.cpp answers
+    404, vLLM 405, some gateways 501 — the fallback fires on all three and records the real
+    one (the 1.9a contract: http_status is always the backend's status)."""
     import asyncio
 
     import httpx
@@ -355,7 +359,7 @@ def test_count_tokens_fallback_records_the_backends_404(tmp_path, monkeypatch):
     shim = Shim(lambda jid: job)
 
     async def not_found(upstream, stream=True):
-        return httpx.Response(404, request=upstream)  # the backend has no /v1/messages/count_tokens
+        return httpx.Response(status, request=upstream)  # the backend has no /v1/messages/count_tokens
 
     monkeypatch.setattr(shim._client, "send", not_found)
 
@@ -378,7 +382,7 @@ def test_count_tokens_fallback_records_the_backends_404(tmp_path, monkeypatch):
         "SELECT r.*, p.path AS path_name FROM requests r JOIN paths p ON p.id = r.path_id"
     ).fetchone()
     assert row["path_name"] == "/v1/messages/count_tokens"
-    assert row["http_status"] == 404  # what the backend actually answered
+    assert row["http_status"] == status  # what the backend actually answered
     assert row["error"] == "count_tokens unsupported; estimated"
 
 
@@ -458,6 +462,25 @@ def test_count_tokens_fallback_records_its_real_ms(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert row["error"] == "count_tokens unsupported; estimated"
     assert row["ms"] >= 10
+
+
+def test_count_tokens_500_is_not_estimated(tmp_path, monkeypatch):
+    """Story 3.5 review F4's boundary: only the unsupported statuses (404, 405, 501) become
+    the estimate. A 500 from count_tokens is a real backend failure — estimating over it
+    would hide the failure behind a plausible token count — so it is forwarded as every
+    other error is: the client gets the backend's status, the row records it, no estimate."""
+    import httpx
+
+    async def broken(upstream, stream=True):
+        return httpx.Response(500, json={"error": {"message": "boom"}}, request=upstream)
+
+    resp, row = _relay_and_row(
+        tmp_path, monkeypatch, "/v1/messages/count_tokens", broken,
+        {"model": "m", "messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert resp.status_code == 500  # forwarded, not replaced by the 200 estimate
+    assert row["http_status"] == 500
+    assert row["error"] != "count_tokens unsupported; estimated"
 
 
 def test_stream_usage_merges_message_start_and_message_delta():

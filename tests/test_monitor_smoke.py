@@ -5,6 +5,7 @@ MockTransport, the story-2.1 refused route) and the live run — the story's gat
 separate step, not a test.
 """
 
+import argparse
 import asyncio
 import errno
 import json
@@ -211,6 +212,47 @@ def test_transcript_date_check_ignores_the_runner_own_lines(monkeypatch, tmp_pat
     assert not by_name["transcript has a date-shaped line"].ok
 
 
+# ---------------------------------------------------------------- item 3b: the server row lives
+
+def _server_row(store):
+    return store.conn.execute(
+        "SELECT updated, stopped FROM mcp_servers WHERE id = ?", (store.server_id,)
+    ).fetchone()
+
+
+def test_real_job_heartbeats_the_server_row_while_the_job_runs(monkeypatch, tmp_path):
+    """3.5 review F2: the smoke's mcp_servers row went stale for the whole real job — the
+    heartbeat sampler lives in server.py and the smoke command never starts it, so the row's
+    ``updated`` sat at insert time while a minutes-long job ran. real_job heartbeats its store
+    for the duration of run_job at the sampler's own interval (server.LOAD_SAMPLE_S, read where
+    it is defined, monkeypatched here) and cancels the task when the job returns."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    reg = _registry(monkeypatch)
+    store = jobs.JobStore()
+    monkeypatch.setattr(smoke.server, "LOAD_SAMPLE_S", 0.05)
+    fake, _ = _fake_run_job()
+    stamps: dict[str, float] = {}
+
+    async def slow(job, reg_, res, **kw):
+        stamps["start"] = _server_row(store)["updated"]
+        await asyncio.sleep(0.3)  # the delay the heartbeat must beat through
+        stamps["during"] = _server_row(store)["updated"]
+        await fake(job, reg_, res, **kw)
+
+    monkeypatch.setattr(smoke, "run_job", slow)
+
+    async def scenario():
+        await smoke.real_job(reg, store, _FakeShim(), "ep", "served-model", 180)
+        after = _server_row(store)["updated"]
+        await asyncio.sleep(0.2)  # a task that leaked past run_job would beat here
+        return after, _server_row(store)["updated"]
+
+    after, later = asyncio.run(scenario())
+    assert stamps["during"] > stamps["start"]  # ``updated`` advances during the run
+    assert later == after  # the task is cancelled when the job returns, not left beating
+    assert _server_row(store)["stopped"] is None  # real_job does not close the store's row
+
+
 # ---------------------------------------------------------------- item 4: dead port and collector
 
 @pytest.fixture
@@ -261,6 +303,57 @@ def test_smoke_unknown_endpoint_is_one_missing_line_and_exit_one(tmp_path):
     assert p.returncode == 1
     missing = [ln for ln in p.stdout.splitlines() if ln.startswith("[MISSING]")]
     assert len(missing) == 1 and "Unknown endpoint" in missing[0], p.stdout
+
+
+def _drive_run(monkeypatch, tmp_path, **over):
+    """Run ``smoke._run`` in-process, offline: a canned-probe Registry.load stands in for the
+    yaml, every httpx GET is served (no wire), requests are skipped and the job is skipped —
+    the only thing left on the table is the command's own bookkeeping. Returns nothing; the
+    row lands in the state-dir database the test reads back."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.delenv("LOCALAGENTS_DB", raising=False)
+    reg = _registry(monkeypatch)
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, *a, **k: reg))
+    serve(monkeypatch, "http://ep:8080", {"/v1/models": None})  # answers every GET offline
+    a = argparse.Namespace(endpoint="ep", model="served-model", db=None, requests=0,
+                           timeout_s=180, skip_job=True)
+    for k, v in over.items():
+        setattr(a, k, v)
+    return asyncio.run(smoke._run(a))
+
+
+def test_requests_zero_skips_the_direct_requests_with_an_ok_line(monkeypatch, tmp_path, capsys):
+    """3.5 review F3: ``--requests 0`` ran zero requests in silence — the checklist carried no
+    line about the direct requests at all, which reads as a crash before them rather than as
+    a deliberate skip. Zero is a valid "just the job and the states" run and says so."""
+    _drive_run(monkeypatch, tmp_path)  # the harness drives with requests=0
+    out = capsys.readouterr().out
+    assert "[ok] direct requests: skipped (--requests 0)" in out
+
+
+def test_negative_requests_is_one_line_and_exit_two_before_anything(tmp_path):
+    """3.5 review F3 (other half): a negative --requests silently ran zero requests — a typo'd
+    count must not masquerade as the deliberate 0. It exits 2 with one line, before anything
+    runs: no database line, no resolve, no checklist."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text("")
+    env = {**os.environ, "LOCALAGENTS_CONFIG": str(cfg), "LOCALAGENTS_DB": str(tmp_path / "s.db")}
+    p = _smoke_cli("smoke", "--endpoint", "nosuchname", "--model", "whatever", "--requests", "-1", env=env)
+    assert p.returncode == 2
+    assert len(p.stderr.strip().splitlines()) == 1 and "--requests" in p.stderr, p.stderr
+    assert p.stdout == "", p.stdout  # nothing printed: the error precedes the whole run
+
+
+def test_run_marks_the_server_row_stopped(monkeypatch, tmp_path):
+    """3.5 review F2 (second half): the smoke process wrote its mcp_servers row and never
+    stopped it — the row aged out by heartbeat, so the status line called a finished smoke
+    live for 60 s. _run closes the store on every exit path, so the row is stopped the
+    moment _run returns."""
+    _drive_run(monkeypatch, tmp_path)
+    conn = db.open_db(db.db_path())
+    rows = conn.execute("SELECT stopped FROM mcp_servers").fetchall()
+    assert rows, "the run wrote no server row"
+    assert all(r["stopped"] is not None for r in rows), rows
 
 
 def test_live_tick_offline_sees_counters_and_live_state(monkeypatch, conn):
