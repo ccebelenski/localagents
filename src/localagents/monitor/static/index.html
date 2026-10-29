@@ -4,9 +4,36 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>localagents monitor</title>
+<link rel="stylesheet" href="/static/uPlot.min.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<h1>localagents monitor</h1>
+<header class="top">
+  <div class="brand">
+    <h1><a href="#/">localagents monitor</a></h1>
+    <span id="meta" class="muted"></span>
+  </div>
+  <div class="controls">
+    <div id="range" class="range" role="group" aria-label="time range for every chart"></div>
+    <span id="conn" class="conn conn-down" title="server-sent events stream"><span class="dot"></span><span id="conn-label">connecting</span></span>
+    <span id="updated" class="muted"></span>
+  </div>
+</header>
+<div id="banner" class="banner" role="alert" hidden></div>
+<main id="overview">
+  <section id="hosts" class="hosts" aria-label="hosts"></section>
+  <section class="jobs" aria-labelledby="jobs-title">
+    <h2 id="jobs-title">Running jobs</h2>
+    <div id="jobs-body"></div>
+  </section>
+  <section class="fleet" aria-labelledby="fleet-title">
+    <h2 id="fleet-title">Fleet</h2>
+    <p id="fleet-note" class="muted" hidden></p>
+    <div id="fleet-charts" class="fleet-charts"></div>
+  </section>
+</main>
+<section id="detail" class="detail" hidden></section>
+<script src="/static/uPlot.iife.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

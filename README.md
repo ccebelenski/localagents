@@ -357,8 +357,8 @@ database; point it at a throwaway file to rehearse.
 `localagents monitor` is a web dashboard for the endpoints in `models.yaml` and the jobs
 localagents runs on them: one process that probes every endpoint (every 5 s; a dormant one
 every 60 s) into the shared database and serves a page that redraws from a server-sent
-events stream after each probe. (The page itself is a placeholder until the overview story
-lands; the routes and their JSON below are complete.)
+events stream after each probe. (The endpoint and job detail pages are still to come; their
+links on the overview show a "not built yet" panel.)
 
 ```bash
 localagents monitor                 # http://127.0.0.1:8765/
@@ -371,6 +371,22 @@ network you trust), `--db PATH` (default: `monitor: db`, else `LOCALAGENTS_DB`, 
 directory's `localagents.db`), `--config PATH`, and `--no-collect` (serve the database as it
 is, without probing or pruning). It prints one line at start — the URL, the database path and
 the endpoint count — and stops on Ctrl-C or SIGTERM.
+
+The overview shows one card per host, in `models.yaml` order. A live endpoint shows its
+served model, a state strip (Strata's own state, `idle`/`busy` for the others, over the chosen
+range), slots or running/waiting requests, KV-cache fill (vLLM), decode speed with a sparkline,
+prompt speed, cache hit, GPU figures when the backend reports them (Strata), and the jobs
+running on it. An endpoint that was up within the attention window and is down now is drawn in
+the alert colour with the probe's sentence and when it was last seen; an older one is a single
+muted "last seen" line, and a host whose every endpoint is dormant collapses to one line.
+Below the cards is the running-jobs table (elapsed, turns, tool calls, current tool, errors,
+context fill, speed, last activity; "server gone" when the job's MCP server no longer beats),
+then the fleet charts: decode speed, prompt speed and occupancy per endpoint on one time
+axis. The range buttons (`15m` to `7d`, default `1h`, remembered by the browser) apply to every
+chart and strip. The page redraws on each snapshot the server pushes and never polls; the dot
+in the header is green while the stream is open and red while it reconnects. The charting
+library, uPlot 1.6.31, is vendored into the package
+(`src/localagents/monitor/static/VENDOR.md` has its checksums), so the page needs no internet.
 
 An optional top-level `monitor:` section in `models.yaml` holds its settings; the MCP server
 ignores it, and an unknown key or a bad value in it is an error naming the key:
@@ -391,6 +407,7 @@ LOCALAGENTS_DB=/tmp/x localagents seed && LOCALAGENTS_DB=/tmp/x localagents moni
 ```
 
 The routes and their JSON (`/api/snapshot`, `/api/endpoints/<name>/history?range=1h`,
+`/api/fleet/history?range=1h`, `/api/endpoints/<name>/requests?range=24h`,
 `/api/jobs?range=24h`, `/api/jobs/<id>`, `/events`) are specified in
 [`docs/superpowers/specs/2026-10-29-monitor-design.md`](docs/superpowers/specs/2026-10-29-monitor-design.md)
 §5a. Ranges run from `15m` to `7d`.
