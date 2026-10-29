@@ -153,6 +153,7 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "result": row["result"],
         "error": row["error"],
         "num_turns": row["num_turns"],
+        "compactions": row["compactions"],
         "worktree": worktree,
         "last_activity": row["last_activity"],
         "log_dir": str(state_dir() / "jobs" / row["name"]) if row["name"] else None,

@@ -212,6 +212,156 @@ def test_other_sessions_jobs_fold_into_a_count(monkeypatch, tmp_path):
     assert status.render(now=now).count("·") == 4 and "+" not in status.render(now=now)
 
 
+def test_render_lines_is_one_header_per_endpoint_one_row_per_job(monkeypatch, tmp_path):
+    """Story 1.11 item 4: one header per endpoint of this session (first-seen order of the
+    entries, which collect returns sorted by started_at), one indented row per job, a
+    trailing line for other sessions' jobs. A running job shows calls, files, ctx, t/s,
+    compactions (> 0) and its last activity; a finished one mark, model, elapsed and files —
+    as render_entry does (the one-line tests pin that it did not move)."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+
+    a1 = _new(store, endpoint="ai1", base_url="http://ai1:8080", model="x/Qwen3.8-27B", context=100000)
+    a1.status, a1.started_at = "running", now - 240
+    for i in range(12):
+        a1.record_tool_call(now - 200 + i, "Bash", f"b{i}", "ls")
+    a1.last_activity = "Bash: uv run pytest -q"
+    a1.compactions = 2
+    a1.changed()
+    a1.record_request({"t": now - 10, "path": "/v1/messages", "status": 200, "ms": 3000,
+                       "usage": {"input_tokens": 41000, "output_tokens": 100}})
+
+    a2 = _new(store, endpoint="ai1", base_url="http://ai1:8080", model="x/Qwen3.8-27B")
+    a2.status, a2.started_at, a2.finished_at = "succeeded", now - 150, now - 30
+    a2.record_tool_call(now - 140, "Edit", "e1", "/a.py")
+    a2.record_tool_call(now - 139, "Edit", "e2", "/b.py")
+    a2.changed()
+    store.record_endpoint_load({"ai1": "1/1 slots"})
+
+    d1 = _new(store, endpoint="dgx1-a", base_url="http://dgx1a:8000", model="x/deepseek-v4", context=100000)
+    d1.status, d1.started_at = "running", now - 120
+    for i in range(3):
+        d1.record_tool_call(now - 100 + i, "Bash", f"c{i}", "make")
+    d1.changed()
+    d1.record_request({"t": now - 5, "path": "/v1/messages", "status": 200, "ms": 3000,
+                       "usage": {"input_tokens": 12000, "output_tokens": 120}})
+    store.record_endpoint_load({"dgx1-a": "1 run kv 31%"})
+
+    other = jobs.JobStore()
+    other.conn.execute("UPDATE mcp_servers SET owner = 4242 WHERE id = ?", (other.server_id,))
+    o1 = _new(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000")
+    o1.status, o1.started_at = "running", now - 5
+    o1.changed()
+    o2 = _new(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000")
+    o2.status, o2.started_at, o2.finished_at = "succeeded", now - 50, now - 10
+    o2.changed()
+
+    me = _owner()
+    assert status.render_lines(now=now, owner=me) == [
+        "local ai1 · 1/1 slots",
+        "  ⟳ Qwen3.8-27B 4m00s · 12 calls · ctx 41% · 33 t/s · 2 compactions · Bash: uv run pytest -q",
+        "  ✓ Qwen3.8-27B 2m00s · 2 files",
+        "local dgx1-a · 1 run kv 31%",
+        "  ⟳ deepseek-v4 2m00s · 3 calls · ctx 12% · 40 t/s",
+        "+2 jobs in other sessions",
+    ]
+    # the one-line form is unchanged by the refactor: the same data renders as before
+    # (render_entry's bits are space-joined, endpoint loads and the +N tail as today)
+    assert status.render(now=now, owner=me) == (
+        "local: ⟳ Qwen3.8-27B 4m00s 12 calls ctx 41% 33 t/s · ✓ Qwen3.8-27B 2m00s 2 files · "
+        "⟳ deepseek-v4 2m00s 3 calls ctx 12% 40 t/s · ai1 1/1 slots · dgx1-a 1 run kv 31% · +2 other"
+    )
+
+
+def test_render_lines_puts_jobs_without_an_endpoint_under_local_question(monkeypatch, tmp_path):
+    """A job whose endpoint_id is NULL renders under `local ?` (the model as ? too), and the
+    trailing line is singular for one other job: `+1 job in another session`."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    job = _new(store)
+    job.status, job.started_at = "running", now - 30
+    job.changed()
+    store.conn.execute("UPDATE jobs SET model_id = NULL, endpoint_id = NULL WHERE id = ?", (job.id,))
+
+    other = jobs.JobStore()
+    other.conn.execute("UPDATE mcp_servers SET owner = 4242 WHERE id = ?", (other.server_id,))
+    o1 = _new(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000")
+    o1.status, o1.started_at = "running", now - 5
+    o1.changed()
+    assert status.render_lines(now=now, owner=_owner()) == [
+        "local ?",
+        "  ⟳ ? 30s",
+        "+1 job in another session",
+    ]
+
+
+def test_render_lines_is_empty_and_never_raises(monkeypatch, tmp_path):
+    """Nothing to show yields [], and the same exception set render swallows (it yields the
+    empty line, which the operator's script -n-tests) yields [] instead of a traceback."""
+    store = _store(monkeypatch, tmp_path)
+    assert status.render_lines(now=time.time(), owner=_owner()) == []
+
+    def overflow(now=None, conn=None):
+        raise OverflowError("signed integer is greater than maximum")
+
+    monkeypatch.setattr(status, "collect", overflow)
+    assert status.render_lines() == []
+
+
+def test_statusline_prints_lines_and_one_line_flag(monkeypatch, tmp_path):
+    """Story 1.11 item 5: `localagents statusline` prints render_lines() joined by newlines
+    (header + one row per job); `--one-line` prints render() as before; the empty case
+    prints exactly one empty line (the operator's script -n-tests it), as render() did."""
+    state = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state))
+    dbpath = state / "localagents.db"
+    monkeypatch.setenv("LOCALAGENTS_DB", str(dbpath))
+    store = jobs.JobStore()
+    job = _new(store)
+    job.status, job.started_at = "running", time.time() - 35
+    job.changed()
+
+    src = Path(__file__).resolve().parent.parent / "src"
+    env = {**os.environ, "XDG_STATE_HOME": str(state), "LOCALAGENTS_DB": str(dbpath)}
+
+    def run_cli(one_line: bool = False, env2: dict | None = None):
+        args = "['localagents', 'statusline'" + (", '--one-line'" if one_line else "") + "]"
+        return subprocess.run(
+            [sys.executable, "-c",
+             f"import sys; sys.argv={args}; import localagents; localagents.main()"],
+            capture_output=True, text=True, cwd=src, env=env2 or env,
+        )
+
+    out = run_cli()
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == "local llamacpp\n  ⟳ Qwen3.8-Flash-Next 35s\n"
+    out = run_cli(one_line=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == "local: ⟳ Qwen3.8-Flash-Next 35s\n"
+
+    # the empty case: no database at all — exactly one empty line, nothing created
+    state2 = tmp_path / "state2"
+    env2 = {**os.environ, "XDG_STATE_HOME": str(state2), "LOCALAGENTS_DB": str(state2 / "localagents.db")}
+    out = run_cli(env2=env2)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == "\n"
+    assert not state2.exists()
+
+
+def test_collect_carries_the_compactions_count(monkeypatch, tmp_path):
+    """Story 1.11 item 3: the entry carries the row's compactions count (the job row already
+    comes from SELECT j.*); the line renders it in item 4's rows."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    now = time.time()
+    job.status, job.started_at = "running", now - 30
+    job.compactions = 2
+    job.changed()
+    entries, _ = status.collect(now=now, conn=store.conn)
+    assert len(entries) == 1
+    assert entries[0]["compactions"] == 2
+
+
 def test_load_summary_shapes():
     assert status.load_summary({"slots": {"total": 2, "busy": 1, "free": 1}}) == "1/2 slots"
     assert status.load_summary({"load": {"requests_running": 2, "requests_waiting": 1, "kv_cache_usage": 0.337}}) == "2 run 1 wait kv 34%"

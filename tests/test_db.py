@@ -30,7 +30,7 @@ COLUMNS = {
              "created_at", "started_at", "finished_at", "updated", "session_id", "result", "error",
              "last_activity", "num_turns", "context", "generated_tokens", "prompt_tokens_processed",
              "prompt_tokens_cached", "cache_hit_ratio", "prompt_tps", "generate_tps",
-             "spec_decode_acceptance", "worktree", "dump", "log_events"],
+             "spec_decode_acceptance", "worktree", "dump", "log_events", "compactions"],
     "requests": ["job_id", "path_id", "t", "http_status", "ms", "gen_ms", "stream", "input_tokens",
                  "output_tokens", "cache_read_tokens", "cache_creation_tokens", "messages", "tools", "bytes",
                  "moved_system", "folded_text", "context_exceeded", "error"],
@@ -50,10 +50,12 @@ def _names(conn, kind):
     return {r["name"] for r in rows}
 
 
-def test_fresh_file_comes_up_at_version_1_with_every_table(dbfile):
+def test_fresh_file_comes_up_at_version_2_with_every_table(dbfile):
+    """A fresh file runs the version-1 DDL then the version-2 step (story 1.11:
+    jobs.compactions), so it comes up at version 2 with the column appended last."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
     assert _names(conn, "table") == TABLES
     assert _names(conn, "index") == INDEXES
     for table, cols in COLUMNS.items():
@@ -64,7 +66,7 @@ def test_fresh_file_comes_up_at_version_1_with_every_table(dbfile):
 def test_opening_the_same_file_twice_is_idempotent(dbfile):
     db.open_db().close()
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
     assert _names(conn, "table") == TABLES
     conn.close()
 
@@ -83,19 +85,48 @@ def test_journal_mode_is_wal(dbfile):
     conn.close()
 
 
-def test_a_version_1_file_opens_without_rerunning_ddl(dbfile, monkeypatch):
-    db.open_db().close()
-    raw = sqlite3.connect(dbfile)
-    raw.execute("PRAGMA user_version = 1")  # by hand, on the built file
+def _v1_file(path: Path) -> None:
+    """A file as an older localagents would have left it: only the version-1 DDL ran and
+    user_version says 1. The version-2 step is a non-idempotent ALTER, so the file must be
+    built at v1, not a v2 file with its version rewound."""
+    raw = sqlite3.connect(path)
+    db.MIGRATIONS[0](raw)
+    raw.execute("PRAGMA user_version = 1")
+    raw.commit()
     raw.close()
+
+
+def test_a_version_1_file_opens_without_rerunning_ddl(dbfile, monkeypatch):
+    _v1_file(dbfile)
 
     def boom(conn):
         raise AssertionError("the version-1 DDL ran again")
 
-    monkeypatch.setattr(db, "MIGRATIONS", [boom])
+    monkeypatch.setattr(db, "MIGRATIONS", [boom, db.MIGRATIONS[1]])
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
     assert _names(conn, "table") == TABLES
+    assert "compactions" in [r["name"] for r in conn.execute("PRAGMA table_info(jobs)")]
+    conn.close()
+
+
+def test_a_version_1_file_migrates_to_version_2_with_its_rows_intact(dbfile):
+    """The version-2 step adds the column and touches nothing else: a v1 file's rows open at
+    version 2 unchanged, with compactions 0 on them (ALTER ADD COLUMN DEFAULT)."""
+    _v1_file(dbfile)
+    raw = sqlite3.connect(dbfile)
+    raw.row_factory = sqlite3.Row
+    raw.execute("INSERT INTO mcp_servers (id, pid, started, updated) VALUES ('s1', 42, 1.0, 1.0)")
+    raw.execute(
+        "INSERT INTO jobs (id, name, mcp_server_id, status, created_at, updated)"
+        " VALUES ('j1', '20261029-000000-00000000', 's1', 'running', 1.0, 1.0)")
+    raw.commit()
+    raw.close()
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    row = conn.execute("SELECT status, num_turns, compactions FROM jobs WHERE id = 'j1'").fetchone()
+    assert row["status"] == "running" and row["num_turns"] is None and row["compactions"] == 0
+    assert conn.execute("SELECT pid FROM mcp_servers WHERE id = 's1'").fetchone()["pid"] == 42
     conn.close()
 
 
@@ -246,7 +277,7 @@ def test_four_processes_writing_at_once_lose_nothing(tmp_path, monkeypatch):
     assert (count("endpoints"), count("models"), count("paths")) == (1, 1, 1)
     per_server = conn.execute("SELECT COUNT(*) FROM jobs GROUP BY mcp_server_id").fetchall()
     assert sorted(r[0] for r in per_server) == [100, 100, 100, 100]
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     conn.close()
 
@@ -294,7 +325,7 @@ def test_processes_opening_fresh_files_at_once_migrate_each_exactly_once(tmp_pat
     _race(tmp_path, 8, "open", files)
     for f in files:
         conn = db.open_db(f)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
         assert _names(conn, "table") == TABLES
         conn.close()
 

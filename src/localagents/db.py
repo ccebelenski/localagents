@@ -166,8 +166,15 @@ def _statements(stmts: list[str]) -> Callable[[sqlite3.Connection], None]:
     return step
 
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1. A version 2 is one appended step.
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_statements(_V1)]
+# Version 2 (story 1.11): the job's compaction count, written by the runner when the harness
+# sends its compact_boundary system message. One appended step, never a rewritten one: a
+# version-1 file runs it on open, and MIGRATIONS only ever grows.
+_V2 = [
+    "ALTER TABLE jobs ADD COLUMN compactions INTEGER NOT NULL DEFAULT 0",
+]
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 2.
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_statements(_V1), _statements(_V2)]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

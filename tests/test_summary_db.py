@@ -148,6 +148,33 @@ def test_summary_from_row_reads_the_row_and_the_derivations(monkeypatch, tmp_pat
     assert "result" not in derive.summary_from_row(store.conn, row, include_result=False)
 
 
+def test_compact_boundary_counts_the_compaction(monkeypatch, tmp_path):
+    """Story 1.11 item 2: the harness's compact_boundary system message (type=system, subtype
+    compact_boundary, compact_metadata = {trigger: manual|auto, pre_tokens, ...} — verified
+    against the claude_agent_sdk's bundled CLI) increments job.compactions and writes a
+    transcript line; the count is a jobs column the row carries, and summary() and
+    summary_from_row both read it back."""
+    from claude_agent_sdk import SystemMessage
+
+    from localagents import runner
+
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    msg = SystemMessage(subtype="compact_boundary", data={
+        "compact_metadata": {"trigger": "auto", "pre_tokens": 150000},
+    })
+    runner._apply_message(job, msg)
+    runner._apply_message(job, msg)
+    assert job.compactions == 2
+    job.changed()
+    assert _row(store, job)["compactions"] == 2
+    tail = job.transcript_tail().splitlines()
+    assert "[compact] #1 trigger=auto pre_tokens=150000" in tail
+    assert "[compact] #2 trigger=auto pre_tokens=150000" in tail
+    assert job.summary()["compactions"] == 2
+    assert derive.summary_from_row(store.conn, _row(store, job))["compactions"] == 2
+
+
 def test_summary_from_row_without_metrics_or_worktree(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     job = _new(store)

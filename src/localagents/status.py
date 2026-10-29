@@ -2,7 +2,10 @@
 
 Every MCP server keeps its ``mcp_servers`` row alive with a heartbeat and writes its jobs,
 requests and tool calls to the database; ``render()`` reads the live servers' jobs and prints
-one line, e.g. ``local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls · ✓ Muse-Glimmer-30B 3m02s``. The
+one line, e.g. ``local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls · ✓ Muse-Glimmer-30B 3m02s``.
+``render_lines()`` (story 1.11) is the multi-line form: one header per endpoint the session's
+jobs run on, one indented row per job (mark, model, elapsed, calls, files, ctx, t/s,
+compactions, last activity), a trailing line for other sessions' jobs. The
 ``localagents statusline`` command runs ``render()`` and nothing else, so it stays fast enough
 for every status-line refresh: stdlib plus ``db``/``derive`` only, under 100 ms, and it never
 creates or fails on the database (no live servers or no database yet prints the empty line).
@@ -114,6 +117,7 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
                     "finished_at": j["finished_at"],
                     "tool_calls": derive.tool_call_count(conn, j["id"]),
                     "num_turns": j["num_turns"],
+                    "compactions": j["compactions"],
                     "files": len(derive.files_touched(conn, j["id"])),
                     "ctx_pct": ctx_pct,
                     "gen_tps": round(tps) if tps else None,
@@ -139,25 +143,57 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
 MARK = {"queued": "…", "running": "⟳", "succeeded": "✓", "failed": "✗", "timeout": "⏱", "cancelled": "∅", "lost": "†"}
 
 
-def render_entry(e: dict[str, Any], now: float) -> str:
-    end = e.get("finished_at") or now
-    bits = [MARK.get(e.get("status", ""), "?"), short_model(e.get("model", "")), fmt_elapsed(end - (e.get("started_at") or now))]
-    if e.get("status") == "running":
-        if e.get("tool_calls"):
-            bits.append(_n(e["tool_calls"], "call"))
-        if e.get("files"):
-            bits.append(_n(e["files"], "file"))
-        if e.get("ctx_pct") is not None:
-            bits.append(f"ctx {e['ctx_pct']}%")
-        if e.get("gen_tps"):
-            bits.append(f"{e['gen_tps']} t/s")
-    elif e.get("status") == "succeeded" and e.get("files"):
-        bits.append(_n(e["files"], "file"))
-    return " ".join(bits)
-
-
 def _n(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _entry_bits(e: dict[str, Any]) -> list[str]:
+    """The bits render_entry (one line) and the multi-line row builder share: calls, files,
+    ctx, t/s for a running job; files for a succeeded one (story 1.5a's set, unchanged)."""
+    if e.get("status") != "running":
+        return [_n(e["files"], "file")] if e.get("status") == "succeeded" and e.get("files") else []
+    bits: list[str] = []
+    if e.get("tool_calls"):
+        bits.append(_n(e["tool_calls"], "call"))
+    if e.get("files"):
+        bits.append(_n(e["files"], "file"))
+    if e.get("ctx_pct") is not None:
+        bits.append(f"ctx {e['ctx_pct']}%")
+    if e.get("gen_tps"):
+        bits.append(f"{e['gen_tps']} t/s")
+    return bits
+
+
+def _row_bits(e: dict[str, Any]) -> list[str]:
+    """The multi-line row's bits (story 1.11): the shared bits, plus the compaction count
+    (only when > 0) and the last activity for a running job — the one-line form shows neither."""
+    bits = _entry_bits(e)
+    if e.get("status") == "running":
+        if e.get("compactions"):
+            bits.append(_n(e["compactions"], "compaction"))
+        if e.get("last_activity"):  # collect already cut it to MAX_ACTIVITY
+            bits.append(e["last_activity"])
+    return bits
+
+
+def render_entry(e: dict[str, Any], now: float) -> str:
+    end = e.get("finished_at") or now
+    head = f"{MARK.get(e.get('status', ''), '?')} {short_model(e.get('model', ''))} {fmt_elapsed(end - (e.get('started_at') or now))}"
+    bits = _entry_bits(e)
+    if not bits:
+        return head
+    return f"{head} " + " ".join(bits)
+
+
+def _job_row(e: dict[str, Any], now: float) -> str:
+    """One indented multi-line row (story 1.11): the same head as render_entry, the row's
+    bits joined by ` · `."""
+    end = e.get("finished_at") or now
+    head = f"  {MARK.get(e.get('status', ''), '?')} {short_model(e.get('model', ''))} {fmt_elapsed(end - (e.get('started_at') or now))}"
+    bits = _row_bits(e)
+    if not bits:
+        return head
+    return f"{head} · " + " · ".join(bits)
 
 
 def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ", owner: int | None = None) -> str:
@@ -188,3 +224,40 @@ def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ",
     if others:
         parts.append(f"+{others} other")
     return prefix + sep.join(parts)
+
+
+def render_lines(now: float | None = None, owner: int | None = None) -> list[str]:
+    """The multi-line status line (story 1.11; the one-line render() is unchanged): one
+    header per endpoint this session's jobs run on — first-seen order of the entries, which
+    collect returns sorted by started_at — with that endpoint's load when the map has one,
+    one indented row per job, and a trailing line for other sessions' jobs. Jobs with no
+    endpoint go under ``local ?``.
+
+    [] when there is nothing to show, and the same exception set as render never raises
+    (it yields the empty line, which the operator's script -n-tests; render_lines yields
+    [] so the CLI prints exactly that one empty line)."""
+    now = now or time.time()
+    try:
+        entries, loads = collect(now)
+    except (db.SchemaError, sqlite3.Error, OSError, OverflowError, ValueError):
+        return []
+    if not entries:
+        return []
+    if owner is None:
+        owner = my_owner()
+    mine = [e for e in entries if owner is None or e.get("owner") == owner]
+    others = len(entries) - len(mine)
+    lines: list[str] = []
+    for name in dict.fromkeys(e["endpoint"] or "?" for e in mine):
+        header = f"local {name}"
+        if loads.get(name):
+            header += f" · {loads[name]}"
+        lines.append(header)
+        for e in mine:
+            if (e["endpoint"] or "?") == name:
+                lines.append(_job_row(e, now))
+    if others == 1:
+        lines.append("+1 job in another session")
+    elif others:
+        lines.append(f"+{others} jobs in other sessions")
+    return lines

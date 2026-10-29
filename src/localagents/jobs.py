@@ -86,6 +86,7 @@ class Job:
     result: str | None = None
     error: str | None = None
     num_turns: int = 0
+    compactions: int = 0  # the harness's compact_boundary messages (story 1.11)
     worktree: dict[str, Any] | None = None
     last_activity: str = ""
     log_dir: str = ""
@@ -136,12 +137,14 @@ class Job:
                 self._conn.execute(
                     """UPDATE jobs SET status = ?, started_at = ?, finished_at = ?, updated = ?,
                        session_id = ?, result = ?, error = ?, last_activity = ?, num_turns = ?,
-                       context = ?, generated_tokens = ?, prompt_tokens_processed = ?,
+                       compactions = ?, context = ?, generated_tokens = ?,
+                       prompt_tokens_processed = ?,
                        prompt_tokens_cached = ?, cache_hit_ratio = ?, prompt_tps = ?,
                        generate_tps = ?, spec_decode_acceptance = ?, worktree = ?
                        WHERE id = ?""",
                     (self.status, self.started_at, self.finished_at, time.time(), self.session_id,
-                     self.result, self.error, self.last_activity, self.num_turns, self.context,
+                     self.result, self.error, self.last_activity, self.num_turns,
+                     self.compactions, self.context,
                      *met,
                      json.dumps(self.worktree) if self.worktree is not None else None,
                      self.id),

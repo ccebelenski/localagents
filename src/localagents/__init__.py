@@ -5,9 +5,15 @@ def main() -> None:
     # `localagents statusline` runs on every status-bar refresh: answer it without importing the
     # server (mcp, httpx, uvicorn), which takes far longer than the render itself.
     if sys.argv[1:2] == ["statusline"]:
-        from .status import render
+        from .status import render, render_lines
 
-        print(render())
+        if "--one-line" in sys.argv[2:]:
+            print(render())
+        else:
+            lines = render_lines()
+            # as render() always did in the empty case: exactly one empty line — the operator's
+            # script -n-tests the output, so "nothing" is an empty line, not silence
+            print("\n".join(lines) if lines else "")
         return
     if sys.argv[1:2] == ["prune"]:
         import argparse

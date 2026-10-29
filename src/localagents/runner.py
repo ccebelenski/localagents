@@ -227,6 +227,17 @@ def _apply_message(job: Job, m: Any) -> None:
         if m.subtype == "init":
             job.session_id = m.data.get("session_id") or job.session_id
             job.log_text(f"[init] session={job.session_id} model={m.data.get('model')} cwd={m.data.get('cwd')}")
+        elif m.subtype == "compact_boundary":
+            # A trailing indicator of a context-tuning problem (story 1.11): the harness's
+            # compact_boundary message carries compact_metadata = {trigger: manual|auto,
+            # pre_tokens, ...} (verified against the claude_agent_sdk's bundled CLI)
+            meta = m.data.get("compact_metadata") or {}
+            job.compactions += 1
+            pre_tokens = meta.get("pre_tokens")
+            job.log_text(
+                f"[compact] #{job.compactions} trigger={meta.get('trigger') or '?'}"
+                f" pre_tokens={pre_tokens if pre_tokens is not None else '?'}"
+            )
     elif isinstance(m, ResultMessage):
         # usage is not stored: it is the sum of the request rows (story 1.5b)
         job.session_id = m.session_id or job.session_id

@@ -199,19 +199,28 @@ Jobs started this way are MCP tasks, not subagents, so they don't appear in the 
 panel. `/tasks` shows the latest progress line the server reported (status, elapsed,
 turns, tool calls, last activity). For an always-visible view, every server keeps its
 state in the shared database — a heartbeat every ten seconds, plus its jobs, requests
-and tool calls — and `localagents statusline` reads it and prints one line:
+and tool calls — and `localagents statusline` reads it and prints one header per
+endpoint plus one row per job (the old one-line form is `localagents statusline
+--one-line`):
 
 ```
-local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls ctx 31% 82 t/s · llamacpp 1/1 slots · +1 other
+local ai1 · 1/1 slots
+  ⟳ Qwen3.8-27B 4m00s · 12 calls · 3 files · ctx 41% · 33 t/s · 2 compactions · Bash: uv run pytest -q
+  ✓ Qwen3.8-27B 2m00s · 2 files
+local dgx1-a · 1 run kv 31%
+  ⟳ DeepSeek-V4-Flash 2m00s · 3 calls · ctx 12% · 40 t/s
++2 jobs in other sessions
 ```
 
 Per running job: elapsed time, tool calls, files touched, how full the local model's
 context window is (`ctx`, from the token usage recorded on every backend request, so it
-tells you how close the agent is to compaction) and its recent generation speed. Then
-the load of each endpoint your jobs run on, probed every ten seconds while jobs run:
-slots busy for llama.cpp, requests running and queued and KV cache fill for vLLM.
-Finished jobs stay on the line for two minutes with a check mark (or a cross, clock, null
-sign or dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost).
+tells you how close the agent is to compaction), its recent generation speed, the
+compaction count (a trailing indicator of a context-tuning problem — the harness says so
+with a `compact_boundary` message) and its last tool call. The load of each endpoint your
+jobs run on rides its header line, probed every ten seconds while jobs run: slots busy
+for llama.cpp, requests running and queued and KV cache fill for vLLM. Finished jobs
+stay on the line for two minutes with a check mark (or a cross, clock, null sign or
+dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost).
 
 "Live" means the heartbeat: a server is shown while its last beat is under a minute
 old (and its pid still exists). A server that exited or was killed drops off the line
@@ -220,19 +229,26 @@ The line is scoped to the Claude Code session asking: each server records as its
 the nearest `claude` ancestor it runs under (its parent pid when there is none — the
 same walk the renderer does up from the status line script), so a session's own jobs
 match their session whichever way the server was started (`uv run localagents`
-included). Jobs of other sessions on the same machine fold into `+N other`, because
-the boxes are shared and knowing one is busy matters even when the job isn't yours.
+included). Jobs of other sessions on the same machine fold into a trailing
+`+N jobs in other sessions` line, because the boxes are shared and knowing one is
+busy matters even when the job isn't yours.
 
 The renderer imports nothing heavy and runs in well under 100 ms, and it never prints a
 traceback: the database is another process's file, so a too-new schema or a lock
-renders as the empty line, and with no database yet it prints nothing and creates
-nothing. Append it to your
+renders as the empty line, and with no database yet it prints one empty line and
+creates nothing. Append it to your
 status line script and set `refreshInterval` in the `statusLine` settings block so
-the elapsed times tick while the session is idle:
+the elapsed times tick while the session is idle. Your script is
+`~/.claude/statusline-command.sh`; it prints your own first line and the local lines
+after it (shape only — the script is yours, not in the repo):
 
 ```bash
-local_jobs=$(timeout 2 localagents statusline 2>/dev/null)
-[ -n "$local_jobs" ] && line+="  $local_jobs"
+local_lines=$(timeout 2 localagents statusline 2>/dev/null)
+if [ -n "$local_lines" ]; then
+  printf '%s\n%s\n' "$line" "$local_lines"
+else
+  printf '%s\n' "$line"
+fi
 ```
 
 ### Job records
@@ -243,7 +259,9 @@ numbers are rows in SQLite (see [The database](#the-database) below): the brief 
 `requests` table with timing, size and usage, written directly by the shim; there is no
 `requests.jsonl`. `job_status` answers from those rows: `usage` as the sums over the
 job's requests, `tool_calls` with `tool_counts` per tool, `errors`, `last_tool`,
-`files_touched`, `ctx_tokens` and `gen_tps`.
+`files_touched`, `ctx_tokens` and `gen_tps`. `compactions` is a column of its own,
+not a derivation: the runner counts the harness's `compact_boundary` messages into
+it (and the status line shows the count when it is above zero).
 
 The directory — `~/.local/state/localagents/jobs/<name>/`, where `<name>` is the job's
 readable name `YYYYMMDD-HHMMSS-<8 hex>` (tools take the job's uuid as `job_id`; the name

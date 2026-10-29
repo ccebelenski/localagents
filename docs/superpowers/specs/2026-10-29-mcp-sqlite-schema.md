@@ -62,6 +62,9 @@ jobs
   cache_hit_ratio, prompt_tps, generate_tps, spec_decode_acceptance   REAL
   worktree      TEXT (JSON)         -- repo, path, root, branch, base, recreated, diffstat, kept, note; read as a unit
   dump, log_events   INTEGER (0/1)  -- which opt-in debug files exist in the job directory
+  compactions   INTEGER            -- added in version 2 (story 1.11): how many of the harness's
+                                   --   compact_boundary messages the job saw (a trailing
+                                   --   indicator of a context-tuning problem)
 
 requests                            -- one row per backend request the shim forwarded
   rowid
@@ -102,6 +105,10 @@ indexes
 
 PRAGMA user_version = 1; journal_mode = WAL; busy_timeout = 5000; foreign_keys = ON (per connection)
 ```
+
+Version 2 (story 1.11, 2026-10-29): `jobs.compactions` — one appended migration step
+(`ALTER TABLE jobs ADD COLUMN compactions INTEGER NOT NULL DEFAULT 0`); a file opens at
+user_version 2, and the version-1 history above stands as written.
 
 ## Derivations (read time; each reproduces today's value)
 
