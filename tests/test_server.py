@@ -398,6 +398,45 @@ def test_shim_port_write_failure_cannot_orphan_a_queued_job(reg, monkeypatch):
     assert row["shim_port"] == 4242
 
 
+@pytest.mark.parametrize("describe_raises", ["sqlite", "other"])
+def test_nothing_between_new_and_the_task_can_orphan_a_job(reg, monkeypatch, capsys, describe_raises):
+    """DeepSeek review of 6005f94: the shim_port failure handler wrote its line with
+    job.log_text, which raises OSError on a full disk or a read-only state directory — after
+    new() and before create_task, so the job stayed `queued` with no task. The whole step is
+    guarded and the line falls back to stderr."""
+    import sqlite3
+
+    started = []
+
+    async def record_run(job, *a, **kw):
+        started.append(job.id)
+
+    def describe(**cols):
+        if describe_raises == "sqlite":
+            raise sqlite3.OperationalError("database is locked")
+        raise OSError(30, "Read-only file system")
+
+    def no_disk(self, text):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(server, "run_job", record_run)
+    monkeypatch.setattr(server.shim, "port", 4242)
+    monkeypatch.setattr(server.store, "describe_server", describe)
+    monkeypatch.setattr(jobs.Job, "log_text", no_disk)
+
+    async def go():
+        out = await server.run_agent(task="t")
+        await asyncio.sleep(0)
+        return out
+
+    out = asyncio.run(go())
+    assert out["status"] == "queued"
+    job = server.store.get(out["id"])
+    assert job._task is not None and started == [job.id]
+    assert server._shim_port_recorded is False
+    assert "shim_port" in capsys.readouterr().err
+
+
 def test_run_agent_answers_a_database_error_like_its_other_refusals(reg, monkeypatch):
     """Review of 1.7, finding 8: new() raising sqlite3.Error reached the caller as a bare "Error
     executing tool run_agent" (the SDK keeps the cause out of the reply). It is a refusal dict

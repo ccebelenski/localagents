@@ -94,7 +94,8 @@ tool_calls                          -- one row per ToolUseBlock the runner saw
 
 indexes
   jobs(name), jobs(mcp_server_id), jobs(endpoint_id), jobs(model_id), jobs(status, finished_at),
-  jobs(created_at)
+  jobs(created_at)                  -- added to v1 before the first release (story 1.8); after a
+                                    --   release an index is a version-N step
   mcp_servers(updated)
   requests(job_id, t)
   tool_calls(job_id, t)

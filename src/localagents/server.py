@@ -17,8 +17,8 @@ from typing import Any
 import httpx
 from mcp.server.mcpserver import Context, MCPServer
 
-from . import derive, status
-from .jobs import Job, JobStore, prune, state_dir
+from . import db, derive, status
+from .jobs import Job, JobStore, oldest_first, prune, state_dir
 from .registry import ModelUnavailable, Registry, config_path, local_path
 from .runner import run_job
 from .shim import Shim
@@ -349,11 +349,18 @@ async def run_agent(
         return {"error": "database_error", "message": f"the job could not be recorded: {e}"}
     global _shim_port_recorded
     if not _shim_port_recorded and shim.port:
+        # Nothing between new() and create_task may raise: a job without its task stays `queued`
+        # for good. So any failure here is a line, and the line itself may fail (a full disk, a
+        # read-only state directory): stderr then (DeepSeek review of 6005f94).
         try:
             store.describe_server(shim_port=shim.port)  # once: the port is the process's, not the job's
             _shim_port_recorded = True  # only on success: a dropped write is retried by the next job
-        except sqlite3.Error as e:
-            job.log_text(f"[db-error] shim_port: {e}")
+        except Exception as e:  # noqa: BLE001
+            line = f"[db-error] shim_port: {type(e).__name__}: {e}"
+            try:
+                job.log_text(line)
+            except Exception as log_e:  # noqa: BLE001
+                print(f"localagents: job {job.id}: {line} (transcript write failed: {log_e})", file=sys.stderr)
     _ensure_sampler()
     job._task = asyncio.create_task(
         run_job(
@@ -431,16 +438,24 @@ async def wait_jobs(
     }
 
 
+def _database_error(e: Exception) -> dict[str, Any]:
+    """The read tools' answer when the database itself fails: a refusal like run_agent's, so
+    the caller sees "database is locked" rather than a bare tool error (review of 1.8)."""
+    return {"error": "database_error", "message": f"the database could not be read: {e}"}
+
+
 def _row_summary(row: Any, include_result: bool = True) -> dict[str, Any]:
     """derive.summary_from_row, but a row it cannot read (another writer's garbled worktree
     JSON, say) answers with what the row does say plus ``row_error``, never an exception: one
     bad row must not break list_jobs(all=True) for every caller."""
     try:
         return derive.summary_from_row(store.conn, row, include_result=include_result)
-    except (json.JSONDecodeError, TypeError, ValueError, KeyError, sqlite3.Error) as e:
+    except (json.JSONDecodeError, TypeError, ValueError, KeyError) as e:
         # only what a row another writer mangled can raise; anything else is a bug in this
-        # code and must propagate, not hide behind row_error (review of 1.8). The line names
-        # the row: a silently degraded listing is how a broken writer hides.
+        # code and must propagate, not hide behind row_error (review of 1.8). A sqlite3.Error is
+        # the database's problem (locked, I/O, closed), not the row's: it propagates and the
+        # tool answers database_error (review of 1.8, finding 5). The line names the row: a
+        # silently degraded listing is how a broken writer hides.
         print(f"localagents: row_error {row['id']}: {type(e).__name__}: {e}", file=sys.stderr)
         return {"id": row["id"], "name": row["name"], "status": row["status"], "row_error": f"{type(e).__name__}: {e}"}
 
@@ -454,35 +469,45 @@ async def job_status(job_id: str) -> dict[str, Any]:
     try:
         return store.get(job_id).summary()
     except KeyError as e:
-        row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        if row is None:
-            return {"error": "unknown_job", "message": e.args[0]}
-        return _row_summary(row)
+        try:
+            row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None:
+                return {"error": "unknown_job", "message": e.args[0]}
+            return _row_summary(row)
+        except (sqlite3.Error, db.SchemaError) as db_e:
+            # the same guard as list_jobs: the database failing is database_error, and a
+            # newer-schema file (SchemaError, a RuntimeError) is one way it fails (review of 1.8)
+            return _database_error(db_e)
 
 
 @mcp.tool()
-async def list_jobs(include_finished: bool = True, all: bool = False, limit: int = 50) -> list[dict[str, Any]]:
+async def list_jobs(
+    include_finished: bool = True, all: bool = False, limit: int = 50
+) -> list[dict[str, Any]] | dict[str, Any]:
     """List jobs (newest last). This server session's; with all=True, every localagents
     server's jobs read from the shared database.
 
     limit: the newest N jobs only (default 50; 0 = no limit). The database keeps every job
     ever run, so all=True without a limit grows with the whole history."""
     if not all:
-        mine = [j for j in sorted(store.jobs.values(), key=lambda j: j.created_at) if include_finished or not j.done]
+        mine = [j for j in sorted(store.jobs.values(), key=oldest_first) if include_finished or not j.done]
         return [j.summary(include_result=False) for j in (mine[-limit:] if limit > 0 else mine)]
     # the newest `limit` rows, returned oldest first (newest last, as the in-process list).
     # A NULL created_at means oldest: SQLite sorts NULLs last in DESC (so the inner LIMIT cuts
     # it first) and first in ASC (so the outer re-sort puts it at the oldest end) — no
     # `created_at IS NULL` term needed, and none wanted: it would break the jobs(created_at)
     # index scan the inner query relies on (review of 1.8).
-    rows = store.conn.execute(
-        "SELECT * FROM (SELECT *, rowid AS _rowid FROM jobs"
-        + ("" if include_finished
-           else " WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'timeout', 'lost')")
-        + " ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, _rowid",
-        (limit if limit > 0 else -1,),  # SQLite: a negative LIMIT is no limit
-    ).fetchall()
-    return [_row_summary(r, include_result=False) for r in rows]
+    try:
+        rows = store.conn.execute(
+            "SELECT * FROM (SELECT *, rowid AS _rowid FROM jobs"
+            + ("" if include_finished
+               else " WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'timeout', 'lost')")
+            + " ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, _rowid",
+            (limit if limit > 0 else -1,),  # SQLite: a negative LIMIT is no limit
+        ).fetchall()
+        return [_row_summary(r, include_result=False) for r in rows]
+    except (sqlite3.Error, db.SchemaError) as e:
+        return _database_error(e)
 
 
 @mcp.tool()
@@ -526,10 +551,10 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
         job = store.get(job_id)
     except KeyError as e:
         return _foreign_job_error(job_id) or {"error": "unknown_job", "message": e.args[0]}
-    if job.done:
-        return job.summary()
-    if job._task:
+    if not job.done and job._task:
         job._task.cancel()
+    # a done job whose finally is still finishing its worktree gets the same wait as a cancelled
+    # one: the record handed back is the settled one, with kept/note (DeepSeek review of 6005f94)
     await store.wait(job_id, 15)
     return job.summary()
 

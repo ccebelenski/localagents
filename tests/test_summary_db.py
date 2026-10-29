@@ -341,6 +341,44 @@ def test_unknown_job_hint_falls_back_to_the_database(monkeypatch, tmp_path):
     assert mine.id in e2.value.args[0] and theirs[-1].id not in e2.value.args[0]
 
 
+def test_an_in_process_job_with_no_created_at_is_the_oldest(monkeypatch, tmp_path):
+    """The row listing puts a NULL created_at at the oldest end; the in-process listing and the
+    unknown-job hint sort the same way instead of raising TypeError on None < float (review of
+    1.8, finding 7). Its summary's elapsed_s is 0, as summary_from_row's is."""
+    made = [_new(server.store, created_at=1000.0 + i) for i in range(3)]
+    made[1].created_at = None
+    out = asyncio.run(server.list_jobs())
+    assert [j["id"] for j in out] == [made[1].id, made[0].id, made[2].id]
+    assert out[0]["elapsed_s"] == 0
+    assert [j["id"] for j in asyncio.run(server.list_jobs(limit=1))] == [made[2].id]
+    with pytest.raises(KeyError) as e:
+        server.store.get("nosuch")
+    msg = e.value.args[0]
+    assert msg.index(made[2].id) < msg.index(made[0].id) < msg.index(made[1].id)  # newest first, None last
+
+
+def test_unknown_job_hint_survives_a_database_it_cannot_open(monkeypatch, tmp_path):
+    """Any failure of the hint's database fallback leaves the plain unknown_job message: a file
+    whose schema is newer than this code raises db.SchemaError (a RuntimeError, not a
+    sqlite3.Error), which escaped get() (review of 1.8, finding 6). job_status, whose next step
+    reads the same database, answers database_error rather than raising."""
+    import sqlite3
+
+    newer = tmp_path / "newer.sqlite"
+    c = sqlite3.connect(newer)
+    c.execute("PRAGMA user_version = 99")
+    c.close()
+    monkeypatch.setenv("LOCALAGENTS_DB", str(newer))
+    store = jobs.JobStore()
+    with pytest.raises(KeyError) as e:
+        store.get("nosuch")
+    assert e.value.args[0] == "unknown job 'nosuch'. Known (newest first): none"
+
+    monkeypatch.setattr(server, "store", store)
+    s = asyncio.run(server.job_status("nosuch"))
+    assert s["error"] == "database_error" and "schema version 99" in s["message"], s
+
+
 def test_run_job_writes_the_worktree_before_the_first_message(monkeypatch, tmp_path):
     """run_job flushes job.worktree/run_cwd to the row as soon as the tree exists, so another
     server's job_status sees it before the session's first SDK message (review of 1.5b,
@@ -379,6 +417,54 @@ def test_run_job_writes_the_worktree_before_the_first_message(monkeypatch, tmp_p
     ))
     assert seen["worktree"] is not None and json.loads(seen["worktree"]) == wt
     assert seen["run_cwd"] == "/wt/sub"
+
+
+@pytest.mark.parametrize("fails", ["metrics_delta", "fetch_metrics"])
+def test_a_metrics_failure_in_the_finally_cannot_strand_the_job(monkeypatch, tmp_path, fails):
+    """run_job's finally computes the metrics delta before it finishes the worktree, sets _done
+    and writes the final row. An exception there (the 1.8 review built one: a KeyError from a
+    counter whose partner was in one snapshot only) left the row `running` with no finished_at,
+    the worktree unfinished and every waiter blocked. The block is guarded: one [metrics-error]
+    transcript line, metrics None, and the rest of the finally runs (review of 1.8)."""
+    from localagents import runner
+    from localagents.registry import Defaults, Endpoint, Registry, Resolution
+
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    calls = {"fetch": 0, "finish_worktree": 0}
+
+    async def fake_metrics(*a, **kw):
+        calls["fetch"] += 1
+        if calls["fetch"] > 1 and fails == "fetch_metrics":
+            raise RuntimeError("after-snapshot failed")
+        return {"generated_tokens": 10.0, "generated_seconds": 1.0, "prompt_tokens": 5.0}
+
+    def boom(*a, **kw):
+        raise KeyError("generated_tokens")
+
+    def fake_query(prompt, options):
+        async def nothing():
+            return
+            yield
+
+        return nothing()
+
+    monkeypatch.setattr(runner, "fetch_metrics", fake_metrics)
+    if fails == "metrics_delta":
+        monkeypatch.setattr(runner, "metrics_delta", boom)
+    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(runner, "finish_worktree", lambda j: calls.__setitem__("finish_worktree", 1))
+    ep = Endpoint(name="llamacpp", base_url="http://x:8080", backend="llama.cpp")
+    reg = Registry(path=None, endpoints={"llamacpp": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
+    asyncio.run(runner.run_job(
+        job, reg, Resolution(ep, "served-model"), permission_mode=None, max_turns=None, allowed_tools=None,
+        system_prompt_append=None, resume_session=None, timeout_s=5, shim_base_url="http://127.0.0.1:1/job/x",
+    ))
+    assert job._done.is_set() and calls["finish_worktree"] == 1
+    row = _row(store, job)
+    assert row["status"] == job.status and row["status"] != "running" and row["finished_at"] is not None
+    assert job.metrics is None and row["generated_tokens"] is None
+    assert "[metrics-error] " in job.transcript_tail()
 
 
 def test_list_jobs_limit_keeps_the_newest(monkeypatch, tmp_path):
@@ -489,6 +575,26 @@ def test_row_summary_catches_only_row_problems_and_says_so(monkeypatch, tmp_path
     monkeypatch.setattr(derive, "summary_from_row", boom)
     with pytest.raises(RuntimeError):
         asyncio.run(server.list_jobs(all=True, limit=0))
+
+
+def test_a_database_error_is_not_a_row_error(monkeypatch, tmp_path, capsys):
+    """A sqlite error inside a derivation is the database's problem (locked, I/O, closed), not
+    the row's: it answers database_error, as run_agent does, instead of reporting a healthy row
+    as garbled (review of 1.8, finding 5)."""
+    import sqlite3
+
+    jid = _insert_row()
+
+    def locked(*a, **kw):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(derive, "tool_call_count", locked)
+    s = asyncio.run(server.job_status(jid))
+    assert s.get("error") == "database_error" and "database is locked" in s["message"], s
+    assert "row_error" not in s
+    out = asyncio.run(server.list_jobs(all=True, limit=0))
+    assert isinstance(out, dict) and out["error"] == "database_error" and "database is locked" in out["message"], out
+    assert "row_error" not in capsys.readouterr().err
 
 
 def test_job_log_says_when_the_directory_is_gone(monkeypatch, tmp_path):

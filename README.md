@@ -122,7 +122,9 @@ notification when it finishes, with nothing for Claude to re-arm.
 `wait_jobs` is the fallback for calls that cannot background: start each job with
 `wait_s: 0` and wait on all the ids in one call. Use it knowingly: a `mode: "any"` wait
 returns on the first finish and must be re-armed at once, or the remaining jobs finish
-with nobody watching (one coordinator lost six hours to that).
+with nobody watching (one coordinator lost six hours to that). Its `running` list holds
+every job whose record is not yet settled, including one whose `status` is already final
+while its worktree is still being finished.
 
 If nothing suitable is running you'll be asked to start one:
 

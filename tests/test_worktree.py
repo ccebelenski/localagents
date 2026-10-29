@@ -1,5 +1,6 @@
 """Worktree lifecycle against a real throwaway git repo (no model server needed)."""
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -51,6 +52,31 @@ def test_no_change_job_removes_tree_and_branch(repo, tmp_path):
     assert j.worktree["kept"] is False
     assert not Path(j.worktree["root"]).exists()
     assert "local-agent/j1" not in git(repo, "branch", "--list", "local-agent/*")
+
+
+@pytest.mark.parametrize("fails", ["worktree", "branch"])
+def test_a_failed_removal_is_recorded_not_reported_removed(repo, tmp_path, monkeypatch, fails):
+    """finish_worktree ignored the return codes of `git worktree remove --force` and
+    `git branch -D` and said "no changes; worktree removed" regardless. A failed removal is
+    kept=True with a note naming the failure, and a [worktree-error] transcript line."""
+    from localagents import runner
+
+    j = job("j9", repo, tmp_path / "logs" / "j9")
+    j.worktree = make_worktree(j)
+    real = runner._git
+
+    def failing(cwd, *args):
+        if args[:2] == (("worktree", "remove") if fails == "worktree" else ("branch", "-D")):
+            return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: simulated failure")
+        return real(cwd, *args)
+
+    monkeypatch.setattr(runner, "_git", failing)
+    finish_worktree(j)
+    assert j.worktree["kept"] is True
+    assert "fatal: simulated failure" in j.worktree["note"]
+    assert j.worktree["note"] != "no changes; worktree removed"
+    log = (tmp_path / "logs" / "j9" / "transcript.txt").read_text()
+    assert "[worktree-error]" in log and "fatal: simulated failure" in log
 
 
 def test_resume_recreates_removed_tree_at_base(repo, tmp_path):
@@ -293,3 +319,151 @@ def test_cancel_during_the_first_metrics_probe_finishes_cancelled(repo, monkeypa
     asyncio.run(go())
     assert j.status == "cancelled" and j.settled and j.finished_at is not None
     assert store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "cancelled"
+
+
+def test_make_worktree_removes_its_tree_when_a_step_after_the_add_fails(repo, monkeypatch):
+    """DeepSeek review of 6005f94: make_worktree's steps after `git worktree add` (rev-parse,
+    the relative_to of the cwd) could raise and leave a tree and branch nothing removes, since
+    job.worktree was never set. It removes its own tree and branch, then re-raises; through
+    run_job the job fails with the error in its transcript."""
+    import asyncio
+
+    from localagents import runner
+
+    class Unrelated(type(Path())):
+        def relative_to(self, *a, **kw):
+            raise ValueError(f"{self} is not under the repo")
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    monkeypatch.setattr(runner, "Path", Unrelated)
+    store, j = _store_job(repo)
+    asyncio.run(runner.run_job(j, reg, res, **kw))
+    assert j.status == "failed" and "is not under the repo" in j.error
+    assert "is not under the repo" in j.transcript_tail()
+    assert j.worktree is None
+    assert not (state_dir() / "worktrees" / repo.name / j.name).exists()
+    assert not _branch_exists(repo, f"local-agent/{j.name}")
+    assert "local-agent" not in git(repo, "worktree", "list")
+
+
+def test_a_make_worktree_error_during_a_cancel_is_not_dropped(repo, monkeypatch):
+    """_make_worktree_shielded's cancel path waited for the thread and dropped a non-cancel
+    exception from it without a word. The cancel still wins (the job is `cancelled`), and the
+    thread's error is a [worktree-error] transcript line (DeepSeek review of 6005f94)."""
+    import asyncio
+    import time
+
+    from localagents import runner
+
+    def slow_fail(job):
+        time.sleep(0.5)
+        raise RuntimeError("git worktree add failed: fatal: simulated")
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    monkeypatch.setattr(runner, "make_worktree", slow_fail)
+    store, j = _store_job(repo)
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        await asyncio.sleep(0.15)
+        j._task.cancel()
+        await store.wait(j.id, 10)
+
+    asyncio.run(go())
+    assert j.status == "cancelled" and j.settled
+    assert "[worktree-error] RuntimeError: git worktree add failed: fatal: simulated" in j.transcript_tail()
+
+
+def test_cancel_job_on_an_unsettled_job_returns_the_settled_record(repo, monkeypatch):
+    """DeepSeek review of 6005f94, nit: cancel_job on a job whose status is final but whose
+    finally is still finishing the worktree returned at once, without `kept`/`note`. It waits
+    for the settle (up to its 15 s) like the waits do."""
+    import asyncio
+
+    from localagents import runner, server
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    _blocking_query(monkeypatch)
+    _slow(monkeypatch, "finish_worktree", 1.0)
+    store, j = _store_job(repo)
+    monkeypatch.setattr(server, "store", store)
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        await asyncio.sleep(0.3)
+        j._task.cancel()
+        await asyncio.sleep(0.2)
+        assert j.done and not j.settled
+        # a copy at return time: summary() hands out the live worktree dict, which the finally
+        # would go on to fill and hide the defect
+        return json.loads(json.dumps(await server.cancel_job(j.id)))
+
+    out = asyncio.run(go())
+    assert out["status"] == "cancelled"
+    assert out["worktree"]["kept"] is False and out["worktree"]["note"] == "no changes; worktree removed"
+
+
+def _blocking_query(monkeypatch):
+    """A session that never ends on its own: only a cancel stops it."""
+    import asyncio
+
+    from localagents import runner
+
+    def fake_query(prompt, options):
+        async def forever():
+            await asyncio.sleep(3600)
+            yield
+
+        return forever()
+
+    monkeypatch.setattr(runner, "query", fake_query)
+
+
+@pytest.mark.parametrize("where", ["finish_worktree", "metrics"])
+def test_a_second_cancel_inside_the_finally_cannot_strand_the_job(repo, monkeypatch, where):
+    """DeepSeek review of 6005f94: two cancel_job calls both pass `if job.done` before either
+    cancel lands, so the second cancel arrives inside run_job's finally — at the after-metrics
+    await or at finish_worktree's thread. It escaped `except Exception`, skipped _done.set() and
+    the final changed(): the row stayed `running` and every waiter ran to its timeout. The
+    finally's awaits now absorb cancels until their work is done and its tail always runs."""
+    import asyncio
+    import time
+
+    from localagents import runner
+
+    calls = {"n": 0}
+
+    async def metrics(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] > 1 and where == "metrics":
+            await asyncio.sleep(1.0)
+        return {"generated_tokens": float(calls["n"])}
+
+    reg, res, kw = _drive_setup(monkeypatch, metrics=metrics)
+    _blocking_query(monkeypatch)
+    if where == "finish_worktree":
+        _slow(monkeypatch, "finish_worktree", 1.0)
+    store, j = _store_job(repo)
+    seen = {}
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        await asyncio.sleep(0.3)  # the tree exists and the session is blocked
+        j._task.cancel()
+        await asyncio.sleep(0.2)  # now inside the finally's slow await
+        assert j.done and not j.settled
+        t0 = time.monotonic()
+        j._task.cancel()  # the second cancel_job
+        await store.wait(j.id, 5)
+        seen["settle_s"] = time.monotonic() - t0
+        await asyncio.wait([j._task], timeout=5)
+        seen["task_done"] = j._task.done()
+
+    asyncio.run(go())
+    assert j.settled and seen["settle_s"] < 1.5 and seen["task_done"], seen
+    assert j.status == "cancelled"
+    assert store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "cancelled"
+    assert j.worktree["kept"] is False and not Path(j.worktree["root"]).exists()
+    assert not _branch_exists(repo, f"local-agent/{j.name}")
+    if where == "metrics":
+        assert j.metrics == {"generated_tokens": 1}  # the probe was waited for, not abandoned

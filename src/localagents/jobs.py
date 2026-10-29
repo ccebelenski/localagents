@@ -61,6 +61,12 @@ def prune(days: int, now: float | None = None, dry_run: bool = False) -> list[Pa
 PROGRESS_INTERVAL_S = 60.0
 
 
+def oldest_first(job: "Job") -> tuple[bool, float]:
+    """Sort key for in-process jobs, oldest first: a None created_at is the oldest, as a NULL
+    created_at is in the row listing (review of 1.8, finding 7)."""
+    return (job.created_at is not None, job.created_at or 0.0)
+
+
 @dataclass
 class Job:
     id: str  # uuid4 (db.new_uuid): the job_id every tool takes, including resume_job
@@ -225,7 +231,8 @@ class Job:
             for f in fields(self)
             if not f.name.startswith("_") and f.name not in self._SUMMARY_HIDDEN
         }
-        d["elapsed_s"] = round((self.finished_at or time.time()) - (self.started_at or self.created_at), 1)
+        start = self.started_at or self.created_at  # None only for a hand-built Job: 0, as summary_from_row
+        d["elapsed_s"] = round((self.finished_at or time.time()) - start, 1) if start is not None else 0
         d["task"] = self.task if len(self.task) < 300 else self.task[:300] + "…"
         met = self._metric_values()  # the row's rule, as derive.summary_from_row reads it back
         d["metrics"] = None if all(v is None for v in met) else dict(zip(self._METRIC_COLUMNS, met))
@@ -458,7 +465,7 @@ class JobStore:
             # "name (id)", newest first: the name is what a caller recognises from list_jobs or a
             # job directory (DeepSeek review of 1.2), the id is what every tool takes (review of 1.5b)
             if self.jobs:
-                newest = sorted(self.jobs.values(), key=lambda j: j.created_at)[-10:][::-1]
+                newest = sorted(self.jobs.values(), key=oldest_first)[-10:][::-1]
                 known = ", ".join(f"{j.name} ({j.id})" for j in newest)
             else:
                 # this server has run nothing, but the shared database holds every other
@@ -469,7 +476,9 @@ class JobStore:
                         "SELECT name, id FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT 10"
                     ).fetchall()
                     known = ", ".join(f"{r['name']} ({r['id']})" for r in rows)
-                except sqlite3.Error:
+                except (sqlite3.Error, db.SchemaError):
+                    # any failure of the fallback (a newer-schema file raises SchemaError, a
+                    # RuntimeError) leaves the plain message (review of 1.8, finding 6)
                     known = ""
             raise KeyError(f"unknown job '{jid}'. Known (newest first): {known or 'none'}")
         return self.jobs[jid]

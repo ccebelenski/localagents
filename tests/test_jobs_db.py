@@ -322,9 +322,15 @@ def test_close_never_raises(monkeypatch, tmp_path):
 # A pid that does not exist (story 1.7 item 2: the sweep needs a *dead* pid, and the tests must
 # prove it). pid_max itself is never assigned (pids run 1 .. pid_max - 1); 2**22 - 1 was a legal
 # pid on a box whose pid_max is 2**22 (review of 1.7, finding 10). Linux-only, like the suite's
-# /proc reads. Asserted dead in test_mark_lost_jobs_sweeps_a_dead_pid.
-with open("/proc/sys/kernel/pid_max") as _f:
-    DEAD_PID = int(_f.read())
+# /proc reads. Asserted dead in test_mark_lost_jobs_sweeps_a_dead_pid. Read in the tests that use
+# it, not at import: on a host without /proc only those tests skip, collection does not fail
+# (DeepSeek review of 6005f94).
+def _dead_pid() -> int:
+    try:
+        with open("/proc/sys/kernel/pid_max") as f:
+            return int(f.read())
+    except OSError:
+        pytest.skip("needs Linux's /proc/sys/kernel/pid_max for a provably dead pid")
 
 
 def _stale_store(monkeypatch, tmp_path, now):
@@ -334,7 +340,7 @@ def _stale_store(monkeypatch, tmp_path, now):
     other = jobs.JobStore()
     other.conn.execute(
         "UPDATE mcp_servers SET updated = ?, pid = ? WHERE id = ?",
-        (now - 61, DEAD_PID, other.server_id),
+        (now - 61, _dead_pid(), other.server_id),
     )
     return other
 
@@ -375,7 +381,7 @@ def test_mark_lost_jobs_marks_a_server_with_no_heartbeat_at_all(monkeypatch, tmp
                   cwd="/tmp", run_cwd="/tmp", isolation="none")
     j.status = "running"
     j.changed()
-    other.conn.execute("UPDATE mcp_servers SET updated = NULL, pid = ? WHERE id = ?", (DEAD_PID, other.server_id))
+    other.conn.execute("UPDATE mcp_servers SET updated = NULL, pid = ? WHERE id = ?", (_dead_pid(), other.server_id))
     other.conn.commit()
     assert mine.mark_lost_jobs() == 1
     assert mine.conn.execute("SELECT status, error FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "lost"
@@ -395,7 +401,7 @@ def test_mark_lost_jobs_spares_a_stale_heartbeat_with_a_live_pid(monkeypatch, tm
     assert store.mark_lost_jobs(now) == 0
     assert _row(store, job.id)["status"] == "running"
     # and it is swept the moment the pid is gone
-    stalled.conn.execute("UPDATE mcp_servers SET pid = ? WHERE id = ?", (DEAD_PID, stalled.server_id))
+    stalled.conn.execute("UPDATE mcp_servers SET pid = ? WHERE id = ?", (_dead_pid(), stalled.server_id))
     assert store.mark_lost_jobs(now + 1) == 1
     assert _row(store, job.id)["status"] == "lost"
 
@@ -434,13 +440,14 @@ def test_mark_lost_jobs_survives_a_long_server_history(monkeypatch, tmp_path):
     still have unfinished jobs."""
     store = _store(monkeypatch, tmp_path)
     now = time.time()
+    dead = _dead_pid()
     with db.immediate(store.conn):
         store.conn.executemany(
             "INSERT INTO mcp_servers (id, pid, owner, started, updated, stopped, cwd, version)"
             " VALUES (?, ?, 1, ?, ?, ?, '/', 'x')",
-            [(db.new_uuid(), DEAD_PID, now - 1e5, now - 1e5, now - 1e5) for _ in range(40_000)],
+            [(db.new_uuid(), dead, now - 1e5, now - 1e5, now - 1e5) for _ in range(40_000)],
         )
-    job = _stale_running_job(DEAD_PID, now)
+    job = _stale_running_job(dead, now)
     assert store.mark_lost_jobs(now) == 1
     assert _row(store, job.id)["status"] == "lost"
 
@@ -455,14 +462,27 @@ def test_mark_lost_jobs_sweeps_a_corrupt_pid(monkeypatch, tmp_path):
     assert _row(store, job.id)["status"] == "lost"
 
 
-def test_mark_lost_jobs_sweeps_a_dead_pid(monkeypatch, tmp_path):
-    """The DEAD_PID the tests use is provably gone (os.kill raises ProcessLookupError), and a
-    stale server row carrying it has its running job swept."""
-    with pytest.raises(ProcessLookupError):
-        os.kill(DEAD_PID, 0)
+@pytest.mark.parametrize("pid", [0, -1])
+def test_mark_lost_jobs_sweeps_a_non_positive_pid(monkeypatch, tmp_path, pid):
+    """DeepSeek review of 6005f94: os.kill(0, 0) signals this process group and os.kill(-1, 0)
+    every process this user may signal, so both succeed and pid_alive called a corrupt row's
+    0 or -1 alive: its jobs were never swept. A pid <= 0 is not a live process, either reading."""
+    assert db.pid_alive(pid) is False and db.pid_alive(pid, strict=True) is False
     store = _store(monkeypatch, tmp_path)
     now = time.time()
-    job = _stale_running_job(DEAD_PID, now)
+    job = _stale_running_job(pid, now)
+    assert store.mark_lost_jobs(now) == 1
+    assert _row(store, job.id)["status"] == "lost"
+
+
+def test_mark_lost_jobs_sweeps_a_dead_pid(monkeypatch, tmp_path):
+    """The dead pid the tests use (_dead_pid) is provably gone (os.kill raises ProcessLookupError), and a
+    stale server row carrying it has its running job swept."""
+    with pytest.raises(ProcessLookupError):
+        os.kill(_dead_pid(), 0)
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    job = _stale_running_job(_dead_pid(), now)
     assert store.mark_lost_jobs(now) == 1
     r = _row(store, job.id)
     assert r["status"] == "lost" and r["error"] == "server exited"

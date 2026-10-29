@@ -470,40 +470,51 @@ def metrics_delta(
     ``backend`` (a ``backend_kind`` value) decides the arithmetic. vLLM's ``prompt_tokens``
     already counts cached tokens, so llama.cpp's cached/(processed+cached) must never be applied
     to a vLLM snapshot — a vLLM without the prefix-cache series reports the prompt delta as
-    processed and omits the cache keys rather than guessing them. Without ``backend`` the key
-    sniff of earlier code stays, for callers that have no backend to name (review of 1.8)."""
+    processed and omits the cache keys rather than guessing them. A backend that names a counter
+    format (``llamacpp``, ``strata``) never sniffs. One that names none (``None``, ``other``,
+    ``ollama``; ``other`` is the config default and the prober finds a vLLM whatever the
+    backend says) is taken as vLLM when ``prefix_queries`` is in both snapshots. The prefix
+    arithmetic itself also needs the series in both: present in one only, it is the no-prefix
+    arithmetic (review of 1.8)."""
     if not before or not after:
         return None
     # counters in BOTH snapshots only: a series that vanished from `after` is a backend change,
     # not a counter running backwards (the row's reset rule must not fire on it), and a series
     # that only appears in `after` is a since-start value, not a delta (review of 1.8)
     d = {k: after[k] - before[k] for k in set(before) & set(after)}
-    vllm = (backend == "vllm") if backend is not None else "prefix_queries" in after
-    out: dict[str, Any] = {"generated_tokens": int(d.get("generated_tokens", 0))}
-    if vllm and "prefix_queries" in after:  # vLLM: prompt_tokens counts everything; hits are the cached part
-        total, hits = d.get("prompt_tokens", 0.0), d.get("prefix_hits", 0.0)
-        out["prompt_tokens_processed"] = int(max(0.0, total - hits))
-        out["prompt_tokens_cached"] = int(hits)
-        if d.get("prefix_queries", 0.0) > 0:
-            out["cache_hit_ratio"] = round(hits / d["prefix_queries"], 3)
-        if d.get("spec_draft_tokens", 0.0) > 0:
-            out["spec_decode_acceptance"] = round(d["spec_accepted_tokens"] / d["spec_draft_tokens"], 3)
+    vllm = backend == "vllm" or (backend in (None, "other", "ollama") and "prefix_queries" in d)
+    # Every counter read below is behind a presence check on `d`: a counter missing from either
+    # snapshot gives no output key — never a KeyError (one reached run_job's finally and stranded
+    # the job) and never a 0 standing in for an unknown (review of 1.8, construct-it).
+    out: dict[str, Any] = {}
+    if "generated_tokens" in d:
+        out["generated_tokens"] = int(d["generated_tokens"])
+    if vllm and "prefix_queries" in d:  # vLLM: prompt_tokens counts everything; hits are the cached part
+        if "prefix_hits" in d:
+            hits = d["prefix_hits"]
+            if "prompt_tokens" in d:
+                out["prompt_tokens_processed"] = int(max(0.0, d["prompt_tokens"] - hits))
+            out["prompt_tokens_cached"] = int(hits)
+            if d.get("prefix_queries", 0.0) > 0:
+                out["cache_hit_ratio"] = round(hits / d["prefix_queries"], 3)
     elif vllm:  # vLLM without the prefix-cache series: prompt_tokens is itself the processed count
-        out["prompt_tokens_processed"] = int(d.get("prompt_tokens", 0.0))
-        if d.get("spec_draft_tokens", 0.0) > 0:
-            out["spec_decode_acceptance"] = round(d["spec_accepted_tokens"] / d["spec_draft_tokens"], 3)
+        if "prompt_tokens" in d:
+            out["prompt_tokens_processed"] = int(d["prompt_tokens"])
     else:  # llama.cpp (and strata, whose parser already splits the two): separate counters
-        processed, cached = d.get("prompt_tokens", 0.0), d.get("prompt_tokens_cached", 0.0)
-        out["prompt_tokens_processed"] = int(processed)
-        out["prompt_tokens_cached"] = int(cached)
-        if processed + cached > 0:
-            out["cache_hit_ratio"] = round(cached / (processed + cached), 3)
-        if d.get("prompt_seconds", 0.0) > 0:
-            out["prompt_tps"] = round(processed / d["prompt_seconds"], 1)
-        if d.get("generated_seconds", 0.0) > 0:
+        if "prompt_tokens" in d:
+            out["prompt_tokens_processed"] = int(d["prompt_tokens"])
+        if "prompt_tokens_cached" in d:
+            out["prompt_tokens_cached"] = int(d["prompt_tokens_cached"])
+        if "prompt_tokens" in d and "prompt_tokens_cached" in d:
+            processed, cached = d["prompt_tokens"], d["prompt_tokens_cached"]
+            if processed + cached > 0:
+                out["cache_hit_ratio"] = round(cached / (processed + cached), 3)
+        if "prompt_tokens" in d and d.get("prompt_seconds", 0.0) > 0:
+            out["prompt_tps"] = round(d["prompt_tokens"] / d["prompt_seconds"], 1)
+        if "generated_tokens" in d and d.get("generated_seconds", 0.0) > 0:
             out["generate_tps"] = round(d["generated_tokens"] / d["generated_seconds"], 1)
-        if d.get("spec_draft_tokens", 0.0) > 0:
-            out["spec_decode_acceptance"] = round(d["spec_accepted_tokens"] / d["spec_draft_tokens"], 3)
+    if "spec_accepted_tokens" in d and d.get("spec_draft_tokens", 0.0) > 0:
+        out["spec_decode_acceptance"] = round(d["spec_accepted_tokens"] / d["spec_draft_tokens"], 3)
     return out
 
 

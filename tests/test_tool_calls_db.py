@@ -110,29 +110,34 @@ def test_tool_use_rows(monkeypatch, tmp_path):
 
 
 def test_last_activity_shows_the_same_text_as_the_row(monkeypatch, tmp_path):
-    """``job.last_activity`` for a ToolUseBlock is ``f"{tool} {input_text}"`` with exactly the
-    text the tool_calls row gets, so job_status shows ``Bash uv run pytest -q`` (the command,
-    not the input JSON with its description) and a call with nothing to show is just the tool
-    name (review of 1.8)."""
+    """``job.last_activity`` for a ToolUseBlock is ``f"{tool}: {input_text}"`` with exactly the
+    text the tool_calls row gets — the shape of derive.last_tool, so job_status's two fields
+    read alike — so job_status shows ``Bash: uv run pytest -q`` (the command, not the input JSON
+    with its description) and a call with nothing to show is just the tool name (review of 1.8;
+    one format: the fold of its review, finding 8)."""
+    from localagents import derive
+
     store = _store(monkeypatch, tmp_path)
     job = _new(store)
     clock = _Clock()
     monkeypatch.setattr(runner, "time", clock)
 
-    runner._apply_message(job, AssistantMessage(content=[
-        ToolUseBlock(id="tu-1", name="Bash", input={"command": "uv run pytest -q", "description": "Run the tests"}),
-    ], model="m"))
-    assert job.last_activity == "Bash uv run pytest -q"
-
-    runner._apply_message(job, AssistantMessage(content=[
-        ToolUseBlock(id="tu-2", name="Edit", input={"file_path": "/a.py", "old_string": "a", "new_string": "b"}),
-    ], model="m"))
-    assert job.last_activity == "Edit /a.py"
-
-    runner._apply_message(job, AssistantMessage(content=[
-        ToolUseBlock(id="tu-3", name="Write", input={"content": "no file_path at all"}),
-    ], model="m"))
-    assert job.last_activity == "Write"
+    cases = [
+        (ToolUseBlock(id="tu-1", name="Bash", input={"command": "uv run pytest -q", "description": "Run the tests"}),
+         "Bash: uv run pytest -q", "uv run pytest -q"),
+        (ToolUseBlock(id="tu-2", name="Edit", input={"file_path": "/a.py", "old_string": "a", "new_string": "b"}),
+         "Edit: /a.py", "/a.py"),
+        (ToolUseBlock(id="tu-3", name="Write", input={"content": "no file_path at all"}), "Write", None),
+        # a non-string `command` is not Bash's: the input JSON, as for any other tool
+        (ToolUseBlock(id="tu-4", name="Custom", input={"command": ["ls", "-la"]}),
+         'Custom: {"command": ["ls", "-la"]}', '{"command": ["ls", "-la"]}'),
+    ]
+    for block, activity, row_input in cases:
+        runner._apply_message(job, AssistantMessage(content=[block], model="m"))
+        assert job.last_activity == activity
+        row = store.conn.execute("SELECT input FROM tool_calls WHERE tool_use_id = ?", (block.id,)).fetchone()
+        assert row["input"] == row_input
+        assert derive.last_tool(store.conn, job.id) == activity  # the same text as the row's view
 
 
 def test_results_set_finished_and_is_error(monkeypatch, tmp_path):

@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from localagents.shim import normalise_messages_body, translate_context_error
 
 LLAMA_ERR = (
@@ -150,13 +152,15 @@ def test_metrics_delta_branches_on_the_backend_not_on_a_key():
     d = metrics_delta(before, after, backend="vllm")
     assert d["prompt_tokens_processed"] == 500 and d["generated_tokens"] == 80
     assert "cache_hit_ratio" not in d and "prompt_tokens_cached" not in d
-    # the sniff is unchanged for backend-less callers: no prefix keys -> llama.cpp arithmetic
-    assert metrics_delta(before, after)["cache_hit_ratio"] == 0.0
+    # the sniff is unchanged for backend-less callers: no prefix keys -> llama.cpp arithmetic,
+    # and with no cached counter in the snapshots there is no cached key or ratio to report
+    # (item 2 of the 1.8 review fold: an unknown is omitted, never a 0)
+    assert metrics_delta(before, after) == {"generated_tokens": 80, "prompt_tokens_processed": 500}
     # backend=vllm with the prefix series present is still the vLLM arithmetic
     b2 = {"prompt_tokens": 0.0, "prefix_hits": 0.0, "prefix_queries": 0.0}
     a2 = {"prompt_tokens": 1000.0, "prefix_hits": 450.0, "prefix_queries": 900.0}
     assert metrics_delta(b2, a2, backend="vllm") == {
-        "generated_tokens": 0, "prompt_tokens_processed": 550, "prompt_tokens_cached": 450,
+        "prompt_tokens_processed": 550, "prompt_tokens_cached": 450,
         "cache_hit_ratio": 0.5,
     }
 
@@ -181,6 +185,103 @@ def test_metrics_delta_diffs_only_counters_present_in_both_snapshots():
     d2 = metrics_delta({"generated_tokens": 0.0}, {"generated_tokens": 50.0, "prompt_seconds": 100.0},
                        backend="llamacpp")
     assert "prompt_tps" not in d2, d2
+
+
+@pytest.mark.parametrize("backend, before, after, absent", [
+    # generated_seconds in both, generated_tokens in `before` only: was KeyError at the tps
+    ("llamacpp", {"generated_tokens": 10.0, "generated_seconds": 1.0, "prompt_tokens": 5.0},
+     {"generated_seconds": 3.0, "prompt_tokens": 9.0}, ("generated_tokens", "generate_tps")),
+    # spec_draft_tokens in both, spec_accepted_tokens in one: was KeyError on every branch
+    ("llamacpp", {"spec_draft_tokens": 10.0, "spec_accepted_tokens": 5.0, "generated_tokens": 1.0},
+     {"spec_draft_tokens": 30.0, "generated_tokens": 2.0}, ("spec_decode_acceptance",)),
+    ("vllm", {"spec_draft_tokens": 10.0, "spec_accepted_tokens": 5.0, "generated_tokens": 1.0},
+     {"spec_draft_tokens": 30.0, "generated_tokens": 2.0}, ("spec_decode_acceptance",)),
+    ("vllm", {"spec_draft_tokens": 10.0, "spec_accepted_tokens": 5.0, "prompt_tokens": 1.0,
+              "prefix_queries": 1.0, "prefix_hits": 0.0},
+     {"spec_draft_tokens": 30.0, "prompt_tokens": 9.0, "prefix_queries": 9.0, "prefix_hits": 4.0},
+     ("spec_decode_acceptance", "generated_tokens")),
+    # prompt_seconds in both, prompt_tokens in `after` only: was a 0 processed and a 0.0 tps
+    ("llamacpp", {"prompt_seconds": 1.0, "prompt_tokens_cached": 0.0},
+     {"prompt_seconds": 2.0, "prompt_tokens": 100.0, "prompt_tokens_cached": 50.0},
+     ("prompt_tokens_processed", "prompt_tps", "cache_hit_ratio", "generated_tokens")),
+    # the cached counter in one snapshot only: no cached key, no ratio built from a guessed 0
+    ("llamacpp", {"prompt_tokens": 1.0, "prompt_tokens_cached": 1.0}, {"prompt_tokens": 5.0},
+     ("prompt_tokens_cached", "cache_hit_ratio")),
+])
+def test_metrics_delta_never_reads_a_partner_it_did_not_guard(backend, before, after, absent):
+    """Every counter metrics_delta reads must be in both snapshots: one that is not yields no
+    output key, never a KeyError (which reached run_job's finally and stranded the job) and
+    never a 0 standing in for an unknown (review of 1.8, construct-it)."""
+    from localagents.registry import metrics_delta
+
+    d = metrics_delta(before, after, backend=backend)
+    assert d is not None
+    for k in absent:
+        assert k not in d, (k, d)
+
+
+def _vllm_text(pt, gen, pq=None, ph=None):
+    s = f'vllm:prompt_tokens_total{{model_name="m"}} {pt}\nvllm:generation_tokens_total{{model_name="m"}} {gen}\n'
+    if pq is not None:
+        s += f'vllm:prefix_cache_queries_total{{model_name="m"}} {pq}\nvllm:prefix_cache_hits_total{{model_name="m"}} {ph}\n'
+    return s
+
+
+@pytest.mark.parametrize("backend", ["other", "ollama", None])
+def test_metrics_delta_sniffs_vllm_for_a_backend_that_names_no_format(backend):
+    """`backend: other` is the Endpoint and register_endpoint default, and the prober finds a
+    vLLM by max_model_len whatever the backend says: such an endpoint with the prefix-cache
+    series gets vLLM's arithmetic, as it did before 1.8 (review of 1.8, finding 1: it had become
+    processed 8000, cached 0, ratio 0.0)."""
+    from localagents.registry import metrics_delta, parse_metrics
+
+    b = parse_metrics(_vllm_text(1000, 100, 1000, 200))
+    a = parse_metrics(_vllm_text(9000, 700, 9000, 5000))
+    assert metrics_delta(b, a, backend=backend) == {
+        "generated_tokens": 600, "prompt_tokens_processed": 3200, "prompt_tokens_cached": 4800,
+        "cache_hit_ratio": 0.6,
+    }
+
+
+@pytest.mark.parametrize("backend", ["strata", "llamacpp"])
+def test_metrics_delta_never_sniffs_for_a_named_counter_format(backend):
+    """strata and llama.cpp name their format: a prefix_queries key (injected here, in both
+    snapshots) never moves them onto the vLLM arithmetic."""
+    import copy
+    import pathlib
+
+    from localagents.registry import metrics_delta, parse_strata_metrics
+
+    doc = json.loads((pathlib.Path(__file__).parent / "fixtures" / "strata_metrics.json").read_text())
+    doc2 = copy.deepcopy(doc)
+    t = doc2["totals"]
+    t.update(prompt_tokens=t["prompt_tokens"] + 30000, reused=t["reused"] + 25000,
+             output_tokens=t["output_tokens"] + 800, prompt_ms=t["prompt_ms"] + 2500.0,
+             decode_ms=t["decode_ms"] + 8000.0, drafts_offered=t["drafts_offered"] + 400,
+             drafts_accepted=t["drafts_accepted"] + 300)
+    b, a = parse_strata_metrics(doc), parse_strata_metrics(doc2)
+    b.update(prefix_queries=0.0, prefix_hits=0.0)
+    a.update(prefix_queries=30000.0, prefix_hits=1.0)
+    assert metrics_delta(b, a, backend=backend) == {
+        "generated_tokens": 800, "prompt_tokens_processed": 5000, "prompt_tokens_cached": 25000,
+        "cache_hit_ratio": 0.833, "prompt_tps": 2000.0, "generate_tps": 100.0, "spec_decode_acceptance": 0.75,
+    }
+
+
+@pytest.mark.parametrize("backend", ["vllm", "other", None])
+def test_metrics_delta_prefix_series_in_one_snapshot_only_is_no_prefix(backend):
+    """The prefix-cache branch needs the series in BOTH snapshots: present in `after` only it
+    used to take that branch and report prompt_tokens_cached 0 (a guess); now it is the
+    no-prefix arithmetic with cached and ratio omitted (review of 1.8, finding 3). The same
+    the other way round (present in `before` only)."""
+    from localagents.registry import metrics_delta, parse_metrics
+
+    b = parse_metrics(_vllm_text(1000, 100))
+    a = parse_metrics(_vllm_text(9000, 700, 9000, 5000))
+    assert metrics_delta(b, a, backend=backend) == {"generated_tokens": 600, "prompt_tokens_processed": 8000}
+    assert metrics_delta(a, parse_metrics(_vllm_text(9500, 800)), backend=backend) == {
+        "generated_tokens": 100, "prompt_tokens_processed": 500,
+    }
 
 
 def test_fuzzy_model_match():

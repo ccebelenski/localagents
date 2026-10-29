@@ -288,7 +288,14 @@ def pid_alive(pid: int, strict: bool = False) -> bool:
     lenient reading: its heartbeat check comes first.
 
     A pid os.kill cannot even take (above a C int, not an integer: a corrupt row) is not a live
-    process, in either reading (review of 1.7, finding 9)."""
+    process, in either reading (review of 1.7, finding 9). Nor is a pid <= 0: os.kill(0, 0)
+    signals this process group and os.kill(-1, 0) every process this user may signal, so both
+    succeed and a corrupt row's 0 or -1 read as alive (DeepSeek review of 6005f94)."""
+    try:
+        if pid <= 0:
+            return False
+    except TypeError:
+        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

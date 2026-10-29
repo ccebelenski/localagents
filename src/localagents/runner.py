@@ -7,6 +7,7 @@ import dataclasses
 import json
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -81,10 +82,22 @@ def make_worktree(job: Job) -> dict[str, Any]:
     r = _git(repo, "worktree", "add", "-b", branch, str(wt), "HEAD")
     if r.returncode != 0:
         raise RuntimeError(f"git worktree add failed: {r.stderr.strip()}")
-    base = _git(repo, "rev-parse", "HEAD").stdout.strip()
-    # keep the relative position inside the repo
-    rel = Path(job.cwd).resolve().relative_to(Path(repo).resolve())
-    return {"repo": repo, "path": str(wt / rel), "root": str(wt), "branch": branch, "base": base}
+    try:
+        base = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        # keep the relative position inside the repo
+        rel = Path(job.cwd).resolve().relative_to(Path(repo).resolve())
+        return {"repo": repo, "path": str(wt / rel), "root": str(wt), "branch": branch, "base": base}
+    except BaseException as e:
+        # the tree and branch exist but job.worktree will never name them, so nothing else
+        # would remove them: this does, then re-raises (DeepSeek review of 6005f94)
+        rm = _git(repo, "worktree", "remove", "--force", str(wt))
+        _git(repo, "branch", "-D", branch)
+        if rm.returncode != 0:
+            raise RuntimeError(
+                f"worktree setup failed after git worktree add ({type(e).__name__}: {e}); removing "
+                f"the tree also failed ({rm.stderr.strip()}): it is left at {wt}, branch {branch}"
+            ) from e
+        raise
 
 
 def _restore_worktree(wt: dict[str, Any]) -> dict[str, Any]:
@@ -117,8 +130,22 @@ def finish_worktree(job: Job) -> None:
     head = _git(root, "rev-parse", "HEAD").stdout.strip()
     changed = bool(status) or head != wt["base"]
     if not changed:
-        _git(repo, "worktree", "remove", "--force", root)
-        _git(repo, "branch", "-D", wt["branch"])
+        # each step's return code is read: "removed" is said only when git removed it
+        rm = _git(repo, "worktree", "remove", "--force", root)
+        if rm.returncode != 0:
+            # the branch is checked out in the tree that is still there: it stays too
+            failed = f"git worktree remove failed: {rm.stderr.strip()}"
+            wt.update(kept=True, note=f"no changes, but the worktree was not removed ({failed}); "
+                                      f"it is left at {root} on branch {wt['branch']}")
+            job.log_text(f"[worktree-error] {failed}")
+            return
+        br = _git(repo, "branch", "-D", wt["branch"])
+        if br.returncode != 0:
+            failed = f"git branch -D failed: {br.stderr.strip()}"
+            wt.update(kept=True, note=f"no changes; the worktree was removed but its branch was not "
+                                      f"({failed}): branch {wt['branch']} is left in {repo}")
+            job.log_text(f"[worktree-error] {failed}")
+            return
         wt.update(kept=False, note="no changes; worktree removed")
         return
     _git(root, "add", "-A")
@@ -178,10 +205,10 @@ def _apply_message(job: Job, m: Any) -> None:
                     # spec: edit tools store just the path (NULL when absent); the count of
                     # calls and the files touched are read back from the rows (story 1.5b).
                     input_text = b.input.get("file_path") or b.input.get("notebook_path")
-                # last_activity shows the same text the row shows: job_status and the progress
-                # line read it, so a Bash call says "Bash uv run pytest -q", never the JSON
-                # around the command (review of 1.8)
-                job.last_activity = f"{b.name} {input_text}" if input_text else b.name
+                # last_activity shows the same text the row shows, in derive.last_tool's shape:
+                # job_status and the progress line read it, so a Bash call says
+                # "Bash: uv run pytest -q", never the JSON around the command (review of 1.8)
+                job.last_activity = f"{b.name}: {input_text}" if input_text is not None else b.name
                 job.record_tool_call(time.time(), b.name, b.id, input_text)
     elif isinstance(m, UserMessage):
         content = m.content
@@ -225,6 +252,11 @@ async def _make_worktree_shielded(job: Job) -> dict[str, Any]:
                 pass
         if not made.cancelled() and made.exception() is None:
             job.worktree = made.result()
+        elif not made.cancelled():
+            # the cancel wins (the job is `cancelled`), but the thread's own error is not
+            # dropped without a word (DeepSeek review of 6005f94)
+            e = made.exception()
+            _log_safe(job, f"[worktree-error] {type(e).__name__}: {e}")
         raise
 
 
@@ -301,25 +333,69 @@ async def run_job(
         job.error = f"{type(e).__name__}: {e}"
         job.log_text(f"[error] {job.error}")
     finally:
+        # The tail (finished_at, _done.set(), the final changed(), the prune) ALWAYS runs: a job
+        # whose finally stops early stays `running` in its row, its worktree unfinished, and
+        # every waiter runs to its timeout. So the finally's awaits absorb cancels until their
+        # work is done (a second cancel_job lands here: both calls pass `if job.done` before
+        # either cancel is processed — DeepSeek review of 6005f94), and an exception from them
+        # is a transcript line, never propagated past the tail.
         job.finished_at = time.time()
-        if metrics_before:
-            # Server-wide counters: with other jobs on the same endpoint the delta is shared.
-            # the backend decides the arithmetic: vLLM's prompt_tokens already includes cached
-            # tokens, and its /metrics sometimes lacks the prefix-cache series (review of 1.8)
+        await _to_the_end(job, _finish(job, res, metrics_before, d.probe_timeout_s), "finish")
+        job._done.set()
+        job.changed()
+        # retention: this job's own directory is new, so only older ones can go
+        await _to_the_end(job, asyncio.to_thread(prune, d.job_retention_days), "prune")
+
+
+def _log_safe(job: Job, text: str) -> None:
+    """A transcript line from the finally, which must not raise: a failing write (ENOSPC, a
+    read-only state directory) falls back to stderr."""
+    try:
+        job.log_text(text)
+    except Exception as e:  # noqa: BLE001
+        print(f"localagents: job {job.id}: {text} (transcript write failed: {e})", file=sys.stderr)
+
+
+async def _to_the_end(job: Job, aw: Any, what: str) -> None:
+    """Await `aw` to completion whatever happens to the caller: a cancel is absorbed (the work
+    goes on in its task or thread and is waited for, like _make_worktree_shielded), and any
+    exception or absorbed cancel is a transcript line. Never raises."""
+    fut = asyncio.ensure_future(aw)
+    absorbed = 0
+    while not fut.done():
+        try:
+            await asyncio.wait([fut])  # wait() never cancels fut, unlike await fut
+        except asyncio.CancelledError:
+            absorbed += 1
+    if absorbed:
+        _log_safe(job, f"[cancel] {absorbed} cancel(s) arrived during the job's {what} step; it ran to the end")
+    if fut.cancelled():
+        _log_safe(job, f"[{what}-error] cancelled")
+    elif fut.exception() is not None:
+        e = fut.exception()
+        _log_safe(job, f"[{what}-error] {type(e).__name__}: {e}")
+
+
+async def _finish(job: Job, res: Resolution, metrics_before: dict[str, float] | None, probe_timeout_s: float) -> None:
+    """The finally's work before the tail: the metrics delta, then the worktree. Each is guarded
+    on its own so a metrics failure still finishes the worktree."""
+    if metrics_before:
+        # Server-wide counters: with other jobs on the same endpoint the delta is shared.
+        # the backend decides the arithmetic: vLLM's prompt_tokens already includes cached
+        # tokens, and its /metrics sometimes lacks the prefix-cache series (review of 1.8).
+        # Guarded (review of 1.8, construct-it: a KeyError from metrics_delta stranded a job).
+        try:
             job.metrics = metrics_delta(
                 metrics_before,
-                await fetch_metrics(res.endpoint, d.probe_timeout_s),
+                await fetch_metrics(res.endpoint, probe_timeout_s),
                 backend=backend_kind(res.endpoint.backend),
             )
             if job.metrics:
-                job.log_text(f"[metrics] {json.dumps(job.metrics)}")
-        try:
-            await asyncio.to_thread(finish_worktree, job)
+                _log_safe(job, f"[metrics] {json.dumps(job.metrics)}")
         except Exception as e:  # noqa: BLE001
-            job.log_text(f"[worktree-error] {e}")
-        job._done.set()
-        job.changed()
-        try:  # retention: this job's own directory is new, so only older ones can go
-            await asyncio.to_thread(prune, d.job_retention_days)
-        except Exception as e:  # noqa: BLE001
-            job.log_text(f"[prune-error] {e}")
+            job.metrics = None
+            _log_safe(job, f"[metrics-error] {type(e).__name__}: {e}")
+    try:
+        await asyncio.to_thread(finish_worktree, job)
+    except Exception as e:  # noqa: BLE001
+        _log_safe(job, f"[worktree-error] {e}")
