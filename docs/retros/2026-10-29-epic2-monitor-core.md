@@ -100,8 +100,9 @@ self-check grepped it.
 
 - Whether the collector runs the lost-job sweep on its own schedule (a crashed server's jobs stay
   `running` until another MCP server starts). Asked twice, not yet answered.
-- The 2.4a review (Qwen/ai1), 3.1b (the node fallback) and 3.2 (the overview page) were in flight
-  at the time of writing; their findings land in EPICS.
+- The 2.4a review landed clean after this was written (Qwen/ai1, no defects: Epic 2 closed);
+  3.1b (the node fallback) and 3.2 (the overview page) were in flight; their findings land in
+  EPICS.
 - Events outside the rulings: the seed's server pid is dead the moment the command exits, so the
   status line never shows a seeded job (documented, not fixed); a `wait_jobs` cancel awaits its
   inner unwinds without a bound (the same trade the runner makes).

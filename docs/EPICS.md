@@ -245,8 +245,11 @@ the duplicates go), then docs.
   29 min, 554 tests; ai1 became a true hour of 721 probes so the restart splits it evenly; the
   rate pins moved to 2.586/1.436/269.3 per second from the captures; `status.collect` had no
   summary call to thread, the brief was wrong there; the merge crossed three stories, two
-  conflicts composed by hand and one 3.1a fleet pin re-pinned by the coordinator. Review:
-  Qwen/ai1, pending.)
+  conflicts composed by hand and one 3.1a fleet pin re-pinned by the coordinator. Reviewed by
+  Qwen/ai1 job 20261029-142045-bab8a1a3, 92 turns: the world replayed over all 720 pairs with
+  one reset byte-equal to the event, the clocks through every route and the status line, the
+  float/force/argument-order rules; NO defects. Epic 2 is closed: every story and fold reviewed
+  by another model.)
 
 
 ## Epic 3: monitor web
