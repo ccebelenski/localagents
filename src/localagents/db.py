@@ -1,8 +1,8 @@
 """The localagents SQLite database: one file shared by every MCP server process on the machine.
 
 Schema and write rules: ``docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md``. Standard
-library only, because ``localagents statusline`` reads this on every status-bar refresh and must
-not pull in the server stack (see ``localagents/__init__.py``).
+library only, because ``localagents statusline`` will read this on every status-bar refresh
+(story 1.5a) and must not pull in the server stack (see ``localagents/__init__.py``).
 
 Write rules every caller keeps:
 
@@ -211,7 +211,7 @@ def _set_wal(conn: sqlite3.Connection) -> None:
                 conn.execute("PRAGMA journal_mode = WAL")
             return
         except sqlite3.OperationalError as e:
-            busy = getattr(e, "sqlite_errorcode", None) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+            busy = e.sqlite_errorcode in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)  # 3.11+; the project is 3.12+
             if not busy or time.monotonic() > deadline:
                 raise
             time.sleep(0.01)
