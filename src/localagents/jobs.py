@@ -101,6 +101,7 @@ class Job:
     _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _on_change: Callable[[], None] | None = field(default=None, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)  # the store's db connection
+    _pending_tools: dict[str, int] = field(default_factory=dict, repr=False)  # tool_use_id -> rowid of its tool_calls row (spec write rule)
 
     # metrics columns written from Job.metrics; the first three decide the NULL-on-reset rule
     _METRIC_COUNTERS = ("generated_tokens", "prompt_tokens_processed", "prompt_tokens_cached")
@@ -140,6 +141,38 @@ class Job:
         except sqlite3.Error as e:
             # the database observes the job; a locked or broken db must never fail the job itself
             self.log_text(f"[db-error] job row update: {e}")
+
+    def record_tool_call(self, t: float, tool: str, tool_use_id: str, input_text: str | None) -> None:
+        """One ``tool_calls`` row per ToolUseBlock (spec: input is the path for edit tools, else
+        the first 120 chars of the input JSON). Remembers the rowid so the matching result can
+        set ``finished``/``is_error`` by rowid — no index on ``tool_use_id`` needed."""
+        if self._conn is None:
+            return  # a Job built outside JobStore.new has no rows to write
+        try:
+            with db.immediate(self._conn):
+                cur = self._conn.execute(
+                    "INSERT INTO tool_calls (job_id, t, tool, tool_use_id, input, is_error, finished)"
+                    " VALUES (?, ?, ?, ?, ?, NULL, NULL)",
+                    (self.id, t, tool, tool_use_id, input_text),
+                )
+                self._pending_tools[tool_use_id] = cur.lastrowid
+        except sqlite3.Error as e:
+            self.log_text(f"[db-error] tool call insert: {e}")
+
+    def record_tool_result(self, tool_use_id: str, t: float, is_error: bool | None) -> None:
+        """Set ``finished``/``is_error`` on the call's row by its remembered rowid. A result
+        whose call we never saw (or whose insert failed) is not an error: it is ignored."""
+        rowid = self._pending_tools.pop(tool_use_id, None)
+        if rowid is None or self._conn is None:
+            return
+        try:
+            with db.immediate(self._conn):
+                self._conn.execute(
+                    "UPDATE tool_calls SET finished = ?, is_error = ? WHERE rowid = ?",
+                    (t, 1 if is_error else 0, rowid),
+                )
+        except sqlite3.Error as e:
+            self.log_text(f"[db-error] tool result update: {e}")
 
     def note_usage(self, usage: dict[str, Any] | None, ms: int, gen_ms: int | None = None) -> None:
         """Record a backend response's usage (called by the shim): live context fill and speed.

@@ -170,10 +170,13 @@ def _apply_message(job: Job, m: Any) -> None:
                 short = json.dumps(b.input, default=str)
                 job.log_text(f"[tool] {b.name} {short[:400]}")
                 job.last_activity = f"{b.name} {short[:120]}"
+                input_text = short[:120]
                 if b.name in EDIT_TOOLS:
                     fp = b.input.get("file_path") or b.input.get("notebook_path")
                     if fp and fp not in job.files_touched:
                         job.files_touched.append(fp)
+                    input_text = fp  # spec: edit tools store just the path (NULL when absent)
+                job.record_tool_call(time.time(), b.name, b.id, input_text)
     elif isinstance(m, UserMessage):
         content = m.content
         if isinstance(content, list):
@@ -181,6 +184,7 @@ def _apply_message(job: Job, m: Any) -> None:
                 if isinstance(b, ToolResultBlock):
                     txt = b.content if isinstance(b.content, str) else json.dumps(b.content, default=str)
                     job.log_text(f"[result{' ERROR' if b.is_error else ''}] {str(txt)[:300]}")
+                    job.record_tool_result(b.tool_use_id, time.time(), b.is_error)
     elif isinstance(m, SystemMessage):
         if m.subtype == "init":
             job.session_id = m.data.get("session_id") or job.session_id
