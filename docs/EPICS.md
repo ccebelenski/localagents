@@ -221,8 +221,20 @@ the duplicates go), then docs.
   only endpoint is dormant) while `node_state` is up, the two are orthogonal; the running
   job's rows are scaled onto its five minutes. Known limit: the seed's `mcp_servers.pid` is
   the seeding process, so `localagents statusline` over a seeded file renders nothing once
-  that process exits; the monitor pages read status from rows and are the consumer. Review:
-  pending, by a model other than the 27B.)
+  that process exits; the monitor pages read status from rows and are the consumer. Reviewed by
+  DeepSeek/dgx1-a job 20261029-132435-5516bed7, 63 turns, 22 min, twelve findings: F4
+  `endpoints.first_seen` is the wall clock (via `db.lookup_id`), so the seed is not pure in
+  `now`; F9 `derive.summary_from_row` computes a running job's elapsed from `time.time()`, so a
+  fixed `--now` shows a negative duration; F10 the running job's `context` is 262144 against
+  ai1's 131072; F1/F2/F3 the seeded events sit at instants the probes contradict and the
+  `restarted` detail is not `reset_reason`'s text; F11 `metrics_delta` truncates fractional
+  deltas, lossless on real integer counters but 7-17 % low on the seed's interpolated ones; F5
+  `--force` deletes a live server's row and its running job's rows; F6 `--now` is parsed after
+  the file is created; F7/F8 naive ISO is local time and the states decay after the window,
+  both undocumented. Folded in 2.4a.)
+- ☐ **2.4a Fold of the 2.4 review** (reviewer fixes its own findings). Lane: DeepSeek, review by
+  the 27B or Qwen.
+
 
 ## Epic 3: monitor web
 
