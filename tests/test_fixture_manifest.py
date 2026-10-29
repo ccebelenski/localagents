@@ -10,6 +10,7 @@ cannot read is a finding recorded in the manifest (`note`), not a fixture to fix
 rows) carry no `parser`, and the parser loop only runs over rows that do.
 """
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -60,3 +61,85 @@ def test_every_fixture_is_listed_and_parses():
             continue
         out = PARSERS[row["parser"]](data := (MONITOR / row["path"]).read_bytes())
         assert out, f"{row['path']}: parser {row['parser']!r} returned nothing"
+
+
+def test_each_row_pins_what_its_parser_returns():
+    """Story 2.1a: every non-error row pins `parsed`, the size of its parser's
+    result (entry count for a dict/list, newline count for text), so a fixture
+    truncated with its `bytes` edited to match still fails the manifest."""
+    rows = _rows()
+    try:
+        from fixture_parsers import PARSERS
+    except ImportError:
+        pytest.skip("fixture_parsers arrives with story step 4")
+    for row in rows:
+        if "error" in row:
+            continue
+        assert "parser" in row, f"{row['path']}: non-error row names no parser"
+        assert "parsed" in row, f"{row['path']}: no `parsed` count pinned in the manifest"
+        out = PARSERS[row["parser"]]((MONITOR / row["path"]).read_bytes())
+        n = out.count("\n") if isinstance(out, str) else len(out)
+        assert n == row["parsed"], (
+            f"{row['path']}: parser {row['parser']!r} yields {n}, manifest pins {row['parsed']}"
+        )
+
+
+def _content_length(sidecar: Path) -> int | None:
+    """The Content-Length value in a curl `-D` sidecar (status line first), or
+    None if the server sent none. Header names are case-insensitive across engines."""
+    for line in sidecar.read_text().splitlines()[1:]:
+        name, sep, value = line.partition(":")
+        if sep and name.strip().lower() == "content-length":
+            return int(value.strip())
+    return None
+
+
+def _sidecar_problems(rows: list[dict], root: Path) -> list[str]:
+    """Story 2.1a: every row with an http:// url has its `.headers` sidecar — the
+    `path` with the extension replaced — including the error row, whose capture
+    has headers but no body. When the sidecar carries Content-Length, that value
+    is the body's size: the row's `bytes`, or 0 for the error row.
+
+    The error row needs no explicit `headers` field: it names a `path` like every
+    other row, and `with_suffix('.headers')` reproduces the name curl gave it
+    (vllm/dgx1-a_health_1.headers), so the rule is uniform.
+    """
+    problems = []
+    for row in rows:
+        if not row["url"].startswith("http://"):
+            continue  # the db export row was never an HTTP capture
+        sidecar = root / Path(row["path"]).with_suffix(".headers")
+        if not sidecar.is_file():
+            problems.append(f"{row['path']}: no sidecar at {sidecar.relative_to(root)}")
+            continue
+        cl = _content_length(sidecar)
+        if cl is not None and cl != row.get("bytes", 0):
+            problems.append(
+                f"{row['path']}: sidecar Content-Length {cl}, manifest bytes {row.get('bytes', 0)}"
+            )
+    return problems
+
+
+def test_every_http_row_has_its_headers_sidecar():
+    assert _sidecar_problems(_rows(), MONITOR) == []
+
+
+def test_missing_sidecar_is_caught(tmp_path):
+    """A copy of the tree with one sidecar deleted must fail the check —
+    the real fixtures are never touched."""
+    root = tmp_path / "monitor"
+    shutil.copytree(MONITOR, root)
+    (root / "vllm" / "dgx1-a_metrics_1.headers").unlink()
+    assert _sidecar_problems(_rows(), root) == [
+        "vllm/dgx1-a_metrics_1.txt: no sidecar at vllm/dgx1-a_metrics_1.headers"
+    ]
+
+
+def test_wrong_content_length_is_caught(tmp_path):
+    root = tmp_path / "monitor"
+    shutil.copytree(MONITOR, root)
+    f = root / "vllm" / "dgx1-a_models_1.headers"
+    f.write_text(f.read_text().replace("content-length: 500", "content-length: 501"))
+    assert _sidecar_problems(_rows(), root) == [
+        "vllm/dgx1-a_models_1.json: sidecar Content-Length 501, manifest bytes 500"
+    ]
