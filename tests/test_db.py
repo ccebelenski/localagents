@@ -471,6 +471,34 @@ def test_session_pid_finds_an_npm_installed_claude_running_as_node(monkeypatch):
     assert db.session_pid(start_pid=100) == 8
 
 
+def test_session_pid_finds_modern_node_whose_comm_carries_the_thread_name(monkeypatch):
+    """Review of 1.9a (probe 4): node 26 on this machine names its main thread in ``comm``,
+    ``node-MainThread`` — the exact ``comm == "node"`` test never fired, so the npm branch of
+    the walk was dead on a modern node. The comm test is node-or-node-something."""
+    _fake_proc(monkeypatch, {
+        "/proc/100/stat": "100 (python) S 8 100 100 0 -1 4194304 1 0 0 0",
+        "/proc/8/stat": "8 (node-MainThread) S 1 8 8 0 -1 4194304 1 0 0 0",
+        "/proc/8/comm": "node-MainThread\n",
+        "/proc/8/cmdline": "node\0/home/x/.npm/bin/claude\0",
+        "/proc/1/comm": "systemd\n",
+    })
+    assert db.session_pid(start_pid=100) == 8
+
+
+def test_session_pid_ignores_claude_appearing_later_in_a_node_command_line(monkeypatch):
+    """Review of 1.9a (probe 4 d): only the interpreter slot (argv[0]) and the script slot
+    (argv[1]) name what the process IS — npm's shim lands in one of them. ``node
+    something.js --name claude`` is some other program that takes a flag called claude."""
+    _fake_proc(monkeypatch, {
+        "/proc/100/stat": "100 (python) S 8 100 100 0 -1 4194304 1 0 0 0",
+        "/proc/8/stat": "8 (node) S 1 8 8 0 -1 4194304 1 0 0 0",
+        "/proc/8/comm": "node\n",
+        "/proc/8/cmdline": "node\0/home/x/something.js\0--name\0claude\0",
+        "/proc/1/comm": "systemd\n",
+    })
+    assert db.session_pid(start_pid=100) is None
+
+
 def test_session_pid_ignores_a_node_running_something_else(monkeypatch):
     """The cmdline rule is the basename ``claude``: a node app (or cli.js by another name) is
     not the session, and the walk goes on past it."""

@@ -384,18 +384,23 @@ def pid_alive(pid: int, strict: bool = False) -> bool:
 def _is_claude(pid: int, comm: str) -> bool:
     """Is ``pid`` the Claude Code session? The native binary's ``comm`` is ``claude``; an
     npm-installed one runs as ``node`` with the npm shim's entry (``.../bin/claude``) as an
-    argument, so its ``cmdline`` is what names it. A cmdline that cannot be read is not the
-    session and the walk goes on (story 1.9a row 5)."""
+    argument, so its ``cmdline`` is what names it. Modern node names its main thread in
+    ``comm`` — ``node-MainThread`` on node 26 — so the comm test accepts ``node`` and
+    ``node-…`` alike (review of 1.9a, row 2). Only argv[0] and argv[1] are compared with
+    ``claude``: the interpreter slot and the script slot, where npm's shim lands. A
+    ``claude`` further along is an argument to some other program (``node something.js
+    --name claude``), not this process being the session. A cmdline that cannot be read is
+    not the session and the walk goes on (story 1.9a row 5)."""
     if comm == "claude":
         return True
-    if comm != "node":
+    if not (comm == "node" or comm.startswith("node-")):
         return False
     try:
         with open(f"/proc/{pid}/cmdline") as f:
             args = f.read().split("\0")
     except OSError:
         return False
-    return any(os.path.basename(arg) == "claude" for arg in args if arg)
+    return any(os.path.basename(arg) == "claude" for arg in args[:2])
 
 
 def session_pid(start_pid: int | None = None) -> int | None:

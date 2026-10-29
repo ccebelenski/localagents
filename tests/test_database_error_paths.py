@@ -14,6 +14,8 @@ exception is a traceback-shaped answer to the caller.
 """
 
 import asyncio
+import os
+import sqlite3
 import time
 from types import SimpleNamespace
 
@@ -129,6 +131,37 @@ def test_cancel_job_answers_database_error_when_its_summary_cannot_be_read(srv):
     out = asyncio.run(server.cancel_job(job.id))
     assert out["error"] == "database_error"
     assert "no such table: tool_calls" in out["message"]
+
+
+def test_run_agent_answers_database_error_on_a_newer_schema_file(srv):
+    """Review of 1.9a (job 20261029-122217-cc1db55a, probe 1 scenario B): the store opens
+    lazily, and run_agent's `store.new` guard caught `sqlite3.Error` only. A second
+    connection raised `PRAGMA user_version` to 99 — newer than this localagents knows — so
+    a fresh store's first use raises `db.SchemaError` (a RuntimeError) out of migrate as a
+    traceback to the caller. The answer is database_error, like every other guard."""
+    make_job(srv)  # the file opens at the current schema first, then another process upgrades it
+    other = sqlite3.connect(os.environ["LOCALAGENTS_DB"])
+    other.execute("PRAGMA user_version = 99")
+    other.commit()
+    other.close()
+    fresh = srv.jobs.JobStore()  # a fresh store: the in-process jobs dict is empty, open fails
+    srv.monkeypatch.setattr(srv.server, "store", fresh)
+
+    from localagents.registry import Endpoint, Resolution
+
+    ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
+
+    class FakeReg:
+        defaults = SimpleNamespace(dump_requests=False, log_events=False, probe_timeout_s=1.0)
+        endpoints = {}
+
+        async def resolve(self, model=None, endpoint=None):
+            return Resolution(ep, "served-model")
+
+    srv.monkeypatch.setattr(srv.server, "_reg", lambda: FakeReg())
+    out = asyncio.run(srv.server.run_agent(task="t", wait_s=5))
+    assert out["error"] == "database_error"
+    assert "newer than this localagents knows" in out["message"]
 
 
 def test_a_healthy_database_still_answers_unknown_job(srv):

@@ -365,9 +365,11 @@ async def run_agent(
             log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",
             context=res.context,
         )
-    except sqlite3.Error as e:
+    except (sqlite3.Error, db.SchemaError) as e:
         # a refusal like the others, not a bare tool error: the SDK keeps an exception's text out
-        # of the reply, and the caller should see "database is locked" (review of 1.7, finding 8)
+        # of the reply, and the caller should see "database is locked" (review of 1.7, finding 8).
+        # The store opens lazily, so this new() is often the first use and a newer-schema file
+        # raises db.SchemaError (a RuntimeError) here too — the guard must take it (1.9a review)
         return {"error": "database_error", "message": f"the job could not be recorded: {e}"}
     global _shim_port_recorded
     if not _shim_port_recorded and shim.port:
@@ -690,13 +692,16 @@ def _startup_writes(store: JobStore, config: str, transport: str) -> None:
     item 4). Factor of main(), so a test can drive it without mcp.run()."""
     # two tries: the writes are independent, and a failed describe must not skip the sweep
     # (review of 1.7, finding 11)
+    # Both writes touch store.conn, which is the store's first use of the database: a file at
+    # a newer schema raises db.SchemaError (a RuntimeError, not a sqlite3.Error) out of migrate
+    # through it, and that is the same dropped write, not a crash (review of 1.9a, row 1).
     try:
         store.describe_server(config=config, transport=transport)
-    except sqlite3.Error as e:
+    except (sqlite3.Error, db.SchemaError) as e:
         print(f"localagents: startup server-row write skipped: {e}", file=sys.stderr)
     try:
         store.mark_lost_jobs()
-    except sqlite3.Error as e:
+    except (sqlite3.Error, db.SchemaError) as e:
         print(f"localagents: startup lost-job sweep skipped: {e}", file=sys.stderr)
     # story 1.7 item 6: the pre-1.5a status/<pid>.json files are dead weight — the tables and
     # the heartbeat replaced them, and no code reads or writes that directory any more

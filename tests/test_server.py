@@ -331,6 +331,26 @@ def test_startup_writes_survive_a_locked_database(monkeypatch, tmp_path, capsys)
     assert row["config"] == "/cfg/models.yaml" and row["transport"] == "stdio"
 
 
+def test_startup_writes_survive_a_newer_schema_database(monkeypatch, tmp_path, capsys):
+    """Review of 1.9a, row 1: the store opens lazily on first use, and _startup_writes is
+    usually main's first use — so a file at a newer schema raises db.SchemaError (a
+    RuntimeError, not a sqlite3.Error) out of both guards and startup crashed instead of
+    dropping the two writes. The server still starts; each dropped write names itself."""
+    import sqlite3
+
+    path = tmp_path / "localagents" / "localagents.db"  # conftest's LOCALAGENTS_DB
+    path.parent.mkdir(parents=True)
+    other = sqlite3.connect(path)
+    other.execute("PRAGMA user_version = 99")
+    other.commit()
+    other.close()
+
+    store = jobs.JobStore()
+    server._startup_writes(store, "/cfg/models.yaml", "stdio")  # must return normally
+    err = capsys.readouterr().err
+    assert err.count("newer than this localagents knows") == 2  # describe line AND sweep line
+
+
 def test_startup_sweep_runs_when_the_describe_write_fails(monkeypatch, tmp_path, capsys):
     """Review of 1.7, finding 11: the two startup writes are independent; a failed describe
     must not skip the sweep of crashed servers' jobs."""
