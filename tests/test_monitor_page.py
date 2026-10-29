@@ -186,7 +186,8 @@ VARIABLE_KEY_READS = {
         "fleetEp[key]",  # one endpoint's fleet series by CHARTS key: gen_tps, prompt_tps, occupancy
         "fleet.t[i]",  # the fleet time axis, by index
         "hist.t[i]", "hist.t[j+1]",  # the history time axis, by index (the state strip)
-        "hist.state[i]", "hist.state[j+1]", "hist.state[hist.state.length-1]",  # the state series, by index
+        "hist.state[i]", "hist.state[j+1]",  # the state series, by index (the strip's segments;
+                                              # its "now" label is the snapshot's probe_state)
     },
     "job.js": {
         "detail.metrics[k]",  # the metrics delta by column: derive._METRICS_COLUMNS (a test pins METRICS)
@@ -211,7 +212,8 @@ def test_app_js_reads_only_section_5a_field_names():
     for name, vars in PAGE_VARS.items():
         fields = _read_fields((STATIC / name).read_text(), vars)
         # the regex does see the reads (a guard against a pattern that matches nothing)
-        assert {"hosts", "endpoints", "jobs", "rates", "gen_tps", "state", "t", "server_live", "dropped_job"} <= fields \
+        assert {"hosts", "endpoints", "jobs", "rates", "gen_tps", "state", "t", "server_live", "dropped_job",
+                "dropped_job_id", "db_path", "probe_state"} <= fields \
             if name == "app.js" else \
             {"requests", "tool_call_log", "ctx_tokens", "usage", "metrics", "tool_counts",
              "files_touched", "transcript_tail", "elapsed_s", "server_live"} <= fields, name
@@ -301,7 +303,8 @@ def test_endpoint_js_reads_only_section_5a_field_names():
     assert {"hosts", "endpoints", "now", "state", "fallback", "hardware", "rates", "gpu_mem_total", "ram_total",
             "prompt_tps", "cached_tps", "t", "jobs", "events", "requests", "totals", "tokens", "cache_read",
             "job_id", "job_name", "http_status", "count", "cache_creation_tokens", "errors", "started_at",
-            "kind", "detail", "dropped_job", "last_seen", "base_url"} <= fields
+            "kind", "detail", "dropped_job", "last_seen", "base_url",
+            "host", "last_model", "last_context"} <= fields
     missing = sorted(f for f in fields if not re.search(r"(?<![A-Za-z_])" + re.escape(f) + r"(?![A-Za-z_])", spec))
     assert missing == []
 

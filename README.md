@@ -388,14 +388,17 @@ leaves the charts on the next refresh). The range buttons (`15m` to `7d`, defaul
 remembered by the browser) apply to every chart and strip. The page redraws on each snapshot
 the server pushes and never polls; the dot in the header is green while the stream is open and
 red while it reconnects, and the header names the attention window in hours (`24h` by
-default; the `attention_hours` setting below). The charting
+default; the `attention_hours` setting below) and the database the server opened (the path
+elided from the left when long, the full path in the title). The charting
 library, uPlot 1.6.31, is vendored into the package
 (`src/localagents/monitor/static/VENDOR.md` has its checksums), so the page needs no internet.
 
 An endpoint's name on the overview opens its detail page (`#/endpoint/<name>`), drawn from the
 monitor's own database for every backend, with no link to the endpoint's own UI. Its header
-gives the backend, host, base URL, state and when it was last seen, and for a down endpoint the
-probe's sentence and the job that was running when it dropped. Below it are stat tiles, each
+gives the backend, the host card it sits under, the base URL, the state and when it was last
+seen, and for a down endpoint the probe's sentence and the job that was running when it
+dropped; for a down or dormant endpoint it also names what the engine last served there (the
+model and context window, while the live pair above is null). Below it are stat tiles, each
 with the current figure and a sparkline over the chosen range, grouped by what the backend
 reports: tier 0 for every endpoint (up/down, node state, served model, context window, probe
 latency); tier 1 when it serves counters (llama.cpp with `--metrics`, vLLM, Strata: prompt and

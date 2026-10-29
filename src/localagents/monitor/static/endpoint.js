@@ -405,17 +405,28 @@
       dropped = h("div", { class: "ep-dropped" }, ["running when it dropped: ",
         match ? jobLink(match.id, ep.dropped_job) : h("span", { text: ep.dropped_job })]);
     }
+    // the card the endpoint sits under: the endpoint's own `host` (a page that re-sorts needs
+    // it beside the endpoint), the containing host object as the fallback; the object's node
+    // state goes in the parentheses when it is present
+    var hostName = ep.host != null ? ep.host : host ? host.name : null;
+    // what the engine last served here, while the live pair (model/context) is null
+    var lastServed = null;
+    if ((ep.state === "down" || ep.state === "dormant") && ep.last_model != null) {
+      lastServed = h("div", { class: "ep-note muted", text: "last served " + ep.last_model
+        + (ep.last_context != null ? ", " + fmt.int(ep.last_context) + " tokens" : "") });
+    }
     return h("div", { class: "ep-detail-head endpoint state-" + ep.state, "data-endpoint": ep.name }, [
       back,
       h("div", { class: "ep-head" }, [
         h("h2", { class: "ep-title", text: ep.name }),
         h("span", { class: "tag", text: ep.backend }),
         h("span", { class: "ep-state", text: ep.state }),
-        host ? h("span", { class: "muted", text: "host " + host.name + (host.state ? " (" + host.state + ")" : "") }) : null,
+        hostName != null ? h("span", { class: "muted", text: "host " + hostName + (host && host.state ? " (" + host.state + ")" : "") }) : null,
         h("span", { class: "ep-url", text: ep.base_url }),
       ]),
       h("div", { class: "ep-seen muted", text: seen + (ep.state === "live" && ep.jobs_running ? "; " + fmt.int(ep.jobs_running) + " job" + (ep.jobs_running === 1 ? "" : "s") + " running" : "") }),
       ep.state === "down" && ep.error ? h("div", { class: "ep-error", text: ep.error }) : null,
+      lastServed,
       dropped,
       ep.rates && ep.rates.reason && ep.state === "live" ? h("div", { class: "ep-note muted", text: "speeds: " + ep.rates.reason }) : null,
     ]);

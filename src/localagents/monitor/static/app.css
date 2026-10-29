@@ -41,6 +41,15 @@ h2 { font-size: 15px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 600;
   padding: 12px 0; border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; }
+#meta { display: inline-flex; flex-wrap: wrap; gap: 16px; align-items: baseline; }
+/* the database path: the tail names the file, so a long path elides from the left */
+#meta .db {
+  max-width: min(440px, 60vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
 .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
 .range { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .range button {

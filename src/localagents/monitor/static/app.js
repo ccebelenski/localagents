@@ -2,9 +2,10 @@
  *
  * The page lives on ONE server-sent events stream (/events): each `snapshot` event redraws the
  * host cards and the running-jobs table in place; the page never polls. The fleet charts, the
- * decode sparklines and the state strips need history: on a snapshot the page re-fetches
- * /api/fleet/history (one call for the whole fleet) and each live endpoint's
- * /api/endpoints/<name>/history (for its `state` series) at most once every 5 s. While a
+ * decode sparklines and the state strips' segments need history: on a snapshot the page
+ * re-fetches /api/fleet/history (one call for the whole fleet) and each live endpoint's
+ * /api/endpoints/<name>/history (for its `state` series; the strip's current word is the
+ * snapshot's own `probe_state`, never a point of the series) at most once every 5 s. While a
  * detail page is open the overview is hidden and fetches nothing; it fetches once on return.
  *
  * The JSON is the contract in docs/superpowers/specs/2026-10-29-monitor-design.md §5a; every
@@ -168,15 +169,17 @@
   // --- the host cards -------------------------------------------------------------------------
 
   // the state strip: the endpoint history's `state` series over [now - range, now] as coloured
-  // segments (a null, a down probe, is a gap); nothing when the history has no state series
-  function stateStrip(name, now) {
-    var hist = state.hists[name];
+  // segments (a null, a down probe, is a gap); the current word is the snapshot's own
+  // `probe_state` — the newest probe, fresher than the history grid the segments are drawn
+  // from — so the history exists only for the segments; nothing when the history has no state
+  // series, and no "now" label when the snapshot's probe_state is null (a down probe)
+  function stateStrip(ep, now) {
+    var hist = state.hists[ep.name];
     if (!hist || !hist.state || !hist.t || !hist.t.length) return null;
     var span = rangeSeconds(state.histRange || state.range);
     var t0 = now - span;
     var strip = h("div", { class: "strip", role: "img", "aria-label": "state over the last " + state.range });
-    // the newest kept probe's state; null (nothing printed) when that probe was down
-    var current = hist.state[hist.state.length - 1];
+    var current = ep.probe_state;
     for (var i = 0; i < hist.t.length; i++) {
       var s = hist.state[i];
       if (s == null) continue;
@@ -195,7 +198,8 @@
       }
       i = j;
     }
-    return h("div", { class: "strip-row" }, [strip, h("span", { class: "strip-now", text: current || "" })]);
+    return h("div", { class: "strip-row" }, [strip,
+      current ? h("span", { class: "strip-now", text: current }) : null]);
   }
 
   // a decode-speed sparkline from the fleet history's gen_tps for this endpoint (inline SVG)
@@ -295,7 +299,7 @@
     return h("div", { class: "endpoint state-live", "data-endpoint": ep.name }, [
       h("div", { class: "ep-head" }, [endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
         ep.model ? h("span", { class: "ep-model", text: ep.model }) : null]),
-      stateStrip(ep.name, snap.now),
+      stateStrip(ep, snap.now),
       figures.length ? h("div", { class: "figures" }, figures) : null,
       rates.reason ? h("div", { class: "ep-note muted", text: "speeds: " + rates.reason }) : null,
       hardware(ep.hardware),
@@ -310,7 +314,9 @@
       h("div", { class: "ep-head" }, [endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
         h("span", { class: "ep-seen", text: ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "" })]),
       ep.error && !quiet ? h("div", { class: "ep-error", text: ep.error }) : null,
-      ep.dropped_job ? h("div", { class: "ep-jobs", text: "running when it dropped: " + ep.dropped_job }) : null,
+      // the id beside the name makes the sentence clickable; the name alone stays plain text
+      ep.dropped_job ? h("div", { class: "ep-jobs" }, ["running when it dropped: ",
+        ep.dropped_job_id ? jobLink(ep.dropped_job_id, ep.dropped_job) : ep.dropped_job]) : null,
     ]);
   }
 
@@ -415,7 +421,13 @@
     snap.hosts.forEach(function (host) {
       host.endpoints.forEach(function (ep) { state.order[ep.name] = i++; });
     });
-    byId("meta").textContent = "attention window " + fmt.dur(snap.window_s, true);
+    var meta = [h("span", { text: "attention window " + fmt.dur(snap.window_s, true) })];
+    if (snap.db_path) {
+      // the database the server opened: muted, elided from the left when long (the tail names
+      // the file), the full path in the title
+      meta.push(h("span", { class: "db", title: snap.db_path, text: "database " + snap.db_path }));
+    }
+    byId("meta").replaceChildren.apply(byId("meta"), meta);
     byId("updated").textContent = "snapshot " + fmt.time(snap.now);
     byId("hosts").replaceChildren.apply(byId("hosts"), snap.hosts.map(function (host) { return hostCard(snap, host); }));
     byId("jobs-body").replaceChildren(jobsTable(snap));
