@@ -241,8 +241,12 @@ the duplicates go), then docs.
   `--force` deletes a live server's row and its running job's rows; F6 `--now` is parsed after
   the file is created; F7/F8 naive ISO is local time and the states decay after the window,
   both undocumented. Folded in 2.4a.)
-- ☐ **2.4a Fold of the 2.4 review** (reviewer fixes its own findings). Lane: DeepSeek, review by
-  the 27B or Qwen.
+- ☑ **2.4a Fold of the 2.4 review** (DeepSeek/dgx1-a job 20261029-134818-e7f5e90e, 138 turns,
+  29 min, 554 tests; ai1 became a true hour of 721 probes so the restart splits it evenly; the
+  rate pins moved to 2.586/1.436/269.3 per second from the captures; `status.collect` had no
+  summary call to thread, the brief was wrong there; the merge crossed three stories, two
+  conflicts composed by hand and one 3.1a fleet pin re-pinned by the coordinator. Review:
+  Qwen/ai1, pending.)
 
 
 ## Epic 3: monitor web
