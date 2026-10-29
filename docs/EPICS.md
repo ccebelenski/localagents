@@ -181,8 +181,20 @@ the duplicates go), then docs.
   own test, boundary shared with `interval_s`; `probe_port` against a real listener, a closed
   port and 10.255.255.1; `monitor/jobs.py` `running_job_at`; `monitor/config.py`
   `MonitorSettings`/`load_settings`, `Registry.load` verified to ignore `monitor:`;
-  `run(window_s=)`. Disclosed: settings values are not type-validated. Review: pending, by a
-  model other than the 27B.)
+  `run(window_s=)`. Disclosed: settings values are not type-validated. Reviewed by Qwen/ai2 job
+  20261029-124353-5712a31c, 47 turns: every reachable §4 row right against real collector rows;
+  one defect: a quoted `attention_hours: "24"` passes `load_settings` and kills `collect.run`
+  with a TypeError outside the tick's try; rulings taken by the coordinator: a stale up row
+  older than the window is dormant, not live (the display principle is "not seen within the
+  window"); `attention_hours <= 0` is a config error; a `ReadTimeout` proves the box up (the
+  connect succeeded) and is classified `host: up` with a stalled sentence; the interval line
+  joins the tick's guard. Folded in 2.3a.)
+- ☐ **2.3a Fold of the 2.3 review** (reviewer fixes its own findings): `load_settings`
+  validates values (`port` int 1-65535, `attention_hours` number > 0, `retention_days` int >= 0,
+  `db` str or null); `endpoint_state` live only when the last probe is within the window, spec
+  §4 gains the tie-break sentence; `classify_connect_failure` answers `host: up` for a
+  `ReadTimeout`; `collect.run`'s interval computation inside the per-endpoint guard;
+  `probe_port` reports a reset as `refused`. Lane: Qwen (ai2).
 - ☐ **2.4 `localagents seed`.** Offline database from fixtures, timestamps shifted to now:
   three hosts; live endpoint with an hour of history; one down 20 min; one dormant a week;
   finished job with requests and tool calls; one running. Gate: seeded database passes the
