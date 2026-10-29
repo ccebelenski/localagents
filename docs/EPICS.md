@@ -110,10 +110,17 @@ the duplicates go), then docs.
   the progress line comes from the row. `foreign_job` remains only for `cancel_job` and
   `run_agent(resume_job=)`, which need the process. README table rows follow. Lane: Qwen
   (ai2) after 1.9 merges (same functions), DeepSeek review.
-- ☐ **1.11 Status line: one line per job, grouped by endpoint.** Claude Code renders each
-  printed line as a row (docs: "Multiple lines: each echo or print statement displays as a
-  separate row"). Shape to be approved by the operator before the lane. The one-line form
-  stays available (`localagents statusline --one-line`) for narrow bars.
+- ☐ **1.11 Status line: one line per job, grouped by endpoint; compaction count.** Claude
+  Code renders each printed line as a row (docs: "Multiple lines: each echo or print statement
+  displays as a separate row"). Shape approved by the operator 2026-10-29 ("Status line looks
+  good - exposing current tool call a good idea - can we track compactions done count? That's
+  a good trailing indicator of a tuning problem"): one header per endpoint with its load, one
+  row per job (mark, model, elapsed, calls, files, ctx, t/s, compactions when > 0, the last
+  tool call for a running job), one trailing line for other sessions' jobs; the one-line
+  form stays behind `--one-line`. Schema v2: `jobs.compactions` (migration appended, spec
+  updated), counted from the harness's `compact_boundary` system message, written to the
+  transcript and carried by `job_status`. Lane: Qwen3.8-27B (llamacpp, local), review by a
+  different model.
 
 ## Epic 2: monitor core (collector and storage, no page)
 
