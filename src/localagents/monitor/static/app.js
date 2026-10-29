@@ -654,6 +654,8 @@
     var m = /^#\/(job|endpoint)\/(.+)$/.exec(window.location.hash);
     var detail = byId("detail");
     var overview = byId("overview");
+    // the open detail page's teardown runs on EVERY route change, the overview's included
+    if (pages.teardown) { try { pages.teardown(); } catch (e) { console.error(e); } pages.teardown = null; }
     if (!m) {
       detail.hidden = true;
       overview.hidden = false;
@@ -667,7 +669,6 @@
     // a detail page registers itself as pages.job / pages.endpoint (stories 3.3 and 3.4, each
     // in its own file); it draws into `detail` and returns a teardown function, called before
     // the next route; the placeholder below stands until a page is registered
-    if (pages.teardown) { try { pages.teardown(); } catch (e) { console.error(e); } pages.teardown = null; }
     var page = pages[m[1]];
     if (page) {
       pages.teardown = page(detail, name, state) || null;

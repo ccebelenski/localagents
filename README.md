@@ -357,8 +357,8 @@ database; point it at a throwaway file to rehearse.
 `localagents monitor` is a web dashboard for the endpoints in `models.yaml` and the jobs
 localagents runs on them: one process that probes every endpoint (every 5 s; a dormant one
 every 60 s) into the shared database and serves a page that redraws from a server-sent
-events stream after each probe. (The endpoint and job detail pages are still to come; their
-links on the overview show a "not built yet" panel.)
+events stream after each probe. (The job detail page is still to come; a job link shows a
+"not built yet" panel.)
 
 ```bash
 localagents monitor                 # http://127.0.0.1:8765/
@@ -387,6 +387,24 @@ chart and strip. The page redraws on each snapshot the server pushes and never p
 in the header is green while the stream is open and red while it reconnects. The charting
 library, uPlot 1.6.31, is vendored into the package
 (`src/localagents/monitor/static/VENDOR.md` has its checksums), so the page needs no internet.
+
+An endpoint's name on the overview opens its detail page (`#/endpoint/<name>`), drawn from the
+monitor's own database for every backend, with no link to the endpoint's own UI. Its header
+gives the backend, host, base URL, state and when it was last seen, and for a down endpoint the
+probe's sentence and the job that was running when it dropped. Below it are stat tiles, each
+with the current figure and a sparkline over the chosen range, grouped by what the backend
+reports: tier 0 for every endpoint (up/down, node state, served model, context window, probe
+latency); tier 1 when it serves counters (llama.cpp with `--metrics`, vLLM, Strata: prompt and
+decode speed, cache hit ratio); tier 2 when it reports occupancy (llama.cpp with `--slots`,
+vLLM, Strata: slots busy, requests running and waiting, KV-cache fill); tier 3 when it reports
+hardware (Strata today: GPU use, VRAM, temperature, power, PCIe traffic, CPU, RAM, disk). A
+tile whose source reported nothing in the range is left out rather than drawn empty, and a
+figure the newest probe lacks (a down endpoint) shows the newest value in the range, marked as
+such. Then come the state strip, the jobs that ran on the endpoint in the range, its up, down
+and restart events, and the request table: our own jobs' requests to it (time, job, path,
+status, milliseconds, tokens in, out and from cache, streaming, error), newest first, under a
+totals line. The range buttons apply here too; the tiles follow each snapshot, and the series
+and tables are re-fetched on a range change and at most every 30 s.
 
 An optional top-level `monitor:` section in `models.yaml` holds its settings; the MCP server
 ignores it, and an unknown key or a bad value in it is an error naming the key:

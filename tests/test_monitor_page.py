@@ -7,6 +7,7 @@ static references, the vendored files' checksums, the class inventory the browse
 for, and that ``app.js`` reads only §5a field names). The DOM itself is the browser smoke's
 (spec §7)."""
 import asyncio
+import contextlib
 import hashlib
 import os
 import re
@@ -29,8 +30,10 @@ from monitor_seeded import NOW, registry, seed_file, write_config
 
 STATIC = Path(app_mod.__file__).resolve().parent / "static"
 
-# the shell loads exactly these, in this order (stylesheets first, uPlot before the page script)
-SHELL_ASSETS = ["/static/uPlot.min.css", "/static/app.css", "/static/uPlot.iife.min.js", "/static/app.js"]
+# the shell loads exactly these, in this order (stylesheets first, uPlot before the page script,
+# the detail pages after app.js, whose pages hook they register with)
+SHELL_ASSETS = ["/static/uPlot.min.css", "/static/app.css", "/static/uPlot.iife.min.js", "/static/app.js",
+                "/static/endpoint.js"]
 
 
 @pytest.fixture
@@ -46,7 +49,7 @@ def client(tmp_path):
 # --- item 1: the shell and the vendored uPlot ---------------------------------------------------
 
 
-def test_the_shell_references_exactly_the_four_static_files(client):
+def test_the_shell_references_exactly_the_five_static_files(client):
     html = client.get("/").text
     refs = [r for r in re.findall(r'(?:src|href)="([^"]+)"', html) if not r.startswith("#")]  # in-page links
     assert refs == SHELL_ASSETS
@@ -58,6 +61,7 @@ def test_the_shell_references_exactly_the_four_static_files(client):
     ("/static/app.css", "text/css"),
     ("/static/uPlot.iife.min.js", "javascript"),
     ("/static/app.js", "javascript"),
+    ("/static/endpoint.js", "javascript"),
 ])
 def test_each_static_file_is_served_with_its_content_type(client, path, kind):
     r = client.get(path)
@@ -128,6 +132,78 @@ def test_app_js_reads_only_section_5a_field_names():
     assert missing == []
 
 
+# --- story 3.3: the endpoint detail page (endpoint.js) -------------------------------------------
+
+# the classes the endpoint page's browser smoke names (story 3.3's brief)
+ENDPOINT_CLASSES = ["endpoint-detail", "tiles", "tile", "tier-0", "tier-1", "tier-2", "tier-3", "requests", "totals",
+                    "events"]
+
+# the names endpoint.js reads the route bodies through (its header says so): snapshot, host,
+# snapshot endpoint, endpoint hardware, endpoint rates, endpoint history, one history job, one
+# history event, the requests body, one request row, the requests totals
+ENDPOINT_JSON_VARS = ("snap", "host", "ep", "hw", "rates", "hist", "job", "ev", "reqs", "req", "totals")
+
+
+def _endpoint_js():
+    return (STATIC / "endpoint.js").read_text()
+
+
+def test_endpoint_js_carries_every_class_the_smoke_names():
+    """Each class is a whole word inside a string literal of endpoint.js (the tier classes are
+    picked from a list by tier), and the stylesheet styles it."""
+    js = _endpoint_js()
+    tokens = {c for lit in re.findall(r'"([^"\n]*)"', js) for c in lit.split()}
+    css = (STATIC / "app.css").read_text()
+    for cls in ENDPOINT_CLASSES:
+        assert cls in tokens, cls
+        assert re.search(r"\." + re.escape(cls) + r"(?![\w-])", css), cls
+
+
+def test_endpoint_js_reads_only_section_5a_field_names():
+    """The §5a field-name check of app.js, over endpoint.js with its own variable names."""
+    spec = _section_5a()
+    fields = set()
+    for m in re.finditer(r"(?<![\w.$])(" + "|".join(ENDPOINT_JSON_VARS) + r")((?:\.[A-Za-z_$][\w$]*)+)",
+                         _endpoint_js()):
+        fields |= set(m.group(2).split(".")[1:])
+    fields -= JS_BUILTINS
+    # the regex does see the reads, through every one of the names
+    assert {"hosts", "endpoints", "now", "state", "fallback", "hardware", "rates", "gpu_mem_total", "ram_total",
+            "prompt_tps", "cached_tps", "t", "jobs", "events", "requests", "totals", "tokens", "cache_read",
+            "job_id", "job_name", "http_status", "count", "cache_creation_tokens", "errors", "started_at",
+            "kind", "detail", "dropped_job", "last_seen", "base_url"} <= fields
+    missing = sorted(f for f in fields if not re.search(r"(?<![A-Za-z_])" + re.escape(f) + r"(?![A-Za-z_])", spec))
+    assert missing == []
+
+
+def test_endpoint_js_draws_one_tile_per_history_series():
+    """The tier table's history-drawn tiles name exactly the numeric series §5a's endpoint
+    history serves (besides t, step, state: the strip, events and jobs: the tables)."""
+    from localagents.monitor import read
+    series = re.findall(r'series: "([a-z_]+)"', _endpoint_js())
+    expected = ["latency_ms", "prompt_tps", "gen_tps", "cache_hit", *read._GAUGES, *read._HW_SERIES]
+    assert sorted(series) == sorted(expected)
+    assert len(series) == len(set(series))
+
+
+def test_endpoint_js_registers_through_the_pages_hook_and_never_polls():
+    js = _endpoint_js()
+    assert "M.pages.endpoint = endpointPage;" in js
+    assert "M.endpointPage = { tilesFor: tilesFor" in js
+    assert "setInterval" not in js and "EventSource" not in js  # app.js owns the stream
+    assert "innerHTML" not in js
+
+
+def test_route_tears_the_detail_page_down_on_every_route_change():
+    """app.js's route() calls the open detail page's teardown before it branches, so going back
+    to the overview tears the page down too (story 3.3 found it ran only between detail
+    pages, leaving the endpoint page's observers and fetches alive on the overview)."""
+    js = _app_js()
+    body = js[js.index("function route() {"):js.index("// --- start")]
+    assert body.count("pages.teardown()") == 1
+    assert body.index("pages.teardown()") < body.index("if (!m) {")
+
+
 def test_app_js_offers_the_server_ranges():
     from localagents.monitor import ranges
     js = _app_js()
@@ -140,7 +216,7 @@ def test_app_js_offers_the_server_ranges():
 def test_the_page_loads_nothing_from_the_internet():
     """No CDN, no font service at runtime: the only absolute URL in the page's own files is the
     SVG namespace (an identifier, never fetched)."""
-    for name in ("index.html", "app.js", "app.css"):
+    for name in ("index.html", "app.js", "app.css", "endpoint.js"):
         urls = re.findall(r"https?://[^\s\"')]+", (STATIC / name).read_text())
         assert set(urls) <= {"http://www.w3.org/2000/svg"}, (name, urls)
 
@@ -164,11 +240,11 @@ def _free_port():
         return s.getsockname()[1]
 
 
-def test_the_command_serves_the_page_and_its_files_over_the_seeded_world(tmp_path):
-    """``localagents monitor --no-collect`` over a seeded file (now = the wall clock): the page
-    and its four static files answer 200 over loopback with their content types, and the
-    routes the page calls on load (the snapshot, the fleet history, a live endpoint's history)
-    answer 200; SIGTERM then exits 0."""
+@contextlib.contextmanager
+def _seeded_monitor(tmp_path):
+    """``localagents monitor --no-collect`` in a subprocess over a seeded file (now = the wall
+    clock); yields (base URL, the page response, the process) once ``/`` answers; kills the
+    process on the way out if the test did not stop it."""
     dbpath = tmp_path / "seeded.db"
     seed_file(dbpath, now=time.time())
     cfg = write_config(tmp_path / "models.yaml")
@@ -191,6 +267,19 @@ def test_the_command_serves_the_page_and_its_files_over_the_seeded_world(tmp_pat
                 assert proc.poll() is None, proc.stderr.read()
                 time.sleep(0.1)
         assert page is not None, "the monitor did not answer within 10 s"
+        yield base, page, proc
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_the_command_serves_the_page_and_its_files_over_the_seeded_world(tmp_path):
+    """``localagents monitor --no-collect`` over a seeded file (now = the wall clock): the page
+    and its five static files answer 200 over loopback with their content types, and the
+    routes the page calls on load (the snapshot, the fleet history, a live endpoint's history)
+    answer 200; SIGTERM then exits 0."""
+    with _seeded_monitor(tmp_path) as (base, page, proc):
         assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
         for path in SHELL_ASSETS:
             assert f'"{path}"' in page.text
@@ -206,7 +295,27 @@ def test_the_command_serves_the_page_and_its_files_over_the_seeded_world(tmp_pat
         assert hist.status_code == 200 and "state" in hist.json()
         proc.send_signal(signal.SIGTERM)
         assert proc.wait(timeout=5) == 0
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
+
+
+def test_the_command_serves_the_endpoint_page_and_the_three_calls_it_makes_for_ai1(tmp_path):
+    """Story 3.3 over the seeded world served by the command: ``/`` loads endpoint.js, which
+    answers 200 with its bytes, and the three routes the endpoint page reads for ai1 (the
+    snapshot, its history, its requests) answer 200 with what its tiles and tables draw from:
+    ai1 in the snapshot, a series of every tier in the history, the 152 seeded requests with
+    totals.count 152. The DOM itself is the browser smoke's."""
+    with _seeded_monitor(tmp_path) as (base, page, proc):
+        assert page.status_code == 200 and '"/static/endpoint.js"' in page.text
+        js = httpx.get(base + "/static/endpoint.js", timeout=5)
+        assert js.status_code == 200 and "javascript" in js.headers["content-type"]
+        assert js.content == (STATIC / "endpoint.js").read_bytes()
+        snap = httpx.get(base + "/api/snapshot", timeout=5)
+        assert snap.status_code == 200
+        assert "ai1" in [e["name"] for h in snap.json()["hosts"] for e in h["endpoints"]]
+        hist = httpx.get(base + "/api/endpoints/ai1/history?range=24h", timeout=5)
+        assert hist.status_code == 200
+        assert {"latency_ms", "gen_tps", "slots_busy", "gpu_util", "state", "events", "jobs"} <= set(hist.json())
+        reqs = httpx.get(base + "/api/endpoints/ai1/requests?range=24h", timeout=5)
+        assert reqs.status_code == 200
+        assert len(reqs.json()["requests"]) == 152 and reqs.json()["totals"]["count"] == 152
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=5) == 0
