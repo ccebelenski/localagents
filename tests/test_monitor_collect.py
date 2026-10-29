@@ -13,7 +13,7 @@ import httpx
 import pytest
 
 from localagents import db
-from localagents.monitor import collect, rates, state
+from localagents.monitor import collect, rates, read, state
 from localagents.registry import Defaults, Endpoint, Registry, classify_connect_failure
 
 from monitor_fixtures import LLAMACPP, STRATA_AI2, doc, raw, serve
@@ -680,3 +680,61 @@ def test_a_failing_fallback_ask_is_one_line_per_ask_no_row_and_the_loop_goes_on(
     assert _count(conn, "host_probes") == 0
     assert _count(conn, "probes") == 2  # the loop went on: both rounds probed
     assert reg.calls == {"solo": 2}
+
+
+def test_an_unresolvable_fallback_address_fails_the_ask_loudly(monkeypatch, conn, capsys):
+    """Ruling (3.1b review, 2026-10-29): a hostname that does not resolve is not "nothing" —
+    the box may be fine and the name wrong — so the ask FAILS: through maybe_probe_host with
+    the real probe_port and an unparseable literal address (EAI_NONAME at once, no DNS
+    traffic), one stderr line names the failed ask, no host_probes row is stored, and the
+    overview keeps the node unknown."""
+    ep = Endpoint(name="badmin", base_url="http://999.999.999.999:8080", backend="strata", host="badmin")
+    reg = FakeRegistry({"badmin": [_TIMEOUT]})
+    asyncio.run(collect.tick(reg, conn, ep, collect.endpoint_id(conn, ep), T0, "strata"))
+    asyncio.run(collect.maybe_probe_host(conn, [ep], T0))
+    err = capsys.readouterr().err
+    assert err.count("badmin: host probe failed: gaierror:") == 1
+    assert _count(conn, "host_probes") == 0
+    cfg = Registry(path=None, endpoints={ep.name: ep}, defaults=Defaults(), raw={}, local={})
+    ov = read.overview(conn, cfg, T0, state.ATTENTION_WINDOW_S)
+    assert ov["hosts"][0]["state"] == "unknown"  # the failed ask answers nothing
+    assert ov["hosts"][0]["fallback"] is None
+
+
+def test_three_endpoints_one_round_three_connects_one_row(monkeypatch, conn):
+    """The 3.1b review's probe 2d as a test: the duplicate-connect bound. Three endpoints on
+    one host all time out; the fake connector suspends (the connect is "in flight"), so all
+    three endpoint tasks pass the recency pre-check before any insert lands — the host pays
+    endpoints-per-host connects in the round, endpoints-per-host minus one of them duplicates.
+    The invariant the insert's re-check under the write lock holds: one host_probes row for
+    the whole round, and it is the first connect's answer."""
+    e1 = Endpoint(name="e1", base_url="http://x:8080", backend="strata", host="x")
+    e2 = Endpoint(name="e2", base_url="http://x:9000", backend="strata", host="x")
+    e3 = Endpoint(name="e3", base_url="http://x:9001", backend="strata", host="x")
+    reg = FakeRegistry({"e1": [_TIMEOUT], "e2": [_TIMEOUT], "e3": [_TIMEOUT]})
+    calls = []
+
+    async def fake(address, port=22, timeout_s=2.0):
+        calls.append(address)
+        # in flight for a real window: the other tasks' cadence wake-ups pre-check (no row
+        # stored yet) and connect too, before the first connect returns and its insert lands
+        await asyncio.sleep(0.05)
+        return "refused"
+    monkeypatch.setattr(collect, "probe_port", fake)
+    monkeypatch.setattr(state, "interval_s", lambda *a, **k: 0)
+
+    async def main():
+        stop = asyncio.Event()
+        orig = reg.probe
+
+        async def probe(ep):
+            out = await orig(ep)
+            if all(reg.calls[n] >= 2 for n in ("e1", "e2", "e3")):
+                stop.set()
+            return out
+        reg.probe = probe
+        await asyncio.wait_for(collect.run(reg, conn, [e1, e2, e3], stop, now=lambda: T0), 10)
+    asyncio.run(main())
+    assert calls == ["x", "x", "x"]  # endpoints-per-host connects; two of them duplicates
+    rows_ = conn.execute("SELECT t, host, address, answer FROM host_probes").fetchall()
+    assert [(r["t"], r["host"], r["address"], r["answer"]) for r in rows_] == [(T0, "x", "x", "refused")]

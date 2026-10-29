@@ -8,6 +8,7 @@ import asyncio
 import socket
 
 import httpx
+import pytest
 
 from localagents.monitor import state
 from localagents.monitor.collect import probe_port
@@ -145,3 +146,12 @@ def test_a_timeout_from_the_connector_is_nothing(monkeypatch):
 
     monkeypatch.setattr("asyncio.open_connection", never)
     assert asyncio.run(probe_port("10.255.255.1", 22, timeout_s=0.1)) == "nothing"
+
+
+def test_an_unresolvable_name_raises_instead_of_answering_nothing():
+    """Ruling (3.1b review, 2026-10-29): a name that does not resolve is not "nothing" — the
+    box may be fine and the name wrong — so probe_port answers nothing at all and lets the
+    gaierror propagate. An unparseable literal fails getaddrinfo at once (glibc never offers
+    a numeric-looking name to the resolver: EAI_NONAME, no DNS traffic)."""
+    with pytest.raises(socket.gaierror):
+        asyncio.run(probe_port("999.999.999.999"))

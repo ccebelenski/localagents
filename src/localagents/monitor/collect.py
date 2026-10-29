@@ -13,6 +13,7 @@ interleave inside a transaction.
 from __future__ import annotations
 
 import asyncio
+import socket
 import sqlite3
 import sys
 import time
@@ -126,9 +127,12 @@ async def probe_port(host: str, port: int = 22, timeout_s: float = 2.0) -> str:
     on a completed connect, ``"refused"`` on a connection refusal or a reset — both answer,
     so the box is up (sshd is not, the port answers with a refusal, or something between
     here and it sends a RST; ruling 2026-10-29) — and ``"nothing"`` on a timeout or any
-    other OSError (the box is off, or a firewall drops the packets). The connector is
-    ``asyncio.open_connection`` read through the module global, so tests can inject a
-    fake. Both refusal classes precede the OSError catch: they are OSError subclasses."""
+    other OSError (the box is off, or a firewall drops the packets). A name that does not
+    resolve re-raises the ``socket.gaierror``: it is not an answer (ruling 2026-10-29, review
+    3.1b — the box may be fine and the name wrong), so the ask fails loudly instead of
+    answering ``"nothing"``. The connector is ``asyncio.open_connection`` read through the
+    module global, so tests can inject a fake. Both refusal classes precede the OSError catch:
+    they are OSError subclasses."""
     try:
         _reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout_s)
         writer.close()
@@ -136,6 +140,8 @@ async def probe_port(host: str, port: int = 22, timeout_s: float = 2.0) -> str:
         return "answered"
     except (ConnectionRefusedError, ConnectionResetError):
         return "refused"
+    except socket.gaierror:
+        raise
     except (TimeoutError, OSError):
         return "nothing"
 
@@ -155,10 +161,16 @@ async def maybe_probe_host(conn: sqlite3.Connection, eps: list[Endpoint], now: f
     up). An endpoint without a probe row yet does not count as timed out: the ask waits for
     its first tick.
 
-    The address is the first endpoint's ``base_url`` hostname (config order). The ``probe_port``
-    await is outside any transaction; the insert is one ``immediate()`` that re-checks the
-    recency under the write lock, so the two endpoint tasks of a host (or a restart's first
-    ticks) cannot both store a row in the same minute."""
+    The address is the first endpoint's ``base_url`` hostname (config order). A name there
+    that does not resolve is one stderr line and no row (ruling 2026-10-29, review 3.1b): the
+    box may be fine and the name wrong, so a failed resolution is a failed ask, never a
+    ``"nothing"`` answer. The ``probe_port`` await is outside any transaction; the insert is
+    one ``immediate()`` that re-checks the recency under the write lock. The round's bound on
+    connects is endpoints-per-host: every endpoint task of the host (or a restart's first
+    ticks) may get a connect in flight before any row lands — endpoints-per-host minus one
+    of them duplicates (measured by the 3.1b review, pinned by the three-endpoint test). The
+    one-row invariant the re-check holds: at most one ``host_probes`` row per host per
+    minute."""
     host = eps[0].host
     for ep in eps:
         row = conn.execute(_NEWEST_PROBE_HOST, (endpoint_id(conn, ep),)).fetchone()
@@ -168,7 +180,11 @@ async def maybe_probe_host(conn: sqlite3.Connection, eps: list[Endpoint], now: f
     if last is not None and now - last[0] < HOST_PROBE_INTERVAL_S:
         return
     address = urlsplit(eps[0].base_url).hostname
-    answer = await probe_port(address)
+    try:
+        answer = await probe_port(address)
+    except socket.gaierror as e:
+        _log(f"{eps[0].name}: host probe failed: {type(e).__name__}: {e}")
+        return
     with db.immediate(conn):
         last = conn.execute(_NEWEST_HOST_PROBE, (host,)).fetchone()
         if last is not None and now - last[0] < HOST_PROBE_INTERVAL_S:

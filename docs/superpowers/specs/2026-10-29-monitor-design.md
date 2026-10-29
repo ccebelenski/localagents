@@ -54,7 +54,10 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
   `hardware` and `requests` sections stored when present. Rates are computed between
   consecutive rows, never stored.
 - **Node fallback probe:** only when every endpoint on a host times out, one TCP connect to port
-  22 on the host. Answer or refusal = node up (endpoints down); nothing = node down.
+  22 on the host. Answer or refusal = node up (endpoints down); nothing = node down. A shared
+  `host` key whose endpoints live on two boxes gets one fallback, aimed at the first endpoint's
+  box (config order) — the key names one box, so keep it to one. An endpoint whose ticks never
+  write a probe row keeps its host's fallback from being asked.
 - **Jobs:** read from the `jobs`/`requests`/`tool_calls` tables every 2 s (running jobs with
   context fill and speed; finished records for history).
 - **Storage:** `probes` (monitor-owned) in the shared database; probe rows older than 7 days
