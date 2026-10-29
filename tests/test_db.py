@@ -14,11 +14,14 @@ import pytest
 from localagents import db
 
 TABLES = {"mcp_servers", "endpoints", "endpoint_load", "models", "paths", "jobs", "requests", "tool_calls"}
+# version 3 (story 2.2): the monitor's tables, monitor-design spec §3 "Storage"
+MONITOR_TABLES = {"probes", "probe_counters", "probe_hardware", "endpoint_events"}
 INDEXES = {
     "jobs_name", "jobs_mcp_server_id", "jobs_endpoint_id", "jobs_model_id", "jobs_status_finished_at",
     "jobs_created_at",
     "mcp_servers_updated", "requests_job_id_t", "tool_calls_job_id_t",
 }
+MONITOR_INDEXES = {"probes_endpoint_t", "endpoint_events_endpoint_t"}
 # every column of every table, in the spec's order
 COLUMNS = {
     "mcp_servers": ["id", "pid", "owner", "cwd", "config", "version", "transport", "shim_port",
@@ -37,6 +40,18 @@ COLUMNS = {
                  "moved_system", "folded_text", "context_exceeded", "error"],
     "tool_calls": ["job_id", "t", "finished", "tool", "tool_use_id", "input", "is_error"],
 }
+# the monitor tables, every column in the spec's order (monitor-design §3, approved 2026-10-29)
+MONITOR_COLUMNS = {
+    "probes": ["id", "t", "endpoint_id", "model_id", "up", "host", "error", "latency_ms", "context",
+               "slots_total", "slots_busy", "requests_running", "requests_waiting", "kv_cache_usage",
+               "gen_tps", "since"],
+    "probe_counters": ["probe_id", "prompt_tokens", "prompt_tokens_cached", "prompt_seconds", "generated_tokens",
+                       "generated_seconds", "spec_draft_tokens", "spec_accepted_tokens", "prefix_queries",
+                       "prefix_hits", "preemptions"],
+    "probe_hardware": ["probe_id", "gpu_util", "gpu_mem_used", "gpu_mem_total", "gpu_temp", "gpu_power",
+                       "gpu_power_limit", "gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "ram_total"],
+    "endpoint_events": ["id", "t", "endpoint_id", "kind", "detail"],
+}
 
 
 @pytest.fixture
@@ -51,24 +66,67 @@ def _names(conn, kind):
     return {r["name"] for r in rows}
 
 
-def test_fresh_file_comes_up_at_version_2_with_every_table(dbfile):
-    """A fresh file runs the version-1 DDL then the version-2 step (story 1.11:
-    jobs.compactions), so it comes up at version 2 with the column appended last."""
+def test_fresh_file_comes_up_at_version_3_with_every_table(dbfile):
+    """A fresh file runs the version-1 DDL, the version-2 step (story 1.11: jobs.compactions)
+    and the version-3 step (story 2.2: the monitor's tables), so it comes up at version 3."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
-    assert _names(conn, "table") == TABLES
-    assert _names(conn, "index") == INDEXES
-    for table, cols in COLUMNS.items():
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert db.SCHEMA_VERSION == 3 == len(db.MIGRATIONS)
+    assert _names(conn, "table") == TABLES | MONITOR_TABLES
+    assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
+    for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
         assert [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")] == cols, table
+    conn.close()
+
+
+def test_monitor_tables_carry_the_spec_types_keys_and_indexes(dbfile):
+    """Spec §3: every probes/counters/hardware column is typed as the block says, the child
+    tables are keyed by probe_id referencing probes(id), and the two indexes are on (endpoint_id, t)."""
+    conn = db.open_db()
+    types = {r["name"]: r["type"] for r in conn.execute("PRAGMA table_info(probes)")}
+    assert types == {
+        "id": "INTEGER", "t": "REAL", "endpoint_id": "INTEGER", "model_id": "INTEGER", "up": "INTEGER",
+        "host": "TEXT", "error": "TEXT", "latency_ms": "INTEGER", "context": "INTEGER",
+        "slots_total": "INTEGER", "slots_busy": "INTEGER", "requests_running": "INTEGER",
+        "requests_waiting": "INTEGER", "kv_cache_usage": "REAL", "gen_tps": "REAL", "since": "REAL",
+    }
+    notnull = {r["name"] for r in conn.execute("PRAGMA table_info(probes)") if r["notnull"]}
+    assert notnull == {"t", "endpoint_id", "up"}
+    for child in ("probe_counters", "probe_hardware"):
+        info = list(conn.execute(f"PRAGMA table_info({child})"))
+        assert [(r["name"], r["pk"]) for r in info if r["pk"]] == [("probe_id", 1)], child
+        assert {r["type"] for r in info if r["name"] != "probe_id"} == {"REAL"}, child
+        fks = [(r["table"], r["from"], r["to"]) for r in conn.execute(f"PRAGMA foreign_key_list({child})")]
+        assert fks == [("probes", "probe_id", "id")], child
+    fks = {(r["table"], r["from"], r["to"]) for r in conn.execute("PRAGMA foreign_key_list(probes)")}
+    assert fks == {("endpoints", "endpoint_id", "id"), ("models", "model_id", "id")}
+    for index, table in (("probes_endpoint_t", "probes"), ("endpoint_events_endpoint_t", "endpoint_events")):
+        assert [r["name"] for r in conn.execute(f"PRAGMA index_info({index})")] == ["endpoint_id", "t"]
+        assert conn.execute("SELECT tbl_name FROM sqlite_master WHERE name = ?", (index,)).fetchone()[0] == table
+    conn.close()
+
+
+def test_endpoint_events_kind_check_accepts_up_down_restarted_only(dbfile):
+    conn = db.open_db()
+    ep = db.lookup_id(conn, "endpoints", name="ai1", base_url="http://ai1:8080", backend="strata", host="ai1")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO endpoint_events (t, endpoint_id, kind) VALUES (1.0, ?, 'bogus')", (ep,))
+    with pytest.raises(sqlite3.IntegrityError):  # kind is NOT NULL
+        conn.execute("INSERT INTO endpoint_events (t, endpoint_id, kind) VALUES (1.0, ?, NULL)", (ep,))
+    for kind in ("up", "down", "restarted"):
+        conn.execute("INSERT INTO endpoint_events (t, endpoint_id, kind) VALUES (1.0, ?, ?)", (ep, kind))
+    assert conn.execute("SELECT COUNT(*) FROM endpoint_events").fetchone()[0] == 3
+    with pytest.raises(sqlite3.IntegrityError):  # foreign keys are on: no probe row for an unknown endpoint
+        conn.execute("INSERT INTO probes (t, endpoint_id, up) VALUES (1.0, 999, 1)")
     conn.close()
 
 
 def test_opening_the_same_file_twice_is_idempotent(dbfile):
     db.open_db().close()
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
-    assert _names(conn, "table") == TABLES
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    assert _names(conn, "table") == TABLES | MONITOR_TABLES
     conn.close()
 
 
@@ -103,10 +161,10 @@ def test_a_version_1_file_opens_without_rerunning_ddl(dbfile, monkeypatch):
     def boom(conn):
         raise AssertionError("the version-1 DDL ran again")
 
-    monkeypatch.setattr(db, "MIGRATIONS", [boom, db.MIGRATIONS[1]])
+    monkeypatch.setattr(db, "MIGRATIONS", [boom, *db.MIGRATIONS[1:]])
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
-    assert _names(conn, "table") == TABLES
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert "compactions" in [r["name"] for r in conn.execute("PRAGMA table_info(jobs)")]
     conn.close()
 
@@ -124,10 +182,35 @@ def test_a_version_1_file_migrates_to_version_2_with_its_rows_intact(dbfile):
     raw.commit()
     raw.close()
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     row = conn.execute("SELECT status, num_turns, compactions FROM jobs WHERE id = 'j1'").fetchone()
     assert row["status"] == "running" and row["num_turns"] is None and row["compactions"] == 0
     assert conn.execute("SELECT pid FROM mcp_servers WHERE id = 's1'").fetchone()["pid"] == 42
+    conn.close()
+
+
+def test_a_version_2_file_migrates_to_version_3_with_its_job_intact(dbfile):
+    """Story 2.2: the version-3 step only adds the monitor's tables. A file a 1.11 localagents
+    left at version 2 (both earlier steps run, user_version 2, one job row) opens at version 3
+    with the job row unchanged and the four monitor tables empty."""
+    raw = sqlite3.connect(dbfile)
+    db.MIGRATIONS[0](raw)
+    db.MIGRATIONS[1](raw)
+    raw.execute("PRAGMA user_version = 2")
+    raw.execute("INSERT INTO mcp_servers (id, pid, started, updated) VALUES ('s1', 42, 1.0, 1.0)")
+    raw.execute(
+        "INSERT INTO jobs (id, name, mcp_server_id, status, created_at, updated, num_turns, compactions)"
+        " VALUES ('j1', '20261029-000000-00000000', 's1', 'succeeded', 1.0, 2.0, 7, 1)")
+    raw.commit()
+    assert MONITOR_TABLES.isdisjoint(r[0] for r in raw.execute("SELECT name FROM sqlite_master"))
+    raw.close()
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert _names(conn, "table") == TABLES | MONITOR_TABLES
+    row = conn.execute("SELECT name, status, updated, num_turns, compactions FROM jobs WHERE id = 'j1'").fetchone()
+    assert tuple(row) == ("20261029-000000-00000000", "succeeded", 2.0, 7, 1)
+    for table in MONITOR_TABLES:
+        assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
     conn.close()
 
 
@@ -278,7 +361,7 @@ def test_four_processes_writing_at_once_lose_nothing(tmp_path, monkeypatch):
     assert (count("endpoints"), count("models"), count("paths")) == (1, 1, 1)
     per_server = conn.execute("SELECT COUNT(*) FROM jobs GROUP BY mcp_server_id").fetchall()
     assert sorted(r[0] for r in per_server) == [100, 100, 100, 100]
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     conn.close()
 
@@ -326,8 +409,8 @@ def test_processes_opening_fresh_files_at_once_migrate_each_exactly_once(tmp_pat
     _race(tmp_path, 8, "open", files)
     for f in files:
         conn = db.open_db(f)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
-        assert _names(conn, "table") == TABLES
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+        assert _names(conn, "table") == TABLES | MONITOR_TABLES
         conn.close()
 
 

@@ -378,6 +378,7 @@ _METRIC_KEYS = {
     "vllm:kv_cache_usage_perc": "kv_cache_usage",
     "vllm:spec_decode_num_draft_tokens_total": "spec_draft_tokens",
     "vllm:spec_decode_num_accepted_tokens_total": "spec_accepted_tokens",
+    "vllm:num_preemptions_total": "preemptions",
 }
 
 
@@ -441,9 +442,54 @@ def parse_strata_metrics(doc: dict[str, Any]) -> dict[str, float]:
     return out
 
 
-async def fetch_metrics(ep: Endpoint, timeout_s: float = 2.5) -> dict[str, float] | None:
-    """Snapshot the server's counters: Prometheus text (llama.cpp needs ``--metrics``; vLLM) or
-    strata's JSON. None if unavailable."""
+# The probe_hardware columns (schema version 3, db.py), read under the same names from strata's
+# ``hardware`` section.
+STRATA_HARDWARE_KEYS = (
+    "gpu_util", "gpu_mem_used", "gpu_mem_total", "gpu_temp", "gpu_power", "gpu_power_limit",
+    "gpu_pcie_rx_mb", "gpu_pcie_tx_mb", "cpu", "ram_used", "ram_total",
+)
+
+
+def _number(v: Any) -> float | None:
+    """A JSON number as a float; anything else (null, a string, a bool) is None."""
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def parse_strata_extra(doc: Any) -> dict[str, Any]:
+    """The parts of strata's JSON ``/metrics`` the counters parser does not read, for the probe rows.
+
+    ``since``: ``totals.since``, the server's start epoch (a change means a restart).
+    ``gen_tps``: ``hardware.tok_s``, else ``live.tok_s``, whichever is a number first; else None.
+    ``hardware``: the eleven ``probe_hardware`` columns from the ``hardware`` section as floats,
+    a missing or non-numeric one None; None when the section is absent or holds none of them
+    (strata before 0.1.5x has no such section).
+    ``requests_running``: 0 when ``live.state`` is ``"idle"``, 1 for any other state string
+    (strata serves one request at a time), None when there is no state. Every captured state is
+    ``"idle"`` (story 2.1's four captures and the 0.1.44.1 one).
+    """
+    d = doc if isinstance(doc, dict) else {}
+    totals = d.get("totals") if isinstance(d.get("totals"), dict) else {}
+    live = d.get("live") if isinstance(d.get("live"), dict) else {}
+    hw = d.get("hardware") if isinstance(d.get("hardware"), dict) else {}
+    hardware = {k: _number(hw.get(k)) for k in STRATA_HARDWARE_KEYS}
+    if all(v is None for v in hardware.values()):
+        hardware = None
+    tps = _number(hw.get("tok_s"))
+    if tps is None:
+        tps = _number(live.get("tok_s"))
+    state = live.get("state")
+    return {
+        "since": _number(totals.get("since")),
+        "gen_tps": tps,
+        "hardware": hardware,
+        "requests_running": (0 if state == "idle" else 1) if isinstance(state, str) else None,
+    }
+
+
+async def fetch_metrics_doc(ep: Endpoint, timeout_s: float = 2.5) -> tuple[str, str | dict[str, Any]] | None:
+    """The server's ``/metrics`` document, unparsed: ``("prometheus", text)`` (llama.cpp with
+    ``--metrics``; vLLM) or ``("strata", doc)`` for strata's JSON. None if unavailable (not 200,
+    an HTTP error, or a body that starts as a JSON object and does not parse as one)."""
     try:
         async with httpx.AsyncClient(timeout=timeout_s, headers=ep.auth_headers()) as c:
             r = await c.get(f"{ep.url}/metrics")
@@ -454,10 +500,23 @@ async def fetch_metrics(ep: Endpoint, timeout_s: float = 2.5) -> dict[str, float
     text = r.text
     if text.lstrip().startswith("{"):
         try:
-            return parse_strata_metrics(json.loads(text)) or None
+            doc = json.loads(text)
         except ValueError:
             return None
-    return parse_metrics(text) or None
+        return ("strata", doc) if isinstance(doc, dict) else None
+    return "prometheus", text
+
+
+async def fetch_metrics(ep: Endpoint, timeout_s: float = 2.5) -> dict[str, float] | None:
+    """Snapshot the server's counters: Prometheus text (llama.cpp needs ``--metrics``; vLLM) or
+    strata's JSON, parsed to short names. None if unavailable or nothing in it was understood."""
+    got = await fetch_metrics_doc(ep, timeout_s)
+    if got is None:
+        return None
+    kind, body = got
+    if kind == "strata":
+        return parse_strata_metrics(body) or None
+    return parse_metrics(body) or None
 
 
 def metrics_delta(

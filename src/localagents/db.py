@@ -4,6 +4,12 @@ Schema and write rules: ``docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md
 library only, because ``localagents statusline`` will read this on every status-bar refresh
 (story 1.5a) and must not pull in the server stack (see ``localagents/__init__.py``).
 
+The monitor's tables (``probes``, ``probe_counters``, ``probe_hardware``, ``endpoint_events``;
+schema version 3, ``docs/superpowers/specs/2026-10-29-monitor-design.md`` §3) are monitor-owned:
+only ``localagents.monitor`` writes or prunes them. Their migration lives here because the file
+is shared and versioned as one, so the MCP server creates them too (an idle table costs nothing),
+but the MCP server never imports the monitor package.
+
 Write rules every caller keeps:
 
 - every read-then-write sequence runs inside ``immediate(conn)`` (``BEGIN IMMEDIATE``): a
@@ -173,8 +179,69 @@ _V2 = [
     "ALTER TABLE jobs ADD COLUMN compactions INTEGER NOT NULL DEFAULT 0",
 ]
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 2.
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_statements(_V1), _statements(_V2)]
+# Version 3 (story 2.2): the monitor's tables, exactly the block approved 2026-10-29 in the
+# monitor-design spec §3 "Storage". Monitor-owned: the MCP server creates them by migrating the
+# shared file but never reads or writes them. Rates are computed between consecutive
+# probe_counters rows at read time, never stored.
+_V3 = [
+    """CREATE TABLE probes (
+        id               INTEGER PRIMARY KEY,
+        t                REAL NOT NULL,
+        endpoint_id      INTEGER NOT NULL REFERENCES endpoints(id),
+        model_id         INTEGER REFERENCES models(id),
+        up               INTEGER NOT NULL,
+        host             TEXT,
+        error            TEXT,
+        latency_ms       INTEGER,
+        context          INTEGER,
+        slots_total      INTEGER,
+        slots_busy       INTEGER,
+        requests_running INTEGER,
+        requests_waiting INTEGER,
+        kv_cache_usage   REAL,
+        gen_tps          REAL,
+        since            REAL
+    )""",
+    "CREATE INDEX probes_endpoint_t ON probes(endpoint_id, t)",
+    """CREATE TABLE probe_counters (
+        probe_id             INTEGER PRIMARY KEY REFERENCES probes(id),
+        prompt_tokens        REAL,
+        prompt_tokens_cached REAL,
+        prompt_seconds       REAL,
+        generated_tokens     REAL,
+        generated_seconds    REAL,
+        spec_draft_tokens    REAL,
+        spec_accepted_tokens REAL,
+        prefix_queries       REAL,
+        prefix_hits          REAL,
+        preemptions          REAL
+    )""",
+    """CREATE TABLE probe_hardware (
+        probe_id        INTEGER PRIMARY KEY REFERENCES probes(id),
+        gpu_util        REAL,
+        gpu_mem_used    REAL,
+        gpu_mem_total   REAL,
+        gpu_temp        REAL,
+        gpu_power       REAL,
+        gpu_power_limit REAL,
+        gpu_pcie_rx_mb  REAL,
+        gpu_pcie_tx_mb  REAL,
+        cpu             REAL,
+        ram_used        REAL,
+        ram_total       REAL
+    )""",
+    """CREATE TABLE endpoint_events (
+        id          INTEGER PRIMARY KEY,
+        t           REAL NOT NULL,
+        endpoint_id INTEGER NOT NULL REFERENCES endpoints(id),
+        kind        TEXT NOT NULL CHECK (kind IN ('up', 'down', 'restarted')),
+        detail      TEXT
+    )""",
+    "CREATE INDEX endpoint_events_endpoint_t ON endpoint_events(endpoint_id, t)",
+]
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 3.
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_statements(_V1), _statements(_V2), _statements(_V3)]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
