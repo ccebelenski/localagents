@@ -103,7 +103,7 @@ the duplicates go), then docs.
   records 404, not 200); `mcp_servers.owner` is the pid of the nearest `claude` ancestor (the
   session), parent pid only when there is none, so a wrapper launch (`uv run`) no longer folds
   a session's own jobs into "+N other". Lane: Qwen (ai1), DeepSeek review.
-- ☐ **1.9a Fold of the 1.9 review** (reviewer fixes its own findings, ruling (a)): every tool's
+- ☑ **1.9a Fold of the 1.9 review** (DeepSeek/dgx1-a job 20261029-120539-6bd5c17b, 78 turns, 263 tests; three files three-way patched over 1.11a; third-model review by Qwen/ai1 pending) (reviewer fixes its own findings, ruling (a)): every tool's
   final `summary()` answers `database_error`; `requests.http_status` is the backend's status on
   the overflow rewrite too (500 stays 500; the spec names 0 as the no-answer sentinel); the
   count_tokens fallback records its real `ms`; cancels absorbed during worktree creation print a
