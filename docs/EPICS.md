@@ -206,7 +206,7 @@ the duplicates go), then docs.
   window"); `attention_hours <= 0` is a config error; a `ReadTimeout` proves the box up (the
   connect succeeded) and is classified `host: up` with a stalled sentence; the interval line
   joins the tick's guard. Folded in 2.3a.)
-- ☐ **2.3a Fold of the 2.3 review** (reviewer fixes its own findings): `load_settings`
+- ☑ **2.3a Fold of the 2.3 review** (Qwen/ai2 job 20261029-125456-d4f2fb57, 73 turns, 386 tests; bool excluded from every int setting; a failed tick now costs one dormant sleep, overturning 2.2's fast-cadence-after-failure test; third-model probe folded into the 2.2a review) (reviewer fixes its own findings): `load_settings`
   validates values (`port` int 1-65535, `attention_hours` number > 0, `retention_days` int >= 0,
   `db` str or null); `endpoint_state` live only when the last probe is within the window, spec
   §4 gains the tie-break sentence; `classify_connect_failure` answers `host: up` for a
