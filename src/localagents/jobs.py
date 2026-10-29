@@ -265,7 +265,6 @@ class JobStore:
 
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
-        self.endpoint_load: dict[str, str] = {}  # gone in step 4: replaced by record_endpoint_load + the table
         self._conn: sqlite3.Connection | None = None
         self._server_id: str | None = None
 
