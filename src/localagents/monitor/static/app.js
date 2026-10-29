@@ -662,13 +662,22 @@
     }
     var what = m[1] === "job" ? "Job" : "Endpoint";
     var name = decodeURIComponent(m[2]);
+    overview.hidden = true;
+    detail.hidden = false;
+    // a detail page registers itself as pages.job / pages.endpoint (stories 3.3 and 3.4, each
+    // in its own file); it draws into `detail` and returns a teardown function, called before
+    // the next route; the placeholder below stands until a page is registered
+    if (pages.teardown) { try { pages.teardown(); } catch (e) { console.error(e); } pages.teardown = null; }
+    var page = pages[m[1]];
+    if (page) {
+      pages.teardown = page(detail, name, state) || null;
+      return;
+    }
     detail.replaceChildren(
       h("p", null, [h("strong", { text: what + " " + name })]),
       h("p", { text: "detail page not built yet" }),
       h("p", null, [h("a", { href: "#/", text: "back to the overview" })])
     );
-    overview.hidden = true;
-    detail.hidden = false;
   }
 
   // --- start ----------------------------------------------------------------------------------
@@ -686,7 +695,11 @@
     connect();
   }
 
+  var pages = { job: null, endpoint: null, teardown: null };
+
   window.localagentsMonitor = {
+    pages: pages,
+    h: h,
     fmt: fmt,
     render: render,
     connect: connect,
