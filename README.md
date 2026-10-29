@@ -43,13 +43,15 @@ Three things make this more than an environment variable:
 
 2. **A shim between Claude Code and the backend.** Claude Code sends things local
    chat templates reject, and local servers fail in ways Claude Code doesn't
-   recognise. The shim fixes both directions (details below) and writes a
-   `requests.jsonl` per job so you can see exactly what went over the wire.
+   recognise. The shim fixes both directions (details below) and records every
+   backend request — timing, size, usage, the fixups it applied — in the
+   `requests` table of the shared database, so you can see what each turn cost.
 
 3. **The same isolation model as Claude's own subagents.** By default a job works
    in your tree, like the Agent tool does. `isolation: worktree` gives it a fresh
-   git worktree on a `local-agent/<job>` branch, kept only if it changed something,
-   with a diffstat in the job record so Claude can review it as a diff.
+   git worktree on a `local-agent/<name>` branch (named after the job — see
+   [Job records](#job-records)), kept only if it changed something, with a
+   diffstat in the job record so Claude can review it as a diff.
 
 ## Requirements
 
@@ -104,8 +106,10 @@ What Claude does behind that: `list_models` to see what's up and pick a model, t
 until the job ends; after two minutes Claude Code moves it to a background task (shown
 in `/tasks`), Claude keeps working, and the final job record arrives as a task
 notification. Claude reads `files_touched` (or the worktree diff) and checks the work.
-The server sends a progress notification every minute while it waits, so the call never
-trips Claude Code's idle timeout, and the tool timeout itself defaults to about 28 hours.
+The server sends a progress notification every minute while it waits — e.g.
+`running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: {"command": "uv run pytest -q"…}`
+— so the call never trips Claude Code's idle timeout, and the tool timeout itself
+defaults to about 28 hours.
 
 The two minutes are Claude Code's default (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`, in
 milliseconds). MCP calls run one after another, so with several agents to launch that
@@ -137,7 +141,9 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 |---|---|
 | `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
 | `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, … |
-| `wait_job` / `wait_jobs` / `job_status` / `job_log` / `list_jobs` / `cancel_job` | follow and control jobs; the waits report progress while they block, `wait_jobs` takes several ids (`mode` all/any) |
+| `wait_job` / `wait_jobs` / `cancel_job` | control jobs this server started; the waits report progress while they block, `wait_jobs` takes several ids (`mode` all/any) |
+| `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls, `list_jobs(all=True)` spans every server's |
+| `foreign_job` | the answer `wait_job`, `wait_jobs`, `cancel_job` and `run_agent(resume_job=…)` give for a job another server started; the three reads above work on any job |
 | `register_endpoint` | add a server from inside a session (written to `models.local.yaml`) |
 | `local_complete` | one-shot generation with no tools — summaries, drafts, classification |
 
@@ -189,29 +195,35 @@ cap ended jobs longer than about 2.7 hours).
 
 Jobs started this way are MCP tasks, not subagents, so they don't appear in the agent
 panel. `/tasks` shows the latest progress line the server reported (status, elapsed,
-turns, tool calls, last activity). For an always-visible view, the server publishes
-each job's state to `~/.local/state/localagents/status/<pid>.json` on every change,
-and `localagents statusline` prints them as one line:
+turns, tool calls, last activity). For an always-visible view, every server keeps its
+state in the shared database — a heartbeat every ten seconds, plus its jobs, requests
+and tool calls — and `localagents statusline` reads it and prints one line:
 
 ```
 local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls ctx 31% 82 t/s · llamacpp 1/1 slots · +1 other
 ```
 
 Per running job: elapsed time, tool calls, files touched, how full the local model's
-context window is (`ctx`, from the token usage the shim sees on every backend
-response, so it tells you how close the agent is to compaction) and its recent
-generation speed. Then the load of each endpoint your jobs run on, probed every ten
-seconds while jobs run: slots busy for llama.cpp, requests running and queued and KV
-cache fill for vLLM. Finished jobs stay on the line for two minutes with a check mark
-(or a cross, clock or null sign for failed, timed out and cancelled).
+context window is (`ctx`, from the token usage recorded on every backend request, so it
+tells you how close the agent is to compaction) and its recent generation speed. Then
+the load of each endpoint your jobs run on, probed every ten seconds while jobs run:
+slots busy for llama.cpp, requests running and queued and KV cache fill for vLLM.
+Finished jobs stay on the line for two minutes with a check mark (or a cross, clock or
+null sign for failed, timed out and cancelled).
 
+"Live" means the heartbeat: a server is shown while its last beat is under a minute
+old (and its pid still exists). A server that exited or was killed drops off the line
+as its jobs age out; the next server to start marks that one's unfinished jobs `lost`.
 The line is scoped to the Claude Code session asking: each server records the Claude
 Code process that spawned it, and the renderer finds its own by walking up from the
 status line script. Jobs of other sessions on the same machine fold into `+N other`,
 because the boxes are shared and knowing one is busy matters even when the job isn't
-yours. Files of servers that have exited are ignored and removed.
+yours.
 
-The renderer imports nothing heavy and runs in well under 100 ms. Append it to your
+The renderer imports nothing heavy and runs in well under 100 ms, and it never prints a
+traceback: the database is another process's file, so a too-new schema or a lock
+renders as the empty line, and with no database yet it prints nothing and creates
+nothing. Append it to your
 status line script and set `refreshInterval` in the `statusLine` settings block so
 the elapsed times tick while the session is idle:
 
@@ -222,24 +234,54 @@ local_jobs=$(timeout 2 localagents statusline 2>/dev/null)
 
 ### Job records
 
-Job records live in `~/.local/state/localagents/jobs/<job>/`: `task.txt` (the brief),
-`transcript.txt` (what the agent said and did), and `requests.jsonl` (every backend
-request with timing, size and usage). Together they come to about 100 KB per job.
+A job's record is split between the database and its directory. The brief and the
+numbers are rows in SQLite (see [The database](#the-database) below): the brief is the
+`jobs.task` column — there is no `task.txt` — and every backend request is a row in the
+`requests` table with timing, size and usage, written directly by the shim; there is no
+`requests.jsonl`. `job_status` answers from those rows: `usage` as the sums over the
+job's requests, `tool_calls` with `tool_counts` per tool, `errors`, `last_tool`,
+`files_touched`, `ctx_tokens` and `gen_tps`.
 
-Two debugging files are off by default: `events.jsonl` (every SDK message, tool results
-included; it was 98% of a 6 GB state directory before it became opt-in) with
-`defaults.log_events: true` or `LOCALAGENTS_LOG_EVENTS=1`, and `requests_full.jsonl`
-(every request body) with `defaults.dump_requests: true` or `LOCALAGENTS_DUMP_REQUESTS=1`.
+The directory — `~/.local/state/localagents/jobs/<name>/`, where `<name>` is the job's
+readable name `YYYYMMDD-HHMMSS-<8 hex>` (tools take the job's uuid as `job_id`; the name
+— and with it the directory and the worktree branch `local-agent/<name>` — is the
+timestamp plus its first 8 hex digits) — holds
+`transcript.txt` (what the agent said and did) and nothing else unless debugging is on:
+`events.jsonl` (every SDK message, tool results included; it was 98% of a 6 GB state
+directory before it became opt-in) with `defaults.log_events: true` or
+`LOCALAGENTS_LOG_EVENTS=1`, and `requests_full.jsonl` (every request body) with
+`defaults.dump_requests: true` or `LOCALAGENTS_DUMP_REQUESTS=1`.
 
 **Retention.** Job directories older than `defaults.job_retention_days` (default 7, `0`
 disables) are deleted when a server starts and after every job finishes. The date in the
-directory name decides, and nothing that is not named like a job id is touched. The same
-pass is available by hand, which is also how you clean up a state directory that predates
-this rule:
+directory name decides, and nothing that is not named like a job directory is touched;
+database rows are never deleted. Keep retention above the longest `timeout_s` you
+configure: prune deletes by directory name, so a job still running past its directory's
+expiry would have its transcript deleted out from under it. The same pass is available
+by hand, which is also how you clean up a state directory that predates this rule:
 
 ```bash
 localagents prune --dry-run   # list what would go
 localagents prune             # delete it; --days N overrides the default
+```
+
+### The database
+
+Every server writes to one SQLite file: `~/.local/state/localagents/localagents.db`
+(`XDG_STATE_HOME` honoured; `LOCALAGENTS_DB=/path` overrides). It is in WAL mode and
+holds every server process's jobs, the requests their shims saw, their tool calls, and
+the endpoints and models seen so far. The full schema is
+[`docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md`](docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md).
+Because the record is the database rather than a server's memory, it outlives the server
+that ran the job: any server's `job_status`, `job_log` and `list_jobs(all=True)` can
+read it after the original process is gone (the in-process tools cannot — see
+`foreign_job` above). Rows are history: retention removes job directories, never rows.
+
+It lives on one machine — SQLite's WAL files do not work on a network filesystem, so
+never point `LOCALAGENTS_DB` at one. Back it up with SQLite, not `cp`:
+
+```bash
+sqlite3 ~/.local/state/localagents/localagents.db ".backup /path/to/backup.db"
 ```
 
 ## Config: `models.yaml`

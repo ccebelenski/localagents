@@ -33,10 +33,10 @@ uv run pytest -q
 
 The unit tests cover the shim's request rewriting (system-message folding, context
 overflow translation), the registry's model matching, resume and worktree handling, the
-blocking waits' progress reporting, the status-line publisher, and the relay agent file. None of them need a model
+blocking waits' progress reporting, the status-line renderer, and the relay agent file. None of them need a model
 server. Anything that does — a real job against llama.cpp or vLLM — is done by hand;
-if you change `runner.py` or `shim.py`, run a short job and look at
-`~/.local/state/localagents/jobs/<job>/requests.jsonl` before and after.
+if you change `runner.py` or `shim.py`, run a short job and compare its rows in the
+`requests` table of `~/.local/state/localagents/localagents.db` before and after.
 
 ## Where things live
 
@@ -46,8 +46,10 @@ if you change `runner.py` or `shim.py`, run a short job and look at
 | `registry.py` | `models.yaml` (endpoints only), endpoint probing (health, served ids, context window, slots, metrics), model resolution |
 | `runner.py` | one job = one headless Claude Code session via the Agent SDK; env, worktrees, transcript |
 | `shim.py` | the in-process HTTP proxy every session talks through; all backend-specific fixups go here |
-| `jobs.py` | job records and on-disk logs |
-| `status.py` | per-server status file for the Claude Code status line; `localagents statusline` renders it without importing the server |
+| `db.py` | the shared SQLite file: path, schema, migrations, `open_db` (WAL, busy timeout) |
+| `jobs.py` | job records: the `jobs` and `mcp_servers` rows, the job directory and transcript, retention pruning, the startup lost-job mark |
+| `derive.py` | read-time derivations over the `requests`/`tool_calls` rows: usage totals, per-tool counts, the last tool, the whole `job_status` dict for a row |
+| `status.py` | the status-line renderer: reads every live server's jobs from the shared database; `localagents statusline` runs it without importing the server |
 | `agents/local-agent.md` | Claude Code subagent that relays one job and reports its record; the fallback where auto-backgrounding is off |
 
 A note on `agents/local-agent.md`: the frontmatter must be valid YAML, so quote the
@@ -66,6 +68,6 @@ that uses the real error body you saw.
 ## Pull requests
 
 Keep them focused. A change that touches the request shape or the env passed to
-Claude Code should say what you measured (the `requests.jsonl` timings and the
+Claude Code should say what you measured (the `requests` rows' timings and the
 server's prompt-eval numbers are the usual evidence). CI runs the unit tests on
 Python 3.12 and 3.13.
