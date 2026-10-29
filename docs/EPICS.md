@@ -292,8 +292,10 @@ the duplicates go), then docs.
   "server gone"; §5a gaps: the database path, a `probe_state` on the snapshot endpoint, an id
   for `dropped_job`. Review: DeepSeek, pending.)
 - ☐ **3.2a Fold of the 3.2 build notes.** `port_free` with SO_REUSEADDR; snapshot gains
-  `db_path`, `endpoint.probe_state` and `dropped_job_id`; the page uses them. Lane: with the 3.2
-  review's findings.
+  `db_path`, `endpoint.probe_state` and `dropped_job_id`; the page uses them; the header's
+  window reads `24h` not `1d00h`; the job row's current tool and last activity are relativised
+  to the job's root as the status bar does (1.11b's rule, server-side: `jobs[].last_tool` and
+  `last_activity` in the snapshot carry the display form). Lane: with the 3.2 review's findings.
 
 - ☐ **3.3 Endpoint detail.** Tiered stat tiles with sparklines (absent when no source), context
   window, request table with totals line, jobs in range. Gate: browser smoke; tier table
