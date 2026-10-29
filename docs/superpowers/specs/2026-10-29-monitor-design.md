@@ -61,6 +61,51 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
   deleted on the same schedule as job directories. Schema migrated by version number. The
   database is a cache of the fleet, not the record of truth: deleting it costs history only.
 
+  Monitor tables, approved 2026-10-29 (schema version 3; version 2 is `jobs.compactions`,
+  story 1.11). Conventions as the MCP schema: epoch REAL timestamps, lookups by id, flat
+  nullable columns where the field set is fixed, nothing stored that is derived.
+
+  ```
+  probes            one row per probe attempt (5 s when live, 60 s when dormant); monitor-owned
+    id            INTEGER PRIMARY KEY
+    t             REAL NOT NULL
+    endpoint_id   INTEGER NOT NULL REFERENCES endpoints(id)
+    model_id      INTEGER REFERENCES models(id)      NULL when unknown
+    up            INTEGER NOT NULL                   0/1
+    host          TEXT                               'up' | 'down' | 'unknown' (errno class from classify_connect_failure)
+    error         TEXT                               the failure sentence; NULL when up
+    latency_ms    INTEGER
+    context       INTEGER                            per-slot window
+    slots_total   INTEGER, slots_busy INTEGER        llama.cpp, Strata
+    requests_running INTEGER, requests_waiting INTEGER
+    kv_cache_usage REAL                              vLLM, 0..1
+    gen_tps       REAL                               live speed when the backend reports one (Strata)
+    since         REAL                               server start epoch when known (Strata totals.since)
+    INDEX probes_endpoint_t (endpoint_id, t)
+
+  probe_counters    the cumulative counters as parsed, one row per probe; all REAL, NULL when absent
+    probe_id      INTEGER PRIMARY KEY REFERENCES probes(id)
+    prompt_tokens, prompt_tokens_cached, prompt_seconds, generated_tokens, generated_seconds,
+    spec_draft_tokens, spec_accepted_tokens, prefix_queries, prefix_hits, preemptions
+
+  probe_hardware    one row per probe when the backend reports hardware (Strata now; SSH nvidia-smi in V2)
+    probe_id      INTEGER PRIMARY KEY REFERENCES probes(id)
+    gpu_util, gpu_mem_used, gpu_mem_total, gpu_temp, gpu_power, gpu_power_limit,
+    gpu_pcie_rx_mb, gpu_pcie_tx_mb, cpu, ram_used, ram_total          REAL
+
+  endpoint_events   id INTEGER PRIMARY KEY, t REAL NOT NULL, endpoint_id INTEGER NOT NULL REFERENCES endpoints(id),
+                    kind TEXT NOT NULL CHECK (kind IN ('up', 'down', 'restarted')), detail TEXT
+    INDEX endpoint_events_endpoint_t (endpoint_id, t)
+  ```
+
+  Rates are computed between consecutive `probe_counters` rows at read time, never stored. A
+  reset is any main counter going backwards or `since` changing: it writes a `restarted` event
+  and the interval has no rate. `endpoint_load` stays the MCP server's own sampler table: the
+  monitor reads it, never writes it. Retention deletes only the monitor's tables. Not stored:
+  Strata's per-request table and `history` arrays (the MCP records its own requests; the
+  monitor's history is its probe rows) and the `engine` block (static config, read live for
+  the detail page).
+
 ## 4. Display states
 
 Per endpoint, derived from rows (so a restart reconstructs them from the database):
