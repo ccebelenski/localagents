@@ -137,7 +137,7 @@ the duplicates go), then docs.
   23 turns; coordinator read the 20-line diff; third-model probe folded into the next status
   review.)
 
-- ☐ **1.11b Status line: readable last activity.** From the operator's bar (2026-10-29): a Read
+- ☑ **1.11b Status line: readable last activity.** (Qwen/ai2 job 20261029-123329-8c0fdadb, 64 turns, 364 tests; also fixed a crash on a non-dict edit-tool input; review folded into the next status-line review.) From the operator's bar (2026-10-29): a Read
   shows its JSON head, a multi-line Bash command breaks the row, absolute worktree paths eat
   the 60 characters. The input rule stores the path for any path-shaped tool; the row's
   activity is one line with paths relative to the job's root. Lane: Qwen (ai2).
