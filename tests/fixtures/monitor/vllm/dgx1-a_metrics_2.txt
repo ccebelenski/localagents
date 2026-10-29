@@ -1,0 +1,784 @@
+# HELP python_gc_objects_collected_total Objects collected during gc
+# TYPE python_gc_objects_collected_total counter
+python_gc_objects_collected_total{generation="0"} 81577.0
+python_gc_objects_collected_total{generation="1"} 59057.0
+python_gc_objects_collected_total{generation="2"} 304.0
+# HELP python_gc_objects_uncollectable_total Uncollectable objects found during GC
+# TYPE python_gc_objects_uncollectable_total counter
+python_gc_objects_uncollectable_total{generation="0"} 0.0
+python_gc_objects_uncollectable_total{generation="1"} 0.0
+python_gc_objects_uncollectable_total{generation="2"} 0.0
+# HELP python_gc_collections_total Number of times this generation was collected
+# TYPE python_gc_collections_total counter
+python_gc_collections_total{generation="0"} 2408.0
+python_gc_collections_total{generation="1"} 219.0
+python_gc_collections_total{generation="2"} 11.0
+# HELP python_info Python platform information
+# TYPE python_info gauge
+python_info{implementation="CPython",major="3",minor="12",patchlevel="3",version="3.12.3"} 1.0
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 2.53903872e+10
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 1.5497216e+08
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1.79324304575e+09
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 180.07
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 77.0
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 65535.0
+# HELP vllm:spec_decode_num_drafts_total Number of spec decoding drafts.
+# TYPE vllm:spec_decode_num_drafts_total counter
+vllm:spec_decode_num_drafts_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 82611.0
+# HELP vllm:spec_decode_num_drafts_created Number of spec decoding drafts.
+# TYPE vllm:spec_decode_num_drafts_created gauge
+vllm:spec_decode_num_drafts_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039467206e+09
+# HELP vllm:spec_decode_num_draft_tokens_total Number of verified draft tokens.
+# TYPE vllm:spec_decode_num_draft_tokens_total counter
+vllm:spec_decode_num_draft_tokens_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 437219.0
+# HELP vllm:spec_decode_num_draft_tokens_created Number of verified draft tokens.
+# TYPE vllm:spec_decode_num_draft_tokens_created gauge
+vllm:spec_decode_num_draft_tokens_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039471536e+09
+# HELP vllm:spec_decode_num_accepted_tokens_total Number of accepted tokens.
+# TYPE vllm:spec_decode_num_accepted_tokens_total counter
+vllm:spec_decode_num_accepted_tokens_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 217046.0
+# HELP vllm:spec_decode_num_accepted_tokens_created Number of accepted tokens.
+# TYPE vllm:spec_decode_num_accepted_tokens_created gauge
+vllm:spec_decode_num_accepted_tokens_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039475205e+09
+# HELP vllm:spec_decode_num_accepted_tokens_per_pos_total Accepted tokens per draft position.
+# TYPE vllm:spec_decode_num_accepted_tokens_per_pos_total counter
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="0"} 68551.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="1"} 52940.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="2"} 38776.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="3"} 24089.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="4"} 15041.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="5"} 10597.0
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="6"} 7052.0
+# HELP vllm:spec_decode_num_accepted_tokens_per_pos_created Accepted tokens per draft position.
+# TYPE vllm:spec_decode_num_accepted_tokens_per_pos_created gauge
+vllm:spec_decode_num_accepted_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="0"} 1.7932442039497137e+09
+vllm:spec_decode_num_accepted_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="1"} 1.793244203949923e+09
+vllm:spec_decode_num_accepted_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="2"} 1.793244203950118e+09
+vllm:spec_decode_num_accepted_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="3"} 1.793244203950314e+09
+vllm:spec_decode_num_accepted_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="4"} 1.7932442039506388e+09
+vllm:spec_decode_num_accepted_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="5"} 1.7932442039508715e+09
+vllm:spec_decode_num_accepted_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="6"} 1.7932442039510112e+09
+# HELP vllm:spec_decode_num_draft_tokens_per_pos_total Verified draft tokens per draft position.
+# TYPE vllm:spec_decode_num_draft_tokens_per_pos_total counter
+vllm:spec_decode_num_draft_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="0"} 82611.0
+vllm:spec_decode_num_draft_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="1"} 82610.0
+vllm:spec_decode_num_draft_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="2"} 82109.0
+vllm:spec_decode_num_draft_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="3"} 62467.0
+vllm:spec_decode_num_draft_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="4"} 42474.0
+vllm:spec_decode_num_draft_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="5"} 42474.0
+vllm:spec_decode_num_draft_tokens_per_pos_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="6"} 42474.0
+# HELP vllm:spec_decode_num_draft_tokens_per_pos_created Verified draft tokens per draft position.
+# TYPE vllm:spec_decode_num_draft_tokens_per_pos_created gauge
+vllm:spec_decode_num_draft_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="0"} 1.793244203951806e+09
+vllm:spec_decode_num_draft_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="1"} 1.793244203951991e+09
+vllm:spec_decode_num_draft_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="2"} 1.7932442039522033e+09
+vllm:spec_decode_num_draft_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="3"} 1.7932442039524393e+09
+vllm:spec_decode_num_draft_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="4"} 1.7932442039525778e+09
+vllm:spec_decode_num_draft_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="5"} 1.7932442039528131e+09
+vllm:spec_decode_num_draft_tokens_per_pos_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",position="6"} 1.7932442039529533e+09
+# HELP vllm:estimated_flops_per_gpu_total Estimated number of floating point operations per GPU (for Model Flops Utilization calculations).
+# TYPE vllm:estimated_flops_per_gpu_total counter
+vllm:estimated_flops_per_gpu_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:estimated_flops_per_gpu_created Estimated number of floating point operations per GPU (for Model Flops Utilization calculations).
+# TYPE vllm:estimated_flops_per_gpu_created gauge
+vllm:estimated_flops_per_gpu_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039541912e+09
+# HELP vllm:estimated_read_bytes_per_gpu_total Estimated number of bytes read from memory per GPU (for Model Flops Utilization calculations).
+# TYPE vllm:estimated_read_bytes_per_gpu_total counter
+vllm:estimated_read_bytes_per_gpu_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:estimated_read_bytes_per_gpu_created Estimated number of bytes read from memory per GPU (for Model Flops Utilization calculations).
+# TYPE vllm:estimated_read_bytes_per_gpu_created gauge
+vllm:estimated_read_bytes_per_gpu_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039546382e+09
+# HELP vllm:estimated_write_bytes_per_gpu_total Estimated number of bytes written to memory per GPU (for Model Flops Utilization calculations).
+# TYPE vllm:estimated_write_bytes_per_gpu_total counter
+vllm:estimated_write_bytes_per_gpu_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:estimated_write_bytes_per_gpu_created Estimated number of bytes written to memory per GPU (for Model Flops Utilization calculations).
+# TYPE vllm:estimated_write_bytes_per_gpu_created gauge
+vllm:estimated_write_bytes_per_gpu_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039549263e+09
+# HELP vllm:num_requests_running Number of requests in model execution batches.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.0
+# HELP vllm:num_requests_waiting Number of requests waiting to be processed.
+# TYPE vllm:num_requests_waiting gauge
+vllm:num_requests_waiting{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:scheduler_prefill_compute_share Effective fraction of contended model execution assigned to prefill; zero means disabled.
+# TYPE vllm:scheduler_prefill_compute_share gauge
+vllm:scheduler_prefill_compute_share{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:scheduler_compute_pressure Normalized service pressure observed by adaptive fairness.
+# TYPE vllm:scheduler_compute_pressure gauge
+vllm:scheduler_compute_pressure{class="decode",engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.0
+vllm:scheduler_compute_pressure{class="prefill",engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.0
+# HELP vllm:scheduler_local_prefill_backlog_tokens Local model-compute prefill tokens visible to adaptive fairness.
+# TYPE vllm:scheduler_local_prefill_backlog_tokens gauge
+vllm:scheduler_local_prefill_backlog_tokens{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:scheduler_compute_seconds_total Model-execution time charged to each service class.
+# TYPE vllm:scheduler_compute_seconds_total counter
+vllm:scheduler_compute_seconds_total{class="decode",engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:scheduler_compute_seconds_total{class="prefill",engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:scheduler_compute_seconds_created Model-execution time charged to each service class.
+# TYPE vllm:scheduler_compute_seconds_created gauge
+vllm:scheduler_compute_seconds_created{class="decode",engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.793244203958721e+09
+vllm:scheduler_compute_seconds_created{class="prefill",engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.793244203958958e+09
+# HELP vllm:num_requests_waiting_by_reason Number of waiting requests by reason. Reason labels: 'capacity' = waiting for scheduling capacity; 'deferred' = deferred by transient constraints (LoRA budget, KV transfer, blocked status). Sum of all reasons equals vllm:num_requests_waiting.
+# TYPE vllm:num_requests_waiting_by_reason gauge
+vllm:num_requests_waiting_by_reason{engine="0",model_name="DeepSeek-V4.1-Flash-1017",reason="capacity"} 0.0
+vllm:num_requests_waiting_by_reason{engine="0",model_name="DeepSeek-V4.1-Flash-1017",reason="deferred"} 0.0
+# HELP vllm:engine_sleep_state Engine sleep state; awake = 0 means engine is sleeping; awake = 1 means engine is awake; weights_offloaded = 1 means sleep level 1; discard_all = 1 means sleep level 2.
+# TYPE vllm:engine_sleep_state gauge
+vllm:engine_sleep_state{engine="0",model_name="DeepSeek-V4.1-Flash-1017",sleep_state="awake"} 1.0
+vllm:engine_sleep_state{engine="0",model_name="DeepSeek-V4.1-Flash-1017",sleep_state="weights_offloaded"} 0.0
+vllm:engine_sleep_state{engine="0",model_name="DeepSeek-V4.1-Flash-1017",sleep_state="discard_all"} 0.0
+# HELP vllm:kv_cache_usage_perc KV-cache usage. 1 means 100 percent usage.
+# TYPE vllm:kv_cache_usage_perc gauge
+vllm:kv_cache_usage_perc{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.19060647514819884
+# HELP vllm:prefix_cache_queries_total Prefix cache queries, in terms of number of queried tokens.
+# TYPE vllm:prefix_cache_queries_total counter
+vllm:prefix_cache_queries_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.8361898e+07
+# HELP vllm:prefix_cache_queries_created Prefix cache queries, in terms of number of queried tokens.
+# TYPE vllm:prefix_cache_queries_created gauge
+vllm:prefix_cache_queries_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.793244203962184e+09
+# HELP vllm:prefix_cache_hits_total Prefix cache hits, in terms of number of cached tokens.
+# TYPE vllm:prefix_cache_hits_total counter
+vllm:prefix_cache_hits_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.753472e+07
+# HELP vllm:prefix_cache_hits_created Prefix cache hits, in terms of number of cached tokens.
+# TYPE vllm:prefix_cache_hits_created gauge
+vllm:prefix_cache_hits_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039626393e+09
+# HELP vllm:external_prefix_cache_queries_total External prefix cache queries from KV connector cross-instance cache sharing, in terms of number of queried tokens.
+# TYPE vllm:external_prefix_cache_queries_total counter
+vllm:external_prefix_cache_queries_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:external_prefix_cache_queries_created External prefix cache queries from KV connector cross-instance cache sharing, in terms of number of queried tokens.
+# TYPE vllm:external_prefix_cache_queries_created gauge
+vllm:external_prefix_cache_queries_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039629695e+09
+# HELP vllm:external_prefix_cache_hits_total External prefix cache hits from KV connector cross-instance cache sharing, in terms of number of cached tokens.
+# TYPE vllm:external_prefix_cache_hits_total counter
+vllm:external_prefix_cache_hits_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:external_prefix_cache_hits_created External prefix cache hits from KV connector cross-instance cache sharing, in terms of number of cached tokens.
+# TYPE vllm:external_prefix_cache_hits_created gauge
+vllm:external_prefix_cache_hits_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.793244203963251e+09
+# HELP vllm:mm_cache_queries_total Multi-modal cache queries, in terms of number of queried items.
+# TYPE vllm:mm_cache_queries_total counter
+vllm:mm_cache_queries_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:mm_cache_queries_created Multi-modal cache queries, in terms of number of queried items.
+# TYPE vllm:mm_cache_queries_created gauge
+vllm:mm_cache_queries_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.793244203963589e+09
+# HELP vllm:mm_cache_hits_total Multi-modal cache hits, in terms of number of cached items.
+# TYPE vllm:mm_cache_hits_total counter
+vllm:mm_cache_hits_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:mm_cache_hits_created Multi-modal cache hits, in terms of number of cached items.
+# TYPE vllm:mm_cache_hits_created gauge
+vllm:mm_cache_hits_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039639456e+09
+# HELP vllm:num_preemptions_total Cumulative number of preemption from the engine.
+# TYPE vllm:num_preemptions_total counter
+vllm:num_preemptions_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:num_preemptions_created Cumulative number of preemption from the engine.
+# TYPE vllm:num_preemptions_created gauge
+vllm:num_preemptions_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039642904e+09
+# HELP vllm:prompt_tokens_total Number of prefill tokens processed.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.8361898e+07
+# HELP vllm:prompt_tokens_created Number of prefill tokens processed.
+# TYPE vllm:prompt_tokens_created gauge
+vllm:prompt_tokens_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039646218e+09
+# HELP vllm:prompt_tokens_by_source_total Number of prompt tokens by source.
+# TYPE vllm:prompt_tokens_by_source_total counter
+vllm:prompt_tokens_by_source_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",source="local_compute"} 827178.0
+vllm:prompt_tokens_by_source_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",source="local_cache_hit"} 1.753472e+07
+vllm:prompt_tokens_by_source_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017",source="external_kv_transfer"} 0.0
+# HELP vllm:prompt_tokens_by_source_created Number of prompt tokens by source.
+# TYPE vllm:prompt_tokens_by_source_created gauge
+vllm:prompt_tokens_by_source_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",source="local_compute"} 1.7932442039652855e+09
+vllm:prompt_tokens_by_source_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",source="local_cache_hit"} 1.793244203965469e+09
+vllm:prompt_tokens_by_source_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017",source="external_kv_transfer"} 1.793244203965695e+09
+# HELP vllm:prompt_tokens_cached_total Number of cached prompt tokens (local + external).
+# TYPE vllm:prompt_tokens_cached_total counter
+vllm:prompt_tokens_cached_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.753472e+07
+# HELP vllm:prompt_tokens_cached_created Number of cached prompt tokens (local + external).
+# TYPE vllm:prompt_tokens_cached_created gauge
+vllm:prompt_tokens_cached_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039660225e+09
+# HELP vllm:generation_tokens_total Number of generation tokens processed.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 299686.0
+# HELP vllm:generation_tokens_created Number of generation tokens processed.
+# TYPE vllm:generation_tokens_created gauge
+vllm:generation_tokens_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039664006e+09
+# HELP vllm:request_success_total Count of successfully processed requests.
+# TYPE vllm:request_success_total counter
+vllm:request_success_total{engine="0",finished_reason="stop",model_name="DeepSeek-V4.1-Flash-1017"} 218.0
+vllm:request_success_total{engine="0",finished_reason="length",model_name="DeepSeek-V4.1-Flash-1017"} 5.0
+vllm:request_success_total{engine="0",finished_reason="abort",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_success_total{engine="0",finished_reason="error",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_success_total{engine="0",finished_reason="repetition",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:request_success_created Count of successfully processed requests.
+# TYPE vllm:request_success_created gauge
+vllm:request_success_created{engine="0",finished_reason="stop",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039673693e+09
+vllm:request_success_created{engine="0",finished_reason="length",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039675212e+09
+vllm:request_success_created{engine="0",finished_reason="abort",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039676616e+09
+vllm:request_success_created{engine="0",finished_reason="error",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039679086e+09
+vllm:request_success_created{engine="0",finished_reason="repetition",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039760857e+09
+# HELP vllm:request_prompt_tokens Number of prefill tokens processed.
+# TYPE vllm:request_prompt_tokens histogram
+vllm:request_prompt_tokens_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prompt_tokens_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prompt_tokens_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prompt_tokens_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prompt_tokens_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prompt_tokens_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 2.0
+vllm:request_prompt_tokens_bucket{engine="0",le="100.0",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:request_prompt_tokens_bucket{engine="0",le="200.0",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:request_prompt_tokens_bucket{engine="0",le="500.0",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:request_prompt_tokens_bucket{engine="0",le="1000.0",model_name="DeepSeek-V4.1-Flash-1017"} 5.0
+vllm:request_prompt_tokens_bucket{engine="0",le="2000.0",model_name="DeepSeek-V4.1-Flash-1017"} 5.0
+vllm:request_prompt_tokens_bucket{engine="0",le="5000.0",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:request_prompt_tokens_bucket{engine="0",le="10000.0",model_name="DeepSeek-V4.1-Flash-1017"} 13.0
+vllm:request_prompt_tokens_bucket{engine="0",le="20000.0",model_name="DeepSeek-V4.1-Flash-1017"} 13.0
+vllm:request_prompt_tokens_bucket{engine="0",le="50000.0",model_name="DeepSeek-V4.1-Flash-1017"} 47.0
+vllm:request_prompt_tokens_bucket{engine="0",le="100000.0",model_name="DeepSeek-V4.1-Flash-1017"} 153.0
+vllm:request_prompt_tokens_bucket{engine="0",le="200000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prompt_tokens_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prompt_tokens_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prompt_tokens_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.8266966e+07
+# HELP vllm:request_prompt_tokens_created Number of prefill tokens processed.
+# TYPE vllm:request_prompt_tokens_created gauge
+vllm:request_prompt_tokens_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.793244203977382e+09
+# HELP vllm:request_generation_tokens Number of generation tokens processed.
+# TYPE vllm:request_generation_tokens histogram
+vllm:request_generation_tokens_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_generation_tokens_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_generation_tokens_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_generation_tokens_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_generation_tokens_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 4.0
+vllm:request_generation_tokens_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 5.0
+vllm:request_generation_tokens_bucket{engine="0",le="100.0",model_name="DeepSeek-V4.1-Flash-1017"} 21.0
+vllm:request_generation_tokens_bucket{engine="0",le="200.0",model_name="DeepSeek-V4.1-Flash-1017"} 60.0
+vllm:request_generation_tokens_bucket{engine="0",le="500.0",model_name="DeepSeek-V4.1-Flash-1017"} 111.0
+vllm:request_generation_tokens_bucket{engine="0",le="1000.0",model_name="DeepSeek-V4.1-Flash-1017"} 136.0
+vllm:request_generation_tokens_bucket{engine="0",le="2000.0",model_name="DeepSeek-V4.1-Flash-1017"} 167.0
+vllm:request_generation_tokens_bucket{engine="0",le="5000.0",model_name="DeepSeek-V4.1-Flash-1017"} 210.0
+vllm:request_generation_tokens_bucket{engine="0",le="10000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_generation_tokens_bucket{engine="0",le="20000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_generation_tokens_bucket{engine="0",le="50000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_generation_tokens_bucket{engine="0",le="100000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_generation_tokens_bucket{engine="0",le="200000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_generation_tokens_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_generation_tokens_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_generation_tokens_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 299618.0
+# HELP vllm:request_generation_tokens_created Number of generation tokens processed.
+# TYPE vllm:request_generation_tokens_created gauge
+vllm:request_generation_tokens_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039790044e+09
+# HELP vllm:iteration_tokens_total Histogram of number of tokens per engine_step.
+# TYPE vllm:iteration_tokens_total histogram
+vllm:iteration_tokens_total_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 14134.0
+vllm:iteration_tokens_total_bucket{engine="0",le="8.0",model_name="DeepSeek-V4.1-Flash-1017"} 82611.0
+vllm:iteration_tokens_total_bucket{engine="0",le="16.0",model_name="DeepSeek-V4.1-Flash-1017"} 82611.0
+vllm:iteration_tokens_total_bucket{engine="0",le="32.0",model_name="DeepSeek-V4.1-Flash-1017"} 82611.0
+vllm:iteration_tokens_total_bucket{engine="0",le="64.0",model_name="DeepSeek-V4.1-Flash-1017"} 82615.0
+vllm:iteration_tokens_total_bucket{engine="0",le="128.0",model_name="DeepSeek-V4.1-Flash-1017"} 82615.0
+vllm:iteration_tokens_total_bucket{engine="0",le="256.0",model_name="DeepSeek-V4.1-Flash-1017"} 82616.0
+vllm:iteration_tokens_total_bucket{engine="0",le="512.0",model_name="DeepSeek-V4.1-Flash-1017"} 82627.0
+vllm:iteration_tokens_total_bucket{engine="0",le="1024.0",model_name="DeepSeek-V4.1-Flash-1017"} 82659.0
+vllm:iteration_tokens_total_bucket{engine="0",le="2048.0",model_name="DeepSeek-V4.1-Flash-1017"} 82715.0
+vllm:iteration_tokens_total_bucket{engine="0",le="4096.0",model_name="DeepSeek-V4.1-Flash-1017"} 82766.0
+vllm:iteration_tokens_total_bucket{engine="0",le="8192.0",model_name="DeepSeek-V4.1-Flash-1017"} 82817.0
+vllm:iteration_tokens_total_bucket{engine="0",le="16384.0",model_name="DeepSeek-V4.1-Flash-1017"} 82830.0
+vllm:iteration_tokens_total_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 82836.0
+vllm:iteration_tokens_total_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 82836.0
+vllm:iteration_tokens_total_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.126864e+06
+# HELP vllm:iteration_tokens_total_created Histogram of number of tokens per engine_step.
+# TYPE vllm:iteration_tokens_total_created gauge
+vllm:iteration_tokens_total_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039799495e+09
+# HELP vllm:request_max_num_generation_tokens Histogram of maximum number of requested generation tokens.
+# TYPE vllm:request_max_num_generation_tokens histogram
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 4.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 5.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="100.0",model_name="DeepSeek-V4.1-Flash-1017"} 21.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="200.0",model_name="DeepSeek-V4.1-Flash-1017"} 60.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="500.0",model_name="DeepSeek-V4.1-Flash-1017"} 111.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="1000.0",model_name="DeepSeek-V4.1-Flash-1017"} 136.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="2000.0",model_name="DeepSeek-V4.1-Flash-1017"} 167.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="5000.0",model_name="DeepSeek-V4.1-Flash-1017"} 210.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="10000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="20000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="50000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="100000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="200000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_max_num_generation_tokens_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_max_num_generation_tokens_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_max_num_generation_tokens_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 299618.0
+# HELP vllm:request_max_num_generation_tokens_created Histogram of maximum number of requested generation tokens.
+# TYPE vllm:request_max_num_generation_tokens_created gauge
+vllm:request_max_num_generation_tokens_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.793244203981015e+09
+# HELP vllm:request_params_n Histogram of the n request parameter.
+# TYPE vllm:request_params_n histogram
+vllm:request_params_n_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_params_n_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_params_n_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_params_n_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_params_n_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_params_n_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_params_n_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_params_n_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+# HELP vllm:request_params_n_created Histogram of the n request parameter.
+# TYPE vllm:request_params_n_created gauge
+vllm:request_params_n_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039816566e+09
+# HELP vllm:request_params_max_tokens Histogram of the max_tokens request parameter.
+# TYPE vllm:request_params_max_tokens histogram
+vllm:request_params_max_tokens_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_params_max_tokens_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_params_max_tokens_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_params_max_tokens_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_params_max_tokens_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 4.0
+vllm:request_params_max_tokens_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 5.0
+vllm:request_params_max_tokens_bucket{engine="0",le="100.0",model_name="DeepSeek-V4.1-Flash-1017"} 6.0
+vllm:request_params_max_tokens_bucket{engine="0",le="200.0",model_name="DeepSeek-V4.1-Flash-1017"} 6.0
+vllm:request_params_max_tokens_bucket{engine="0",le="500.0",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:request_params_max_tokens_bucket{engine="0",le="1000.0",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:request_params_max_tokens_bucket{engine="0",le="2000.0",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:request_params_max_tokens_bucket{engine="0",le="5000.0",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:request_params_max_tokens_bucket{engine="0",le="10000.0",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:request_params_max_tokens_bucket{engine="0",le="20000.0",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:request_params_max_tokens_bucket{engine="0",le="50000.0",model_name="DeepSeek-V4.1-Flash-1017"} 217.0
+vllm:request_params_max_tokens_bucket{engine="0",le="100000.0",model_name="DeepSeek-V4.1-Flash-1017"} 217.0
+vllm:request_params_max_tokens_bucket{engine="0",le="200000.0",model_name="DeepSeek-V4.1-Flash-1017"} 217.0
+vllm:request_params_max_tokens_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_params_max_tokens_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_params_max_tokens_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 8.521367e+06
+# HELP vllm:request_params_max_tokens_created Histogram of the max_tokens request parameter.
+# TYPE vllm:request_params_max_tokens_created gauge
+vllm:request_params_max_tokens_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039822416e+09
+# HELP vllm:time_to_first_token_seconds Histogram of time to first token in seconds.
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.001",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.005",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.01",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.02",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.04",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.06",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.08",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.1",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.25",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.5",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.75",model_name="DeepSeek-V4.1-Flash-1017"} 4.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 19.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="2.5",model_name="DeepSeek-V4.1-Flash-1017"} 86.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 156.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="7.5",model_name="DeepSeek-V4.1-Flash-1017"} 177.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 199.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 219.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="40.0",model_name="DeepSeek-V4.1-Flash-1017"} 225.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="80.0",model_name="DeepSeek-V4.1-Flash-1017"} 225.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="160.0",model_name="DeepSeek-V4.1-Flash-1017"} 225.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="640.0",model_name="DeepSeek-V4.1-Flash-1017"} 225.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="2560.0",model_name="DeepSeek-V4.1-Flash-1017"} 225.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 225.0
+vllm:time_to_first_token_seconds_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 225.0
+vllm:time_to_first_token_seconds_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1116.259759426117
+# HELP vllm:time_to_first_token_seconds_created Histogram of time to first token in seconds.
+# TYPE vllm:time_to_first_token_seconds_created gauge
+vllm:time_to_first_token_seconds_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039829578e+09
+# HELP vllm:inter_token_latency_seconds Histogram of inter-token latency in seconds.
+# TYPE vllm:inter_token_latency_seconds histogram
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.01",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.025",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.05",model_name="DeepSeek-V4.1-Flash-1017"} 10.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.075",model_name="DeepSeek-V4.1-Flash-1017"} 39334.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.1",model_name="DeepSeek-V4.1-Flash-1017"} 81412.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.15",model_name="DeepSeek-V4.1-Flash-1017"} 82595.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.2",model_name="DeepSeek-V4.1-Flash-1017"} 82600.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.3",model_name="DeepSeek-V4.1-Flash-1017"} 82606.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.4",model_name="DeepSeek-V4.1-Flash-1017"} 82606.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.5",model_name="DeepSeek-V4.1-Flash-1017"} 82608.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.75",model_name="DeepSeek-V4.1-Flash-1017"} 82609.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 82609.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="2.5",model_name="DeepSeek-V4.1-Flash-1017"} 82609.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 82610.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="7.5",model_name="DeepSeek-V4.1-Flash-1017"} 82610.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 82610.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 82611.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="40.0",model_name="DeepSeek-V4.1-Flash-1017"} 82611.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="80.0",model_name="DeepSeek-V4.1-Flash-1017"} 82611.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 82611.0
+vllm:inter_token_latency_seconds_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 82611.0
+vllm:inter_token_latency_seconds_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 6124.882439324938
+# HELP vllm:inter_token_latency_seconds_created Histogram of inter-token latency in seconds.
+# TYPE vllm:inter_token_latency_seconds_created gauge
+vllm:inter_token_latency_seconds_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039837255e+09
+# HELP vllm:request_time_per_output_token_seconds Histogram of time_per_output_token_seconds per request.
+# TYPE vllm:request_time_per_output_token_seconds histogram
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.01",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.025",model_name="DeepSeek-V4.1-Flash-1017"} 210.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.05",model_name="DeepSeek-V4.1-Flash-1017"} 222.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.075",model_name="DeepSeek-V4.1-Flash-1017"} 222.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.1",model_name="DeepSeek-V4.1-Flash-1017"} 222.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.15",model_name="DeepSeek-V4.1-Flash-1017"} 222.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.2",model_name="DeepSeek-V4.1-Flash-1017"} 222.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.3",model_name="DeepSeek-V4.1-Flash-1017"} 222.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.4",model_name="DeepSeek-V4.1-Flash-1017"} 222.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.5",model_name="DeepSeek-V4.1-Flash-1017"} 222.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="0.75",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="2.5",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="7.5",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="40.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="80.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_time_per_output_token_seconds_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 4.770279416589437
+# HELP vllm:request_time_per_output_token_seconds_created Histogram of time_per_output_token_seconds per request.
+# TYPE vllm:request_time_per_output_token_seconds_created gauge
+vllm:request_time_per_output_token_seconds_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039845753e+09
+# HELP vllm:e2e_request_latency_seconds Histogram of e2e request latency in seconds.
+# TYPE vllm:e2e_request_latency_seconds histogram
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="0.3",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="0.5",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="0.8",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="1.5",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 4.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="2.5",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 30.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 66.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="15.0",model_name="DeepSeek-V4.1-Flash-1017"} 101.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 120.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="30.0",model_name="DeepSeek-V4.1-Flash-1017"} 146.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="40.0",model_name="DeepSeek-V4.1-Flash-1017"} 157.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 173.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="60.0",model_name="DeepSeek-V4.1-Flash-1017"} 183.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="120.0",model_name="DeepSeek-V4.1-Flash-1017"} 213.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="240.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="480.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="960.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="1920.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="7680.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:e2e_request_latency_seconds_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:e2e_request_latency_seconds_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 7220.4217031002045
+# HELP vllm:e2e_request_latency_seconds_created Histogram of e2e request latency in seconds.
+# TYPE vllm:e2e_request_latency_seconds_created gauge
+vllm:e2e_request_latency_seconds_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039849088e+09
+# HELP vllm:request_queue_time_seconds Histogram of time spent in WAITING phase for request.
+# TYPE vllm:request_queue_time_seconds histogram
+vllm:request_queue_time_seconds_bucket{engine="0",le="0.3",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="0.5",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="0.8",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="1.5",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="2.5",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="15.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="30.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="40.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="60.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="120.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="240.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="480.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="960.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="1920.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="7680.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_queue_time_seconds_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.04179463200853206
+# HELP vllm:request_queue_time_seconds_created Histogram of time spent in WAITING phase for request.
+# TYPE vllm:request_queue_time_seconds_created gauge
+vllm:request_queue_time_seconds_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039857123e+09
+# HELP vllm:request_inference_time_seconds Histogram of time spent in RUNNING phase for request.
+# TYPE vllm:request_inference_time_seconds histogram
+vllm:request_inference_time_seconds_bucket{engine="0",le="0.3",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="0.5",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="0.8",model_name="DeepSeek-V4.1-Flash-1017"} 1.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="1.5",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 4.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="2.5",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 33.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 68.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="15.0",model_name="DeepSeek-V4.1-Flash-1017"} 103.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 121.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="30.0",model_name="DeepSeek-V4.1-Flash-1017"} 147.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="40.0",model_name="DeepSeek-V4.1-Flash-1017"} 157.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 173.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="60.0",model_name="DeepSeek-V4.1-Flash-1017"} 183.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="120.0",model_name="DeepSeek-V4.1-Flash-1017"} 213.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="240.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="480.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="960.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="1920.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="7680.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_inference_time_seconds_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_inference_time_seconds_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_inference_time_seconds_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 7181.826096105913
+# HELP vllm:request_inference_time_seconds_created Histogram of time spent in RUNNING phase for request.
+# TYPE vllm:request_inference_time_seconds_created gauge
+vllm:request_inference_time_seconds_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039864926e+09
+# HELP vllm:request_prefill_time_seconds Histogram of time spent in PREFILL phase for request.
+# TYPE vllm:request_prefill_time_seconds histogram
+vllm:request_prefill_time_seconds_bucket{engine="0",le="0.3",model_name="DeepSeek-V4.1-Flash-1017"} 1.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="0.5",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="0.8",model_name="DeepSeek-V4.1-Flash-1017"} 12.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 29.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="1.5",model_name="DeepSeek-V4.1-Flash-1017"} 53.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 67.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="2.5",model_name="DeepSeek-V4.1-Flash-1017"} 94.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 160.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 198.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="15.0",model_name="DeepSeek-V4.1-Flash-1017"} 216.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 217.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="30.0",model_name="DeepSeek-V4.1-Flash-1017"} 221.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="40.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="60.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="120.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="240.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="480.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="960.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="1920.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="7680.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_time_seconds_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1058.6858198969712
+# HELP vllm:request_prefill_time_seconds_created Histogram of time spent in PREFILL phase for request.
+# TYPE vllm:request_prefill_time_seconds_created gauge
+vllm:request_prefill_time_seconds_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.793244203987383e+09
+# HELP vllm:request_decode_time_seconds Histogram of time spent in DECODE phase for request.
+# TYPE vllm:request_decode_time_seconds histogram
+vllm:request_decode_time_seconds_bucket{engine="0",le="0.3",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="0.5",model_name="DeepSeek-V4.1-Flash-1017"} 2.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="0.8",model_name="DeepSeek-V4.1-Flash-1017"} 4.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 7.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="1.5",model_name="DeepSeek-V4.1-Flash-1017"} 24.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 36.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="2.5",model_name="DeepSeek-V4.1-Flash-1017"} 42.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 86.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 110.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="15.0",model_name="DeepSeek-V4.1-Flash-1017"} 124.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 135.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="30.0",model_name="DeepSeek-V4.1-Flash-1017"} 152.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="40.0",model_name="DeepSeek-V4.1-Flash-1017"} 164.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 176.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="60.0",model_name="DeepSeek-V4.1-Flash-1017"} 188.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="120.0",model_name="DeepSeek-V4.1-Flash-1017"} 217.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="240.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="480.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="960.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="1920.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="7680.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_decode_time_seconds_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_decode_time_seconds_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_decode_time_seconds_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 6123.140276208942
+# HELP vllm:request_decode_time_seconds_created Histogram of time spent in DECODE phase for request.
+# TYPE vllm:request_decode_time_seconds_created gauge
+vllm:request_decode_time_seconds_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039879477e+09
+# HELP vllm:request_num_preemptions Histogram of the number of times a request was preempted.
+# TYPE vllm:request_num_preemptions histogram
+vllm:request_num_preemptions_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_num_preemptions_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_num_preemptions_bucket{engine="0",le="3.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_num_preemptions_bucket{engine="0",le="4.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_num_preemptions_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_num_preemptions_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_num_preemptions_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_num_preemptions_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_num_preemptions_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_num_preemptions_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+# HELP vllm:request_num_preemptions_created Histogram of the number of times a request was preempted.
+# TYPE vllm:request_num_preemptions_created gauge
+vllm:request_num_preemptions_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.79324420398867e+09
+# HELP vllm:request_prefill_kv_computed_tokens Histogram of new KV tokens computed during prefill (excluding cached tokens).
+# TYPE vllm:request_prefill_kv_computed_tokens histogram
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="1.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="2.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="5.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="10.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="20.0",model_name="DeepSeek-V4.1-Flash-1017"} 0.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="50.0",model_name="DeepSeek-V4.1-Flash-1017"} 2.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="100.0",model_name="DeepSeek-V4.1-Flash-1017"} 3.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="200.0",model_name="DeepSeek-V4.1-Flash-1017"} 4.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="500.0",model_name="DeepSeek-V4.1-Flash-1017"} 14.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="1000.0",model_name="DeepSeek-V4.1-Flash-1017"} 42.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="2000.0",model_name="DeepSeek-V4.1-Flash-1017"} 98.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="5000.0",model_name="DeepSeek-V4.1-Flash-1017"} 172.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="10000.0",model_name="DeepSeek-V4.1-Flash-1017"} 211.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="20000.0",model_name="DeepSeek-V4.1-Flash-1017"} 217.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="50000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="100000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="200000.0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_kv_computed_tokens_bucket{engine="0",le="+Inf",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_kv_computed_tokens_count{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 223.0
+vllm:request_prefill_kv_computed_tokens_sum{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 826454.0
+# HELP vllm:request_prefill_kv_computed_tokens_created Histogram of new KV tokens computed during prefill (excluding cached tokens).
+# TYPE vllm:request_prefill_kv_computed_tokens_created gauge
+vllm:request_prefill_kv_computed_tokens_created{engine="0",model_name="DeepSeek-V4.1-Flash-1017"} 1.7932442039890358e+09
+# HELP vllm:cache_config_info Information of the LLMEngine CacheConfig
+# TYPE vllm:cache_config_info gauge
+vllm:cache_config_info{_block_size_resolved="True",block_size="128",cache_dtype="auto",enable_mamba_fine_grained_prefix_cache="False",enable_prefix_caching="True",engine="0",gpu_memory_utilization="0.8",is_attention_free="False",kv_cache_dtype_skip_layers="[]",kv_cache_layout="None",kv_cache_max_concurrency="1.0004559963520292",kv_cache_memory_bytes="500000000",kv_cache_size_tokens="307852",kv_offloading_backend="native",kv_offloading_size="None",kv_sharing_fast_prefill="False",mamba_block_size="None",mamba_cache_dtype="auto",mamba_cache_mode="none",mamba_page_size_padded="None",mamba_ssm_cache_dtype="auto",num_cpu_blocks="None",num_gpu_blocks="2194",num_gpu_blocks_override="None",prefix_cache_retention_interval="0",prefix_caching_hash_algo="sha256",prefix_match_unit="None",recurrent_checkpoint_policy="auto",replayssm_buffer_len="16",skip_page_size_padded="None",sliding_window="128",swa_block_size="None",use_kda_recoverssm="False",use_replayssm="False",user_specified_block_size="True",user_specified_mamba_block_size="False"} 1.0
+# HELP http_requests_total Total number of requests by method, status and handler.
+# TYPE http_requests_total counter
+http_requests_total{handler="/v1/chat/completions",method="POST",status="2xx"} 14.0
+http_requests_total{handler="/v1/chat/completions",method="POST",status="4xx"} 2.0
+http_requests_total{handler="/v1/models",method="GET",status="2xx"} 743.0
+http_requests_total{handler="none",method="HEAD",status="4xx"} 6.0
+http_requests_total{handler="/v1/messages",method="POST",status="2xx"} 210.0
+http_requests_total{handler="/v1/messages/count_tokens",method="POST",status="2xx"} 5.0
+# HELP http_requests_created Total number of requests by method, status and handler.
+# TYPE http_requests_created gauge
+http_requests_created{handler="/v1/chat/completions",method="POST",status="2xx"} 1.7932442264674714e+09
+http_requests_created{handler="/v1/chat/completions",method="POST",status="4xx"} 1.7932483464970362e+09
+http_requests_created{handler="/v1/models",method="GET",status="2xx"} 1.7932483504697244e+09
+http_requests_created{handler="none",method="HEAD",status="4xx"} 1.7932600406137621e+09
+http_requests_created{handler="/v1/messages",method="POST",status="2xx"} 1.7932600825313444e+09
+http_requests_created{handler="/v1/messages/count_tokens",method="POST",status="2xx"} 1.7932652495164902e+09
+# HELP http_request_size_bytes Content length of incoming requests by handler. Only value of header is respected. Otherwise ignored. No percentile calculated. 
+# TYPE http_request_size_bytes summary
+http_request_size_bytes_count{handler="/v1/chat/completions"} 16.0
+http_request_size_bytes_sum{handler="/v1/chat/completions"} 276909.0
+http_request_size_bytes_count{handler="/v1/models"} 743.0
+http_request_size_bytes_sum{handler="/v1/models"} 0.0
+http_request_size_bytes_count{handler="none"} 6.0
+http_request_size_bytes_sum{handler="none"} 0.0
+http_request_size_bytes_count{handler="/v1/messages"} 210.0
+http_request_size_bytes_sum{handler="/v1/messages"} 7.0278901e+07
+http_request_size_bytes_count{handler="/v1/messages/count_tokens"} 5.0
+http_request_size_bytes_sum{handler="/v1/messages/count_tokens"} 165882.0
+# HELP http_request_size_bytes_created Content length of incoming requests by handler. Only value of header is respected. Otherwise ignored. No percentile calculated. 
+# TYPE http_request_size_bytes_created gauge
+http_request_size_bytes_created{handler="/v1/chat/completions"} 1.793244226468352e+09
+http_request_size_bytes_created{handler="/v1/models"} 1.7932483504700592e+09
+http_request_size_bytes_created{handler="none"} 1.7932600406141405e+09
+http_request_size_bytes_created{handler="/v1/messages"} 1.7932600825320692e+09
+http_request_size_bytes_created{handler="/v1/messages/count_tokens"} 1.7932652495167108e+09
+# HELP http_response_size_bytes Content length of outgoing responses by handler. Only value of header is respected. Otherwise ignored. No percentile calculated. 
+# TYPE http_response_size_bytes summary
+http_response_size_bytes_count{handler="/v1/chat/completions"} 16.0
+http_response_size_bytes_sum{handler="/v1/chat/completions"} 8423.0
+http_response_size_bytes_count{handler="/v1/models"} 743.0
+http_response_size_bytes_sum{handler="/v1/models"} 371500.0
+http_response_size_bytes_count{handler="none"} 6.0
+http_response_size_bytes_sum{handler="none"} 132.0
+http_response_size_bytes_count{handler="/v1/messages"} 210.0
+http_response_size_bytes_sum{handler="/v1/messages"} 0.0
+http_response_size_bytes_count{handler="/v1/messages/count_tokens"} 5.0
+http_response_size_bytes_sum{handler="/v1/messages/count_tokens"} 367.0
+# HELP http_response_size_bytes_created Content length of outgoing responses by handler. Only value of header is respected. Otherwise ignored. No percentile calculated. 
+# TYPE http_response_size_bytes_created gauge
+http_response_size_bytes_created{handler="/v1/chat/completions"} 1.7932442264694176e+09
+http_response_size_bytes_created{handler="/v1/models"} 1.7932483504703627e+09
+http_response_size_bytes_created{handler="none"} 1.793260040614226e+09
+http_response_size_bytes_created{handler="/v1/messages"} 1.7932600825329142e+09
+http_response_size_bytes_created{handler="/v1/messages/count_tokens"} 1.7932652495167308e+09
+# HELP http_request_duration_highr_seconds Latency with many buckets but no API specific labels. Made for more accurate percentile calculations. 
+# TYPE http_request_duration_highr_seconds histogram
+http_request_duration_highr_seconds_bucket{le="0.01"} 727.0
+http_request_duration_highr_seconds_bucket{le="0.025"} 738.0
+http_request_duration_highr_seconds_bucket{le="0.05"} 747.0
+http_request_duration_highr_seconds_bucket{le="0.075"} 752.0
+http_request_duration_highr_seconds_bucket{le="0.1"} 753.0
+http_request_duration_highr_seconds_bucket{le="0.25"} 756.0
+http_request_duration_highr_seconds_bucket{le="0.5"} 756.0
+http_request_duration_highr_seconds_bucket{le="0.75"} 756.0
+http_request_duration_highr_seconds_bucket{le="1.0"} 759.0
+http_request_duration_highr_seconds_bucket{le="1.5"} 759.0
+http_request_duration_highr_seconds_bucket{le="2.0"} 760.0
+http_request_duration_highr_seconds_bucket{le="2.5"} 763.0
+http_request_duration_highr_seconds_bucket{le="3.0"} 765.0
+http_request_duration_highr_seconds_bucket{le="3.5"} 767.0
+http_request_duration_highr_seconds_bucket{le="4.0"} 772.0
+http_request_duration_highr_seconds_bucket{le="4.5"} 778.0
+http_request_duration_highr_seconds_bucket{le="5.0"} 786.0
+http_request_duration_highr_seconds_bucket{le="7.5"} 806.0
+http_request_duration_highr_seconds_bucket{le="10.0"} 821.0
+http_request_duration_highr_seconds_bucket{le="30.0"} 903.0
+http_request_duration_highr_seconds_bucket{le="60.0"} 940.0
+http_request_duration_highr_seconds_bucket{le="+Inf"} 980.0
+http_request_duration_highr_seconds_count 980.0
+http_request_duration_highr_seconds_sum 7244.3900377675745
+# HELP http_request_duration_highr_seconds_created Latency with many buckets but no API specific labels. Made for more accurate percentile calculations. 
+# TYPE http_request_duration_highr_seconds_created gauge
+http_request_duration_highr_seconds_created 1.793244204989805e+09
+# HELP http_request_duration_seconds Latency with only few buckets by handler. Made to be only used if aggregation by handler is important. 
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{handler="/v1/chat/completions",le="0.1",method="POST"} 1.0
+http_request_duration_seconds_bucket{handler="/v1/chat/completions",le="0.5",method="POST"} 2.0
+http_request_duration_seconds_bucket{handler="/v1/chat/completions",le="1.0",method="POST"} 5.0
+http_request_duration_seconds_bucket{handler="/v1/chat/completions",le="+Inf",method="POST"} 16.0
+http_request_duration_seconds_count{handler="/v1/chat/completions",method="POST"} 16.0
+http_request_duration_seconds_sum{handler="/v1/chat/completions",method="POST"} 159.80206677700335
+http_request_duration_seconds_bucket{handler="/v1/models",le="0.1",method="GET"} 741.0
+http_request_duration_seconds_bucket{handler="/v1/models",le="0.5",method="GET"} 743.0
+http_request_duration_seconds_bucket{handler="/v1/models",le="1.0",method="GET"} 743.0
+http_request_duration_seconds_bucket{handler="/v1/models",le="+Inf",method="GET"} 743.0
+http_request_duration_seconds_count{handler="/v1/models",method="GET"} 743.0
+http_request_duration_seconds_sum{handler="/v1/models",method="GET"} 1.3822723727789707
+http_request_duration_seconds_bucket{handler="none",le="0.1",method="HEAD"} 6.0
+http_request_duration_seconds_bucket{handler="none",le="0.5",method="HEAD"} 6.0
+http_request_duration_seconds_bucket{handler="none",le="1.0",method="HEAD"} 6.0
+http_request_duration_seconds_bucket{handler="none",le="+Inf",method="HEAD"} 6.0
+http_request_duration_seconds_count{handler="none",method="HEAD"} 6.0
+http_request_duration_seconds_sum{handler="none",method="HEAD"} 0.10253953198844101
+http_request_duration_seconds_bucket{handler="/v1/messages",le="0.1",method="POST"} 0.0
+http_request_duration_seconds_bucket{handler="/v1/messages",le="0.5",method="POST"} 0.0
+http_request_duration_seconds_bucket{handler="/v1/messages",le="1.0",method="POST"} 0.0
+http_request_duration_seconds_bucket{handler="/v1/messages",le="+Inf",method="POST"} 210.0
+http_request_duration_seconds_count{handler="/v1/messages",method="POST"} 210.0
+http_request_duration_seconds_sum{handler="/v1/messages",method="POST"} 7082.848702250791
+http_request_duration_seconds_bucket{handler="/v1/messages/count_tokens",le="0.1",method="POST"} 5.0
+http_request_duration_seconds_bucket{handler="/v1/messages/count_tokens",le="0.5",method="POST"} 5.0
+http_request_duration_seconds_bucket{handler="/v1/messages/count_tokens",le="1.0",method="POST"} 5.0
+http_request_duration_seconds_bucket{handler="/v1/messages/count_tokens",le="+Inf",method="POST"} 5.0
+http_request_duration_seconds_count{handler="/v1/messages/count_tokens",method="POST"} 5.0
+http_request_duration_seconds_sum{handler="/v1/messages/count_tokens",method="POST"} 0.2544568350131158
+# HELP http_request_duration_seconds_created Latency with only few buckets by handler. Made to be only used if aggregation by handler is important. 
+# TYPE http_request_duration_seconds_created gauge
+http_request_duration_seconds_created{handler="/v1/chat/completions",method="POST"} 1.7932442264701667e+09
+http_request_duration_seconds_created{handler="/v1/models",method="GET"} 1.7932483504707315e+09
+http_request_duration_seconds_created{handler="none",method="HEAD"} 1.793260040614464e+09
+http_request_duration_seconds_created{handler="/v1/messages",method="POST"} 1.7932600825334792e+09
+http_request_duration_seconds_created{handler="/v1/messages/count_tokens",method="POST"} 1.7932652495170562e+09
+# HELP vllm:tool_call_parser_invocations_total Total number of ToolParser invocations. Non-streaming increments once per choice; streaming increments once per delta.
+# TYPE vllm:tool_call_parser_invocations_total counter
+vllm:tool_call_parser_invocations_total{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="chat_completions"} 1820.0
+vllm:tool_call_parser_invocations_total{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="responses"} 0.0
+vllm:tool_call_parser_invocations_total{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="other"} 0.0
+vllm:tool_call_parser_invocations_total{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="chat_completions"} 22544.0
+vllm:tool_call_parser_invocations_total{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="responses"} 0.0
+vllm:tool_call_parser_invocations_total{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="other"} 0.0
+vllm:tool_call_parser_invocations_total{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="chat_completions"} 0.0
+vllm:tool_call_parser_invocations_total{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="responses"} 0.0
+vllm:tool_call_parser_invocations_total{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="other"} 0.0
+vllm:tool_call_parser_invocations_total{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="chat_completions"} 7.0
+vllm:tool_call_parser_invocations_total{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="responses"} 0.0
+vllm:tool_call_parser_invocations_total{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="other"} 0.0
+# HELP vllm:tool_call_parser_invocations_created Total number of ToolParser invocations. Non-streaming increments once per choice; streaming increments once per delta.
+# TYPE vllm:tool_call_parser_invocations_created gauge
+vllm:tool_call_parser_invocations_created{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="chat_completions"} 1.793244204993807e+09
+vllm:tool_call_parser_invocations_created{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="responses"} 1.7932442049938514e+09
+vllm:tool_call_parser_invocations_created{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="other"} 1.793244204993855e+09
+vllm:tool_call_parser_invocations_created{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="chat_completions"} 1.793244204993902e+09
+vllm:tool_call_parser_invocations_created{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="responses"} 1.7932442049939053e+09
+vllm:tool_call_parser_invocations_created{mode="streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="other"} 1.7932442049939084e+09
+vllm:tool_call_parser_invocations_created{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="chat_completions"} 1.7932442049939518e+09
+vllm:tool_call_parser_invocations_created{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="responses"} 1.7932442049939547e+09
+vllm:tool_call_parser_invocations_created{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="tool_call",request_type="other"} 1.7932442049939575e+09
+vllm:tool_call_parser_invocations_created{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="chat_completions"} 1.7932442049939609e+09
+vllm:tool_call_parser_invocations_created{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="responses"} 1.7932442049939637e+09
+vllm:tool_call_parser_invocations_created{mode="non_streaming",model_name="DeepSeek-V4.1-Flash-1017",outcome="no_tool_call",request_type="other"} 1.7932442049939673e+09
