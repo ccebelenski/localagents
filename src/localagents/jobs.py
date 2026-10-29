@@ -218,7 +218,7 @@ class Job:
 
     @property
     def done(self) -> bool:
-        return self.status in ("succeeded", "failed", "cancelled", "timeout")
+        return self.status in ("succeeded", "failed", "cancelled", "timeout", "lost")
 
     def summary(self, include_result: bool = True) -> dict[str, Any]:
         d = {
@@ -319,11 +319,13 @@ class JobStore:
             job.endpoint_id, job.model_id = endpoint_id, model_id
             self.conn.execute(
                 """INSERT INTO jobs (id, name, mcp_server_id, endpoint_id, model_id, task, cwd,
-                                     isolation, status, created_at, updated, dump, log_events, worktree)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                     isolation, status, created_at, updated, dump, log_events, worktree,
+                                     context, num_turns, last_activity)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (jid, name, self.server_id, endpoint_id, model_id, job.task, job.cwd, job.isolation,
                  job.status, created_at, time.time(), 1 if job.dump else 0, 1 if job.log_events else 0,
-                 json.dumps(job.worktree) if job.worktree is not None else None),
+                 json.dumps(job.worktree) if job.worktree is not None else None,
+                 job.context, job.num_turns, job.last_activity),
             )
         return job
 
@@ -374,7 +376,7 @@ class JobStore:
                 """UPDATE jobs SET status = 'lost', error = 'server exited', finished_at = ?, updated = ?
                    WHERE status IN ('queued', 'running')
                      AND mcp_server_id IN (
-                       SELECT id FROM mcp_servers WHERE stopped IS NOT NULL OR updated < ?
+                       SELECT id FROM mcp_servers WHERE stopped IS NOT NULL OR updated IS NULL OR updated < ?
                      )""",
                 (now, now, now - 60),
             )

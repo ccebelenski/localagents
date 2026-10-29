@@ -54,6 +54,23 @@ def test_store_does_not_open_the_database_until_used(monkeypatch, tmp_path):
     assert db.db_path().exists()
 
 
+def test_new_row_carries_the_fields_known_at_creation(monkeypatch, tmp_path):
+    """DeepSeek review of 1.2, finding 2: context, num_turns and last_activity were NULL until
+    the first changed(); a queued or lost job showed no context window."""
+    store = _store(monkeypatch, tmp_path)
+    job = store.new(task="t", model="m", endpoint="e", base_url="http://x", cwd="/tmp", run_cwd="/tmp",
+                    isolation="none", context=131072)
+    row = store.conn.execute("SELECT context, num_turns, last_activity FROM jobs WHERE id = ?", (job.id,)).fetchone()
+    assert tuple(row) == (131072, 0, "")
+
+
+def test_lost_counts_as_done():
+    """1.5a writes status='lost'; a waiter must not block on it (DeepSeek review of 1.2)."""
+    j = jobs.Job(id="x", name="n", task="t", model="m", endpoint="e", base_url="b", cwd="c", run_cwd="c",
+                 isolation="none", status="lost")
+    assert j.done
+
+
 def test_mcp_servers_row_at_first_use(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     rows = store.conn.execute("SELECT * FROM mcp_servers").fetchall()
@@ -247,6 +264,20 @@ def test_mark_lost_jobs_marks_other_servers_not_this_one(monkeypatch, tmp_path):
     assert _row(store, mine.id)["status"] == "running"  # this server's row is fresh: never touched
     # a second call finds nothing left to mark
     assert store.mark_lost_jobs(now + 10) == 0
+
+
+def test_mark_lost_jobs_marks_a_server_with_no_heartbeat_at_all(monkeypatch, tmp_path):
+    """A row written before heartbeats existed has updated NULL; the spec's 'no heartbeat for
+    60 s' covers it (flagged by the 1.5a lane; the brief's SQL missed it)."""
+    mine = _store(monkeypatch, tmp_path)
+    other = jobs.JobStore()
+    j = other.new(task="t", model="m", endpoint="e", base_url="http://x", cwd="/tmp", run_cwd="/tmp", isolation="none")
+    j.status = "running"
+    j.changed()
+    other.conn.execute("UPDATE mcp_servers SET updated = NULL WHERE id = ?", (other.server_id,))
+    other.conn.commit()
+    assert mine.mark_lost_jobs() == 1
+    assert mine.conn.execute("SELECT status, error FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "lost"
 
 
 def test_mark_lost_jobs_marks_a_stopped_server_despite_a_fresh_heartbeat(monkeypatch, tmp_path):

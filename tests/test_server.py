@@ -8,17 +8,6 @@ from localagents.registry import Defaults, Endpoint, Registry
 SERVING = {"first": ["default-model"], "second": ["big-model"]}
 
 
-@pytest.fixture(autouse=True)
-def fresh_store(monkeypatch, tmp_path):
-    """The module-level `server.store` caches its sqlite connection, and the connection belongs
-    to the directory open on first use. Reset the store after XDG_STATE_HOME is set so each test
-    opens its own database instead of sharing the first test's."""
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    server.store = jobs.JobStore()
-    server._shim_port_recorded = False  # the once-guard belongs to the store we just replaced
-    server._shim_port_recorded = False
-
-
 @pytest.fixture
 def reg(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))

@@ -227,6 +227,10 @@ def open_db(path: Path | None = None) -> sqlite3.Connection:
         conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         _set_wal(conn)
         conn.execute("PRAGMA foreign_keys = ON")  # per connection, never persisted in the file
+        # WAL + NORMAL: a commit survives a process crash without an fsync of its own (the log is
+        # synced at checkpoints); only a power loss can lose the last commits. The server writes a
+        # row per SDK message on the event loop, so the per-commit fsync of FULL is the wrong trade.
+        conn.execute("PRAGMA synchronous = NORMAL")
         migrate(conn)
     except BaseException:
         conn.close()

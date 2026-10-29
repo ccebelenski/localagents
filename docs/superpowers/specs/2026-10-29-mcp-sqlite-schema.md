@@ -125,6 +125,13 @@ PRAGMA user_version = 1; journal_mode = WAL; busy_timeout = 5000; foreign_keys =
 - `tool_calls`: the runner keeps `tool_use_id -> rowid` for pending calls in memory and sets
   `finished`/`is_error` by rowid, so no index on `tool_use_id` is needed.
 - `foreign_keys = ON` is per connection and must be set on every open.
+- A transaction holds one statement, or one job's creation; never a probe cycle or a network
+  call. Every writer shares one write lock, and a server's `changed()` runs on its event loop
+  with a 5 s busy timeout (measured: a 2 s hold by another process stalls the loop 2 s; a hold
+  past the timeout drops that update). The monitor's collector commits each probe row on its
+  own.
+- `synchronous = NORMAL` with WAL: commits survive a process crash without a per-commit fsync;
+  only a power loss can lose the last commits, which is the right trade for a row per SDK message.
 - On startup a server marks every `queued`/`running` job whose `mcp_servers` row is not live
   (no heartbeat for 60 s, or `stopped` set) as `lost` with `error = "server exited"`. That is
   the only status write to another server's job.

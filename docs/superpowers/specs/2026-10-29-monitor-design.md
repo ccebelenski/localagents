@@ -36,7 +36,7 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
 - Exposed to the coordinating model: `job_status` and the final record gain `tool_counts`
   (per tool: calls, errors) and `last_tool`; `job_log` gets `tools: N` (last N tool calls,
   structured); the blocking-wait progress line names the current tool and the error count.
-- Stays as files: `task.txt`, `transcript.txt` (humans read them; `job_log` tails them),
+- Stays as files: `transcript.txt` (humans read it; `job_log` tails it; the brief is the `jobs.task` column),
   and the opt-in debug dumps `events.jsonl` / `requests_full.jsonl`. The 7-day prune keeps
   deleting directories by date; job, request and tool-call rows are kept.
 - The MCP server never depends on the monitor. The monitor adds its own tables to the same
