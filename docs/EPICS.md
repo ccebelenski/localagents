@@ -61,13 +61,13 @@ the duplicates go), then docs.
   the error count; `job_status`/`job_log`/`list_jobs` read any server's job, the in-process
   tools refuse another server's with a clear error. Gate: summaries over a seeded database
   match hand-computed values; progress line pinned. Lane: DeepSeek (dgx1-a).
-- ☐ **1.7 Review fold: liveness, loop hygiene, cleanup.** From the DeepSeek batch review and
+- ☑ **1.7 Review fold: liveness, loop hygiene, cleanup.** (9951438 + 7836d63, Qwen/ai1 job 20261029-043615-edf1; review pending) From the DeepSeek batch review and
   the Opus 1.5b review: a `†` mark for lost; `mark_lost_jobs` checks the pid like `collect`
   (a stalled server is not a dead one); `collect` LEFT JOINs the lookups; startup writes never
   kill the server on a lock; `new()` removes its directory on a failed insert; the old
   `status/` directory is removed at startup; worktree git calls run in `asyncio.to_thread`;
   subprocess tests point at tmp. Gate: one test per item. Lane: Qwen (ai1), DeepSeek review.
-- ☐ **1.6 Docs and version.** README job records, status line, retention ("retention must
+- ☑ **1.6 Docs and version.** (6472c6d, Qwen/ai2 job 20261029-042000-0a8e; every sentence cited; two sentences re-corrected in 1.7) README job records, status line, retention ("retention must
   exceed the longest timeout_s"), `models.example.yaml`; version bump. Gate: full suite;
   README cites nothing that no longer exists. Lane: Qwen or Haiku.
 
