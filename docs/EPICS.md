@@ -387,8 +387,17 @@ the duplicates go), then docs.
 - ☑ **3.5a Fold of the 3.5 review** (Qwen/ai2 job 20261029-135005-491f2d2b, 42 turns, 521 tests; third-model probe folded into the 3.6 live run) (reviewer fixes its own findings): the smoke heartbeats
   its server row while the job runs and closes it at exit; `--requests 0` prints a skip line,
   negative is an error; the shim estimates `count_tokens` on 404, 405 and 501. Lane: Qwen (ai2).
-- ☐ **3.6 Merge gates.** Smoke green against the real `models.yaml`; two-minute live run of
-  the monitor at the Epic 3 merge; README monitor section (with 3.1).
+- ☑ **3.6 Merge gates.** (Qwen/ai1 job 20261029-162525-e7fcb80e, 78 turns; report in
+  `docs/gates/2026-10-29-epic3-live-gate.md`: the monitor against the real `models.yaml` for
+  two minutes with the real database: four live endpoints each serving the model the snapshot
+  names, seven dormant with the kernel's sentence, ai9's node down with the port-22 answer
+  `nothing`; 5 s / 60 s cadence exact; a rate interval recomputed by hand from ai1's own
+  metrics; the smoke once, 17/17, the job seen appearing with `Bash: date` and finishing;
+  every page over the real fleet with zero console errors; SIGTERM exit 0. GREEN. One (a) stale
+  expectation in the brief (the status line's 120 s linger is for a still-live server's
+  finished jobs, not a stopped smoke); one (c) node fact (Strata's counters advance during
+  streaming, so a 5 s bin straddling a request can spike above the engine's ceiling). Live
+  data the seed never showed: the monitor watching its own operator's session.)
 
 ## Epic 4: operations (V2, not scheduled)
 
