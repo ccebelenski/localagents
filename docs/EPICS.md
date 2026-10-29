@@ -143,10 +143,14 @@ the duplicates go), then docs.
   `time`); no `requests_running` from Strata; vLLM 117 series, 9 mapped
   (`num_requests_waiting_by_reason`, `num_preemptions_total`, `external_prefix_cache_*`,
   `estimated_*_per_gpu`); llama.cpp `/slots` shape differs busy vs idle.
-- ☐ **2.1a Manifest oracle fold.** Each manifest row pins `parsed` (the parser's entry count)
-  and the test asserts equality, so a consistently hand-edited fixture is caught; every HTTP
-  row has its `.headers` sidecar and its Content-Length, when present, equals `bytes`. Lane:
-  Qwen (ai1, the reviewer), review by a different model.
+- ☑ **2.1a Manifest oracle fold.** (e1c061d, Qwen/ai1 job 20261029-114842-0a0f5114, 25 turns;
+  reviewed by Qwen3.8-27B/llamacpp job 20261029-115233-c9225557, 40 turns: the entry-count pin
+  is a presence oracle, a value edit of equal byte length passes every check; `_content_length`
+  reads the first block, so a redirect sidecar misreports; an error row without `path` raises
+  KeyError. Folded in 2.1b.)
+- ☐ **2.1b Manifest values oracle** (reviewer fixes its own findings): rows pin a sha256 digest
+  of the parsed values; Content-Length from the last header block; a pathless error row is a
+  problem string. Lane: Qwen3.8-27B, review by Qwen (ai1) folded into the next cycle.
 - ☐ **2.2 Probes table and collector.** `monitor/collect.py`: fast/slow cadence per state,
   one `probes` row per probe (failure sentence included), Strata `hardware`/`requests` stored
   when present, rates between consecutive rows with reset detection (negative delta →
