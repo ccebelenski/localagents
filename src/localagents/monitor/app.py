@@ -14,6 +14,7 @@ comment after ``keepalive_s`` of silence.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 import time
@@ -70,8 +71,11 @@ class _Fanout:
         self.tick = tick
         self.subscribers: set[asyncio.Event] = set()
         self.task: asyncio.Task | None = None
+        self.closed = False
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
+        if self.closed:  # story 3.2c row 1: close() is final — see close()
+            return
         if self.task is None or self.task.done() or self.task.get_loop() is not loop:
             self.task = loop.create_task(self._run())
 
@@ -91,9 +95,25 @@ class _Fanout:
             for ev in list(self.subscribers):
                 ev.set()
 
-    def close(self) -> None:
-        if self.task is not None and not self.task.done():
-            self.task.cancel()
+    async def close(self) -> None:
+        """Story 3.2c row 1 (the 3.2 combined review): this had no caller, so a stop on a loop
+        that outlives the app left the drain task pending forever — the shipped command only
+        masked it with ``asyncio.run`` cancelling the leftovers at exit. The stop path now calls
+        this and awaits it: the drain is cancelled and awaited, so after ``stop`` no
+        ``_Fanout._run`` task is pending. Idempotent for the races ruling (d) names: the second
+        stop and the other open streams all arrive here too — whoever took the task awaits it,
+        whoever finds it taken returns. After close, ``start`` (and with it ``subscribe``'s lazy
+        fallback) never restarts the drain: a stream connecting after the stop gets its connect
+        snapshot and ends at once, resurrecting nothing. A wake this close races does not lose
+        a tick that mattered: every subscriber's event is set in one step of ``_run`` before any
+        stream wakes, and streams ending on a set ``stop`` want no further tick anyway."""
+        self.closed = True
+        task, self.task = self.task, None
+        if task is not None and not task.done():
+            task.cancel()
+        if task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 def make_app(
@@ -142,7 +162,11 @@ def make_app(
         return parse_range(request.query_params.get("range", default))
 
     async def index(request: Request) -> Response:
-        return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
+        # story 3.2c row 3 (the 3.2 combined review): the shell answers no-cache like the static
+        # mount below — it names the page's scripts, so a shell the browser reused without
+        # asking pins a stale build across an upgrade.
+        return FileResponse(STATIC_DIR / "index.html", media_type="text/html",
+                            headers={"Cache-Control": "no-cache"})
 
     @guarded
     async def snapshot(request: Request) -> Response:
@@ -228,6 +252,11 @@ def make_app(
                     if stop is not None and stop.is_set():
                         break
                     yield await snapshot_event()
+                # Story 3.2c row 1 (the 3.2 combined review): reaching here means the loop
+                # ended on a set `stop` — the app's stop path, and the review's place where a
+                # caller-less `_Fanout.close()` left the drain task pending. The first stream
+                # home cancels it and awaits; the streams behind it find it closed and return.
+                await fan.close()
             finally:
                 fan.unsubscribe(ev)
 

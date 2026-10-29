@@ -7,6 +7,7 @@ TestClient buffers a whole response body before returning (testclient.py ``handl
 ``portal.call(self.app, scope, receive, send)`` returns only when the app does), so it can never
 hand back the first event of an endless stream."""
 import asyncio
+import errno
 import json
 import os
 import re
@@ -68,6 +69,16 @@ def test_index_is_the_html_shell_loading_app_js(client):
     assert r.headers["content-type"].startswith("text/html")
     assert "localagents monitor" in r.text
     assert '<script src="/static/app.js"></script>' in r.text
+
+
+def test_the_shell_revalidates_on_every_load(client):
+    """Story 3.2c row 3 (the 3.2 combined review's observation): `/` carried no Cache-Control,
+    so a browser could reuse a stale shell after an upgrade — the shell is what names the
+    page's scripts, so a stale one pins a stale build. Same rule as the static mount: the
+    answer is no-cache, so the browser asks on every load."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache"
 
 
 def test_static_serves_the_package_files(client):
@@ -419,6 +430,82 @@ def test_stop_ends_the_stream(dbpath, tmp_path):
     asyncio.run(main())
 
 
+def _drain_tasks():
+    """The ``_Fanout._run`` tasks pending on the running loop (story 3.2c row 1)."""
+    return [t for t in asyncio.all_tasks() if getattr(t.get_coro(), "__name__", "") == "_run"]
+
+
+def test_stop_ends_the_streams_and_closes_the_fanout(dbpath, tmp_path):
+    """Story 3.2c row 1 (the 3.2 combined review): ``_Fanout.close()`` had no caller, so a stop
+    on a loop that outlives the app left the drain task pending forever — masked in the shipped
+    command only by ``asyncio.run`` cancelling every leftover task at exit. The stop path now
+    also cancels the drain and awaits it: with two streams open, stop + tick ends both streams
+    AND leaves no ``_Fanout._run`` task pending on this loop."""
+
+    async def main():
+        tick, stop = asyncio.Event(), asyncio.Event()
+        app = _app(dbpath, tmp_path, tick, stop=stop)
+        a, b = _Stream(app), _Stream(app)
+        for s in (a, b):
+            assert _event(await s.next_chunk())[0] == "snapshot"
+        assert _drain_tasks()  # the drain is pending while the app runs
+        stop.set()
+        tick.set()  # what the command does on SIGTERM: wake the streams so they see stop
+        await asyncio.wait_for(a.task, 5)
+        await asyncio.wait_for(b.task, 5)
+        assert _drain_tasks() == []  # nothing of the fan-out survives the stop on this loop
+        assert app.state.fanout.task is None
+    asyncio.run(main())
+
+
+def test_stop_set_twice_ends_the_streams_without_error(dbpath, tmp_path):
+    """Standing ruling (d) for the fan-out change: stop twice — the second set landing while the
+    first stop's close is still awaiting the drain — must not raise, and must still end every
+    stream with nothing pending. ``serve``'s own ``finally: stop.set()`` is exactly this when a
+    signal already drove the stop."""
+
+    async def main():
+        tick, stop = asyncio.Event(), asyncio.Event()
+        app = _app(dbpath, tmp_path, tick, stop=stop)
+        a, b = _Stream(app), _Stream(app)
+        for s in (a, b):
+            assert _event(await s.next_chunk())[0] == "snapshot"
+        stop.set()
+        tick.set()
+        await asyncio.sleep(0)  # one loop pass: the streams are now mid their stop awaits
+        stop.set()              # the second, while the first stop's await is in flight
+        await asyncio.wait_for(a.task, 5)
+        await asyncio.wait_for(b.task, 5)
+        assert _drain_tasks() == []
+        assert app.state.fanout.task is None
+    asyncio.run(main())
+
+
+def test_a_stream_after_close_does_not_resurrect_the_drain(dbpath, tmp_path):
+    """Story 3.2c row 1: the lazy fallback in ``subscribe()`` must not restart the drain after
+    close. A browser reconnecting after the stop gets the connect snapshot and the stream ends
+    at once — decided over raising a clear error: ``/events`` answers with the snapshot first,
+    and an exception there surfaces as a raw ASGI failure of an already-200 response, while the
+    page's EventSource would retry into the same answer. Ending at once says "no server here"
+    in the only channel the route has."""
+
+    async def main():
+        tick, stop = asyncio.Event(), asyncio.Event()
+        app = _app(dbpath, tmp_path, tick, stop=stop)
+        s = _Stream(app)
+        assert _event(await s.next_chunk())[0] == "snapshot"
+        stop.set()
+        tick.set()
+        await asyncio.wait_for(s.task, 5)
+        assert _drain_tasks() == []
+        s2 = _Stream(app)  # a reconnect after close
+        assert _event(await s2.next_chunk())[0] == "snapshot"  # the connect snapshot is the contract
+        await asyncio.wait_for(s2.task, 5)  # and the stream ends at once: stop is set, no ticks follow
+        assert s2.chunks == []
+        assert _drain_tasks() == []  # the subscribe fallback did not restart the drain
+    asyncio.run(main())
+
+
 def test_a_database_error_in_the_stream_is_an_error_event(tmp_path):
     def broken():
         raise sqlite3.OperationalError("disk I/O error")
@@ -504,6 +591,49 @@ def test_port_free_is_false_for_a_listening_socket():
         assert not serve_mod.port_free("127.0.0.1", holder.getsockname()[1])
     finally:
         holder.close()
+
+
+def test_port_free_refuses_when_any_resolved_address_is_taken():
+    """Story 3.2c row 4 (the 3.2 combined review): port_free answered on the FIRST address
+    getaddrinfo resolved. `localhost` resolves ::1 before 127.0.0.1 on this box, so a listener
+    on 127.0.0.1 only still read free and `--host localhost` started serving where the port was
+    taken. The port is free only when EVERY address for the host binds."""
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.bind(("127.0.0.1", 0))
+    holder.listen()
+    try:
+        assert not serve_mod.port_free("localhost", holder.getsockname()[1])
+    finally:
+        holder.close()
+
+
+def test_port_free_is_true_for_a_free_port():
+    """Every address of the host binds: the port is free. (127.0.0.1 names one address; the
+    multi-address `localhost` of the row's other test reads free the same way when nothing
+    listens.)"""
+    assert serve_mod.port_free("127.0.0.1", _free_port())
+
+
+def test_port_free_skips_an_address_family_the_box_lacks(monkeypatch):
+    """Story 3.2c row 4: an IPv6-less box still resolves `localhost` to ::1, and binding it
+    answers EADDRNOTAVAIL, not EADDRINUSE — that address is skipped, not a refusal, and the
+    free IPv4 bind still answers True. The box is simulated (this kernel has IPv6): a socket
+    subclass fails the v6 bind the way a box without the family does."""
+    port = _free_port()
+
+    class _NoV6Socket(socket.socket):
+        def bind(self, sa):
+            if self.family == socket.AF_INET6:
+                raise OSError(errno.EADDRNOTAVAIL, "Cannot assign requested address")
+            return super().bind(sa)
+
+    def fake_gai(host, port_, type=None):
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", port_, 0, 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port_))]
+
+    monkeypatch.setattr(serve_mod.socket, "socket", _NoV6Socket)
+    monkeypatch.setattr(serve_mod.socket, "getaddrinfo", fake_gai)
+    assert serve_mod.port_free("localhost", port)
 
 
 def test_a_port_already_in_use_exits_2_with_the_sentence(tmp_path):

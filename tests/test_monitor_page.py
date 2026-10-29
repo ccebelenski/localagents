@@ -265,6 +265,18 @@ def test_job_js_links_to_no_file_urls():
     assert (STATIC / "job.js").read_text().count("file://") == 0
 
 
+def test_job_js_totals_count_only_real_errors():
+    """Story 3.2c row 2 (the 3.2 combined review): the totals row counted every request with
+    ``error != null``, so a server that writes the empty string for a clean request was tallied
+    as an error while its own cell drew clean (the cell reads ``req.error || ""``; 3.2b's
+    handoff did not pick the totals up). The totals now use the row's rule — non-null AND
+    non-empty. This is a source pin, not a browser check: the rule is one expression, and the
+    review reproduced the defect by reading it (a browser pass is available but adds nothing)."""
+    js = (STATIC / "job.js").read_text()
+    assert 'req.error != null && req.error !== ""' in js
+    assert "if (req.error != null) tot.errors++;" not in js
+
+
 # --- story 3.3: the endpoint detail page (endpoint.js) -------------------------------------------
 
 # the classes the endpoint page's browser smoke names (story 3.3's brief)

@@ -54,7 +54,16 @@ def port_free(host: str, port: int) -> bool:
     """Review of 3.1 (G1), ruling F: the port is checked before uvicorn starts, so an occupied
     one is one clean sentence on stderr and exit 2, never a traceback out of uvicorn. The bind
     test is not atomic with the server's own bind (another process can take the port in
-    between); that race still ends in uvicorn's own startup failure, which stays loud."""
+    between); that race still ends in uvicorn's own startup failure, which stays loud.
+
+    Story 3.2c row 4 (the 3.2 combined review): the port is free only when EVERY address
+    getaddrinfo resolves for the host binds — the old answer came from the first address that
+    bound, and ``localhost`` resolves ``::1`` before ``127.0.0.1``, so a listener on
+    ``127.0.0.1:<p>`` alone let ``--host localhost`` start serving on the other family while
+    the port was taken. EADDRNOTAVAIL is a box without that address family (an IPv6-less one
+    still resolves ``localhost`` to ``::1``): skipped, not a refusal — the verdict comes from
+    the addresses the box can use (all skipped answers not free, as before)."""
+    free = False
     for family, stype, proto, _, sa in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
         s = socket.socket(family, stype, proto)
         try:
@@ -63,13 +72,16 @@ def port_free(host: str, port: int) -> bool:
             # LISTENing socket still binds to nothing: EADDRINUSE stands (the 3.1 ruling F test).
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(sa)
-            s.close()
-            return True  # at least one address for this host binds: the port is free
         except OSError as e:
             s.close()
-            if e.errno not in (errno.EADDRINUSE, errno.EADDRNOTAVAIL):
+            if e.errno == errno.EADDRNOTAVAIL:
+                continue  # this box has no such address: says nothing about the port
+            if e.errno != errno.EADDRINUSE:
                 raise
-    return False
+            return False  # taken on this address of the host: refuse, whatever the rest do
+        s.close()
+        free = True
+    return free
 
 
 def db_file(arg: str | None, settings: MonitorSettings) -> Path:
@@ -109,6 +121,15 @@ async def serve(reg: Registry, settings: MonitorSettings, path: Path, host: str,
         await stop.wait()
         server.should_exit = True
         tick.set()  # wake the event streams so they see stop and end
+        # story 3.2c row 1 (the 3.2 combined review): after stop, no `_Fanout._run` task is
+        # pending even on a loop that outlives the app. A connected stream closes the fan-out
+        # itself; this covers the stop with no browser ever open. The sleep(0) lets the drain
+        # run once first — it sets every subscriber's event in one step, so a stream the stop
+        # is meant to wake is already awake when the drain is cancelled. close() is idempotent:
+        # a stream's own close may get here first, and `finally: stop.set()` below is the
+        # second stop ruling (d) names.
+        await asyncio.sleep(0)
+        await app.state.fanout.close()
 
     tasks = [stopper(), server.serve()]
     conn = None

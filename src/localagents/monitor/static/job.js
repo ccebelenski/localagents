@@ -410,7 +410,7 @@
         tot.output += t.output || 0;
         tot.cache_read += t.cache_read || 0;
         tot.cache_creation += t.cache_creation || 0;
-        if (req.error != null) tot.errors++;
+        if (req.error != null && req.error !== "") tot.errors++;  // 3.2c row 2: '' is clean, as the row's own cell already treats it
       });
       var totals = h("tr", { class: "totals" }, [
         h("td", { class: "n", text: fmt.int(reqs.length) }),
