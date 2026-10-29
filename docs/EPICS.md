@@ -203,7 +203,7 @@ the duplicates go), then docs.
   "during a gap"), still no rate; the prober's `load` copy omits a series the document lacks
   so the row stays NULL; `endpoint_events` pruned per endpoint through its index; the "no
   event" docstring says "no restarted event". Folded in 2.2b.)
-- ☐ **2.2b Fold of the 2.2a review** (reviewer fixes its own findings). Lane: Qwen3.8-27B.
+- ☑ **2.2b Fold of the 2.2a review** (Qwen3.8-27B/llamacpp job 20261029-135720-76dbcf09, 90 turns, 528 tests; recovered the review's probe scripts from the dangling WIP commits rather than rebuilding from prose; third-model probe folded into the 3.1a review).
 - ☑ **2.3 Display and node state.** (Qwen3.8-27B/llamacpp job 20261029-122542-1e3d7290, 82
   turns, 361 tests: `endpoint_state`/`node_state`/`node_dormant` with every truth-table row its
   own test, boundary shared with `interval_s`; `probe_port` against a real listener, a closed
@@ -264,7 +264,7 @@ the duplicates go), then docs.
   series; PCIe/CPU/RAM stored but not served as series; disk nowhere in the schema; no
   requests-by-endpoint route though the data exists. Defect: a port in use exits 3 with a raw
   traceback. The `tool_calls` int is overwritten by a list in job detail. Folded in 3.1a.)
-- ☐ **3.1a Fold of the 3.1 review** (reviewer fixes its own findings): schema v4 adds
+- ☑ **3.1a Fold of the 3.1 review** (Qwen/ai1 job 20261029-135525-9a542843, 134 turns, 543 tests; ten hardware series not eight, the brief miscounted; llamacpp appears in the fleet with null series because its dormant probes are probes; totals sum the whole range, not the capped page; the port pre-check is not atomic with uvicorn's bind, documented. Review: Qwen/ai2, pending.) (reviewer fixes its own findings): schema v4 adds
   `probes.state` (Strata's `live.state`, else idle/busy) and `probe_hardware.disk_read_mb`/
   `disk_write_mb`; history serves latency, PCIe, CPU, RAM, disk and state series; a fleet route
   on one time grid; a requests-by-endpoint route; job detail's list is `tool_call_log`; a port in
