@@ -37,3 +37,5 @@ endpoints:
     host: ai1
     # api_key: sk-...                      # for a server started with --api-key; sent on every call, never shown to the agent
 
+# monitor: {port: 8765, attention_hours: 24.0, retention_days: 7}   # the monitor's own section (localagents monitor); the MCP server ignores it
+

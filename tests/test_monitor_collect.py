@@ -255,3 +255,29 @@ def test_a_failed_tick_keeps_a_live_endpoint_on_the_fast_cadence(monkeypatch, co
         await asyncio.wait_for(collect.run(reg, conn, [ep], stop, now=lambda: T0), 10)
     asyncio.run(main())
     assert waits == [T0, T0, T0]
+
+
+def test_run_passes_the_attention_window_to_the_cadence(monkeypatch, conn):
+    """Story 2.3 item 5: run(window_s=1) on an endpoint whose newest up probe is 2 s old:
+    the window flows from run into interval_s, so the endpoint sleeps 60 (dormant), not 5.
+    Stop after one tick; the sleep arguments are asserted through a monkeypatched
+    _sleep_or_stop (the prune task's retention sleep is in there too)."""
+    ep = Endpoint(name="a", base_url=URL, backend="strata")
+    eid = collect.endpoint_id(conn, ep)
+    with db.immediate(conn):
+        conn.execute("INSERT INTO probes (t, endpoint_id, up) VALUES (?, ?, 1)", (998.0, eid))
+    reg = FakeRegistry({"a": [{"up": False, "models": [], "host": "down",
+                                "error": "a is unreachable (EHOSTUNREACH)"}]})
+    sleeps = []
+
+    async def record(stop, seconds):
+        # Waits on stop like the real _sleep_or_stop, so the prune task (whose retention
+        # sleep is 3600) can never stop the run before the endpoint task has ticked once.
+        sleeps.append(seconds)
+        if seconds != 3600:
+            stop.set()
+        await stop.wait()
+    monkeypatch.setattr(collect, "_sleep_or_stop", record)
+    stop = asyncio.Event()
+    asyncio.run(collect.run(reg, conn, [ep], stop, now=lambda: 1000.0, window_s=1))
+    assert 60 in sleeps and 5 not in sleeps

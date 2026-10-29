@@ -86,6 +86,23 @@ def _log(msg: str) -> None:
     print(f"localagents monitor: {msg}", file=sys.stderr, flush=True)
 
 
+async def probe_port(host: str, port: int = 22, timeout_s: float = 2.0) -> str:
+    """The node fallback probe (spec §3 "Node fallback probe"): asked for only when every
+    endpoint on the host timed out — one TCP connect to the host's port 22. ``"answered"``
+    on a completed connect, ``"refused"`` on a connection refusal (the box is up; sshd is
+    not, or the port answers with a refusal), ``"nothing"`` on a timeout or any other
+    OSError (the box is off, or a firewall drops the packets). The connector is
+    ``asyncio.open_connection`` read through the module global, so tests can inject a fake."""
+    try:
+        _reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout_s)
+        writer.close()
+        return "answered"
+    except ConnectionRefusedError:
+        return "refused"
+    except (TimeoutError, OSError):
+        return "nothing"
+
+
 async def run(
     reg: Any,
     conn: sqlite3.Connection,
@@ -94,10 +111,12 @@ async def run(
     now: Callable[[], float] = time.time,
     retention_days: float = retention.RETENTION_DAYS,
     retention_every_s: float = 3600,
+    window_s: float = state.ATTENTION_WINDOW_S,
 ) -> None:
     """Probe every endpoint until ``stop`` is set: one task per endpoint, all concurrent. Each
-    task ticks, then sleeps ``state.interval_s`` (5 s within the attention window of its newest
-    up probe, 60 s dormant). A failing tick (any exception: ``Registry.probe`` already turns a
+    task ticks, then sleeps ``state.interval_s`` (5 s within ``window_s`` of its newest up
+    probe, 60 s dormant; the window is the attention window, ``monitor:``'s ``attention_hours``
+    in hours, story 2.3). A failing tick (any exception: ``Registry.probe`` already turns a
     failed probe into an ``up: False`` dict, so these are database errors) is logged to stderr
     and the loop goes on. One more task prunes the monitor's tables at start and then every
     ``retention_every_s`` (``retention.prune_probes``, ``retention_days``)."""
@@ -126,6 +145,6 @@ async def run(
                 last_up = last_up_t(conn, eid) if eid is not None else None
             except sqlite3.Error as e:
                 _log(f"{ep.name}: reading the last up probe failed: {e}")
-            await _sleep_or_stop(stop, state.interval_s(last_up, now()))
+            await _sleep_or_stop(stop, state.interval_s(last_up, now(), window_s))
 
     await asyncio.gather(prune(), *(one(ep) for ep in endpoints))
