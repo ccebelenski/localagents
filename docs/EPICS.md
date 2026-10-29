@@ -129,10 +129,9 @@ the duplicates go), then docs.
   transcript and carried by `job_status`. Lane: Qwen3.8-27B (llamacpp, local), review by a
   different model.
 
-- ☐ **1.11a Compactions on finished rows; docstring.** A finished job's row shows its
-  compaction count for its two minutes on the line (the operator's "trailing indicator");
-  status.py's module docstring names `render_lines` as the default. Lane: Qwen (ai1, the
-  reviewer).
+- ☑ **1.11a Compactions on finished rows; docstring.** (Qwen/ai1 job 20261029-120856-ce6c4f0a,
+  23 turns; coordinator read the 20-line diff; third-model probe folded into the next status
+  review.)
 
 ## Epic 2: monitor core (collector and storage, no page)
 
