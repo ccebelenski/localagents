@@ -226,10 +226,21 @@ the duplicates go), then docs.
 
 ## Epic 3: monitor web
 
-- ☐ **3.1 App and routes.** `localagents monitor [--port 8765]`: Starlette app, SSE stream
-  pushing a snapshot per tick, JSON history routes for endpoint and job, time-range parsing
-  (15 min to 7 d; bad range rejected). Gate: Starlette test client over the seeded database.
-  Lane: DeepSeek or Opus.
+- ☑ **3.1 App and routes.** (Opus-high, 79 tool uses, 514 tests; §5a is the JSON contract with
+  a spec-vs-code key test; SSE verified over real HTTP in a subprocess; uvicorn's signal
+  capture overridden so SIGTERM exits 0. Corrected the brief: Starlette's TestClient buffers a
+  stream, so the SSE tests drive the ASGI app directly. Decisions: overview rates from the
+  last two probes so a down endpoint shows no stale rate; running jobs carry `server_live`;
+  history rates averaged between kept probes, null across a gap or reset; absent sources
+  are absent keys; job detail's `tool_calls` is a list where the summary's is an int (flagged
+  for the fold). Noticed: `collect.probe_port` is never called by `run`, the node fallback is
+  dead code → 3.1b; `metrics_delta` truncates fractional deltas (seed-only effect); the seed's
+  server pid again. Review: Qwen/ai1, pending.)
+- ☐ **3.1b Node fallback wired.** `collect.run` asks `probe_port` when every endpoint of a
+  host timed out in the same round and stores the answer (a `host_probes` row or a column on
+  the probe), so `node_state`'s `fallback` argument has a source; §3's rule becomes code.
+  Lane: Qwen, after the 3.1 review.
+
 - ☐ **3.2 Overview page.** Host cards with the three endpoint states and node collapse,
   running-jobs table (current tool, error count, context bar), fleet charts with vendored
   uPlot, range control, dark theme. Gate: browser smoke over `seed` (every state visible).
