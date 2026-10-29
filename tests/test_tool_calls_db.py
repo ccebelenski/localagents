@@ -109,6 +109,32 @@ def test_tool_use_rows(monkeypatch, tmp_path):
     assert rows[3]["input"] is None
 
 
+def test_last_activity_shows_the_same_text_as_the_row(monkeypatch, tmp_path):
+    """``job.last_activity`` for a ToolUseBlock is ``f"{tool} {input_text}"`` with exactly the
+    text the tool_calls row gets, so job_status shows ``Bash uv run pytest -q`` (the command,
+    not the input JSON with its description) and a call with nothing to show is just the tool
+    name (review of 1.8)."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    clock = _Clock()
+    monkeypatch.setattr(runner, "time", clock)
+
+    runner._apply_message(job, AssistantMessage(content=[
+        ToolUseBlock(id="tu-1", name="Bash", input={"command": "uv run pytest -q", "description": "Run the tests"}),
+    ], model="m"))
+    assert job.last_activity == "Bash uv run pytest -q"
+
+    runner._apply_message(job, AssistantMessage(content=[
+        ToolUseBlock(id="tu-2", name="Edit", input={"file_path": "/a.py", "old_string": "a", "new_string": "b"}),
+    ], model="m"))
+    assert job.last_activity == "Edit /a.py"
+
+    runner._apply_message(job, AssistantMessage(content=[
+        ToolUseBlock(id="tu-3", name="Write", input={"content": "no file_path at all"}),
+    ], model="m"))
+    assert job.last_activity == "Write"
+
+
 def test_results_set_finished_and_is_error(monkeypatch, tmp_path):
     """The matching ToolResultBlock sets finished/is_error on its call's row, by the rowid
     remembered when the call was inserted."""

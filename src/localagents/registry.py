@@ -460,13 +460,27 @@ async def fetch_metrics(ep: Endpoint, timeout_s: float = 2.5) -> dict[str, float
     return parse_metrics(text) or None
 
 
-def metrics_delta(before: dict[str, float] | None, after: dict[str, float] | None) -> dict[str, Any] | None:
-    """Cache/throughput summary for the span between two snapshots (llama.cpp or vLLM counters)."""
+def metrics_delta(
+    before: dict[str, float] | None,
+    after: dict[str, float] | None,
+    backend: str | None = None,
+) -> dict[str, Any] | None:
+    """Cache/throughput summary for the span between two snapshots (llama.cpp or vLLM counters).
+
+    ``backend`` (a ``backend_kind`` value) decides the arithmetic. vLLM's ``prompt_tokens``
+    already counts cached tokens, so llama.cpp's cached/(processed+cached) must never be applied
+    to a vLLM snapshot — a vLLM without the prefix-cache series reports the prompt delta as
+    processed and omits the cache keys rather than guessing them. Without ``backend`` the key
+    sniff of earlier code stays, for callers that have no backend to name (review of 1.8)."""
     if not before or not after:
         return None
-    d = {k: after.get(k, 0.0) - before.get(k, 0.0) for k in set(before) | set(after)}
+    # counters in BOTH snapshots only: a series that vanished from `after` is a backend change,
+    # not a counter running backwards (the row's reset rule must not fire on it), and a series
+    # that only appears in `after` is a since-start value, not a delta (review of 1.8)
+    d = {k: after[k] - before[k] for k in set(before) & set(after)}
+    vllm = (backend == "vllm") if backend is not None else "prefix_queries" in after
     out: dict[str, Any] = {"generated_tokens": int(d.get("generated_tokens", 0))}
-    if "prefix_queries" in after:  # vLLM: prompt_tokens counts everything; hits are the cached part
+    if vllm and "prefix_queries" in after:  # vLLM: prompt_tokens counts everything; hits are the cached part
         total, hits = d.get("prompt_tokens", 0.0), d.get("prefix_hits", 0.0)
         out["prompt_tokens_processed"] = int(max(0.0, total - hits))
         out["prompt_tokens_cached"] = int(hits)
@@ -474,7 +488,11 @@ def metrics_delta(before: dict[str, float] | None, after: dict[str, float] | Non
             out["cache_hit_ratio"] = round(hits / d["prefix_queries"], 3)
         if d.get("spec_draft_tokens", 0.0) > 0:
             out["spec_decode_acceptance"] = round(d["spec_accepted_tokens"] / d["spec_draft_tokens"], 3)
-    else:  # llama.cpp: processed and cached are separate counters
+    elif vllm:  # vLLM without the prefix-cache series: prompt_tokens is itself the processed count
+        out["prompt_tokens_processed"] = int(d.get("prompt_tokens", 0.0))
+        if d.get("spec_draft_tokens", 0.0) > 0:
+            out["spec_decode_acceptance"] = round(d["spec_accepted_tokens"] / d["spec_draft_tokens"], 3)
+    else:  # llama.cpp (and strata, whose parser already splits the two): separate counters
         processed, cached = d.get("prompt_tokens", 0.0), d.get("prompt_tokens_cached", 0.0)
         out["prompt_tokens_processed"] = int(processed)
         out["prompt_tokens_cached"] = int(cached)

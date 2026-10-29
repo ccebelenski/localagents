@@ -137,6 +137,52 @@ def test_metrics_delta():
     assert metrics_delta(None, after) is None
 
 
+def test_metrics_delta_branches_on_the_backend_not_on_a_key():
+    """A vLLM /metrics without the prefix-cache series must NOT be computed as llama.cpp's
+    cached/(processed+cached): vLLM's ``prompt_tokens`` already includes cached tokens, so the
+    processed count is the prompt delta itself and the cache keys are omitted rather than
+    guessed. With ``backend=None`` the old key sniff stays for callers that have no backend
+    (review of 1.8)."""
+    from localagents.registry import metrics_delta
+
+    before = {"prompt_tokens": 100.0, "generated_tokens": 10.0}
+    after = {"prompt_tokens": 600.0, "generated_tokens": 90.0}
+    d = metrics_delta(before, after, backend="vllm")
+    assert d["prompt_tokens_processed"] == 500 and d["generated_tokens"] == 80
+    assert "cache_hit_ratio" not in d and "prompt_tokens_cached" not in d
+    # the sniff is unchanged for backend-less callers: no prefix keys -> llama.cpp arithmetic
+    assert metrics_delta(before, after)["cache_hit_ratio"] == 0.0
+    # backend=vllm with the prefix series present is still the vLLM arithmetic
+    b2 = {"prompt_tokens": 0.0, "prefix_hits": 0.0, "prefix_queries": 0.0}
+    a2 = {"prompt_tokens": 1000.0, "prefix_hits": 450.0, "prefix_queries": 900.0}
+    assert metrics_delta(b2, a2, backend="vllm") == {
+        "generated_tokens": 0, "prompt_tokens_processed": 550, "prompt_tokens_cached": 450,
+        "cache_hit_ratio": 0.5,
+    }
+
+
+def test_metrics_delta_diffs_only_counters_present_in_both_snapshots():
+    """A counter that vanished from ``after`` (a backend release dropping a series) is not a
+    reset: the reset rule must fire only when a counter truly went backwards, so the diff runs
+    over the intersection, and a counter that only appears in ``after`` is not a whole
+    since-start delta either (review of 1.8)."""
+    from localagents.registry import metrics_delta
+
+    before = {"generated_tokens": 100.0, "prompt_tokens": 1000.0, "prompt_tokens_cached": 500.0,
+              "spec_draft_tokens": 90.0, "spec_accepted_tokens": 60.0}
+    after = {"generated_tokens": 300.0, "prompt_tokens": 4000.0, "prompt_tokens_cached": 900.0}
+    d = metrics_delta(before, after, backend="llamacpp")
+    assert "spec_decode_acceptance" not in d, d  # the vanished spec counters are simply absent
+    assert not any(v < 0 for v in d.values()), d  # and nothing reads as a reset
+    assert d["generated_tokens"] == 200
+    assert d["prompt_tokens_processed"] == 3000 and d["prompt_tokens_cached"] == 400
+
+    # only in `after`: the whole since-start seconds must not count as the span's (old union)
+    d2 = metrics_delta({"generated_tokens": 0.0}, {"generated_tokens": 50.0, "prompt_seconds": 100.0},
+                       backend="llamacpp")
+    assert "prompt_tps" not in d2, d2
+
+
 def test_fuzzy_model_match():
     from localagents.registry import Registry
     ids = ["unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL", "DeepSeek-V4-Flash"]

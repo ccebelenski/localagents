@@ -93,7 +93,8 @@ tool_calls                          -- one row per ToolUseBlock the runner saw
   is_error    INTEGER (0/1)         -- from the matching ToolResultBlock
 
 indexes
-  jobs(name), jobs(mcp_server_id), jobs(endpoint_id), jobs(model_id), jobs(status, finished_at)
+  jobs(name), jobs(mcp_server_id), jobs(endpoint_id), jobs(model_id), jobs(status, finished_at),
+  jobs(created_at)
   mcp_servers(updated)
   requests(job_id, t)
   tool_calls(job_id, t)

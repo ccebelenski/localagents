@@ -321,6 +321,26 @@ def test_unknown_job_hint_pairs_names_with_ids(monkeypatch, tmp_path):
     assert made[1].id not in msg and made[0].id not in msg  # ten newest only
 
 
+def test_unknown_job_hint_falls_back_to_the_database(monkeypatch, tmp_path):
+    """A store that has run nothing says ``none`` and leaves the caller guessing: with the
+    in-process list empty the ten newest rows of the shared database (any server's) name the
+    job instead; a non-empty in-process list keeps its own message (review of 1.8)."""
+    empty = _store(monkeypatch, tmp_path)
+    other = jobs.JobStore()
+    theirs = [_new(other, created_at=1000.0 + i) for i in range(12)]
+
+    with pytest.raises(KeyError) as e:
+        empty.get("nosuch")
+    msg = e.value.args[0]
+    assert f"{theirs[-1].name} ({theirs[-1].id})" in msg
+    assert theirs[-11].id not in msg and theirs[0].id not in msg  # ten newest, from the rows
+
+    mine = _new(empty, created_at=2000.0)
+    with pytest.raises(KeyError) as e2:
+        empty.get("nosuch")
+    assert mine.id in e2.value.args[0] and theirs[-1].id not in e2.value.args[0]
+
+
 def test_run_job_writes_the_worktree_before_the_first_message(monkeypatch, tmp_path):
     """run_job flushes job.worktree/run_cwd to the row as soon as the tree exists, so another
     server's job_status sees it before the session's first SDK message (review of 1.5b,
@@ -377,6 +397,23 @@ def test_list_jobs_limit_keeps_the_newest(monkeypatch, tmp_path):
     assert len(asyncio.run(server.list_jobs(limit=0))) == 4
 
 
+def test_list_jobs_newest_n_is_served_by_the_created_at_index(monkeypatch, tmp_path):
+    """The newest-``limit`` half of list_jobs(all=True) is the query that would otherwise scan
+    and sort the whole ``jobs`` history twice (EXPLAIN: SCAN + temp B-trees). The
+    jobs(created_at) index serves it: the inner query's plan says USING INDEX (review of 1.8)."""
+    other = jobs.JobStore()
+    _new(other)
+    plan = " ".join(
+        r["detail"]
+        for r in server.store.conn.execute(
+            "EXPLAIN QUERY PLAN SELECT * FROM (SELECT *, rowid AS _rowid FROM jobs"
+            " ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, _rowid",
+            (50,),
+        ).fetchall()
+    )
+    assert "USING INDEX" in plan and "jobs_created_at" in plan, plan
+
+
 def _insert_row(**cols):
     """A jobs row written straight to the table: the schema has no NOT NULL, so another writer
     (or an older one) can leave any column NULL."""
@@ -390,6 +427,27 @@ def _insert_row(**cols):
     with db.immediate(conn):
         conn.execute(f"INSERT INTO jobs ({', '.join(base)}) VALUES ({', '.join('?' * len(base))})", tuple(base.values()))
     return jid
+
+
+def test_null_created_at_sorts_at_the_oldest_end_of_the_listing(monkeypatch, tmp_path):
+    """The decision (review of 1.8): a row with no ``created_at`` means oldest. It is first in
+    the full listing and survives ``limit`` >= the history; a smaller limit cuts it as the oldest
+    row, never silently hides a row that would otherwise fit. SQLite already puts NULLs last in
+    DESC and first in ASC, so the plain ``created_at`` ordering does this — and keeps the inner
+    query served by jobs(created_at) (the ``created_at IS NULL`` prefix the review proposed would
+    sort NULLs to the *newest* end of the outer re-sort and force a second temp B-tree)."""
+    other = jobs.JobStore()
+    made = [_new(other, created_at=1000.0 + i) for i in range(60)]
+    nul = _insert_row(created_at=None)
+
+    full = [j["id"] for j in asyncio.run(server.list_jobs(all=True, limit=0))]
+    assert len(full) == 61 and full[0] == nul and full[1:] == [j.id for j in made]
+
+    sixtyone = [j["id"] for j in asyncio.run(server.list_jobs(all=True, limit=61))]
+    assert sixtyone == full
+
+    fifty = [j["id"] for j in asyncio.run(server.list_jobs(all=True, limit=50))]
+    assert fifty == [j.id for j in made[-50:]] and nul not in fifty
 
 
 def test_summary_from_row_reads_nullable_columns_defensively(monkeypatch, tmp_path):
@@ -412,6 +470,25 @@ def test_summary_from_row_reads_nullable_columns_defensively(monkeypatch, tmp_pa
     assert {no_name, no_created, no_path, garbled} <= set(by_id)
     assert "row_error" in by_id[garbled] and by_id[garbled]["status"] == "succeeded"
     assert all("row_error" not in by_id[j] for j in (no_name, no_created, no_path))
+
+
+def test_row_summary_catches_only_row_problems_and_says_so(monkeypatch, tmp_path, capsys):
+    """A garbled row still answers with row_error, and one line per degraded row goes to stderr
+    (an invisible silent degradation is how a broken writer hides). An exception that is not
+    something a row can cause — a bug in this code — propagates instead (review of 1.8)."""
+    garbled = _insert_row(worktree="{not json")
+    out = asyncio.run(server.list_jobs(all=True, limit=0))
+    row = {j["id"]: j for j in out}[garbled]
+    assert "row_error" in row and row["status"] == "succeeded"
+    err = capsys.readouterr().err
+    assert f"row_error {garbled}: JSONDecodeError:" in err, err
+
+    def boom(*a, **kw):
+        raise RuntimeError("a bug in this code, not in the row")
+
+    monkeypatch.setattr(derive, "summary_from_row", boom)
+    with pytest.raises(RuntimeError):
+        asyncio.run(server.list_jobs(all=True, limit=0))
 
 
 def test_job_log_says_when_the_directory_is_gone(monkeypatch, tmp_path):

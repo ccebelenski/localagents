@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import json
 import os
 import shutil
 import sqlite3
@@ -436,7 +437,11 @@ def _row_summary(row: Any, include_result: bool = True) -> dict[str, Any]:
     bad row must not break list_jobs(all=True) for every caller."""
     try:
         return derive.summary_from_row(store.conn, row, include_result=include_result)
-    except Exception as e:  # noqa: BLE001
+    except (json.JSONDecodeError, TypeError, ValueError, KeyError, sqlite3.Error) as e:
+        # only what a row another writer mangled can raise; anything else is a bug in this
+        # code and must propagate, not hide behind row_error (review of 1.8). The line names
+        # the row: a silently degraded listing is how a broken writer hides.
+        print(f"localagents: row_error {row['id']}: {type(e).__name__}: {e}", file=sys.stderr)
         return {"id": row["id"], "name": row["name"], "status": row["status"], "row_error": f"{type(e).__name__}: {e}"}
 
 
@@ -465,7 +470,11 @@ async def list_jobs(include_finished: bool = True, all: bool = False, limit: int
     if not all:
         mine = [j for j in sorted(store.jobs.values(), key=lambda j: j.created_at) if include_finished or not j.done]
         return [j.summary(include_result=False) for j in (mine[-limit:] if limit > 0 else mine)]
-    # the newest `limit` rows, returned oldest first (newest last, as the in-process list)
+    # the newest `limit` rows, returned oldest first (newest last, as the in-process list).
+    # A NULL created_at means oldest: SQLite sorts NULLs last in DESC (so the inner LIMIT cuts
+    # it first) and first in ASC (so the outer re-sort puts it at the oldest end) — no
+    # `created_at IS NULL` term needed, and none wanted: it would break the jobs(created_at)
+    # index scan the inner query relies on (review of 1.8).
     rows = store.conn.execute(
         "SELECT * FROM (SELECT *, rowid AS _rowid FROM jobs"
         + ("" if include_finished

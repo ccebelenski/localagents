@@ -149,6 +149,9 @@ _V1 = [
     "CREATE INDEX jobs_endpoint_id ON jobs(endpoint_id)",
     "CREATE INDEX jobs_model_id ON jobs(model_id)",
     "CREATE INDEX jobs_status_finished_at ON jobs(status, finished_at)",
+    # list_jobs(all=True) takes the newest N rows: ORDER BY created_at DESC, rowid DESC scans
+    # this index backwards instead of sorting the whole history (review of 1.8)
+    "CREATE INDEX jobs_created_at ON jobs(created_at)",
     "CREATE INDEX mcp_servers_updated ON mcp_servers(updated)",
     "CREATE INDEX requests_job_id_t ON requests(job_id, t)",
     "CREATE INDEX tool_calls_job_id_t ON tool_calls(job_id, t)",

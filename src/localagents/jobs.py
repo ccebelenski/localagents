@@ -145,9 +145,12 @@ class Job:
             self.log_text(f"[db-error] job row update: {e}")
 
     def record_tool_call(self, t: float, tool: str, tool_use_id: str, input_text: str | None) -> None:
-        """One ``tool_calls`` row per ToolUseBlock (spec: input is the path for edit tools, else
-        the first 120 chars of the input JSON). Remembers the rowid so the matching result can
-        set ``finished``/``is_error`` by rowid — no index on ``tool_use_id`` needed."""
+        """One ``tool_calls`` row per ToolUseBlock. The ``input_text`` follows the current input
+        rule (spec; runner._apply_message builds it): an edit tool stores the path, or NULL when
+        the input has none; a tool whose input carries a string ``command`` (Bash) stores that
+        command, first 120 chars; any other tool stores the first 120 chars of the input JSON.
+        Remembers the rowid so the matching result can set ``finished``/``is_error`` by rowid —
+        no index on ``tool_use_id`` needed."""
         if self._conn is None:
             return  # a Job built outside JobStore.new has no rows to write
         try:
@@ -454,8 +457,20 @@ class JobStore:
         if jid not in self.jobs:
             # "name (id)", newest first: the name is what a caller recognises from list_jobs or a
             # job directory (DeepSeek review of 1.2), the id is what every tool takes (review of 1.5b)
-            newest = sorted(self.jobs.values(), key=lambda j: j.created_at)[-10:][::-1]
-            known = ", ".join(f"{j.name} ({j.id})" for j in newest)
+            if self.jobs:
+                newest = sorted(self.jobs.values(), key=lambda j: j.created_at)[-10:][::-1]
+                known = ", ".join(f"{j.name} ({j.id})" for j in newest)
+            else:
+                # this server has run nothing, but the shared database holds every other
+                # server's jobs and one of them is probably the id the caller meant
+                # (review of 1.8). A broken database must not change the unknown_job answer.
+                try:
+                    rows = self.conn.execute(
+                        "SELECT name, id FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT 10"
+                    ).fetchall()
+                    known = ", ".join(f"{r['name']} ({r['id']})" for r in rows)
+                except sqlite3.Error:
+                    known = ""
             raise KeyError(f"unknown job '{jid}'. Known (newest first): {known or 'none'}")
         return self.jobs[jid]
 

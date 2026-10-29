@@ -15,6 +15,7 @@ from localagents import db
 TABLES = {"mcp_servers", "endpoints", "endpoint_load", "models", "paths", "jobs", "requests", "tool_calls"}
 INDEXES = {
     "jobs_name", "jobs_mcp_server_id", "jobs_endpoint_id", "jobs_model_id", "jobs_status_finished_at",
+    "jobs_created_at",
     "mcp_servers_updated", "requests_job_id_t", "tool_calls_job_id_t",
 }
 # every column of every table, in the spec's order

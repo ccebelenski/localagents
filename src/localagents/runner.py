@@ -25,7 +25,7 @@ from claude_agent_sdk import (
 )
 
 from .jobs import Job, prune, state_dir
-from .registry import Registry, Resolution, fetch_metrics, metrics_delta
+from .registry import Registry, Resolution, backend_kind, fetch_metrics, metrics_delta
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
@@ -168,7 +168,6 @@ def _apply_message(job: Job, m: Any) -> None:
             elif isinstance(b, ToolUseBlock):
                 short = json.dumps(b.input, default=str)
                 job.log_text(f"[tool] {b.name} {short[:400]}")
-                job.last_activity = f"{b.name} {short[:120]}"
                 input_text = short[:120]
                 command = b.input.get("command") if isinstance(b.input, dict) else None
                 if isinstance(command, str):
@@ -179,6 +178,10 @@ def _apply_message(job: Job, m: Any) -> None:
                     # spec: edit tools store just the path (NULL when absent); the count of
                     # calls and the files touched are read back from the rows (story 1.5b).
                     input_text = b.input.get("file_path") or b.input.get("notebook_path")
+                # last_activity shows the same text the row shows: job_status and the progress
+                # line read it, so a Bash call says "Bash uv run pytest -q", never the JSON
+                # around the command (review of 1.8)
+                job.last_activity = f"{b.name} {input_text}" if input_text else b.name
                 job.record_tool_call(time.time(), b.name, b.id, input_text)
     elif isinstance(m, UserMessage):
         content = m.content
@@ -301,7 +304,13 @@ async def run_job(
         job.finished_at = time.time()
         if metrics_before:
             # Server-wide counters: with other jobs on the same endpoint the delta is shared.
-            job.metrics = metrics_delta(metrics_before, await fetch_metrics(res.endpoint, d.probe_timeout_s))
+            # the backend decides the arithmetic: vLLM's prompt_tokens already includes cached
+            # tokens, and its /metrics sometimes lacks the prefix-cache series (review of 1.8)
+            job.metrics = metrics_delta(
+                metrics_before,
+                await fetch_metrics(res.endpoint, d.probe_timeout_s),
+                backend=backend_kind(res.endpoint.backend),
+            )
             if job.metrics:
                 job.log_text(f"[metrics] {json.dumps(job.metrics)}")
         try:
