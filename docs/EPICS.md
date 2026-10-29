@@ -152,9 +152,11 @@ the duplicates go), then docs.
   is a presence oracle, a value edit of equal byte length passes every check; `_content_length`
   reads the first block, so a redirect sidecar misreports; an error row without `path` raises
   KeyError. Folded in 2.1b.)
-- ☐ **2.1b Manifest values oracle** (reviewer fixes its own findings): rows pin a sha256 digest
-  of the parsed values; Content-Length from the last header block; a pathless error row is a
-  problem string. Lane: Qwen3.8-27B, review by Qwen (ai1) folded into the next cycle.
+- ☑ **2.1b Manifest values oracle** (reviewer fixes its own findings; Qwen3.8-27B/llamacpp job
+  20261029-120606-0d3097a3, 48 turns, 250 tests: rows pin a sha256 digest of the parsed values,
+  a same-length value edit now fails the digest while bytes and Content-Length pass;
+  Content-Length from the last header block; a pathless error row is a problem string.
+  Third-model probe folded into the 2.2 review.)
 - ☐ **2.2 Probes table and collector.** `monitor/collect.py`: fast/slow cadence per state,
   one `probes` row per probe (failure sentence included), Strata `hardware`/`requests` stored
   when present, rates between consecutive rows with reset detection (negative delta →
