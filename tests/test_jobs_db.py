@@ -1,6 +1,7 @@
 """Story 1.2: the jobs write path into SQLite (mcp_servers row at store start, jobs row at new(),
 UPDATEs from changed()). In-memory Job fields and the status file keep working unchanged."""
 
+import dataclasses
 import os
 import re
 import sqlite3
@@ -22,6 +23,8 @@ def _new(store, **kw):
     kw.setdefault("model", "served-model")
     kw.setdefault("endpoint", "llamacpp")
     kw.setdefault("base_url", "http://x:8080")
+    kw.setdefault("backend", "llama.cpp")
+    kw.setdefault("host", "local")
     kw.setdefault("cwd", "/tmp")
     kw.setdefault("run_cwd", "/tmp")
     kw.setdefault("isolation", "none")
@@ -58,8 +61,8 @@ def test_new_row_carries_the_fields_known_at_creation(monkeypatch, tmp_path):
     """DeepSeek review of 1.2, finding 2: context, num_turns and last_activity were NULL until
     the first changed(); a queued or lost job showed no context window."""
     store = _store(monkeypatch, tmp_path)
-    job = store.new(task="t", model="m", endpoint="e", base_url="http://x", cwd="/tmp", run_cwd="/tmp",
-                    isolation="none", context=131072)
+    job = store.new(task="t", model="m", endpoint="e", base_url="http://x", backend="llama.cpp", host="local",
+                    cwd="/tmp", run_cwd="/tmp", isolation="none", context=131072)
     row = store.conn.execute("SELECT context, num_turns, last_activity FROM jobs WHERE id = ?", (job.id,)).fetchone()
     assert tuple(row) == (131072, 0, "")
 
@@ -170,6 +173,46 @@ def test_lookup_rows_reused_across_jobs(monkeypatch, tmp_path):
     assert store.conn.execute("SELECT COUNT(*) FROM models").fetchone()[0] == 1
 
 
+# --- story 1.5b: the in-memory duplicates are gone; summary() reads them from the rows ---
+
+
+def test_summary_reads_the_duplicated_values_from_rows(monkeypatch, tmp_path):
+    """usage, tool_calls, tool_counts, errors, last_tool, files_touched, ctx_tokens, gen_tps
+    are derived from the rows at read time; the in-memory fields and note_usage are gone."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    t = time.time()
+    job.record_request({
+        "t": t, "path": "/v1/messages", "status": 200, "ms": 1000,
+        "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 90},
+    })
+    job.record_tool_call(t, "Edit", "u1", "/a.py")
+    job.record_tool_result("u1", t + 1, True)
+    s = job.summary()
+    assert s["usage"] == {
+        "input_tokens": 10, "output_tokens": 5,
+        "cache_read_input_tokens": 90, "cache_creation_input_tokens": 0,
+    }
+    assert s["tool_calls"] == 1 and s["errors"] == 1
+    assert s["tool_counts"] == {"Edit": {"calls": 1, "errors": 1}}
+    assert s["last_tool"] == "Edit: /a.py"
+    assert s["files_touched"] == ["/a.py"]
+    assert s["ctx_tokens"] == 100 and s["gen_tps"] == pytest.approx(5.0)
+    gone = ("usage", "tool_calls", "files_touched", "ctx_tokens", "gen_tps")
+    assert all(name not in {f.name for f in dataclasses.fields(job)} for name in gone), gone
+    assert not hasattr(job, "note_usage")
+
+
+def test_summary_of_a_job_outside_the_store_has_empty_derived_fields():
+    j = jobs.Job(id="x", name="n", task="t", model="m", endpoint="e", base_url="b", cwd="c",
+                 run_cwd="c", isolation="none")
+    s = j.summary()
+    assert s["usage"] is None
+    assert s["tool_calls"] == 0 and s["tool_counts"] == {} and s["errors"] == 0
+    assert s["last_tool"] is None and s["files_touched"] == []
+    assert s["ctx_tokens"] is None and s["gen_tps"] is None
+
+
 # --- story 1.5a: server-row lifecycle (heartbeat, describe, close) and the startup lost rule ---
 
 
@@ -271,7 +314,8 @@ def test_mark_lost_jobs_marks_a_server_with_no_heartbeat_at_all(monkeypatch, tmp
     60 s' covers it (flagged by the 1.5a lane; the brief's SQL missed it)."""
     mine = _store(monkeypatch, tmp_path)
     other = jobs.JobStore()
-    j = other.new(task="t", model="m", endpoint="e", base_url="http://x", cwd="/tmp", run_cwd="/tmp", isolation="none")
+    j = other.new(task="t", model="m", endpoint="e", base_url="http://x", backend="other", host="local",
+                  cwd="/tmp", run_cwd="/tmp", isolation="none")
     j.status = "running"
     j.changed()
     other.conn.execute("UPDATE mcp_servers SET updated = NULL WHERE id = ?", (other.server_id,))

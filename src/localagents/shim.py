@@ -319,8 +319,8 @@ class Shim:
             )
         rec.update(note)
         rec = {k: v for k, v in rec.items() if v is not None}
-        if path.endswith("/v1/messages"):
-            job.note_usage(kw.get("usage"), int(kw.get("ms") or 0), kw.get("gen_ms"))
+        # story 1.5b: no note_usage — the row is the record; the status line and job_status
+        # derive ctx_tokens/gen_tps/usage from the requests table.
         job.record_request(rec)
         if kw.get("error") and kw.get("status", 0) >= 400:
             job.log_text(f"[backend {kw['status']}] {str(kw['error'])[:300]}")

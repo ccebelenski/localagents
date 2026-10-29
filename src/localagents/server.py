@@ -13,8 +13,8 @@ from typing import Any
 import httpx
 from mcp.server.mcpserver import Context, MCPServer
 
-from . import status
-from .jobs import Job, JobStore, prune
+from . import derive, status
+from .jobs import Job, JobStore, prune, state_dir
 from .registry import ModelUnavailable, Registry, config_path, local_path
 from .runner import run_job
 from .shim import Shim
@@ -133,9 +133,15 @@ def _progress_reporter(ctx: Context | None):
 
     async def report(job: Job) -> None:
         elapsed = round(time.time() - (job.started_at or job.created_at))
-        msg = f"{job.status}: {elapsed}s, {job.num_turns} turns, {job.tool_calls} tool calls"
-        if job.last_activity:
-            msg += f"; {job.last_activity[:120]}"
+        conn = store.conn
+        calls = derive.tool_call_count(conn, job.id)
+        msg = f"{job.status}: {elapsed}s, {job.num_turns} turns, {calls} tool calls"
+        errors = derive.error_count(conn, job.id)
+        if errors:
+            msg += f", {errors} errors"
+        last = derive.last_tool(conn, job.id)  # what the agent is doing right now, from the rows
+        if last:
+            msg += f"; {last}"
         try:
             await ctx.report_progress(elapsed, None, msg)
         except Exception:  # a client without progress support must not break the wait
@@ -155,7 +161,9 @@ def _progress_reporter_many(ctx: Context | None):
         for j in jobs:
             if not j.done:
                 elapsed = round(time.time() - (j.started_at or j.created_at))
-                parts.append(f"{j.id}: {j.status} {elapsed}s, {j.num_turns} turns")
+                # name, not uuid: a user comparing this line with list_jobs or a job directory
+                # can match it (DeepSeek review of 1.2)
+                parts.append(f"{j.name}: {j.status} {elapsed}s, {j.num_turns} turns")
         try:
             await ctx.report_progress(done, len(jobs), "; ".join(parts))
         except Exception:
@@ -201,6 +209,23 @@ def _ensure_sampler() -> None:
 
 # ---------------------------------------------------------------- agents
 
+
+def _foreign_job_error(job_id: str) -> dict[str, str] | None:
+    """The id exists in the shared database but not in this process: another server's job.
+    wait/cancel/resume need the in-process task and keep refusing it (spec "Tool contract
+    decisions"); job_status, job_log and list_jobs read any server's rows instead."""
+    row = store.conn.execute("SELECT mcp_server_id FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    if row is None:
+        return None
+    return {
+        "error": "foreign_job",
+        "message": (
+            f"job {job_id} belongs to another localagents server ({row['mcp_server_id']}); "
+            "only job_status, job_log and list_jobs can read it"
+        ),
+    }
+
+
 @mcp.tool()
 async def run_agent(
     task: str,
@@ -240,8 +265,10 @@ async def run_agent(
       allowed_tools: Override auto-approved tools.
       system_prompt_append: Extra instructions appended to the Claude Code system prompt.
       resume_job: Continue a previous job's session with `task` as the next message (same
-        server process only; the store is in memory). Runs on that job's model, endpoint, cwd
-        and isolation unless `model` is given; a removed worktree is recreated at its base.
+        server process only; the store is in memory — job_status, job_log and
+        list_jobs(all=True) read any server's jobs instead). Runs on that job's model,
+        endpoint, cwd and isolation unless `model` is given; a removed worktree is recreated
+        at its base.
       timeout_s: Wall-clock cap for the job.
     """
     if isolation not in ("none", "worktree"):
@@ -257,6 +284,9 @@ async def run_agent(
         try:
             prev = store.get(resume_job)
         except KeyError as e:
+            foreign = _foreign_job_error(resume_job)
+            if foreign is not None:
+                return foreign
             return {"error": "bad_argument", "message": str(e)}
         if not prev.session_id:
             return {"error": "bad_argument", "message": f"job {resume_job} has no session to resume"}
@@ -329,7 +359,7 @@ async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = Non
     try:
         job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx))
     except KeyError as e:
-        return {"error": "unknown_job", "message": str(e)}
+        return _foreign_job_error(job_id) or {"error": "unknown_job", "message": str(e)}
     return job.summary()
 
 
@@ -349,6 +379,11 @@ async def wait_jobs(
         return {"error": "bad_argument", "message": "mode must be 'all' or 'any'"}
     if not job_ids:
         return {"error": "bad_argument", "message": "job_ids is empty"}
+    for jid in job_ids:
+        if jid not in store.jobs:
+            foreign = _foreign_job_error(jid)
+            if foreign is not None:
+                return foreign
     try:
         jobs = await store.wait_many(job_ids, timeout_s, mode=mode, progress=_progress_reporter_many(ctx))
     except KeyError as e:
@@ -373,31 +408,65 @@ async def wait_jobs(
 
 @mcp.tool()
 async def job_status(job_id: str) -> dict[str, Any]:
-    """Current status, last activity, files touched, and result (if finished) of a job."""
+    """Current status, last activity, files touched, and result (if finished) of a job.
+
+    Reads any localagents server's job: an in-process job gets its live summary, otherwise
+    the row and its read-time derivations from the shared database."""
     try:
         return store.get(job_id).summary()
     except KeyError as e:
-        return {"error": "unknown_job", "message": str(e)}
+        row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            return {"error": "unknown_job", "message": str(e)}
+        return derive.summary_from_row(store.conn, row)
 
 
 @mcp.tool()
-async def list_jobs(include_finished: bool = True) -> list[dict[str, Any]]:
-    """List jobs from this server session (newest last)."""
-    return [
-        j.summary(include_result=False)
-        for j in store.jobs.values()
-        if include_finished or not j.done
-    ]
+async def list_jobs(include_finished: bool = True, all: bool = False) -> list[dict[str, Any]]:
+    """List jobs (newest last). This server session's; with all=True, every localagents
+    server's jobs read from the shared database."""
+    if not all:
+        return [
+            j.summary(include_result=False)
+            for j in store.jobs.values()
+            if include_finished or not j.done
+        ]
+    rows = store.conn.execute(
+        "SELECT * FROM jobs"
+        + ("" if include_finished
+           else " WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'timeout', 'lost')")
+        + " ORDER BY created_at, rowid",
+    ).fetchall()
+    return [derive.summary_from_row(store.conn, r, include_result=False) for r in rows]
 
 
 @mcp.tool()
-async def job_log(job_id: str, tail_lines: int = 80) -> dict[str, Any]:
-    """Tail of a job's human-readable transcript (assistant text, tool calls, results)."""
+async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str, Any]:
+    """Tail of a job's human-readable transcript (assistant text, tool calls, results).
+
+    Works for any localagents server's job. tools=N also returns the last N recorded tool
+    calls (t, finished, tool, input, is_error), oldest first."""
     try:
         job = store.get(job_id)
+        status_, log_dir, transcript = job.status, job.log_dir, job.transcript_tail(tail_lines)
     except KeyError as e:
-        return {"error": "unknown_job", "message": str(e)}
-    return {"job_id": job_id, "status": job.status, "log_dir": job.log_dir, "transcript": job.transcript_tail(tail_lines)}
+        row = store.conn.execute("SELECT status, name FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            return {"error": "unknown_job", "message": str(e)}
+        # another server's job: its log directory follows from its name (spec derivation)
+        status_, log_dir = row["status"], str(state_dir() / "jobs" / row["name"])
+        p = Path(log_dir) / "transcript.txt"
+        lines = p.read_text(errors="replace").splitlines() if p.exists() else []
+        transcript = "\n".join(lines[-tail_lines:])
+    out: dict[str, Any] = {"job_id": job_id, "status": status_, "log_dir": log_dir, "transcript": transcript}
+    if tools > 0:
+        rows = store.conn.execute(
+            "SELECT t, finished, tool, input, is_error FROM tool_calls WHERE job_id = ?"
+            " ORDER BY t DESC, rowid DESC LIMIT ?",
+            (job_id, tools),
+        ).fetchall()
+        out["tool_calls"] = [dict(r) for r in reversed(rows)]  # the last N, oldest first
+    return out
 
 
 @mcp.tool()
@@ -406,7 +475,7 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
     try:
         job = store.get(job_id)
     except KeyError as e:
-        return {"error": "unknown_job", "message": str(e)}
+        return _foreign_job_error(job_id) or {"error": "unknown_job", "message": str(e)}
     if job.done:
         return job.summary()
     if job._task:

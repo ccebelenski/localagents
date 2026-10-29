@@ -3,14 +3,23 @@
 runner used to keep, computed from the ``requests``/``tool_calls`` rows instead.
 
 Standard library only: ``localagents statusline`` imports this on every status-bar refresh.
-Story 1.5b adds the rest here (usage totals, counts by tool, last_tool)."""
+Story 1.5b adds the rest: usage totals, counts by tool, the error count, the last tool, and
+``summary_from_row`` (the whole job_status dict for a row read from the database)."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import time
 
 # runner.py EDIT_TOOLS: the tools whose input carries a touched file path (spec write rule).
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
+# the jobs columns holding the /metrics delta, rebuilt into Job.metrics at read time
+_METRICS_COLUMNS = (
+    "generated_tokens", "prompt_tokens_processed", "prompt_tokens_cached",
+    "cache_hit_ratio", "prompt_tps", "generate_tps", "spec_decode_acceptance",
+)
 
 _PROMPT_SUM = "(COALESCE(r.input_tokens, 0) + COALESCE(r.cache_read_tokens, 0) + COALESCE(r.cache_creation_tokens, 0))"
 _MESSAGES = "FROM requests r JOIN paths p ON p.id = r.path_id WHERE r.job_id = ? AND p.path = '/v1/messages'"
@@ -42,6 +51,49 @@ def ctx_tokens(conn: sqlite3.Connection, job_id: str) -> int | None:
     return row[0] if row else None
 
 
+def usage_totals(conn: sqlite3.Connection, job_id: str) -> dict[str, int]:
+    """The four token columns summed over the job's requests rows (NULLs as 0). Replaces the
+    SDK's ``ResultMessage.usage`` in ``job_status``: the two count the same traffic from
+    different sides and can differ by count_tokens calls and failed requests (spec contract
+    note). The keys are the API's names, as ``Job.usage`` carried them."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),"
+        " COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_creation_tokens), 0)"
+        " FROM requests WHERE job_id = ?",
+        (job_id,),
+    ).fetchone()
+    return {
+        "input_tokens": row[0], "output_tokens": row[1],
+        "cache_read_input_tokens": row[2], "cache_creation_input_tokens": row[3],
+    }
+
+
+def tool_counts(conn: sqlite3.Connection, job_id: str) -> dict[str, dict[str, int]]:
+    """Calls and errors grouped by tool (spec: ``SUM(is_error)``; a pending result counts 0)."""
+    rows = conn.execute(
+        "SELECT tool, COUNT(*), COALESCE(SUM(is_error), 0) FROM tool_calls WHERE job_id = ? GROUP BY tool",
+        (job_id,),
+    ).fetchall()
+    return {r[0]: {"calls": r[1], "errors": r[2]} for r in rows}
+
+
+def error_count(conn: sqlite3.Connection, job_id: str) -> int:
+    """Tool calls whose matching result carried is_error."""
+    return conn.execute("SELECT COALESCE(SUM(is_error), 0) FROM tool_calls WHERE job_id = ?", (job_id,)).fetchone()[0]
+
+
+def last_tool(conn: sqlite3.Connection, job_id: str) -> str | None:
+    """``"<tool>: <input>"`` of the latest tool_calls row (a NULL input leaves just the name):
+    the progress line's view of what the job is doing right now."""
+    row = conn.execute(
+        "SELECT tool, input FROM tool_calls WHERE job_id = ? ORDER BY t DESC, rowid DESC LIMIT 1",
+        (job_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return f"{row['tool']}: {row['input']}" if row["input"] is not None else row["tool"]
+
+
 def gen_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
     """Replay of the note_usage EMA, ``0.5*prev + 0.5*(output / span)``, over the job's
     ``/v1/messages`` rows in t order; span is gen_ms when set, else ms, and rows without output
@@ -55,3 +107,67 @@ def gen_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
         tps = out / (span / 1000)
         ema = tps if ema is None else 0.5 * ema + 0.5 * tps
     return ema
+
+
+def _truncate(task: str | None) -> str | None:
+    """job_status shows the brief's first 300 chars, as Job.summary always did."""
+    return task if task is None or len(task) < 300 else task[:300] + "…"
+
+
+def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result: bool = True) -> dict:
+    """The full ``job_status`` dict for a ``jobs`` row read from the database — any server's
+    job: every column under its Job field name, the lookup ids resolved to model/endpoint/
+    base_url, worktree parsed from its JSON, metrics rebuilt from the seven columns or None,
+    plus every read-time derivation. Storage details (mcp_server_id, endpoint_id, model_id)
+    stay out; ``name`` identifies the job. Same keys as ``Job.summary()`` for the same job."""
+    from .jobs import state_dir  # lazy: jobs.py imports this module at top level
+
+    job_id = row["id"]
+    model = (
+        conn.execute("SELECT served_id FROM models WHERE id = ?", (row["model_id"],)).fetchone()
+        if row["model_id"] is not None else None
+    )
+    ep = (
+        conn.execute("SELECT name, base_url FROM endpoints WHERE id = ?", (row["endpoint_id"],)).fetchone()
+        if row["endpoint_id"] is not None else None
+    )
+    worktree = json.loads(row["worktree"]) if row["worktree"] is not None else None
+    d: dict = {
+        "id": job_id,
+        "name": row["name"],
+        "task": _truncate(row["task"]),
+        "model": model["served_id"] if model is not None else None,
+        "endpoint": ep["name"] if ep is not None else None,
+        "base_url": ep["base_url"] if ep is not None else None,
+        "cwd": row["cwd"],
+        "run_cwd": worktree["path"] if worktree is not None else row["cwd"],
+        "isolation": row["isolation"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+        "session_id": row["session_id"],
+        "result": row["result"],
+        "error": row["error"],
+        "num_turns": row["num_turns"],
+        "worktree": worktree,
+        "last_activity": row["last_activity"],
+        "log_dir": str(state_dir() / "jobs" / row["name"]),
+        "dump": bool(row["dump"]),
+        "log_events": bool(row["log_events"]),
+        "context": row["context"],
+        "metrics": None if all(row[c] is None for c in _METRICS_COLUMNS) else {c: row[c] for c in _METRICS_COLUMNS},
+        # the spec's read-time derivations (the in-memory duplicates story 1.5b removed from Job)
+        "usage": usage_totals(conn, job_id),
+        "tool_calls": tool_call_count(conn, job_id),
+        "tool_counts": tool_counts(conn, job_id),
+        "errors": error_count(conn, job_id),
+        "last_tool": last_tool(conn, job_id),
+        "files_touched": files_touched(conn, job_id),
+        "ctx_tokens": ctx_tokens(conn, job_id),
+        "gen_tps": gen_tps(conn, job_id),
+    }
+    d["elapsed_s"] = round((row["finished_at"] or time.time()) - (row["started_at"] or row["created_at"]), 1)
+    if not include_result:
+        d.pop("result")
+    return d

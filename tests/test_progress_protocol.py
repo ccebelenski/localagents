@@ -16,7 +16,7 @@ from localagents import jobs, server
 
 def _job():
     return server.store.new(
-        task="t", model="m", endpoint="e", base_url="http://e:8080",
+        task="t", model="m", endpoint="e", base_url="http://e:8080", backend="llama.cpp", host="local",
         cwd="/tmp", run_cwd="/tmp", isolation="none",
     )
 

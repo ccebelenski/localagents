@@ -1,6 +1,6 @@
 """Story 1.4: the tool_calls write path (INSERT per ToolUseBlock, finished/is_error per matching
-ToolResultBlock, tool_use_id -> rowid kept in memory). In-memory counters and transcript lines
-stay exactly as they were; readers switch in story 1.5b.
+ToolResultBlock, tool_use_id -> rowid kept in memory). Story 1.5b removed the in-memory
+counters: the rows are the record, and the readers use derive.
 
 There is no captured SDK stream to replay, so the message sequence is built directly from the
 claude_agent_sdk dataclasses (AssistantMessage / UserMessage / ToolUseBlock / ToolResultBlock,
@@ -11,9 +11,9 @@ import json
 import sqlite3
 from contextlib import contextmanager
 
-from claude_agent_sdk import AssistantMessage, TextBlock, ToolResultBlock, ToolUseBlock, UserMessage
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolResultBlock, ToolUseBlock, UserMessage
 
-from localagents import jobs, runner
+from localagents import derive, jobs, runner
 
 
 def _store(monkeypatch, tmp_path):
@@ -26,6 +26,8 @@ def _new(store, **kw):
     kw.setdefault("model", "served-model")
     kw.setdefault("endpoint", "llamacpp")
     kw.setdefault("base_url", "http://x:8080")
+    kw.setdefault("backend", "llama.cpp")
+    kw.setdefault("host", "local")
     kw.setdefault("cwd", "/tmp")
     kw.setdefault("run_cwd", "/tmp")
     kw.setdefault("isolation", "none")
@@ -133,13 +135,27 @@ def test_orphan_result_is_ignored(monkeypatch, tmp_path):
     assert "[db-error]" not in job.transcript_tail()
 
 
-def test_in_memory_counters_unchanged(monkeypatch, tmp_path):
-    """job.tool_calls and job.files_touched keep working exactly as before this story."""
+def test_result_message_usage_stays_off_the_job(monkeypatch, tmp_path):
+    """Story 1.5b: usage is the sum of the request rows; the SDK ResultMessage usage is no
+    longer parked on the Job (it counts the same traffic from the other side and differs)."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    runner._apply_message(job, ResultMessage(
+        subtype="success", duration_ms=5, duration_api_ms=4, is_error=False, num_turns=2,
+        session_id="sess-1", usage={"input_tokens": 999, "output_tokens": 7}, result="done",
+    ))
+    assert not hasattr(job, "usage")
+    assert job.result == "done" and job.num_turns == 2 and job.session_id == "sess-1"
+
+
+def test_counts_and_files_touched_come_from_the_rows(monkeypatch, tmp_path):
+    """Story 1.5b: the in-memory counters are gone; the rows are the record and derive
+    reproduces exactly the values they held."""
     store = _store(monkeypatch, tmp_path)
     job = _new(store)
     _feed(store, monkeypatch, job, [1000.0, 1001.0, 1002.0, 1003.0])
-    assert job.tool_calls == 4
-    assert job.files_touched == ["/a.py"]  # Edit repeats the path; dedup keeps first seen
+    assert derive.tool_call_count(store.conn, job.id) == 4
+    assert derive.files_touched(store.conn, job.id) == ["/a.py"]  # Edit repeats the path; dedup keeps first seen
 
 
 def test_db_error_does_not_break_tool_recording(monkeypatch, tmp_path):
@@ -158,6 +174,6 @@ def test_db_error_does_not_break_tool_recording(monkeypatch, tmp_path):
     runner._apply_message(job, AssistantMessage(content=[
         ToolUseBlock(id="tu-boom", name="Bash", input={"command": "ls"}),
     ], model="m"))
-    assert job.tool_calls == 1  # in-memory bookkeeping unaffected
     assert _row_vals(store, job) == []  # nothing inserted, no pending rowid remembered
+    assert derive.tool_call_count(store.conn, job.id) == 0  # and the readers see nothing
     assert "[db-error]" in job.transcript_tail()

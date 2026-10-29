@@ -1,4 +1,7 @@
 import asyncio
+import json
+import re
+import time
 
 import pytest
 
@@ -33,7 +36,7 @@ def reg(monkeypatch, tmp_path):
 def _prev_job(**kw):
     job = server.store.new(
         task="t", model="big-model", endpoint="second", base_url="http://second:8080",
-        cwd="/tmp", run_cwd="/tmp", isolation="none", **kw,
+        backend="llama.cpp", host="local", cwd="/tmp", run_cwd="/tmp", isolation="none", **kw,
     )
     job.session_id = "sess-1"
     return job
@@ -60,7 +63,7 @@ def _prev_worktree_job(tmp_path):
     root = tmp_path / "worktrees" / "proj" / "old-job"  # does not exist: removed for having no changes
     job = server.store.new(
         task="t", model="big-model", endpoint="second", base_url="http://second:8080",
-        cwd="/tmp", run_cwd=str(root), isolation="worktree",
+        backend="llama.cpp", host="local", cwd="/tmp", run_cwd=str(root), isolation="worktree",
         worktree={"repo": "/tmp", "path": str(root), "root": str(root), "branch": "local-agent/old-job",
                   "base": "abc123", "kept": False, "note": "no changes; worktree removed"},
     )
@@ -116,20 +119,53 @@ def _finish_later(job, delay):
 
 
 def test_wait_s_reports_progress_until_done(reg, monkeypatch):
+    """Story 1.5b pins the line: "<status>: <elapsed>s, <turns> turns, <calls> tool calls,
+    <errors> errors; <last_tool>" — errors and last_tool read from the rows the job recorded."""
     monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
     ctx = _Ctx()
+    job = _prev_job()
+    t = time.time()
+    job.record_tool_call(t, "Read", "u1", json.dumps({"file_path": "/a.py"}))
+    job.record_tool_result("u1", t + 0.01, False)
+    job.record_tool_call(t + 1, "Bash", "u2", "make test")
+    job.record_tool_result("u2", t + 2, True)  # the one error
+    job.record_tool_call(t + 2, "Edit", "u3", "/a.py")
+    job.record_tool_result("u3", t + 3, False)  # the latest row: last_tool
 
     async def run():
-        task = asyncio.create_task(server.run_agent(task="slow", wait_s=5, ctx=ctx))
+        task = asyncio.create_task(server.wait_job(job.id, timeout_s=5, ctx=ctx))
         await asyncio.sleep(0.01)
-        job = server.store.jobs[max(server.store.jobs, key=lambda j: server.store.jobs[j].created_at)]
         asyncio.create_task(_finish_later(job, 0.1))
         return await task
 
     out = asyncio.run(run())
     assert out["status"] == "succeeded"
     assert len(ctx.reports) >= 2
-    assert all("turns" in m for _, _, m in ctx.reports)
+    line = re.compile(r"queued: \d+s, 0 turns, 3 tool calls, 1 errors; Edit: /a\.py")
+    assert all(line.fullmatch(m) for _, _, m in ctx.reports), ctx.reports
+
+
+def test_progress_line_omits_zero_errors_and_the_tail_until_the_first_tool(reg, monkeypatch):
+    """No rows yet: no errors part and no "; ..." tail; a call without a result is not an error.
+    Two jobs reported side by side: the line's tool counts identify which is which, no timing
+    races."""
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+    ctx = _Ctx()
+    quiet, busy = _prev_job(), _prev_job()
+    busy.record_tool_call(time.time(), "Glob", "u1", '{"pattern": "*.py"}')  # result pending: no errors part
+
+    async def run():
+        a = asyncio.create_task(server.wait_job(quiet.id, timeout_s=0.05, ctx=ctx))
+        b = asyncio.create_task(server.wait_job(busy.id, timeout_s=0.05, ctx=ctx))
+        await a
+        await b
+
+    asyncio.run(run())
+    bare = re.compile(r"queued: \d+s, 0 turns, 0 tool calls")
+    tail = re.compile(r'queued: \d+s, 0 turns, 1 tool calls; Glob: \{"pattern": "\*\.py"\}')
+    assert all(bare.fullmatch(m) or tail.fullmatch(m) for _, _, m in ctx.reports), ctx.reports
+    assert any(bare.fullmatch(m) for _, _, m in ctx.reports)
+    assert any(tail.fullmatch(m) for _, _, m in ctx.reports)
 
 
 def test_wait_job_times_out_and_still_reports(reg, monkeypatch):

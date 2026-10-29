@@ -12,8 +12,8 @@ from localagents.registry import Defaults
 
 def _job(log_events=False):
     return jobs.JobStore().new(
-        task="t", model="m", endpoint="e", base_url="http://x:8080", cwd="/tmp", run_cwd="/tmp",
-        isolation="none", log_events=log_events,
+        task="t", model="m", endpoint="e", base_url="http://x:8080", backend="llama.cpp", host="local",
+        cwd="/tmp", run_cwd="/tmp", isolation="none", log_events=log_events,
     )
 
 

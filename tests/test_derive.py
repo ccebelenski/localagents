@@ -11,8 +11,8 @@ from localagents import derive, jobs
 def _job(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     return jobs.JobStore().new(
-        task="t", model="m", endpoint="e", base_url="http://x:8080", cwd="/tmp", run_cwd="/tmp",
-        isolation="none",
+        task="t", model="m", endpoint="e", base_url="http://x:8080", backend="llama.cpp", host="local",
+        cwd="/tmp", run_cwd="/tmp", isolation="none",
     )
 
 

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from . import db
+from . import db, derive
 
 
 def state_dir() -> Path:
@@ -80,18 +80,15 @@ class Job:
     result: str | None = None
     error: str | None = None
     num_turns: int = 0
-    tool_calls: int = 0
-    usage: dict[str, Any] | None = None
-    files_touched: list[str] = field(default_factory=list)
     worktree: dict[str, Any] | None = None
     last_activity: str = ""
     log_dir: str = ""
     dump: bool = False
     log_events: bool = False  # write events.jsonl (every SDK message); debugging only
     context: int | None = None  # backend context window handed to the session
-    ctx_tokens: int | None = None  # prompt size of the last backend request (shim-observed)
-    gen_tps: float | None = None  # smoothed output tokens/s of recent backend responses
     metrics: dict[str, Any] | None = None  # llama.cpp /metrics delta over the job (endpoint-wide)
+    # usage, tool_calls, files_touched, ctx_tokens, gen_tps were the duplicated values story
+    # 1.5b removed: the rows carry them, summary()/derive compute them at read time.
     # database identity (set by JobStore.new; NULL-ish defaults so a Job built directly still works)
     mcp_server_id: str = ""
     endpoint_id: int | None = None
@@ -105,6 +102,9 @@ class Job:
     # metrics columns written from Job.metrics; the first three decide the NULL-on-reset rule
     _METRIC_COUNTERS = ("generated_tokens", "prompt_tokens_processed", "prompt_tokens_cached")
     _METRIC_COLUMNS = _METRIC_COUNTERS + ("cache_hit_ratio", "prompt_tps", "generate_tps", "spec_decode_acceptance")
+    # storage details: summary()/job_status shows the job, and name identifies it; the id columns
+    # resolve to model/endpoint/base_url there (DeepSeek review of 1.2)
+    _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id")
 
     def changed(self) -> None:
         """This job's visible state moved: write the new state to its row. The status line reads
@@ -199,23 +199,6 @@ class Job:
             # same rule as _row_update: the database observes the job and must never fail it
             self.log_text(f"[db-error] record_request: {e}")
 
-    def note_usage(self, usage: dict[str, Any] | None, ms: int, gen_ms: int | None = None) -> None:
-        """Record a backend response's usage (called by the shim): live context fill and speed.
-
-        ``gen_ms`` is the time from first streamed byte to end, i.e. generation without prompt
-        processing; it is used for the speed figure when known, else the whole request time."""
-        if not usage:
-            return
-        prompt = sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
-        if prompt:
-            self.ctx_tokens = prompt
-        out = int(usage.get("output_tokens") or 0)
-        span = gen_ms if gen_ms else ms
-        if out and span > 0:
-            tps = out / (span / 1000)
-            self.gen_tps = tps if self.gen_tps is None else 0.5 * self.gen_tps + 0.5 * tps
-        self.changed()
-
     @property
     def done(self) -> bool:
         return self.status in ("succeeded", "failed", "cancelled", "timeout", "lost")
@@ -224,12 +207,34 @@ class Job:
         d = {
             f.name: getattr(self, f.name)
             for f in fields(self)
-            if not f.name.startswith("_")
+            if not f.name.startswith("_") and f.name not in self._SUMMARY_HIDDEN
         }
         d["elapsed_s"] = round((self.finished_at or time.time()) - (self.started_at or self.created_at), 1)
         d["task"] = self.task if len(self.task) < 300 else self.task[:300] + "…"
         if not include_result:
             d.pop("result", None)
+        # the duplicated values come from the rows (spec "Derivations"); a Job built outside
+        # JobStore.new has no rows: the same keys, empty. derive.summary_from_row builds these
+        # same keys for a job read straight from the database.
+        conn = self._conn
+        if conn is not None:
+            d["usage"] = derive.usage_totals(conn, self.id)
+            d["tool_calls"] = derive.tool_call_count(conn, self.id)
+            d["tool_counts"] = derive.tool_counts(conn, self.id)
+            d["errors"] = derive.error_count(conn, self.id)
+            d["last_tool"] = derive.last_tool(conn, self.id)
+            d["files_touched"] = derive.files_touched(conn, self.id)
+            d["ctx_tokens"] = derive.ctx_tokens(conn, self.id)
+            d["gen_tps"] = derive.gen_tps(conn, self.id)
+        else:
+            d["usage"] = None
+            d["tool_calls"] = 0
+            d["tool_counts"] = {}
+            d["errors"] = 0
+            d["last_tool"] = None
+            d["files_touched"] = []
+            d["ctx_tokens"] = None
+            d["gen_tps"] = None
         return d
 
     # ----- logging -----
@@ -299,7 +304,9 @@ class JobStore:
             )
         self._conn, self._server_id = conn, server_id
 
-    def new(self, backend: str = "other", host: str = "local", **kw: Any) -> Job:
+    # backend and host are required keywords: the endpoints row is keyed on all four values, and
+    # a forgotten call site must fail here, not write a wrong endpoints row (DeepSeek review of 1.2)
+    def new(self, *, backend: str, host: str, **kw: Any) -> Job:
         jid = db.new_uuid()
         created_at = kw.setdefault("created_at", time.time())
         name = db.job_name(created_at, jid)
@@ -404,7 +411,10 @@ class JobStore:
 
     def get(self, jid: str) -> Job:
         if jid not in self.jobs:
-            raise KeyError(f"unknown job '{jid}'. Known: {sorted(self.jobs)[-10:]}")
+            # names (newest first), not uuids: they are what a caller can actually match against
+            # list_jobs output or a job directory (DeepSeek review of 1.2)
+            newest = [j.name for j in sorted(self.jobs.values(), key=lambda j: j.created_at)][-10:][::-1]
+            raise KeyError(f"unknown job '{jid}'. Known (newest first): {newest}")
         return self.jobs[jid]
 
     async def wait_many(

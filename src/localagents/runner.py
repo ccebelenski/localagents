@@ -166,16 +166,14 @@ def _apply_message(job: Job, m: Any) -> None:
             elif isinstance(b, ThinkingBlock):
                 job.log_text(f"[thinking] {b.thinking[:500]}")
             elif isinstance(b, ToolUseBlock):
-                job.tool_calls += 1
                 short = json.dumps(b.input, default=str)
                 job.log_text(f"[tool] {b.name} {short[:400]}")
                 job.last_activity = f"{b.name} {short[:120]}"
                 input_text = short[:120]
                 if b.name in EDIT_TOOLS:
-                    fp = b.input.get("file_path") or b.input.get("notebook_path")
-                    if fp and fp not in job.files_touched:
-                        job.files_touched.append(fp)
-                    input_text = fp  # spec: edit tools store just the path (NULL when absent)
+                    # spec: edit tools store just the path (NULL when absent); the count of
+                    # calls and the files touched are read back from the rows (story 1.5b).
+                    input_text = b.input.get("file_path") or b.input.get("notebook_path")
                 job.record_tool_call(time.time(), b.name, b.id, input_text)
     elif isinstance(m, UserMessage):
         content = m.content
@@ -190,9 +188,9 @@ def _apply_message(job: Job, m: Any) -> None:
             job.session_id = m.data.get("session_id") or job.session_id
             job.log_text(f"[init] session={job.session_id} model={m.data.get('model')} cwd={m.data.get('cwd')}")
     elif isinstance(m, ResultMessage):
+        # usage is not stored: it is the sum of the request rows (story 1.5b)
         job.session_id = m.session_id or job.session_id
         job.num_turns = m.num_turns
-        job.usage = m.usage
         job.result = m.result
         job.log_text(f"[done] subtype={m.subtype} turns={m.num_turns} duration={m.duration_ms}ms")
         if m.is_error or m.subtype != "success":

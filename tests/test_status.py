@@ -23,6 +23,8 @@ def _new(store, **kw):
     kw.setdefault("model", MODEL)
     kw.setdefault("endpoint", "llamacpp")
     kw.setdefault("base_url", "http://x:8080")
+    kw.setdefault("backend", "llama.cpp")
+    kw.setdefault("host", "local")
     kw.setdefault("cwd", "/tmp")
     kw.setdefault("run_cwd", "/tmp")
     kw.setdefault("isolation", "none")
@@ -155,24 +157,18 @@ def test_load_summary_shapes():
 
 
 def test_shim_usage_feeds_context_and_speed(monkeypatch, tmp_path):
-    """The shim calls both: note_usage keeps the in-memory fields (job_status still reads them)
-    and _log records the request row — the line now derives ctx fill and speed from the rows."""
+    """The shim's _log records one request row per backend response; the line derives ctx fill
+    and speed from the rows alone (story 1.5b: the in-memory note_usage fields are gone)."""
     store = _store(monkeypatch, tmp_path)
     job = _new(store, context=131072)
     now = time.time()
     job.status, job.started_at = "running", now - 10
-    job.note_usage({"input_tokens": 1000, "cache_read_input_tokens": 39000, "output_tokens": 300}, ms=3000)
-    assert job.ctx_tokens == 40000 and job.gen_tps == 100.0
-    job.note_usage({"output_tokens": 300}, ms=9000, gen_ms=3000)  # prompt processing excluded
-    assert job.ctx_tokens == 40000 and job.gen_tps == 100.0
-    job.note_usage({"input_tokens": 2000, "cache_read_input_tokens": 40000, "output_tokens": 200}, ms=4000)
-    assert job.ctx_tokens == 42000 and job.gen_tps == 75.0  # smoothed
-    job.note_usage(None, ms=0)  # count_tokens etc.: no change
+    job.changed()
     for t, ms, gen_ms, usage in (
         (1, 3000, None, {"input_tokens": 1000, "cache_read_input_tokens": 39000, "output_tokens": 300}),
-        (2, 9000, 3000, {"output_tokens": 300}),
+        (2, 9000, 3000, {"output_tokens": 300}),  # prompt processing excluded from the speed figure
         (3, 4000, None, {"input_tokens": 2000, "cache_read_input_tokens": 40000, "output_tokens": 200}),
-        (4, 5, None, None),  # the count_tokens call note_usage(None) stands for: a null-usage row
+        (4, 5, None, None),  # a count_tokens call: a null-usage row must not move either figure
     ):
         rec = {"t": now + t, "path": "/v1/messages", "status": 200, "ms": ms, "usage": usage}
         if gen_ms is not None:
