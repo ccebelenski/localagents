@@ -199,19 +199,39 @@ class JobStore:
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
         self.endpoint_load: dict[str, str] = {}  # endpoint name -> compact load text, while jobs run
+        self._conn: sqlite3.Connection | None = None
+        self._server_id: str | None = None
+
+    # The database is opened on first use, not at construction: server.py builds the store at
+    # import time, and importing the server (tests, `localagents --help`) must not create or
+    # write the real database.
+    @property
+    def conn(self) -> sqlite3.Connection:
+        self._open()
+        return self._conn  # type: ignore[return-value]
+
+    @property
+    def server_id(self) -> str:
+        self._open()
+        return self._server_id  # type: ignore[return-value]
+
+    def _open(self) -> None:
+        if self._conn is not None:
+            return
         # One row per process (spec: docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md).
         # config, transport, shim_port and the updated/stopped timestamps are story 1.5a's: left NULL.
-        self.conn = db.open_db()
-        self.server_id = db.new_uuid()
+        conn = db.open_db()
+        server_id = db.new_uuid()
         try:
             version = importlib.metadata.version("localagents")
         except importlib.metadata.PackageNotFoundError:  # running from a source tree without metadata
             version = "dev"
-        with db.immediate(self.conn):
-            self.conn.execute(
+        with db.immediate(conn):
+            conn.execute(
                 "INSERT INTO mcp_servers (id, pid, owner, started, cwd, version) VALUES (?, ?, ?, ?, ?, ?)",
-                (self.server_id, os.getpid(), os.getppid(), time.time(), os.getcwd(), version),
+                (server_id, os.getpid(), os.getppid(), time.time(), os.getcwd(), version),
             )
+        self._conn, self._server_id = conn, server_id
 
     def new(self, backend: str = "other", host: str = "local", **kw: Any) -> Job:
         jid = db.new_uuid()

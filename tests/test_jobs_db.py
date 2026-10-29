@@ -9,7 +9,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from localagents import jobs
+from localagents import db, jobs
 
 
 def _store(monkeypatch, tmp_path):
@@ -47,7 +47,14 @@ def test_new_job_inserts_row(monkeypatch, tmp_path):
     assert m[0] == "served-model"
 
 
-def test_mcp_servers_row_at_init(monkeypatch, tmp_path):
+def test_store_does_not_open_the_database_until_used(monkeypatch, tmp_path):
+    store = _store(monkeypatch, tmp_path)
+    assert not db.db_path().exists(), "constructing a JobStore must not create the database"
+    store.conn  # first use
+    assert db.db_path().exists()
+
+
+def test_mcp_servers_row_at_first_use(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     rows = store.conn.execute("SELECT * FROM mcp_servers").fetchall()
     assert len(rows) == 1
