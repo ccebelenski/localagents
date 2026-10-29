@@ -8,7 +8,7 @@ narrative out of the live plan.
 ## What shipped
 
 Version 0.2.0 on main, unpushed (operator rule: always hold, review together). Range
-0100fb6..<final>, 30+ files, ~4100 insertions. Suite 81 → 221 tests. Eight stories (1.1–1.8), three reviewer-built folds, three coordinator fold commits, two live
+0100fb6..ad63d9d+, 34 files, ~5500 insertions. Suite 81 → 221 tests. Eight stories (1.1–1.8), three reviewer-built folds, three coordinator fold commits, two live
 smokes (after 1.5a and after the last fold; both clean).
 
 | story | built by | turns | wall | reviewed by | verdict |
@@ -25,7 +25,7 @@ smokes (after 1.5a and after the last fold; both clean).
 | Opus fold of 1.5b (47602e0) | Opus-high | 72 tool uses, 7.6 min | | DeepSeek (50 turns, 22 min) | no blocking defect, 10 items → 1.8 |
 | Opus fold of 1.7 (6005f94) | Opus-high | 180 tool uses, 27.5 min | | DeepSeek (41 turns, 17 min) | 1 DEFECT the builder had called unreachable (a cancel in the finally strands the row), 7 more |
 | 1.8 review fold | Qwen iq3/ai1 | 99 | 8 min | Opus-high (43 tool uses, 6.8 min) | 2 defects (vLLM-as-other arithmetic; partner-counter KeyError in the finally), declined one brief item with an EXPLAIN |
-| Opus fold of 1.8 + the 1.7-fold review (422deae) | Opus-high | 133 tool uses, 18 min, 16 items | | DeepSeek (pending at write time) | pending |
+| Opus fold of 1.8 + the 1.7-fold review (422deae) | Opus-high | 133 tool uses, 18 min, 16 items | | DeepSeek (62 turns, 33 min) | no defects; 64/64 metrics cases, every cancel probe settled; 3 possibles + 4 nits → 1.9 (open) |
 
 Every local job succeeded; no caps, no DeepSeek trouble (the deployment the operator flagged as
 untested held four reviews of 48–50 turns each).
@@ -100,6 +100,9 @@ untested held four reviews of 48–50 turns each).
 - Opus lanes: ~1.0M subagent tokens over five dispatches (quota); local lanes: zero quota.
 
 ## Open rulings
+
+- Story 1.9 (consistency fold from the final review) is written and unscheduled: the
+  operator decides whether it runs before Epic 2.
 
 - `wait_job` on a finished foreign job could return its row instead of refusing (recorded,
   not built).

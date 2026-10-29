@@ -62,7 +62,7 @@ the duplicates go), then docs.
   tools refuse another server's with a clear error. Gate: summaries over a seeded database
   match hand-computed values; progress line pinned. Lane: DeepSeek (dgx1-a).
 - ☑ **1.7 Review fold: liveness, loop hygiene, cleanup.** (9951438 + 7836d63, Qwen/ai1 job 20261029-043615-edf1; reviewed by Opus-high: two defects NEW from the to_thread change (a wait can return before finish_worktree; a cancel during make_worktree orphans a tree) and two pre-existing cancel/startup holes; the reviewer folded all thirteen items in 6005f94, 184 tests; DeepSeek review of that fold, job 20261029-051337-e3b6: one DEFECT the builder had called unreachable (a cancel in the finally strands the row running), reproduced via two concurrent cancel_job calls; folded with the 1.8 findings by the Opus lane)
-- ☑ **1.8 Review fold: listing cost, metrics_delta, hints.** (4476d06, Qwen/ai1 job 20261029-051257-77b2, 99 turns; declined the NULL-ordering rewrite with an EXPLAIN; reviewed by Opus-high: two defects (backend-keyed branch broke vLLM-as-other; a partner counter missing from one snapshot raised in the finally); the reviewer folded its 8 items plus DeepSeek's 8 from the 1.7-fold review in 422deae, 221 tests; final DeepSeek review of 422deae pending) From the DeepSeek review of
+- ☑ **1.8 Review fold: listing cost, metrics_delta, hints.** (4476d06, Qwen/ai1 job 20261029-051257-77b2, 99 turns; declined the NULL-ordering rewrite with an EXPLAIN; reviewed by Opus-high: two defects (backend-keyed branch broke vLLM-as-other; a partner counter missing from one snapshot raised in the finally); the reviewer folded its 8 items plus DeepSeek's 8 from the 1.7-fold review in 422deae, 221 tests; final DeepSeek review of 422deae, job 20261029-054854-a7cc, 62 turns: NO defects; 64/64 metrics_delta cases by hand; every cancel probe settled; three possibles and four nits → 1.9) From the DeepSeek review of
   47602e0 (job 20261029-043652-7d80: no blocking defect): a `jobs(created_at)` index in the
   v1 DDL (nothing deployed yet); `_row_summary` catches only expected errors and logs; NULL
   `created_at` sorts oldest; the unknown-job hint falls back to the database; docstring and
@@ -77,6 +77,14 @@ the duplicates go), then docs.
 - ☑ **1.6 Docs and version.** (6472c6d, Qwen/ai2 job 20261029-042000-0a8e; every sentence cited; two sentences re-corrected in 1.7) README job records, status line, retention ("retention must
   exceed the longest timeout_s"), `models.example.yaml`; version bump. Gate: full suite;
   README cites nothing that no longer exists. Lane: Qwen or Haiku.
+
+- ☐ **1.9 Consistency fold (open, operator to schedule).** From the final DeepSeek review:
+  `database_error` on EVERY read path, not only foreign rows (in-process `job_status`,
+  `list_jobs(all=False)`, `job_log`, `_foreign_job_error`, and the progress reporter's derive
+  reads inside `store.wait`); `wait_jobs`'s running branch with a None `created_at`;
+  `make_worktree`'s post-add cleanup checks `branch -D`; `cancel_job` says when its 15 s wait
+  timed out; the `[cancel]` line counts deliveries per step (two concurrent cancels print
+  nothing); `Job.summary()` returns a copy of `worktree`. Lane: Qwen (ai1), DeepSeek review.
 
 ## Epic 2: monitor core (collector and storage, no page)
 
