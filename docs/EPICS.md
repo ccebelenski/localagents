@@ -124,11 +124,22 @@ the duplicates go), then docs.
 
 ## Epic 2: monitor core (collector and storage, no page)
 
-- ☐ **2.1 Fixtures.** Capture: fresh Strata `/metrics` from ai1 (with `hardware`/`history`);
-  vLLM `/metrics` + `/v1/models` from a DGX box; llama.cpp `/props`, `/slots`, `/metrics`; two
-  captures of each counter document a minute apart; one real job's `requests` and
-  `tool_calls` rows. A manifest test that every fixture is listed and parses. Lane:
-  coordinator by hand, through the manifest test before commit.
+- ☑ **2.1 Fixtures.** (a1c3693, Qwen/ai2 job 20261029-112904-212f6c31, 66 turns: 26 verbatim
+  captures + 1 error row (vLLM `/health` answers 200 with no body) from Strata ai1/ai2, vLLM
+  dgx1-a and llama.cpp local, two passes 2 min 19 s apart (ai2's pair carries the lane's own
+  traffic; the llama.cpp pair holds a real restart, every counter backwards), the story-1.9
+  job's rows exported read-only; manifest test; 236 tests. Reviewed by Qwen/ai1 job
+  20261029-114358-b254dd96, 37 turns: every file byte-exact against manifest and sidecar, live
+  shapes equal, db export equal field by field; NO defects; two possibles folded in 2.1a.)
+  Gap list for 2.2 in the job's report: Strata `/metrics` has 9 sections, the parser reads 2
+  (`engine`, `live`, `requests[]`, `conversation_cache`, `hardware*`, `history`, `totals.since`,
+  `time`); no `requests_running` from Strata; vLLM 117 series, 9 mapped
+  (`num_requests_waiting_by_reason`, `num_preemptions_total`, `external_prefix_cache_*`,
+  `estimated_*_per_gpu`); llama.cpp `/slots` shape differs busy vs idle.
+- ☐ **2.1a Manifest oracle fold.** Each manifest row pins `parsed` (the parser's entry count)
+  and the test asserts equality, so a consistently hand-edited fixture is caught; every HTTP
+  row has its `.headers` sidecar and its Content-Length, when present, equals `bytes`. Lane:
+  Qwen (ai1, the reviewer), review by a different model.
 - ☐ **2.2 Probes table and collector.** `monitor/collect.py`: fast/slow cadence per state,
   one `probes` row per probe (failure sentence included), Strata `hardware`/`requests` stored
   when present, rates between consecutive rows with reset detection (negative delta →
