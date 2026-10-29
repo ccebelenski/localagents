@@ -9,38 +9,57 @@ Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before 
 
 ## Epic 1: the MCP server writes SQLite
 
-Replaces `requests.jsonl` and `status/<pid>.json` with tables in
+Replaces `requests.jsonl`, `task.txt` and `status/<pid>.json` with tables in
 `~/.local/state/localagents/localagents.db`; adds tool-call records and exposes them to the
-coordinating model. `task.txt`, `transcript.txt` and the opt-in debug dumps stay files.
-The MCP server never depends on the monitor. Needs its own short design before 1.1.
+coordinating model. `transcript.txt` and the opt-in debug dumps stay files. The MCP server
+never depends on the monitor. Spec: `docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md`
+(reviewed by Qwen 2026-10-29). Cut as write path first (1.2–1.4: rows are written, in-memory
+fields and the status files stay), then read path (1.5a/b: readers switch to the tables and
+the duplicates go), then docs.
 
-- ☐ **1.1 Schema module.** New `db.py`: `open_db()` (WAL, busy timeout, `LOCALAGENTS_DB`
-  override, `XDG_STATE_HOME` as `state_dir()`), versioned schema, `migrate()`. Tables: `servers`,
-  `jobs`, `requests`, `tool_calls`; `probes` reserved for the monitor (created by it).
-  Gate: empty file and a version-1 file both come up current; two processes writing
-  concurrently (subprocess test) lose nothing. Lane: Opus or Qwen (single file).
-- ☐ **1.2 Jobs table.** `JobStore.new`/`Job.changed` upsert the job row (every `job_status`
-  field plus `server_pid`); `summary()` unchanged for callers. Gate: a job's row tracks each
-  status transition over a real temp database; existing server tests green. Lane: Qwen.
-- ☐ **1.3 Requests table.** Shim `_log` writes a `requests` row instead of `requests.jsonl`
-  (same fields: t, path, status, ms, gen_ms, usage, model, messages, tools, bytes, notes).
-  README "Job records" updated. Gate: rows reproduce a captured `requests.jsonl` line for line
-  (fixture from a real job, captured in 2.1). Lane: Qwen.
-- ☐ **1.4 Tool calls and exposure.** Runner writes one `tool_calls` row per `ToolUseBlock`
-  (time, name, short input: file path or first 120 chars of a command) and marks the error
-  flag from the matching `ToolResultBlock`. `job_status`/final record gain `tool_counts`
-  (per tool: calls, errors) and `last_tool`; `job_log(tools=N)` returns the last N rows;
-  the blocking-wait progress line names the current tool and the error count. Gate: a
-  replayed SDK message sequence (fixture) yields the expected rows and counts; progress line
-  pinned. Lane: DeepSeek (runner + server + jobs) with the fixture named.
-- ☐ **1.5 Servers table and status line.** Heartbeat row per server pid (owner, updated);
-  `status.collect()` reads the tables; `status/<pid>.json` and its publish path removed; the
-  pid alive check kept. Gate: `test_status.py` renders the same lines as today from the
-  database; `localagents statusline` still imports no server modules (existing subprocess
-  test). Lane: Qwen.
-- ☐ **1.6 Retention and docs.** Prune leaves job/request/tool-call rows; README retention and
-  job-records sections rewritten for the database; `models.example.yaml`; version bump.
-  Gate: `test_retention.py` extended for rows kept; full suite. Lane: Qwen (docs story).
+- ☐ **1.1 Schema module.** New `db.py`: `db_path()`, `open_db()` (WAL, busy timeout,
+  foreign_keys per connection, `LOCALAGENTS_DB` override), versioned `migrate()`,
+  `immediate()` context manager (BEGIN IMMEDIATE), `lookup_id()` (INSERT OR IGNORE then
+  SELECT), `new_uuid()`, `job_name()`. Stdlib only (the status line imports it). Gate: fresh
+  file and a version-1 file both come up current; version 99 raises; four real processes
+  writing concurrently lose nothing; CHECK and FK enforced. Lane: Opus-high (dispatched
+  2026-10-29 night).
+- ☐ **1.2 Jobs write path.** `Job.id` becomes a uuid4 (`job_id` of every tool, `resume_job`
+  included), `Job.name` the readable stamp (directory and worktree branch `local-agent/<name>`).
+  `JobStore` opens the database, inserts its `mcp_servers` row (id, pid, owner, started, cwd,
+  version) at init, and `new()` inserts the job row inside `immediate()` with `endpoint_id` /
+  `model_id` via `lookup_id`; `Job.changed()` upserts the mutable columns. `task.txt` no
+  longer written. Prune pattern widened to `[0-9a-f]{4,}`. In-memory fields and the status
+  file untouched. Gate: a job's row tracks each status transition over a real temp database;
+  the `job_id` run_agent returns is the uuid; directory and branch use `name`; existing
+  suite green. Lane: Qwen (ai1).
+- ☐ **1.3 Requests write path.** Shim `_log` inserts a `requests` row (path via `lookup_id`,
+  `http_status`, ms, gen_ms, stream, four token columns, messages, tools, bytes,
+  moved_system, folded_text, context_exceeded, error) and stops appending `requests.jsonl`.
+  `note_usage` still updates the in-memory ctx_tokens/gen_tps for now. Gate: a captured
+  `requests.jsonl` from a real job replays into rows that match it field for field (fixture
+  captured by the coordinator). Lane: Qwen (ai2).
+- ☐ **1.4 Tool-calls write path.** Runner inserts a `tool_calls` row per `ToolUseBlock`
+  (input rule: edit tools → file_path/notebook_path or NULL; others → first 120 chars),
+  keeps `tool_use_id -> rowid` for pending calls in memory, and sets `finished`/`is_error`
+  by rowid when the `ToolResultBlock` arrives. Gate: a replayed SDK message sequence (fixture
+  built from the SDK dataclasses) yields the expected rows. Lane: DeepSeek (dgx1-a) or Qwen.
+- ☐ **1.5a Status line read path.** `mcp_servers` heartbeat every 10 s (`updated`), `stopped`
+  at clean exit, config/transport/shim_port filled; sampler writes `endpoint_load` rows;
+  `status.collect()` reads live servers + their queued/running/recent jobs + latest request
+  rows + endpoint_load; `status/<pid>.json` and `publish()` removed; the `lost` rule at
+  startup. Gate: `test_status.py` renders the same lines from the database; statusline still
+  imports no server modules. Lane: Qwen (ai1).
+- ☐ **1.5b Summary read path and exposure.** `summary()` derives usage totals, tool call
+  count, `tool_counts`, `last_tool`, files touched, ctx_tokens, gen_tps, run_cwd, log_dir from
+  the tables (derivations as in the spec); the in-memory duplicates are removed from `Job`;
+  `job_log(tools=N)`; `list_jobs(all=False)`; the progress line names the current tool and
+  the error count; `job_status`/`job_log`/`list_jobs` read any server's job, the in-process
+  tools refuse another server's with a clear error. Gate: summaries over a seeded database
+  match hand-computed values; progress line pinned. Lane: DeepSeek (dgx1-a).
+- ☐ **1.6 Docs and version.** README job records, status line, retention ("retention must
+  exceed the longest timeout_s"), `models.example.yaml`; version bump. Gate: full suite;
+  README cites nothing that no longer exists. Lane: Qwen or Haiku.
 
 ## Epic 2: monitor core (collector and storage, no page)
 
