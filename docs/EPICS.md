@@ -313,7 +313,7 @@ the duplicates go), then docs.
 - ☐ **3.2a Fold of the 3.2 build notes and the page reviews.** Split: 3.2a-server ☑ (Qwen/ai1
   job 20261029-153853-bcc9fa21, 123 turns, 594 tests: port_free with SO_REUSEADDR, static
   no-cache, the snapshot fields, relativised tool text, the seed's up-probe models corrected;
-  review folded into the 3.3a review) and 3.2a-page (Opus, running). Page items from the reviews: fleet charts for live
+  review folded into the 3.3a review) and 3.2a-page ☑ (Opus-high, 110 tool uses, 600 tests: rulings A-G built with browser evidence per row; a cold load of a malformed hash used to kill the whole page, fixed; one field walker with a named allow-list of variable-key reads). Both halves reviewed with 3.3a. Page items from the reviews: fleet charts for live
   endpoints only; a node-down card does not repeat each endpoint's sentence; the field gate
   sees bracket reads with a literal key. `port_free` with SO_REUSEADDR; snapshot gains
   `db_path`, `endpoint.probe_state` and `dropped_job_id`; the page uses them; the header's
@@ -343,6 +343,10 @@ the duplicates go), then docs.
   hash must not blank the pane. Server seams found: the stream fan-out starts draining only at
   the first subscriber, so a tick before it makes the first page load fetch twice; totals count
   `error = ''` rows the page draws as clean; the restart detail stores raw float repr. → 3.3a.)
+- ☐ **3.2b Page uses the new snapshot fields** (after 3.2a-server): the header shows `db_path`;
+  the endpoint card's strip "now" reads `probe_state` (no history call for it); the down card
+  links `dropped_job_id`; the endpoint page's header shows `host` from the endpoint object and
+  `last_model`/`last_context` for a down or dormant endpoint. Lane: Qwen3.8-27B.
 - ☐ **3.3a Server seams from the 3.3 review** (after 3.2a-server): the fan-out task starts with
   the app, not the first subscriber; `endpoint_requests` totals count `error IS NOT NULL AND
   error != ''` and job detail's client-side totals agree; `rates.reset_reason` rounds the
