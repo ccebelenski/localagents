@@ -6,9 +6,10 @@ one line, e.g. ``local: ⟳ Qwen3.8-Flash-Next 1m18s 4 calls · ✓ Muse-Glimmer
 ``render_lines()`` (story 1.11) is the multi-line form: one header per endpoint the session's
 jobs run on, one indented row per job (mark, model, elapsed, calls, files, ctx, t/s,
 compactions, last activity), a trailing line for other sessions' jobs. The
-``localagents statusline`` command runs ``render()`` and nothing else, so it stays fast enough
-for every status-line refresh: stdlib plus ``db``/``derive`` only, under 100 ms, and it never
-creates or fails on the database (no live servers or no database yet prints the empty line).
+``localagents statusline`` command runs ``render_lines()`` by default and ``render()`` under
+``--one-line``, and nothing else, so it stays fast enough for every status-line refresh:
+stdlib plus ``db``/``derive`` only, under 100 ms, and it never creates or fails on the
+database (no live servers or no database yet prints the empty line).
 """
 
 from __future__ import annotations
@@ -166,13 +167,14 @@ def _entry_bits(e: dict[str, Any]) -> list[str]:
 
 def _row_bits(e: dict[str, Any]) -> list[str]:
     """The multi-line row's bits (story 1.11): the shared bits, plus the compaction count
-    (only when > 0) and the last activity for a running job — the one-line form shows neither."""
+    (when > 0, on finished rows too — a trailing indicator of a tuning problem, ruling on the
+    1.11 review) and the last activity, which stays running-only. The one-line form shows
+    neither."""
     bits = _entry_bits(e)
-    if e.get("status") == "running":
-        if e.get("compactions"):
-            bits.append(_n(e["compactions"], "compaction"))
-        if e.get("last_activity"):  # collect already cut it to MAX_ACTIVITY
-            bits.append(e["last_activity"])
+    if e.get("compactions"):
+        bits.append(_n(e["compactions"], "compaction"))
+    if e.get("status") == "running" and e.get("last_activity"):  # collect already cut it to MAX_ACTIVITY
+        bits.append(e["last_activity"])
     return bits
 
 

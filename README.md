@@ -206,7 +206,7 @@ endpoint plus one row per job (the old one-line form is `localagents statusline
 ```
 local ai1 · 1/1 slots
   ⟳ Qwen3.8-27B 4m00s · 12 calls · 3 files · ctx 41% · 33 t/s · 2 compactions · Bash: uv run pytest -q
-  ✓ Qwen3.8-27B 2m00s · 2 files
+  ✓ Qwen3.8-27B 2m00s · 2 files · 3 compactions
 local dgx1-a · 1 run kv 31%
   ⟳ DeepSeek-V4-Flash 2m00s · 3 calls · ctx 12% · 40 t/s
 +2 jobs in other sessions
@@ -220,7 +220,9 @@ with a `compact_boundary` message) and its last tool call. The load of each endp
 jobs run on rides its header line, probed every ten seconds while jobs run: slots busy
 for llama.cpp, requests running and queued and KV cache fill for vLLM. Finished jobs
 stay on the line for two minutes with a check mark (or a cross, clock, null sign or
-dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost).
+dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost); a finished row
+keeps its compaction count for those two minutes — it's a trailing indicator of a
+context-tuning problem, worth seeing even after the job turned green.
 
 "Live" means the heartbeat: a server is shown while its last beat is under a minute
 old (and its pid still exists). A server that exited or was killed drops off the line

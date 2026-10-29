@@ -216,8 +216,10 @@ def test_render_lines_is_one_header_per_endpoint_one_row_per_job(monkeypatch, tm
     """Story 1.11 item 4: one header per endpoint of this session (first-seen order of the
     entries, which collect returns sorted by started_at), one indented row per job, a
     trailing line for other sessions' jobs. A running job shows calls, files, ctx, t/s,
-    compactions (> 0) and its last activity; a finished one mark, model, elapsed and files —
-    as render_entry does (the one-line tests pin that it did not move)."""
+    compactions (> 0) and its last activity; a finished one mark, model, elapsed, files and
+    its compaction count (the trailing indicator — ruling on the 1.11 review) — while
+    render_entry shows neither compactions nor activity (the one-line tests pin that it did
+    not move)."""
     store = _store(monkeypatch, tmp_path)
     now = time.time()
 
@@ -235,6 +237,7 @@ def test_render_lines_is_one_header_per_endpoint_one_row_per_job(monkeypatch, tm
     a2.status, a2.started_at, a2.finished_at = "succeeded", now - 150, now - 30
     a2.record_tool_call(now - 140, "Edit", "e1", "/a.py")
     a2.record_tool_call(now - 139, "Edit", "e2", "/b.py")
+    a2.compactions = 3
     a2.changed()
     store.record_endpoint_load({"ai1": "1/1 slots"})
 
@@ -260,7 +263,7 @@ def test_render_lines_is_one_header_per_endpoint_one_row_per_job(monkeypatch, tm
     assert status.render_lines(now=now, owner=me) == [
         "local ai1 · 1/1 slots",
         "  ⟳ Qwen3.8-27B 4m00s · 12 calls · ctx 41% · 33 t/s · 2 compactions · Bash: uv run pytest -q",
-        "  ✓ Qwen3.8-27B 2m00s · 2 files",
+        "  ✓ Qwen3.8-27B 2m00s · 2 files · 3 compactions",
         "local dgx1-a · 1 run kv 31%",
         "  ⟳ deepseek-v4 2m00s · 3 calls · ctx 12% · 40 t/s",
         "+2 jobs in other sessions",
