@@ -90,7 +90,7 @@ the duplicates go), then docs.
   exceed the longest timeout_s"), `models.example.yaml`; version bump. Gate: full suite;
   README cites nothing that no longer exists. Lane: Qwen or Haiku.
 
-- ☐ **1.9 Consistency fold and contract tightening.** From the final DeepSeek review:
+- ☑ **1.9 Consistency fold and contract tightening.** (04ced07, Qwen/ai1 job 20261029-110844-8fd14e0e, 143 turns, 235 tests; reviewed by DeepSeek/dgx1-a job 20261029-112752-b3499250, 97 turns, 31 probe tests: four summary() reads unguarded (`wait_job` 416 contradicting its own comment, `run_agent` 401, `wait_jobs` 460, `cancel_job` 605); the context-overflow rewrite records the shim's 400 not the backend's 500; cancels absorbed during worktree creation are counted nowhere; a half-failed `worktree add -b` leaves its branch; possibles: an npm-installed Claude runs as `node` so the owner walk finds nothing; the count_tokens fallback row's `ms` is 0. Folded in 1.9a.) From the final DeepSeek review:
   `database_error` on EVERY read path, not only foreign rows (in-process `job_status`,
   `list_jobs(all=False)`, `job_log`, `_foreign_job_error`, and the progress reporter's derive
   reads inside `store.wait`); `wait_jobs`'s running branch with a None `created_at`;
@@ -103,6 +103,13 @@ the duplicates go), then docs.
   records 404, not 200); `mcp_servers.owner` is the pid of the nearest `claude` ancestor (the
   session), parent pid only when there is none, so a wrapper launch (`uv run`) no longer folds
   a session's own jobs into "+N other". Lane: Qwen (ai1), DeepSeek review.
+- ☐ **1.9a Fold of the 1.9 review** (reviewer fixes its own findings, ruling (a)): every tool's
+  final `summary()` answers `database_error`; `requests.http_status` is the backend's status on
+  the overflow rewrite too (500 stays 500; the spec names 0 as the no-answer sentinel); the
+  count_tokens fallback records its real `ms`; cancels absorbed during worktree creation print a
+  `[cancel]` line naming the step; a failed `worktree add -b` deletes the branch it created; the
+  owner walk also accepts a `node` ancestor whose cmdline runs `claude`. Lane: DeepSeek, review
+  by Qwen.
 - ☐ **1.10 `wait_job`/`wait_jobs` on any job.** The waits work for any job on the machine: an
   in-process job through its settle event as today; another server's job by polling its row
   (2 s) until a terminal status or the timeout, with `mark_lost_jobs` applied every 30 s of
