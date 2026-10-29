@@ -242,14 +242,16 @@ the duplicates go), then docs.
 - ☐ **3.4 Job detail.** Context gauge, request table, metrics delta, files touched, tool-call
   timeline strip with context fill overlaid, breakdown by tool, transcript tail. Gate:
   browser smoke over the seeded finished job. Lane: Qwen with the row shapes quoted.
-- ☐ **3.5 `localagents smoke` and merge gates.** Online script: direct `/v1/messages`
-  requests to a named endpoint; one real job through `run_job` with the fixed brief ("run
-  `date` with Bash and report it"); a temp config entry on a dead port; printed checklist,
-  non-zero exit on a missing row. README monitor section. Gate: smoke green against the real
-  `models.yaml`; two-minute live run at merge. Lane: Qwen on Strata (node-pass shape), the
-  endpoint and model named in the brief. Dispatched 2026-10-29 to Qwen/ai1 ahead of 3.1-3.4:
-  the script needs only the tables and the collector; the README monitor section and the
-  merge gates come with the pages.
+- ☑ **3.5 `localagents smoke`.** (Qwen/ai1 job 20261029-130838-4304e120, 104 turns, 431 tests;
+  three live runs pasted verbatim in the job's report: ai2 full green, llamacpp requests
+  green, the real database once with one red line, an ai2 stall at the 60 s cap, classified
+  (c) node fact; one (b) script bug found by the live run and fixed, the date match hit the
+  runner's own timestamp lines. Noticed: the shim answers 501 to `count_tokens` when the
+  backend does (only a 404 is estimated), so every job carries a 501 request row; the smoke's
+  server row is never `stopped`. The merge gates and the README monitor section come with the
+  pages. Review: pending.)
+- ☐ **3.6 Merge gates.** Smoke green against the real `models.yaml`; two-minute live run of
+  the monitor at the Epic 3 merge; README monitor section (with 3.1).
 
 ## Epic 4: operations (V2, not scheduled)
 
