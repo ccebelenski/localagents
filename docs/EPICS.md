@@ -157,12 +157,16 @@ the duplicates go), then docs.
   a same-length value edit now fails the digest while bytes and Content-Length pass;
   Content-Length from the last header block; a pathless error row is a problem string.
   Third-model probe folded into the 2.2 review.)
-- ☐ **2.2 Probes table and collector.** `monitor/collect.py`: fast/slow cadence per state,
-  one `probes` row per probe (failure sentence included), Strata `hardware`/`requests` stored
-  when present, rates between consecutive rows with reset detection (negative delta →
-  endpoint event, no rate for the interval), 7-day probe retention. Gate: rates from the
-  paired captures match hand-computed values; reset case; cadence selection. Lane: DeepSeek
-  or Opus (cross-module with registry).
+- ☑ **2.2 Probes table and collector.** (Opus-high, 123 tool uses, 322 tests; schema v3 per the
+  approved spec block; `fetch_metrics_doc` + `parse_strata_extra`; `monitor/{rows,rates,state,
+  collect,retention}.py`; rates pinned by hand on the fixture pairs (ai2 33.482 prompt/s,
+  18.590 gen/s over 139 s; dgx1-a 71.813/44.381; llama.cpp pair = reset; ai1 idle = 0.0);
+  events up/down/restarted; probe retention 7 d; the MCP server imports no monitor module
+  (boundary test). Corrected against the brief: Strata `requests[]` are NOT stored (the spec
+  rules, this line used to say otherwise); reset detection reads the raw counters, since
+  `metrics_delta` has no NULL rule. Noticed: llama.cpp `requests_processing`/`requests_deferred`
+  are not mapped, so llama.cpp rows carry NULL running/waiting; `parse_strata_metrics` reads a
+  missing counter as 0 not NULL. Review: DeepSeek, pending.)
 - ☐ **2.3 Display and node state.** Pure functions from rows: live / down-recent / dormant
   with the attention window (24 h default, `monitor:` section), cold start → dormant; node
   up/down/unknown from a host's endpoints; port-22 fallback behind an injected connector.
