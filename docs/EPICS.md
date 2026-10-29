@@ -117,7 +117,7 @@ the duplicates go), then docs.
   the progress line comes from the row. `foreign_job` remains only for `cancel_job` and
   `run_agent(resume_job=)`, which need the process. README table rows follow. Lane: Qwen
   (ai2) after 1.9 merges (same functions), DeepSeek review.
-- ☐ **1.11 Status line: one line per job, grouped by endpoint; compaction count.** Claude
+- ☑ **1.11 Status line: one line per job, grouped by endpoint; compaction count.** (a3ad9da, Qwen3.8-27B/llamacpp job 20261029-113848-f97e5888, 105 turns, 247 tests; `compact_boundary` confirmed in the claude binary and the SDK's bundled CLI; reviewed by Qwen/ai1 job 20261029-120222-edf9e6b2, 46 turns: one-line form byte-identical old vs new over four scenarios, migration with foreign keys clean, CLI 24 ms, NO defects; one ruling: finished rows should keep their compaction count, a trailing indicator; folded in 1.11a.) Claude
   Code renders each printed line as a row (docs: "Multiple lines: each echo or print statement
   displays as a separate row"). Shape approved by the operator 2026-10-29 ("Status line looks
   good - exposing current tool call a good idea - can we track compactions done count? That's
@@ -128,6 +128,11 @@ the duplicates go), then docs.
   updated), counted from the harness's `compact_boundary` system message, written to the
   transcript and carried by `job_status`. Lane: Qwen3.8-27B (llamacpp, local), review by a
   different model.
+
+- ☐ **1.11a Compactions on finished rows; docstring.** A finished job's row shows its
+  compaction count for its two minutes on the line (the operator's "trailing indicator");
+  status.py's module docstring names `render_lines` as the default. Lane: Qwen (ai1, the
+  reviewer).
 
 ## Epic 2: monitor core (collector and storage, no page)
 
