@@ -357,8 +357,7 @@ database; point it at a throwaway file to rehearse.
 `localagents monitor` is a web dashboard for the endpoints in `models.yaml` and the jobs
 localagents runs on them: one process that probes every endpoint (every 5 s; a dormant one
 every 60 s) into the shared database and serves a page that redraws from a server-sent
-events stream after each probe. (The job detail page is still to come; a job link shows a
-"not built yet" panel.)
+events stream after each probe.
 
 ```bash
 localagents monitor                 # http://127.0.0.1:8765/
@@ -405,6 +404,16 @@ and restart events, and the request table: our own jobs' requests to it (time, j
 status, milliseconds, tokens in, out and from cache, streaming, error), newest first, under a
 totals line. The range buttons apply here too; the tiles follow each snapshot, and the series
 and tables are re-fetched on a range change and at most every 30 s.
+
+The job detail page (`#/job/<id>`, from the running-jobs table) fetches the job's record in
+one call and shows its status, model, endpoint and times; a context gauge when the job
+reported a window; the four usage counters and the seven /metrics deltas the runner recorded
+(or "metrics not recorded"); the files touched, shown relative to the job's worktree or cwd;
+a tool-call timeline across the job's duration — one mark per call coloured by tool, errors
+red, the context fill drawn over it — and the breakdown by tool; the request table with a
+totals line; and the transcript tail with the job's log directory (a sentence when the
+directory is gone). A running job's header refreshes in place from the snapshot stream; a job
+whose server stopped beating is shown lost.
 
 An optional top-level `monitor:` section in `models.yaml` holds its settings; the MCP server
 ignores it, and an unknown key or a bad value in it is an error naming the key:

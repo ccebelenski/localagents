@@ -181,6 +181,48 @@ td.cut { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .events tr.ev-down td:nth-child(2) { color: var(--critical); }
 .events tr.ev-up td:nth-child(2) { color: var(--good); }
 
+/* job detail (story 3.4; monitor spec §5 "Job detail") */
+.job-detail { display: flex; flex-direction: column; gap: 18px; }
+h3 { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; }
+.job-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.job-name { font-weight: 600; font-size: 15px; }
+.status { font-size: 12px; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; white-space: nowrap; }
+.status-queued, .status-cancelled { color: var(--muted); }
+.status-lost { color: var(--warning); border-color: var(--warning); }
+.status-running { color: var(--accent); border-color: var(--accent); }
+.status-succeeded { color: var(--good); border-color: var(--good); }
+.status-failed { color: var(--critical); border-color: var(--critical); }
+.status-timeout { color: var(--warning); border-color: var(--warning); }
+.job-task { background: var(--surface-2); border-radius: 6px; padding: 8px 10px; font-family: var(--mono);
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 0; }
+.job-note { color: var(--muted); margin-top: 6px; }
+.fig-row { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; margin-top: 8px; }
+.gauge { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.gauge .label { color: var(--muted); }
+.gauge-bar { display: inline-block; width: 180px; height: 10px; background: var(--surface-2);
+  border-radius: 3px; overflow: hidden; vertical-align: middle; }
+.gauge-bar span { display: block; height: 100%; background: var(--accent); }
+.gauge-bar.high span { background: var(--warning); }
+.timeline { min-width: 0; }
+.timeline-svg { width: 100%; height: 44px; background: var(--surface-2); border-radius: 4px; display: block; }
+.timeline-mark { shape-rendering: crispEdges; }
+.timeline-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--ink-2); margin-top: 4px; }
+.legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.by-tool table { width: auto; }
+.by-tool .legend-swatch { margin-right: 6px; }
+.job-requests { min-width: 0; }
+.job-requests-table { width: 100%; }
+.job-requests .totals { color: var(--ink-2); font-weight: 600; }
+.transcript { min-width: 0; }
+.transcript-tail { background: var(--surface-2); border-radius: 6px; padding: 8px 10px; font-family: var(--mono);
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px;
+  overflow-y: auto; margin: 0; }
+.transcript-dir { font-size: 12px; margin-top: 4px; color: var(--ink-2); overflow-wrap: anywhere; }
+.files { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.files .file { font-family: var(--mono); font-size: 12px; color: var(--ink-2); background: var(--surface-2);
+  border-radius: 4px; padding: 1px 6px; overflow-wrap: anywhere; }
+
 @media (max-width: 760px) {
   .hosts, .fleet-charts { grid-template-columns: 1fr; }
   .tiles { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }

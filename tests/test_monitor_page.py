@@ -30,10 +30,11 @@ from monitor_seeded import NOW, registry, seed_file, write_config
 
 STATIC = Path(app_mod.__file__).resolve().parent / "static"
 
-# the shell loads exactly these, in this order (stylesheets first, uPlot before the page script,
-# the detail pages after app.js, whose pages hook they register with)
+# the shell loads exactly these, in this order (stylesheets first, uPlot before the page
+# scripts; the detail pages register themselves after app.js, stories 3.3 and 3.4 in their own
+# files)
 SHELL_ASSETS = ["/static/uPlot.min.css", "/static/app.css", "/static/uPlot.iife.min.js", "/static/app.js",
-                "/static/endpoint.js"]
+                "/static/endpoint.js", "/static/job.js"]
 
 
 @pytest.fixture
@@ -49,7 +50,7 @@ def client(tmp_path):
 # --- item 1: the shell and the vendored uPlot ---------------------------------------------------
 
 
-def test_the_shell_references_exactly_the_five_static_files(client):
+def test_the_shell_references_exactly_the_page_static_files(client):
     html = client.get("/").text
     refs = [r for r in re.findall(r'(?:src|href)="([^"]+)"', html) if not r.startswith("#")]  # in-page links
     assert refs == SHELL_ASSETS
@@ -62,6 +63,7 @@ def test_the_shell_references_exactly_the_five_static_files(client):
     ("/static/uPlot.iife.min.js", "javascript"),
     ("/static/app.js", "javascript"),
     ("/static/endpoint.js", "javascript"),
+    ("/static/job.js", "javascript"),
 ])
 def test_each_static_file_is_served_with_its_content_type(client, path, kind):
     r = client.get(path)
@@ -87,11 +89,22 @@ SPEC = Path(__file__).resolve().parent.parent / "docs" / "superpowers" / "specs"
 # the classes the browser smoke and the spec name (story 3.2's brief)
 SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant", "node-down", "node-unknown",
                  "jobs", "fleet", "range"]
+# the classes the job page's smoke names (story 3.4's brief): the page root and its sections,
+# the status classes the header's mark takes (a queued job takes one more, styled but not
+# smoked)
+JOB_SMOKE_CLASSES = ["job-detail", "gauge", "timeline", "by-tool", "job-requests", "transcript", "files",
+                     "status-running", "status-succeeded", "status-failed", "status-timeout",
+                     "status-cancelled", "status-lost"]
 
 # the names app.js reads the route bodies through (its header says so): snapshot, host, endpoint,
 # running job, endpoint hardware, endpoint rates, fleet history, one endpoint's fleet series,
 # endpoint history
-JSON_VARS = ("snap", "host", "ep", "job", "hw", "rates", "fleet", "fleetEp", "hist")
+APP_JS_VARS = ("snap", "host", "ep", "job", "hw", "rates", "fleet", "fleetEp", "hist")
+# the names job.js (story 3.4) reads the route bodies through (its header says so): the job
+# detail through `detail`, a snapshot through `snap`, a request row through `req`, a tool call
+# through `tc`, a snapshot jobs[] entry through `job`
+JOB_JS_VARS = ("detail", "snap", "req", "tc", "job")
+PAGE_VARS = {"app.js": APP_JS_VARS, "job.js": JOB_JS_VARS}
 # Array methods called on those values: not fields (the allow-list of the regex's false positives)
 JS_BUILTINS = {"forEach", "map", "filter", "some", "length", "slice", "sort", "push", "join", "concat", "indexOf"}
 
@@ -107,29 +120,42 @@ def _app_js():
 
 
 def test_the_page_carries_every_class_the_smoke_and_spec_name():
-    """Each class appears as a whole word inside a class string of the shell or of app.js, and
-    the stylesheet styles it."""
-    text = (STATIC / "index.html").read_text() + _app_js()
-    strings = re.findall(r'class="([^"]*)"|class: "([^"]*)"|cls \+?= "([^"]*)"|"(node-[a-z]+)"', text)
+    """Each class appears as a whole word inside a class string of the shell or of a page
+    script, and the stylesheet styles it."""
+    text = (STATIC / "index.html").read_text() + (STATIC / "app.js").read_text() + (STATIC / "job.js").read_text()
+    # the overview's `cls += "node-down"` style and the job page's status class map values
+    strings = re.findall(r'class="([^"]*)"|class: "([^"]*)"|cls \+?= "([^"]*)"|"(node-[a-z]+)"|"(status-[a-z]+)"', text)
     classes = {c for groups in strings for s in groups for c in s.split()}
     css = (STATIC / "app.css").read_text()
-    for cls in SMOKE_CLASSES:
+    for cls in SMOKE_CLASSES + JOB_SMOKE_CLASSES:
         assert cls in classes, cls
         assert re.search(r"\." + re.escape(cls) + r"(?![\w-])", css), cls
 
 
-def test_app_js_reads_only_section_5a_field_names():
-    """Every property chain read off a route body (``ep.rates.gen_tps``, ``fleet.endpoints``) names
-    keys §5a names, so a field the page invents (or a renamed one) fails here."""
-    spec = _section_5a()
+def _read_fields(js_text, vars):
+    """The field names read through the given variable names, the allow-list of the regex's
+    array-method false positives removed."""
     fields = set()
-    for m in re.finditer(r"(?<![\w.$])(" + "|".join(JSON_VARS) + r")((?:\.[A-Za-z_$][\w$]*)+)", _app_js()):
+    for m in re.finditer(r"(?<![\w.$])(" + "|".join(vars) + r")((?:\.[A-Za-z_$][\w$]*)+)", js_text):
         fields |= set(m.group(2).split(".")[1:])
-    fields -= JS_BUILTINS
-    # the regex does see the reads (a guard against a pattern that matches nothing)
-    assert {"hosts", "endpoints", "jobs", "rates", "gen_tps", "state", "t", "server_live", "dropped_job"} <= fields
-    missing = sorted(f for f in fields if not re.search(r"(?<![A-Za-z_])" + re.escape(f) + r"(?![A-Za-z_])", spec))
-    assert missing == []
+    return fields - JS_BUILTINS
+
+
+def test_app_js_reads_only_section_5a_field_names():
+    """Every property chain read off a route body (``ep.rates.gen_tps``, ``fleet.endpoints``,
+    ``detail.requests``, ``job.server_live``) names keys §5a names, so a field the page
+    invents (or a renamed one) fails here. Walked per page file, each through the names its
+    header declares (app.js: JSON_VARS, job.js: detail/snap/req/tc/job)."""
+    spec = _section_5a()
+    for name, vars in PAGE_VARS.items():
+        fields = _read_fields((STATIC / name).read_text(), vars)
+        # the regex does see the reads (a guard against a pattern that matches nothing)
+        assert {"hosts", "endpoints", "jobs", "rates", "gen_tps", "state", "t", "server_live", "dropped_job"} <= fields \
+            if name == "app.js" else \
+            {"requests", "tool_call_log", "ctx_tokens", "usage", "metrics", "tool_counts",
+             "files_touched", "transcript_tail", "elapsed_s", "server_live"} <= fields, name
+        missing = sorted(f for f in fields if not re.search(r"(?<![A-Za-z_])" + re.escape(f) + r"(?![A-Za-z_])", spec))
+        assert missing == [], (name, missing)
 
 
 # --- story 3.3: the endpoint detail page (endpoint.js) -------------------------------------------
@@ -293,6 +319,15 @@ def test_the_command_serves_the_page_and_its_files_over_the_seeded_world(tmp_pat
         assert fleet.status_code == 200 and fleet.json()["t"]
         hist = httpx.get(base + "/api/endpoints/ai1/history?range=1h", timeout=5)
         assert hist.status_code == 200 and "state" in hist.json()
+        # the job detail route answers the seeded finished job (the story 3.4 page's source)
+        jobs = httpx.get(base + "/api/jobs", timeout=5).json()
+        finished = [j for j in jobs if j["status"] == "succeeded"]
+        assert len(finished) == 1
+        r = httpx.get(base + f"/api/jobs/{finished[0]['id']}", timeout=5)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "succeeded"
+        assert len(body["requests"]) == 112 and len(body["tool_call_log"]) == 142
         proc.send_signal(signal.SIGTERM)
         assert proc.wait(timeout=5) == 0
 
