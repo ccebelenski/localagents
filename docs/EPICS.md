@@ -347,7 +347,7 @@ the duplicates go), then docs.
   the endpoint card's strip "now" reads `probe_state` (no history call for it); the down card
   links `dropped_job_id`; the endpoint page's header shows `host` from the endpoint object and
   `last_model`/`last_context` for a down or dormant endpoint. Lane: Qwen3.8-27B.
-- ☐ **3.3a Server seams from the 3.3 review** (after 3.2a-server): the fan-out task starts with
+- ☑ **3.3a Server seams from the 3.3 review** (Qwen/ai2 job 20261029-155444-1499e5ca, 60 turns, 603 tests; the fan-out starts in make_app under a running loop with the lazy start kept as the fallback for the test client's portal loop; one existing test had pinned the old error rule and followed; job.js's client-side totals still count '' rows → 3.2b's lane told; reviewed with 3.2a and 3.2b) (after 3.2a-server): the fan-out task starts with
   the app, not the first subscriber; `endpoint_requests` totals count `error IS NOT NULL AND
   error != ''` and job detail's client-side totals agree; `rates.reset_reason` rounds the
   figures it names. Lane: Qwen (ai2).
