@@ -114,7 +114,12 @@ the duplicates go), then docs.
   `db.SchemaError` too; the owner walk's node rule matches `comm` starting with `node` and only
   argv[0]/argv[1] basenames; `Job.log_text` keeps one line per entry (embedded newlines
   flattened). Lane: Qwen (ai1).
-- ☑ **1.10 `wait_job`/`wait_jobs` on any job.** (Qwen/ai1 job 20261029-123812-e82215e7, 47 turns, 371 tests; two docs three-way patched over 1.11b; open design point: `_progress_reporter_many` covers in-process jobs only, each foreign wait reports its own line; review: Opus-high (race-shaped), pending.) The waits work for any job on the machine: an
+- ☑ **1.10 `wait_job`/`wait_jobs` on any job.** (Qwen/ai1 job 20261029-123812-e82215e7, 47 turns, 371 tests; two docs three-way patched over 1.11b; open design point: `_progress_reporter_many` covers in-process jobs only, each foreign wait reports its own line; reviewed by Opus-high, four probes over a real file: D1 a cancelled `wait_jobs` orphans its `wait_many` and `_wait_foreign` tasks until `timeout_s` (a regression: pre-1.10 awaited `wait_many` directly, proven by running the same cancel on the old server.py); D2 mixed waits emit N+1 progress lines per interval on one token with a regressing progress value; D3 `_foreign_job_error`'s message is false since 1.10; possibles: the foreign "terminal = settled" rests on `runner.py:397` being the only terminal write (unstated, untested), a lost worktree job's record says nothing about its tree, a row deleted mid-wait aborts the whole call, NULL-start elapsed 0.0 vs 0, a stray `)` in README. Folded in 1.10a.)
+- ☐ **1.10a Fold of the 1.10 review** (reviewer fixes its own findings): `wait_jobs` cancels and
+  awaits its tasks in a `finally`; one progress reporter over every id with `progress = done
+  count, total = len(job_ids)`; the `foreign_job` message corrected; the terminal-is-settled
+  invariant stated and pinned; `mark_lost_jobs` writes a worktree `note`; the deleted-row case
+  documented; elapsed types aligned; README paren. Lane: Opus-high, review by DeepSeek. The waits work for any job on the machine: an
   in-process job through its settle event as today; another server's job by polling its row
   (2 s) until a terminal status or the timeout, with `mark_lost_jobs` applied every 30 s of
   the wait so a job whose server died resolves as `lost` rather than running out the clock;
