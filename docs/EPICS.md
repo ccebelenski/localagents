@@ -283,7 +283,7 @@ the duplicates go), then docs.
   connects), the freshness boundary, retention through the index, the merge intact; NO code
   defects. Ruling taken: a name that does not resolve is not "nothing" (the box may be fine,
   the name is wrong), so the ask fails loudly and the node stays unknown. Folded in 3.1c.)
-- ☐ **3.1c Fold of the 3.1b review** (reviewer fixes its own findings): `probe_port` lets a
+- ☑ **3.1c Fold of the 3.1b review** (Qwen/ai1 job 20261029-144654-b1f6f099, 45 turns, 577 tests; the brief had assumed an existing socket import, the lane added it; coordinator read the 32-line collect.py diff; third-model probe folded into the 3.3 review) (reviewer fixes its own findings): `probe_port` lets a
   `socket.gaierror` propagate so the ask fails with one stderr line and no row; the re-check
   docstring states the duplicate-connect bound as endpoints-per-host minus one; spec §3 says
   out loud that a shared `host` key with two boxes gets one fallback aimed at the first
