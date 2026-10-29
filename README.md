@@ -411,9 +411,9 @@ reported a window; the four usage counters and the seven /metrics deltas the run
 (or "metrics not recorded"); the files touched, shown relative to the job's worktree or cwd;
 a tool-call timeline across the job's duration — one mark per call coloured by tool, errors
 red, the context fill drawn over it — and the breakdown by tool; the request table with a
-totals line; and the transcript tail with the job's log directory (a sentence when the
-directory is gone). A running job's header refreshes in place from the snapshot stream; a job
-whose server stopped beating is shown lost.
+totals line; and the transcript tail with the job's log directory path (copy it to open the
+transcript; a sentence when the directory is gone). A running job's header refreshes in place
+from the snapshot stream; a job whose server stopped beating is shown lost.
 
 An optional top-level `monitor:` section in `models.yaml` holds its settings; the MCP server
 ignores it, and an unknown key or a bad value in it is an error naming the key:

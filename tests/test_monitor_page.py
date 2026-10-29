@@ -94,7 +94,7 @@ SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant"
 # smoked)
 JOB_SMOKE_CLASSES = ["job-detail", "gauge", "timeline", "by-tool", "job-requests", "transcript", "files",
                      "status-running", "status-succeeded", "status-failed", "status-timeout",
-                     "status-cancelled", "status-lost"]
+                     "status-cancelled", "status-lost", "log-dir"]
 
 # the names app.js reads the route bodies through (its header says so): snapshot, host, endpoint,
 # running job, endpoint hardware, endpoint rates, fleet history, one endpoint's fleet series,
@@ -134,10 +134,17 @@ def test_the_page_carries_every_class_the_smoke_and_spec_name():
 
 def _read_fields(js_text, vars):
     """The field names read through the given variable names, the allow-list of the regex's
-    array-method false positives removed."""
+    array-method false positives removed. A chain rooted at ``state.<name>.`` — the page's own
+    state object holding a route body, ``state.snap.now`` — is walked from its second segment
+    on, so ``state.snap.<field>`` is checked against §5a just like ``snap.<field>`` (story
+    3.4a: the old lookbehind skipped exactly those chains)."""
     fields = set()
-    for m in re.finditer(r"(?<![\w.$])(" + "|".join(vars) + r")((?:\.[A-Za-z_$][\w$]*)+)", js_text):
-        fields |= set(m.group(2).split(".")[1:])
+    pat = r"(?<![\w.$])((?:state\.)?(?:" + "|".join(vars) + r"))((?:\.[A-Za-z_$][\w$]*)+)"
+    for m in re.finditer(pat, js_text):
+        segs = (m.group(1) + m.group(2)).split(".")
+        if segs[0] == "state":
+            segs = segs[1:]  # the state root names no body; the variable is the second segment
+        fields |= set(segs[1:])
     return fields - JS_BUILTINS
 
 
@@ -156,6 +163,27 @@ def test_app_js_reads_only_section_5a_field_names():
              "files_touched", "transcript_tail", "elapsed_s", "server_live"} <= fields, name
         missing = sorted(f for f in fields if not re.search(r"(?<![A-Za-z_])" + re.escape(f) + r"(?![A-Za-z_])", spec))
         assert missing == [], (name, missing)
+
+
+# --- story 3.4: the job detail page (job.js) ----------------------------------------------------
+
+
+def test_job_js_lists_exactly_the_metrics_columns():
+    """The page lists the metrics delta's columns in its own display order (job.js's comment
+    says so, story 3.4a); what must not drift is the SET: it equals derive._METRICS_COLUMNS,
+    so a column added to the delta without a label on the page fails here."""
+    from localagents import derive
+    js = (STATIC / "job.js").read_text()
+    m = re.search(r"var METRICS = \[(.*?)\n  \];", js, re.S)
+    assert m is not None
+    keys = re.findall(r'\["([a-z_]+)",', m.group(1))
+    assert sorted(keys) == sorted(derive._METRICS_COLUMNS)
+
+
+def test_job_js_links_to_no_file_urls():
+    """A file:// link is dead in a page served over http (story 3.4a): the log directory is
+    selectable text with a copy button instead, and the file never carries the scheme again."""
+    assert (STATIC / "job.js").read_text().count("file://") == 0
 
 
 # --- story 3.3: the endpoint detail page (endpoint.js) -------------------------------------------

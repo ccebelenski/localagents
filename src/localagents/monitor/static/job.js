@@ -36,10 +36,13 @@
   // is the critical colour, never a tool colour
   var TOOL_PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
   var ERROR_COLOUR = "#d03b3b"; // app.css --critical
-  // the metrics delta's seven columns (derive._METRICS_COLUMNS order), each with its label
-  // and format: a fraction as a whole percentage, a speed in t/s, token counts as integers.
-  // The page walks the object in this order, so a column §5a does not name by key still
-  // shows labelled (or by its raw name when the order gains a new one)
+  // the metrics delta's seven columns in the page's own display order — processed, cached,
+  // cache hit, generated, prompt t/s, generate t/s, spec acceptance — not derive's order,
+  // which puts generated first. Each carries its label and format: a fraction as a whole
+  // percentage, a speed in t/s, token counts as integers. The page walks the object in this
+  // order, so a column §5a does not name by key still shows labelled (or by its raw name
+  // when the order gains a new one); a Python test pins the SET of keys here to
+  // derive._METRICS_COLUMNS, so a column added to the delta is caught even unseen here
   var METRICS = [
     ["prompt_tokens_processed", "processed", function (v) { return fmt.int(v); }],
     ["prompt_tokens_cached", "cached", function (v) { return fmt.int(v); }],
@@ -79,9 +82,11 @@
 
   // the context fill over the marks: each /v1/messages request with a usage, its prompt
   // tokens (input + cache read + cache creation) over the window, in time order; a request
-  // without a usage keeps the line where it was
-  function contextFill(detail) {
-    var s = span(detail, Date.now() / 1000);
+  // without a usage keeps the line where it was. It is drawn against the same clock as the
+  // marks — the caller passes the very `now` it gave timelineMarks, so a browser whose clock
+  // lies cannot slide the fill out from under the marks (story 3.4a)
+  function contextFill(detail, now) {
+    var s = span(detail, now);
     var out = [];
     if (!s || !detail.context || !detail.requests) return out;
     detail.requests.forEach(function (req) {
@@ -116,6 +121,17 @@
   function oneLine(text) {
     if (text == null) return "";
     return String(text).split("\n")[0];
+  }
+
+  // select an element's text: the copy button's fallback when the clipboard is missing or the
+  // write is refused (story 3.4a)
+  function selectText(el) {
+    var sel = window.getSelection && window.getSelection();
+    if (!sel) return;
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 
   // the job's root for relativising touched paths, the status bar's rule (status._job_root):
@@ -270,8 +286,9 @@
     // or to now), one mark per call at its time coloured by tool, errors red, the context
     // fill drawn over it as a faint line, and a legend
     function timelineSection() {
-      var marks = timelineMarks(detail, nowClock());
-      var fill = contextFill(detail);
+      var now = nowClock();
+      var marks = timelineMarks(detail, now);
+      var fill = contextFill(detail, now);
       if (!marks.length && !fill.length) return null;
       var W = 720, H = 44;
       var svg = document.createElementNS(SVGNS, "svg");
@@ -415,7 +432,9 @@
     }
 
     // the transcript tail in a <pre> (the user text, textContent only) with the log directory
-    // as a file:// link, or the sentence saying why there is no tail
+    // as selectable text in a <code> plus a copy button — never a link into the local
+    // filesystem, dead in a page served over http (story 3.4a) — or the sentence saying why
+    // there is no tail
     function transcriptSection() {
       if (detail.transcript_tail == null) {
         if (!detail.transcript_note) return null;
@@ -425,8 +444,21 @@
       var els = [h("h3", { text: "Transcript" }),
         h("pre", { class: "transcript-tail", text: detail.transcript_tail })];
       if (detail.log_dir) {
-        els.push(h("div", { class: "transcript-dir" }, [
-          h("a", { href: "file://" + encodeURI(detail.log_dir), text: detail.log_dir })]));
+        var code = h("code", { class: "log-dir", text: detail.log_dir });
+        var btn = h("button", { type: "button", class: "copy-path", text: "copy path" });
+        // the clipboard when the browser offers one (a plain-http page may not, and the write
+        // can still be refused); otherwise select the path for the user to copy themselves
+        var btnDone = function (ok) { btn.textContent = ok ? "copied" : "select it"; };
+        btn.addEventListener("click", function () {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(detail.log_dir).then(
+              function () { btnDone(true); },
+              function () { selectText(code); btnDone(false); });
+          } else {
+            selectText(code); btnDone(false);
+          }
+        });
+        els.push(h("div", { class: "transcript-dir" }, [code, btn]));
       }
       return h("div", { class: "transcript" }, els);
     }
