@@ -137,7 +137,8 @@ PRAGMA user_version = 1; journal_mode = WAL; busy_timeout = 5000; foreign_keys =
 - `synchronous = NORMAL` with WAL: commits survive a process crash without a per-commit fsync;
   only a power loss can lose the last commits, which is the right trade for a row per SDK message.
 - On startup a server marks every `queued`/`running` job whose `mcp_servers` row is not live
-  (no heartbeat for 60 s, or `stopped` set) as `lost` with `error = "server exited"`. That is
+  (`stopped` set, or no heartbeat for 60 s AND its pid no longer alive: a stalled server is
+  not a dead one, 1.7) as `lost` with `error = "server exited"`. That is
   the only status write to another server's job.
 
 ## Liveness

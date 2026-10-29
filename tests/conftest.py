@@ -11,13 +11,16 @@ def fresh_server_store(request, monkeypatch, tmp_path):
     another test's database (DeepSeek review of 1.2, finding 4)."""
     import sys
 
+    # Both database variables, unconditionally: db_path() prefers LOCALAGENTS_DB, so a developer
+    # with it exported would otherwise have the suite read (and write) the real database.
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("LOCALAGENTS_DB", str(tmp_path / "localagents" / "localagents.db"))
     server = sys.modules.get("localagents.server")
     if server is None:
         yield
         return
     from localagents import jobs
 
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     server.store = jobs.JobStore()
     server._shim_port_recorded = False
     yield
