@@ -8,7 +8,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 13350,
     "parser": "strata_metrics",
-    "parsed": 8
+    "digest": "087c14c422394dbfc93646a203b7be8d0419e86a841bc2638401c73de030ed6f"
   },
   {
     "path": "strata/ai1_props_1.json",
@@ -19,7 +19,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 10921,
     "parser": "json",
-    "parsed": 10
+    "digest": "b296d8d6a92cebd5f751a8f37ca0f15a6038c4f356cb72318bc62804d6d1923f"
   },
   {
     "path": "strata/ai1_slots_1.json",
@@ -30,7 +30,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 79,
     "parser": "json",
-    "parsed": 1
+    "digest": "c9908c0903b6f160ba0fbd334e55198bf1886e3f6256f9eb770049b428c52121"
   },
   {
     "path": "strata/ai1_models_1.json",
@@ -41,7 +41,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 229,
     "parser": "json",
-    "parsed": 2
+    "digest": "72d9afb629f96c1654a609337254ccbf2777d2b01274f6cee51d414815be5360"
   },
   {
     "path": "strata/ai1_health_1.json",
@@ -52,7 +52,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 174,
     "parser": "json",
-    "parsed": 8
+    "digest": "46a939c2a4be383313b986d48a603f99892424d5c734b2da16341b312cc91a2c"
   },
   {
     "path": "strata/ai2_metrics_1.json",
@@ -63,7 +63,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 13343,
     "parser": "strata_metrics",
-    "parsed": 8
+    "digest": "26bcd26439a1128ad7e2319990c7be13f1b4d915d49b7096b2e35a3ecf612ffa"
   },
   {
     "path": "strata/ai2_props_1.json",
@@ -74,7 +74,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 10923,
     "parser": "json",
-    "parsed": 10
+    "digest": "41ac2c664d1ddff10a97be1c6cac636706ef721feee54495d19862bd70d61f16"
   },
   {
     "path": "strata/ai2_slots_1.json",
@@ -85,7 +85,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 78,
     "parser": "json",
-    "parsed": 1
+    "digest": "e1375abf98f92335b2a22bf2e3dcee39e777cb30571b79ee832e3f354ab097d0"
   },
   {
     "path": "strata/ai2_models_1.json",
@@ -96,7 +96,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 242,
     "parser": "json",
-    "parsed": 2
+    "digest": "23d635d99302ae1e7c0de504bf0cd59bb2a5e171395a502cecfa6a88bdc0580e"
   },
   {
     "path": "strata/ai2_health_1.json",
@@ -107,7 +107,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 187,
     "parser": "json",
-    "parsed": 8
+    "digest": "fe7f37b5f9b13e3328ee1261f97fce9174bcadb88c11cfa34588ef521a94d93e"
   },
   {
     "path": "vllm/dgx1-a_metrics_1.txt",
@@ -118,7 +118,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 75771,
     "parser": "prometheus",
-    "parsed": 9
+    "digest": "258f93e1bc9cb60d77baa3b76e38c3d942a1e366a857e2ede239a18e40814318"
   },
   {
     "path": "vllm/dgx1-a_models_1.json",
@@ -129,7 +129,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 500,
     "parser": "json",
-    "parsed": 2
+    "digest": "ab4396e44b139958ce9efe6ebe45400878848a7ba5f352ce5416b64e435ee440"
   },
   {
     "path": "vllm/dgx1-a_health_1.json",
@@ -148,7 +148,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 47,
     "parser": "json",
-    "parsed": 1
+    "digest": "25514f44e967dd857bda5b61a9eccf658d4dc1ced5321c5be990804a1a210457"
   },
   {
     "path": "llamacpp/llamacpp_props_1.json",
@@ -159,7 +159,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 12219,
     "parser": "json",
-    "parsed": 19
+    "digest": "6045b4f487f888a6421ee19c87d4ceaa3226037d76640f65ec5225a950e12a32"
   },
   {
     "path": "llamacpp/llamacpp_slots_1.json",
@@ -170,7 +170,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 1328,
     "parser": "json",
-    "parsed": 2
+    "digest": "1d2ec2806bd5a02138744d0f2f24bce2eb1d810e06ced75e09047bf17e8dd84c"
   },
   {
     "path": "llamacpp/llamacpp_metrics_1.txt",
@@ -181,7 +181,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 8956,
     "parser": "prometheus",
-    "parsed": 7
+    "digest": "a1d0da51388c7da0372becfd80891038bf594cabc3cb2a1e5785b3b637c129b6"
   },
   {
     "path": "llamacpp/llamacpp_models_1.json",
@@ -192,7 +192,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 805,
     "parser": "json",
-    "parsed": 3
+    "digest": "1339acb64463b2febec79b96cf7dcd53c0ca3f082789cf2dc08f95f619c7aa16"
   },
   {
     "path": "llamacpp/llamacpp_health_1.json",
@@ -203,7 +203,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 15,
     "parser": "json",
-    "parsed": 1
+    "digest": "08e2c358ce13cb67f94ebb35b0f67c8763190a857c0db68da6eb196dfe9da46a"
   },
   {
     "path": "strata/ai1_metrics_2.json",
@@ -214,7 +214,7 @@
     "captured_at": "2026-10-29T15:36:44Z",
     "bytes": 13341,
     "parser": "strata_metrics",
-    "parsed": 8
+    "digest": "087c14c422394dbfc93646a203b7be8d0419e86a841bc2638401c73de030ed6f"
   },
   {
     "path": "strata/ai1_slots_2.json",
@@ -225,7 +225,7 @@
     "captured_at": "2026-10-29T15:36:44Z",
     "bytes": 79,
     "parser": "json",
-    "parsed": 1
+    "digest": "c9908c0903b6f160ba0fbd334e55198bf1886e3f6256f9eb770049b428c52121"
   },
   {
     "path": "strata/ai2_metrics_2.json",
@@ -236,7 +236,7 @@
     "captured_at": "2026-10-29T15:36:44Z",
     "bytes": 12982,
     "parser": "strata_metrics",
-    "parsed": 8
+    "digest": "fec3b259c7d3109be209d5fe30f8bc10c5fe3d60d381e7b8c8ffb7057a385ad7"
   },
   {
     "path": "strata/ai2_slots_2.json",
@@ -247,7 +247,7 @@
     "captured_at": "2026-10-29T15:36:44Z",
     "bytes": 78,
     "parser": "json",
-    "parsed": 1
+    "digest": "7100c71af87fb7a808f09c23439304e695b8bdd7c1401c230fcc6e6d0993bbbe"
   },
   {
     "path": "vllm/dgx1-a_metrics_2.txt",
@@ -258,7 +258,7 @@
     "captured_at": "2026-10-29T15:36:44Z",
     "bytes": 75773,
     "parser": "prometheus",
-    "parsed": 9
+    "digest": "4f3dd60aefb63d6b23a3b25235e51d12a782f8bfdfb035fab58f043537216798"
   },
   {
     "path": "llamacpp/llamacpp_metrics_2.txt",
@@ -269,7 +269,7 @@
     "captured_at": "2026-10-29T15:36:44Z",
     "bytes": 2553,
     "parser": "prometheus",
-    "parsed": 7
+    "digest": "f3d14f0850dcb288fbadaa42403a6f573e4ce0320b046c09b68a2fdd58280506"
   },
   {
     "path": "llamacpp/llamacpp_slots_2.json",
@@ -280,7 +280,7 @@
     "captured_at": "2026-10-29T15:36:44Z",
     "bytes": 131,
     "parser": "json",
-    "parsed": 2
+    "digest": "1781f9d3b3a15fbf2e91417bb1bdcb8a4975a9697b568f6cd329d45a66e0c995"
   },
   {
     "path": "db/job_20261029-110844-8fd14e0e.json",
@@ -291,6 +291,6 @@
     "bytes": 118825,
     "parser": "json",
     "source": "localagents.db",
-    "parsed": 6
+    "digest": "38a2a0a83cac8ced51084410f91a2f4f0a61cec205515fc156358151a01e636d"
   }
 ]
