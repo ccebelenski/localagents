@@ -21,34 +21,34 @@ never depends on the monitor. Spec: `docs/superpowers/specs/2026-10-29-mcp-sqlit
 fields and the status files stay), then read path (1.5a/b: readers switch to the tables and
 the duplicates go), then docs.
 
-- ☐ **1.1 Schema module.** New `db.py`: `db_path()`, `open_db()` (WAL, busy timeout,
+- ☑ **1.1 Schema module.** (8d01b41, Opus-high; reviewed by Qwen/ai2 job 20261029-033804-d6e5: clean, nits folded in f5c090e) New `db.py`: `db_path()`, `open_db()` (WAL, busy timeout,
   foreign_keys per connection, `LOCALAGENTS_DB` override), versioned `migrate()`,
   `immediate()` context manager (BEGIN IMMEDIATE), `lookup_id()` (INSERT OR IGNORE then
   SELECT), `new_uuid()`, `job_name()`. Stdlib only (the status line imports it). Gate: fresh
   file and a version-1 file both come up current; version 99 raises; four real processes
   writing concurrently lose nothing; CHECK and FK enforced. Lane: Opus-high (dispatched
   2026-10-29 night).
-- ☐ **1.2 Jobs write path.** `Job.id` becomes a uuid4 (`job_id` of every tool, `resume_job`
+- ☑ **1.2 Jobs write path.** (b331747 + c603007, Qwen/ai1 job 20261029-033850-e873; reviewed by DeepSeek/dgx1-a job 20261029-034720-3071: one low defect, folded in 1535399) `Job.id` becomes a uuid4 (`job_id` of every tool, `resume_job`
   included), `Job.name` the readable stamp (directory and worktree branch `local-agent/<name>`).
-  `JobStore` opens the database, inserts its `mcp_servers` row (id, pid, owner, started, cwd,
-  version) at init, and `new()` inserts the job row inside `immediate()` with `endpoint_id` /
+  `JobStore` opens the database and inserts its `mcp_servers` row (id, pid, owner, started, cwd,
+  version) on first use (not at construction: server.py builds the store at import), and `new()` inserts the job row inside `immediate()` with `endpoint_id` /
   `model_id` via `lookup_id`; `Job.changed()` upserts the mutable columns. `task.txt` no
   longer written. Prune pattern widened to `[0-9a-f]{4,}`. In-memory fields and the status
   file untouched. Gate: a job's row tracks each status transition over a real temp database;
   the `job_id` run_agent returns is the uuid; directory and branch use `name`; existing
   suite green. Lane: Qwen (ai1).
-- ☐ **1.3 Requests write path.** Shim `_log` inserts a `requests` row (path via `lookup_id`,
+- ☑ **1.3 Requests write path.** (eb458b6, Qwen/ai2 job 20261029-034621-217d; review in the batch below) Shim `_log` inserts a `requests` row (path via `lookup_id`,
   `http_status`, ms, gen_ms, stream, four token columns, messages, tools, bytes,
   moved_system, folded_text, context_exceeded, error) and stops appending `requests.jsonl`.
   `note_usage` still updates the in-memory ctx_tokens/gen_tps for now. Gate: a captured
   `requests.jsonl` from a real job replays into rows that match it field for field (fixture
   captured by the coordinator). Lane: Qwen (ai2).
-- ☐ **1.4 Tool-calls write path.** Runner inserts a `tool_calls` row per `ToolUseBlock`
+- ☑ **1.4 Tool-calls write path.** (a295ff8, Qwen/ai1 job 20261029-034639-1970; review in the batch below) Runner inserts a `tool_calls` row per `ToolUseBlock`
   (input rule: edit tools → file_path/notebook_path or NULL; others → first 120 chars),
   keeps `tool_use_id -> rowid` for pending calls in memory, and sets `finished`/`is_error`
   by rowid when the `ToolResultBlock` arrives. Gate: a replayed SDK message sequence (fixture
   built from the SDK dataclasses) yields the expected rows. Lane: DeepSeek (dgx1-a) or Qwen.
-- ☐ **1.5a Status line read path.** `mcp_servers` heartbeat every 10 s (`updated`), `stopped`
+- ☑ **1.5a Status line read path.** (3025d00, Qwen/ai1 job 20261029-035222-2edd; batch review 1.3+1.4+1.5a+1535399 by DeepSeek/dgx1-a dispatched 2026-10-29 04:20) `mcp_servers` heartbeat every 10 s (`updated`), `stopped`
   at clean exit, config/transport/shim_port filled; sampler writes `endpoint_load` rows;
   `status.collect()` reads live servers + their queued/running/recent jobs + latest request
   rows + endpoint_load; `status/<pid>.json` and `publish()` removed; the `lost` rule at
