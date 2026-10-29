@@ -321,9 +321,15 @@ the duplicates go), then docs.
   Cache-Control, so a browser can run stale page code after an upgrade; Strata's `_mb`
   fields' unit is unverified. Review: Qwen/ai2, pending.)
 
-- ☐ **3.4 Job detail.** Context gauge, request table, metrics delta, files touched, tool-call
-  timeline strip with context fill overlaid, breakdown by tool, transcript tail. Gate:
-  browser smoke over the seeded finished job. Lane: Qwen with the row shapes quoted.
+- ☑ **3.4 Job detail.** (Qwen3.8-27B/llamacpp job 20261029-144115-e9874e7c, 137 turns, 585
+  tests; one file `job.js`; browser smoke over both seeded jobs with zero console errors; a
+  real race found and fixed in the browser: the on-connect snapshot could beat the detail
+  fetch. Corrected the brief: files relativise by `worktree.path`, as the status bar does, not
+  `root`; `metrics` keys are not named in §5a, rendered in `derive._METRICS_COLUMNS` order.
+  Decisions: a second EventSource per job-page view, closed by teardown; lost when the status
+  is lost or the server stopped beating. Merged beside 3.3 by four hand-composed conflicts.
+  Review: Qwen/ai1, pending.)
+
 - ☑ **3.5 `localagents smoke`.** (Qwen/ai1 job 20261029-130838-4304e120, 104 turns, 431 tests;
   three live runs pasted verbatim in the job's report: ai2 full green, llamacpp requests
   green, the real database once with one red line, an ai2 stall at the 60 s cap, classified
