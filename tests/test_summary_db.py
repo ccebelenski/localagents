@@ -260,9 +260,13 @@ def test_cancel_and_resume_refuse_a_foreign_job(monkeypatch, tmp_path):
 
     cancel = asyncio.run(server.cancel_job(foreign.id))
     assert cancel["error"] == "foreign_job" and other.server_id in cancel["message"]
-    assert "only job_status, job_log and list_jobs can read it" in cancel["message"]
+    assert cancel["message"] == (
+        f"job {foreign.id} belongs to another localagents server ({other.server_id}); "
+        "cancel_job and run_agent(resume_job=) need the server that started it, while "
+        "job_status, job_log, list_jobs, wait_job and wait_jobs work on any job"
+    )
     resumed = asyncio.run(server.run_agent(task="continue", resume_job=foreign.id))
-    assert resumed["error"] == "foreign_job"
+    assert resumed["error"] == "foreign_job" and resumed["message"] == cancel["message"]
 
 
 class _Ctx:
@@ -415,6 +419,93 @@ def test_wait_jobs_any_returns_when_the_foreign_job_finishes_first(monkeypatch, 
     assert out["done"][0]["result"] == "theirs"
     assert [j["id"] for j in out["running"]] == [mine.id]
     assert time.monotonic() - t0 < 1.0  # first completion, not the timeout
+
+
+def test_wait_jobs_reports_one_line_per_interval_over_every_id(monkeypatch, tmp_path):
+    """Story 1.10a row 5 (review of 1.10, D2; probe4 4b as a test): wait_jobs over [mine,
+    foreign_old, foreign_young] emitted three notifications per interval on one token — the
+    in-process line counting 0/1, and one unnamed line per foreign id whose progress value (its
+    elapsed seconds) ran 0, 500, 42, 0, 500, 42. One reporter covers every id now: one line per
+    interval, progress = the done count (non-decreasing), total = len(job_ids), every unfinished
+    job named in job_ids order; a foreign job that turns terminal counts as done and leaves the
+    line."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.02)
+    monkeypatch.setattr(server, "FOREIGN_SWEEP_S", 0.1)
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.05)
+    mine = _new(server.store, task="mine")
+    mine.status, mine.started_at, mine.num_turns = "running", time.time() - 42, 4
+    mine.changed()
+    other = jobs.JobStore()
+    old, young = _new(other, task="old"), _new(other, task="young")
+    old.status, old.started_at = "running", time.time() - 500
+    young.status, young.started_at, young.num_turns = "running", time.time() - 42, 4
+    for j in (old, young):
+        j.changed()
+    ctx = _Ctx()
+
+    async def run():
+        task = asyncio.create_task(server.wait_jobs([mine.id, old.id, young.id], timeout_s=0.4, ctx=ctx))
+        await asyncio.sleep(0.2)
+        with db.immediate(other.conn):
+            other.conn.execute("UPDATE jobs SET status = 'succeeded' WHERE id = ?", (young.id,))
+        return await task
+
+    out = asyncio.run(run())
+    assert out["outcome"] == "some_done" and [d["id"] for d in out["done"]] == [young.id]
+    reports = ctx.reports
+    assert 4 <= len(reports) <= 9, reports  # one per 0.05 s interval of a 0.4 s wait, not three
+    assert all(total == 3 for _, total, _ in reports), reports
+    values = [p for p, _, _ in reports]
+    assert values == sorted(values) and values[0] == 0 and values[-1] == 1, values
+    before = re.compile(
+        rf"0/3 done; {mine.name}: running 4[23]s, 4 turns; {old.name}: running 50[01]s, 0 turns; "
+        rf"{young.name}: running 4[23]s, 4 turns"
+    )
+    after = re.compile(rf"1/3 done; {mine.name}: running 4[23]s, 4 turns; {old.name}: running 50[01]s, 0 turns")
+    for p, _, m in reports:
+        assert (before if p == 0 else after).fullmatch(m), m
+    assert any(p == 0 for p in values) and any(p == 1 for p in values)
+
+
+def test_a_failing_row_read_degrades_the_wait_jobs_line_not_its_count(monkeypatch, tmp_path, capsys):
+    """Row 5's reporter reads each foreign row per interval. A read that fails degrades the line
+    (the unreadable id shows `?`, one stderr line), never the wait; a row already seen terminal
+    stays counted, so `progress` never goes down."""
+    import sqlite3
+
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.02)
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.03)
+    other = jobs.JobStore()
+    first, second = _new(other, task="first"), _new(other, task="second")
+    for j in (first, second):
+        j.status, j.started_at = "running", time.time() - 5
+        j.changed()
+    broken = {"on": False}
+    real = server._progress_rows
+
+    def rows(ids):
+        if broken["on"]:
+            raise sqlite3.OperationalError("database is locked")
+        return real(ids)
+
+    monkeypatch.setattr(server, "_progress_rows", rows)
+    ctx = _Ctx()
+
+    async def run():
+        task = asyncio.create_task(server.wait_jobs([first.id, second.id], timeout_s=0.5, ctx=ctx))
+        await asyncio.sleep(0.1)
+        with db.immediate(other.conn):
+            other.conn.execute("UPDATE jobs SET status = 'succeeded' WHERE id = ?", (first.id,))
+        await asyncio.sleep(0.1)  # at least one line counts it
+        broken["on"] = True
+        return await task
+
+    out = asyncio.run(run())
+    assert out["outcome"] == "some_done" and [d["id"] for d in out["done"]] == [first.id]
+    values = [p for p, _, _ in ctx.reports]
+    assert values == sorted(values) and values[-1] == 1, ctx.reports
+    assert ctx.reports[-1][2] == f"1/2 done; {second.id}: ?"
+    assert "progress line degraded: OperationalError: database is locked" in capsys.readouterr().err
 
 
 def test_wait_jobs_all_done_when_both_foreign_jobs_finish(monkeypatch, tmp_path):
@@ -912,6 +1003,51 @@ def test_wait_jobs_running_elapsed_survives_a_job_with_no_timestamps(monkeypatch
     out = asyncio.run(server.wait_jobs([job.id], timeout_s=0.01))
     assert out["outcome"] == "timeout"
     assert out["running"][0]["elapsed_s"] == 0.0
+
+
+def test_a_running_entrys_elapsed_is_a_float_on_both_paths(monkeypatch, tmp_path):
+    """Story 1.10a row 2 (review of 1.10, P6a): a running entry whose start is NULL said 0.0 on
+    the in-process path (_elapsed, story 1.9 item 2) and the int 0 on the foreign path; both
+    are floats now, as every other elapsed_s in the entry is."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.02)
+    mine = _new(server.store, task="mine")
+    mine.status, mine.started_at, mine.created_at = "running", None, None
+    mine.changed()
+    other = jobs.JobStore()
+    theirs = _new(other, task="theirs")
+    started = _new(other, task="started")
+    started.status, started.started_at = "running", time.time() - 5
+    started.changed()
+    with db.immediate(other.conn):
+        other.conn.execute("UPDATE jobs SET status = 'running', started_at = NULL, created_at = NULL WHERE id = ?",
+                           (theirs.id,))
+
+    out = asyncio.run(server.wait_jobs([mine.id, theirs.id, started.id], timeout_s=0.05))
+    got = [(r["id"], r["elapsed_s"], type(r["elapsed_s"])) for r in out["running"]]
+    assert got[:2] == [(mine.id, 0.0, float), (theirs.id, 0.0, float)], got
+    assert got[2][0] == started.id and got[2][2] is float and got[2][1] >= 5
+
+
+def test_a_row_deleted_mid_wait_answers_unknown_job_for_the_whole_call(monkeypatch, tmp_path):
+    """Story 1.10a row 2 (review of 1.10, P5), the documented behaviour pinned: nothing deletes
+    job rows, but a row that disappears mid-wait (a database rewritten under the server) makes
+    the whole wait_jobs call answer unknown_job, not a list entry."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.02)
+    other = jobs.JobStore()
+    gone, kept = _new(other, task="gone"), _new(other, task="kept")
+    for j in (gone, kept):
+        j.status, j.started_at = "running", time.time() - 5
+        j.changed()
+
+    async def run():
+        task = asyncio.create_task(server.wait_jobs([kept.id, gone.id], timeout_s=5, mode="any"))
+        await asyncio.sleep(0.1)
+        with db.immediate(other.conn):
+            other.conn.execute("DELETE FROM jobs WHERE id = ?", (gone.id,))
+        return await task
+
+    out = asyncio.run(run())
+    assert out == {"error": "unknown_job", "message": f"unknown job '{gone.id}'"}
 
 
 # --- story 1.9 item 6: database_error on every read path (spec "Tool contract decisions") ---

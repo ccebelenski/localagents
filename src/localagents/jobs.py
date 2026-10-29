@@ -424,7 +424,8 @@ class JobStore:
         a stalled server (a loop wedged on something), not a dead one: sweeping its running jobs
         would lie about work that may still finish. A ``stopped`` row was written by the server
         itself exiting, so its pid is not consulted. This is the only status write to another
-        server's jobs; this server's own row was heartbeated moments ago and stays out."""
+        server's jobs (with the worktree note below, the only write of any kind); this server's
+        own row was heartbeated moments ago and stays out."""
         now = now if now is not None else time.time()
         with db.immediate(self.conn):
             # candidates are the not-live servers that still have unfinished jobs, never the whole
@@ -443,6 +444,27 @@ class JobStore:
             ]
             if not dead:
                 return 0
+            # a worktree finish_worktree never reached (no `kept`) may still be on disk: the lost
+            # record says so and names it, every other key kept (review of 1.10, P3). A JSON
+            # this code cannot read is another writer's and left as it is (_row_summary reports it).
+            notes = []
+            for _now, _updated, sid in dead:
+                for r in self.conn.execute(
+                    "SELECT id, worktree FROM jobs WHERE status IN ('queued', 'running')"
+                    " AND mcp_server_id = ? AND worktree IS NOT NULL",
+                    (sid,),
+                ).fetchall():
+                    try:
+                        wt = json.loads(r["worktree"])
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(wt, dict) or "kept" in wt:
+                        continue
+                    where = wt.get("root") or wt.get("path")
+                    wt["note"] = "the server exited before finishing the worktree" + (f"; check {where}" if where else "")
+                    notes.append((json.dumps(wt), r["id"]))
+            if notes:
+                self.conn.executemany("UPDATE jobs SET worktree = ? WHERE id = ?", notes)
             cur = self.conn.executemany(
                 """UPDATE jobs SET status = 'lost', error = 'server exited', finished_at = ?, updated = ?
                    WHERE status IN ('queued', 'running') AND mcp_server_id = ?""",

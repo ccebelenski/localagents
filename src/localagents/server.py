@@ -167,26 +167,61 @@ def _progress_reporter(ctx: Context | None):
     return report
 
 
-def _progress_reporter_many(ctx: Context | None):
-    """Progress callback for `wait_many`: one line per interval covering every job."""
-    if ctx is None:
-        return None
+def _progress_rows(job_ids: list[str]) -> dict[str, Any]:
+    """The rows _report_many's line reads for another server's jobs (None: no such row)."""
+    return {
+        jid: store.conn.execute(
+            "SELECT name, status, started_at, created_at, num_turns FROM jobs WHERE id = ?", (jid,)
+        ).fetchone()
+        for jid in job_ids
+    }
 
-    async def report(jobs: list[Job]) -> None:
-        done = sum(j.done for j in jobs)
-        parts = [f"{done}/{len(jobs)} done"]
-        for j in jobs:
-            if not j.done:
-                elapsed = int(_elapsed(j))
+
+async def _report_many(ctx: Context, job_ids: list[str]) -> None:
+    """wait_jobs' one progress reporter, a task of its own: every jobs.PROGRESS_INTERVAL_S one
+    line covering every id in job_ids order, this server's jobs from their Job and another
+    server's from their row (review of 1.10, D2: the foreign waits each reported their own
+    line on the same token, unnamed, with the progress value regressing). `progress` is the
+    done count (settled in-process, terminal row) and never goes down: a row seen terminal
+    stays counted even if a later read fails. A failing row read degrades the line (the ids it
+    could not read show as `?`, one stderr line), never the wait (story 1.9 item 6's rule)."""
+    interval_s = jobs.PROGRESS_INTERVAL_S  # read at call time so tests can shorten it
+    finished: set[str] = set()  # foreign ids seen terminal: terminal is final
+    while True:
+        await asyncio.sleep(interval_s)
+        foreign = [jid for jid in dict.fromkeys(job_ids) if jid not in store.jobs and jid not in finished]
+        try:
+            rows = _progress_rows(foreign)
+        except (sqlite3.Error, db.SchemaError) as e:
+            rows = {}
+            print(f"localagents: progress line degraded: {type(e).__name__}: {e}", file=sys.stderr)
+        for jid, row in rows.items():
+            if row is not None and row["status"] in _TERMINAL_STATUSES:
+                finished.add(jid)
+        done = 0
+        parts = []
+        for jid in job_ids:
+            j = store.jobs.get(jid)
+            if j is not None:
+                if j.settled:
+                    done += 1
+                    continue
                 # name, not uuid: a user comparing this line with list_jobs or a job directory
                 # can match it (DeepSeek review of 1.2)
-                parts.append(f"{j.name}: {j.status} {elapsed}s, {j.num_turns} turns")
+                parts.append(f"{j.name}: {j.status} {int(_elapsed(j))}s, {j.num_turns} turns")
+            elif jid in finished:
+                done += 1
+            elif rows.get(jid) is None:
+                parts.append(f"{jid}: ?")  # the read failed, or the row is gone (the wait answers that)
+            else:
+                row = rows[jid]
+                start = row["started_at"] or row["created_at"]  # summary_from_row's elapsed rule
+                elapsed = int(time.time() - start) if start is not None else 0
+                parts.append(f"{row['name']}: {row['status']} {elapsed}s, {row['num_turns']} turns")
         try:
-            await ctx.report_progress(done, len(jobs), "; ".join(parts))
-        except Exception:
+            await ctx.report_progress(done, len(job_ids), "; ".join([f"{done}/{len(job_ids)} done", *parts]))
+        except Exception:  # a client without progress support must not break the wait
             pass
-
-    return report
 
 
 LOAD_SAMPLE_S = 10.0
@@ -244,9 +279,17 @@ async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> d
     FOREIGN_SWEEP_S of waiting calls mark_lost_jobs, so a job whose server died resolves as
     `lost` instead of running out the clock. Every jobs.PROGRESS_INTERVAL_S a line with the
     same shape _progress_reporter's has (a failing derive read degrades the line, story 1.9
-    item 6). On timeout the row as it stands — status still `running`, the in-process wait's
+    item 6) — wait_job's; wait_jobs passes no ctx and _report_many covers every id in one line
+    (review of 1.10, D2). On timeout the row as it stands — status still `running`, the in-process wait's
     timeout answer's equivalent. No guard inside: every read here is the database's, and the
-    caller turns sqlite3.Error/db.SchemaError into database_error."""
+    caller turns sqlite3.Error/db.SchemaError into database_error.
+
+    A terminal row is a settled record because run_job writes the terminal status only in its
+    last changed() (runner.py, the finally's tail), after _finish and _done.set(): the status
+    is set in-process earlier, but no row write carries it until the worktree is finished and
+    the record complete. The in-process waits wait on `settled` for the same reason; this
+    path relies on that write order instead (pinned by
+    test_the_row_turns_terminal_only_after_the_finally_work, review of 1.10 P2)."""
     poll_s = FOREIGN_POLL_S  # read at call time so tests can shorten them
     sweep_s = FOREIGN_SWEEP_S
     progress_s = jobs.PROGRESS_INTERVAL_S
@@ -291,6 +334,28 @@ async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> d
         await asyncio.sleep(min(remaining, poll_s))
 
 
+async def _cancel_and_await(futs: list[asyncio.Future[Any]]) -> None:
+    """Cancel every future in `futs` that is not done and await them all to the end, so none
+    outlives the caller (review of 1.10, D1: a cancelled wait_jobs orphaned its waits until
+    timeout_s). A cancel landing on the caller meanwhile is absorbed until they are all done
+    (asyncio.wait never cancels what it waits on: runner._to_the_end's idiom) and then
+    re-raised: the cancel was meant for the caller and must reach it, never be swallowed."""
+    for f in futs:
+        if not f.done():
+            f.cancel()
+    if not futs:
+        return
+    gathered = asyncio.gather(*futs, return_exceptions=True)
+    absorbed = False
+    while not gathered.done():
+        try:
+            await asyncio.wait([gathered])
+        except asyncio.CancelledError:
+            absorbed = True
+    if absorbed:
+        raise asyncio.CancelledError
+
+
 def _foreign_job_error(job_id: str) -> dict[str, str] | None:
     """The id exists in the shared database but not in this process: another server's job.
     cancel_job and run_agent(resume_job=) act on the process and keep refusing it (spec "Tool
@@ -303,7 +368,8 @@ def _foreign_job_error(job_id: str) -> dict[str, str] | None:
         "error": "foreign_job",
         "message": (
             f"job {job_id} belongs to another localagents server ({row['mcp_server_id']}); "
-            "only job_status, job_log and list_jobs can read it"
+            "cancel_job and run_agent(resume_job=) need the server that started it, while "
+            "job_status, job_log, list_jobs, wait_job and wait_jobs work on any job"
         ),
     }
 
@@ -522,6 +588,8 @@ async def wait_jobs(
     Returns done (final records) and running (ids, status, elapsed). Progress every minute.
     A done job's record is derived from the database: when that read fails, the whole call
     answers database_error — a partial record would be a lie about the jobs it leaves out.
+    Likewise a row that disappears mid-wait (nothing deletes job rows; a database rewritten
+    under the server would) answers unknown_job for the whole call, not a list entry.
     """
     if mode not in ("all", "any"):
         return {"error": "bad_argument", "message": "mode must be 'all' or 'any'"}
@@ -541,28 +609,31 @@ async def wait_jobs(
         return _database_error(e)  # a failed row read is never an unknown_job (story 1.9 item 6)
     in_process_ids = [jid for jid in job_ids if jid not in foreign_ids]
 
-    tasks = []
-    if in_process_ids:
-        tasks.append(asyncio.ensure_future(store.wait_many(
-            in_process_ids, timeout_s, mode=mode, progress=_progress_reporter_many(ctx),
-        )))
-    tasks.extend(asyncio.ensure_future(_wait_foreign(jid, timeout_s, ctx)) for jid in foreign_ids)
+    tasks: list[asyncio.Future[Any]] = []
+    reporter: asyncio.Future[Any] | None = None
     try:
-        # mode="any" returns as soon as ANY task finishes and cancels the rest; mode="all"
-        # waits for all of them. Every task is internally bounded by timeout_s, so the
-        # asyncio.wait timeout is a belt. A cancelled wait_many is safe to drop: its finally
-        # cancels the _done.wait() futures and Event.wait discards its waiter on cancellation
-        # (jobs.wait_many), so no dangling waiter survives — and the gather below makes those
-        # finallys run before we classify.
+        # the waits report nothing themselves: one reporter covers every id (review of 1.10, D2)
+        if ctx is not None:
+            reporter = asyncio.ensure_future(_report_many(ctx, job_ids))
+        if in_process_ids:
+            tasks.append(asyncio.ensure_future(store.wait_many(in_process_ids, timeout_s, mode=mode)))
+        tasks.extend(asyncio.ensure_future(_wait_foreign(jid, timeout_s, None)) for jid in foreign_ids)
+        # mode="any" returns as soon as ANY task finishes; mode="all" waits for all of them.
+        # Every task is internally bounded by timeout_s, so the asyncio.wait timeout is a belt.
         await asyncio.wait(
             tasks, timeout=timeout_s,
             return_when=asyncio.FIRST_COMPLETED if mode == "any" else asyncio.ALL_COMPLETED,
         )
-        for f in tasks:
-            if not f.done():
-                f.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        for f in tasks:
+    finally:
+        # asyncio.wait never cancels its tasks, and a cancel of this call (the client's Esc or
+        # request timeout) lands here: every task is cancelled and awaited to the end on every
+        # path, so no wait_many and no _wait_foreign outlives the call (review of 1.10, D1:
+        # they polled and swept until timeout_s). wait_many's own finally drops its _done
+        # waiters; a cancel landing during this await is re-raised once it is done. The
+        # progress reporter goes the same way (row 5 of 1.10a).
+        await _cancel_and_await(tasks + ([reporter] if reporter is not None else []))
+    try:
+        for f in tasks + ([reporter] if reporter is not None else []):
             exc = None if f.cancelled() else f.exception()
             if isinstance(exc, (sqlite3.Error, db.SchemaError)):
                 return _database_error(exc)
@@ -593,7 +664,7 @@ async def wait_jobs(
                     start = row["started_at"] or row["created_at"]
                     running.append({
                         "id": row["id"], "status": row["status"],
-                        "elapsed_s": round(time.time() - start, 1) if start is not None else 0,
+                        "elapsed_s": round(time.time() - start, 1) if start is not None else 0.0,
                         "num_turns": row["num_turns"],
                     })
     except (sqlite3.Error, db.SchemaError) as e:

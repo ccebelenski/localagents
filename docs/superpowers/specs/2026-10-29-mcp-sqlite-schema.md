@@ -154,7 +154,9 @@ user_version 2, and the version-1 history above stands as written.
 - On startup a server marks every `queued`/`running` job whose `mcp_servers` row is not live
   (`stopped` set, or no heartbeat for 60 s AND its pid no longer alive: a stalled server is
   not a dead one, 1.7) as `lost` with `error = "server exited"`. That is
-  the only status write to another server's job.
+  the only status write to another server's job. Correction after 1.10a: the same sweep
+  also writes `note` into the `worktree` JSON of a lost job whose tree was never finished (no
+  `kept`): "the server exited before finishing the worktree; check <root>", every other key kept.
 
 ## Liveness
 

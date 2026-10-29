@@ -270,6 +270,57 @@ def test_wait_many_returns_only_after_the_finally_work(repo, monkeypatch):
     assert done and wt.get("kept") is False
 
 
+def test_the_row_turns_terminal_only_after_the_finally_work(repo, monkeypatch):
+    """Story 1.10a row 2 (review of 1.10, P2): another server's wait (_wait_foreign) hands back
+    the first terminal row it sees, so a terminal row must be a settled record. It is because
+    run_job writes the terminal status only in its last changed(), after _finish and
+    _done.set(). Pinned through run_job: while finish_worktree is blocked the in-process status
+    is already terminal but the row still says `running` and a foreign waiter has not returned;
+    released, the row is terminal and the waiter's record is the finished one."""
+    import asyncio
+    import threading
+
+    from localagents import runner, server
+
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.02)
+    reg, res, kw = _drive_setup(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+    real = runner.finish_worktree
+
+    def blocked(j):
+        entered.set()
+        release.wait(10)
+        return real(j)
+
+    monkeypatch.setattr(runner, "finish_worktree", blocked)
+    store, j = _store_job(repo)
+    assert j.id not in server.store.jobs  # server's wait on this id takes the foreign path
+
+    def row_status():
+        return store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0]
+
+    async def go():
+        task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        try:
+            while not entered.is_set():
+                await asyncio.sleep(0.01)
+            waiter = asyncio.create_task(server.wait_job(j.id, timeout_s=10))
+            await asyncio.sleep(0.2)  # ten polls of the row
+            during = (j.status, row_status(), waiter.done())
+        finally:
+            release.set()
+        out = await waiter
+        await task
+        return during, row_status(), out
+
+    (status_during, row_during, waiter_done_during), row_after, out = asyncio.run(go())
+    assert status_during == "failed"  # the stub session ends without a result: terminal in-process
+    assert row_during == "running" and not waiter_done_during
+    assert row_after == "failed"
+    assert out["status"] == "failed"
+    assert out["worktree"]["kept"] is False and out["worktree"]["note"] == "no changes; worktree removed"
+
+
 def test_cancel_during_make_worktree_leaves_no_tree(repo, monkeypatch):
     """Review of 1.7, finding 2: a cancel landing while make_worktree runs in its thread used to
     leave the tree and branch the thread went on to create, with job.worktree None, so the finally

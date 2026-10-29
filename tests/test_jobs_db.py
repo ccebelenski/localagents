@@ -503,6 +503,41 @@ def test_mark_lost_jobs_marks_a_stopped_server_despite_a_fresh_heartbeat(monkeyp
     assert _row(store, job.id)["status"] == "lost" and _row(store, job.id)["error"] == "server exited"
 
 
+def test_mark_lost_jobs_notes_an_unfinished_worktree(monkeypatch, tmp_path):
+    """Story 1.10a row 3 (review of 1.10, P3): a lost worktree job's record said nothing about
+    its tree, so a waiter could not tell whether it was still on disk. The sweep writes a note
+    naming the root into a worktree JSON that has no `kept` (finish_worktree never ran) and
+    keeps every other key; a non-worktree job, an already finished tree and a JSON the sweep
+    cannot read are untouched (and still swept)."""
+    import json
+
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    exited = jobs.JobStore()
+    wt = {"repo": "/repo", "path": "/wt/sub", "root": "/wt", "branch": "local-agent/x", "base": "abc"}
+    tree = _new(exited, isolation="worktree")
+    plain = _new(exited)
+    done_tree = _new(exited, isolation="worktree")
+    finished = dict(wt, kept=True, note="2 files changed", diffstat="x")
+    for j, w in ((tree, dict(wt)), (plain, None), (done_tree, finished)):
+        j.status, j.started_at, j.worktree = "running", now - 10, w
+        j.changed()
+    garbled = _new(exited, isolation="worktree")  # another writer's unreadable JSON: left as it is
+    garbled.status, garbled.started_at = "running", now - 10
+    garbled.changed()
+    exited.conn.execute("UPDATE jobs SET worktree = '{not json' WHERE id = ?", (garbled.id,))
+    exited.conn.execute("UPDATE mcp_servers SET stopped = ? WHERE id = ?", (now - 1, exited.server_id))
+
+    assert store.mark_lost_jobs(now) == 4
+    assert _row(store, garbled.id)["worktree"] == "{not json" and _row(store, garbled.id)["status"] == "lost"
+    got = json.loads(_row(store, tree.id)["worktree"])
+    assert got == dict(wt, note="the server exited before finishing the worktree; check /wt")
+    assert _row(store, plain.id)["worktree"] is None
+    assert json.loads(_row(store, done_tree.id)["worktree"]) == finished
+    for j in (tree, plain, done_tree):
+        assert _row(store, j.id)["status"] == "lost"
+
+
 def test_record_endpoint_load_writes_by_running_jobs_endpoint(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     job = _new(store)

@@ -300,7 +300,7 @@ the endpoints and models seen so far. The full schema is
 Because the record is the database rather than a server's memory, it outlives the server
 that ran the job: any server's `job_status`, `job_log` and `list_jobs(all=True)` can
 read it after the original process is gone, and the waits can wait on it too; only
-`cancel_job` and `run_agent(resume_job=…)` cannot — see `foreign_job` above). `list_jobs` answers with the 50 newest by default; `limit=0`
+`cancel_job` and `run_agent(resume_job=…)` cannot — see `foreign_job` above. `list_jobs` answers with the 50 newest by default; `limit=0`
 lists the whole history. Rows are history: retention removes job directories, never rows.
 
 It lives on one machine — SQLite's WAL files do not work on a network filesystem, so

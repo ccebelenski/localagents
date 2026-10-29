@@ -490,3 +490,144 @@ def test_run_agent_answers_a_database_error_like_its_other_refusals(reg, monkeyp
     out = asyncio.run(server.run_agent(task="t"))
     assert out["error"] == "database_error" and "database is locked" in out["message"]
     assert server.store.jobs == {}
+
+
+# --- story 1.10a row 4 (review of 1.10, D1): a cancelled wait_jobs leaves nothing behind ---
+# Standing ruling (d): a cancel mid-wait, a cancel twice, a cancel landing while the finally
+# awaits its tasks. The review's probe1b: wait_jobs awaited asyncio.wait(tasks), which never
+# cancels its tasks, and cancelled them only after a normal return; a cancelled call orphaned
+# wait_many and every _wait_foreign until timeout_s (a SELECT every poll, a sweep every 30 s).
+
+
+def _foreign_running(other, task):
+    job = other.new(task=task, model="m", endpoint="e", base_url="http://e:8080", backend="llama.cpp",
+                    host="local", cwd="/tmp", run_cwd="/tmp", isolation="none")
+    job.status, job.started_at = "running", time.time() - 10
+    job.changed()
+    return job
+
+
+def _others():
+    cur = asyncio.current_task()
+    return [t for t in asyncio.all_tasks() if t is not cur]
+
+
+async def _cancelled(task, times=1):
+    for _ in range(times):
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.parametrize("times", [1, 2])
+def test_a_cancelled_wait_jobs_leaves_no_task_waiter_or_poll(reg, monkeypatch, times):
+    """probe1b as a test: [in-process never finishing, foreign, foreign], mode any, cancelled
+    at 0.1 s (once, and twice back to back): CancelledError reaches the caller, no task is left,
+    the in-process job's event has no waiter, and no row is polled afterwards."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.02)
+    monkeypatch.setattr(server, "FOREIGN_SWEEP_S", 0.05)
+    mine = _prev_job()
+    mine.status = "running"
+    other = jobs.JobStore()
+    f1, f2 = _foreign_running(other, "f1"), _foreign_running(other, "f2")
+    conn = server.store.conn
+    stmts = []
+
+    async def run():
+        conn.set_trace_callback(stmts.append)
+        try:
+            t = asyncio.create_task(server.wait_jobs([mine.id, f1.id, f2.id], timeout_s=30, mode="any"))
+            await asyncio.sleep(0.1)
+            polls_before = sum(s.startswith("SELECT * FROM jobs") for s in stmts)
+            await _cancelled(t, times)
+            left = _others()
+            waiters = len(mine._done._waiters or ())
+            n = len(stmts)
+            await asyncio.sleep(0.3)
+            return polls_before, left, waiters, stmts[n:]
+        finally:
+            conn.set_trace_callback(None)
+
+    polls_before, left, waiters, after = asyncio.run(run())
+    assert polls_before > 0  # the foreign waits were polling: the check below is not vacuous
+    assert left == [] and waiters == 0
+    assert after == []  # no poll, no sweep, nothing
+
+
+@pytest.mark.parametrize("times", [1, 2])
+def test_a_cancelled_wait_jobs_stops_its_progress_reporter(reg, monkeypatch, times):
+    """Story 1.10a row 5, ruling (d): the one progress reporter wait_jobs runs (row 5, D2) is a
+    task of its own, cancelled and awaited in the same finally: a cancel mid-wait (once, twice)
+    leaves no task and no notification after it."""
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.02)
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+    mine = _prev_job()
+    mine.status = "running"
+    other = jobs.JobStore()
+    f1 = _foreign_running(other, "f1")
+    ctx = _Ctx()
+
+    async def run():
+        t = asyncio.create_task(server.wait_jobs([mine.id, f1.id], timeout_s=30, ctx=ctx))
+        await asyncio.sleep(0.1)
+        await _cancelled(t, times)
+        n, left = len(ctx.reports), _others()
+        await asyncio.sleep(0.1)
+        return n, left, len(ctx.reports)
+
+    n, left, n_after = asyncio.run(run())
+    assert n > 0 and all(total == 2 for _, total, _ in ctx.reports)
+    assert left == [] and n_after == n
+
+
+@pytest.mark.parametrize("times", [1, 2])
+def test_a_cancelled_in_process_only_wait_jobs_leaves_nothing(reg, times):
+    """probe1b': the same regression with in-process ids only (pre-1.10 awaited wait_many
+    directly, so its finally ran on the cancel)."""
+    a, b = _prev_job(), _prev_job()
+
+    async def run():
+        t = asyncio.create_task(server.wait_jobs([a.id, b.id], timeout_s=30))
+        await asyncio.sleep(0.1)
+        await _cancelled(t, times)
+        return _others(), len(a._done._waiters or ()), len(b._done._waiters or ())
+
+    assert asyncio.run(run()) == ([], 0, 0)
+
+
+@pytest.mark.parametrize("path", ["cancelled", "returned"])
+def test_a_cancel_during_the_finallys_await_still_awaits_every_task(reg, monkeypatch, path):
+    """A cancel that lands while the finally awaits the tasks it cancelled: the awaiting runs to
+    the end (a slow-to-unwind foreign wait finishes its cleanup before the caller sees the
+    cancel) and the cancel still reaches the caller — on the cancelled path (a first cancel at
+    0.05 s, a second while the finally awaits) and on the normal path (mode any returned at once,
+    the finally awaits the other task, a cancel lands there: never swallowed into an answer)."""
+    other = jobs.JobStore()
+    quick, slow = _foreign_running(other, "quick"), _foreign_running(other, "slow")
+    unwound = []
+
+    async def fake_wait_foreign(job_id, *a, **kw):
+        if job_id == quick.id and path == "returned":
+            return {"id": job_id}
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.2)  # a slow unwind: the finally must wait for it
+            unwound.append(job_id)
+            raise
+
+    monkeypatch.setattr(server, "_wait_foreign", fake_wait_foreign)
+
+    async def run():
+        t = asyncio.create_task(server.wait_jobs([quick.id, slow.id], timeout_s=30, mode="any"))
+        if path == "cancelled":
+            await asyncio.sleep(0.05)
+            t.cancel()
+        await asyncio.sleep(0.1)  # inside the finally's await: the slow unwind takes 0.2 s
+        assert not t.done()
+        await _cancelled(t)
+        return list(unwound), _others()
+
+    got_unwound, left = asyncio.run(run())
+    expected = [quick.id, slow.id] if path == "cancelled" else [slow.id]
+    assert sorted(got_unwound) == sorted(expected) and left == []
