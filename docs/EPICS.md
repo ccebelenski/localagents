@@ -277,16 +277,24 @@ the duplicates go), then docs.
   on one time grid; a requests-by-endpoint route; job detail's list is `tool_call_log`; a port in
   use exits 2 with one sentence; §5a follows. Lane: Qwen (ai1), review by DeepSeek. 3.2 waits
   for it.
-- ☐ **3.1b Node fallback wired.** `collect.run` asks `probe_port` when every endpoint of a
+- ☑ **3.1b Node fallback wired.** (Qwen3.8-27B/llamacpp job 20261029-141437-0b7aa654, 94 turns, 562 tests; schema v5 `host_probes`; a re-check inside the insert's transaction; an unprobed sibling blocks the ask, conservatively; the fallback address is the first endpoint's hostname. Review: Qwen/ai1, pending.) `collect.run` asks `probe_port` when every endpoint of a
   host timed out in the same round and stores the answer (a `host_probes` row or a column on
   the probe), so `node_state`'s `fallback` argument has a source; §3's rule becomes code.
   Lane: Qwen, after the 3.1 review.
 
-- ☐ **3.2 Overview page.** Host cards with the three endpoint states and node collapse,
-  running-jobs table (current tool, error count, context bar), fleet charts with vendored
-  uPlot, range control, dark theme. Gate: browser smoke over `seed` (every state visible).
-  Lane: Opus (the user-facing sentences and layout are judgement work); a Glimmer slice only
-  with the exact reply shape.
+- ☑ **3.2 Overview page.** (Opus-high, 133 tool uses, 574 tests; browser smoke in a headless
+  Chromium driven over the DevTools protocol with node, which the brief wrongly said was absent:
+  every state class, one job row, three canvases, phone width clean, error banner, reconnect
+  backoff measured. Corrected the brief: the snapshot's `state` is live/down/dormant, the probe
+  state string lives only in the history series, so the strip costs one history call per live
+  endpoint under the 5 s throttle. Noticed: `port_free` binds without SO_REUSEADDR so a restart
+  within TIME-WAIT exits 2 where uvicorn would bind; the seeded running job always reads
+  "server gone"; §5a gaps: the database path, a `probe_state` on the snapshot endpoint, an id
+  for `dropped_job`. Review: DeepSeek, pending.)
+- ☐ **3.2a Fold of the 3.2 build notes.** `port_free` with SO_REUSEADDR; snapshot gains
+  `db_path`, `endpoint.probe_state` and `dropped_job_id`; the page uses them. Lane: with the 3.2
+  review's findings.
+
 - ☐ **3.3 Endpoint detail.** Tiered stat tiles with sparklines (absent when no source), context
   window, request table with totals line, jobs in range. Gate: browser smoke; tier table
   from the spec checked against each fixture backend. Lane: Opus or Qwen with the tier table
