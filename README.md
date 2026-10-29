@@ -222,10 +222,25 @@ local_jobs=$(timeout 2 localagents statusline 2>/dev/null)
 
 ### Job records
 
-Job records live in `~/.local/state/localagents/jobs/<job>/`: `transcript.txt`
-(what the agent said and did), `events.jsonl` (every SDK message), `requests.jsonl`
-(every backend request with timing, size and usage), and `requests_full.jsonl` if
-you turn on request dumping.
+Job records live in `~/.local/state/localagents/jobs/<job>/`: `task.txt` (the brief),
+`transcript.txt` (what the agent said and did), and `requests.jsonl` (every backend
+request with timing, size and usage). Together they come to about 100 KB per job.
+
+Two debugging files are off by default: `events.jsonl` (every SDK message, tool results
+included; it was 98% of a 6 GB state directory before it became opt-in) with
+`defaults.log_events: true` or `LOCALAGENTS_LOG_EVENTS=1`, and `requests_full.jsonl`
+(every request body) with `defaults.dump_requests: true` or `LOCALAGENTS_DUMP_REQUESTS=1`.
+
+**Retention.** Job directories older than `defaults.job_retention_days` (default 7, `0`
+disables) are deleted when a server starts and after every job finishes. The date in the
+directory name decides, and nothing that is not named like a job id is touched. The same
+pass is available by hand, which is also how you clean up a state directory that predates
+this rule:
+
+```bash
+localagents prune --dry-run   # list what would go
+localagents prune             # delete it; --days N overrides the default
+```
 
 ## Config: `models.yaml`
 

@@ -24,7 +24,7 @@ from claude_agent_sdk import (
     query,
 )
 
-from .jobs import Job, state_dir
+from .jobs import Job, prune, state_dir
 from .registry import Registry, Resolution, fetch_metrics, metrics_delta
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -275,3 +275,7 @@ async def run_job(
             job.log_text(f"[worktree-error] {e}")
         job._done.set()
         job.changed()
+        try:  # retention: this job's own directory is new, so only older ones can go
+            await asyncio.to_thread(prune, d.job_retention_days)
+        except Exception as e:  # noqa: BLE001
+            job.log_text(f"[prune-error] {e}")

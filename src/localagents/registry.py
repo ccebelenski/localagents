@@ -155,6 +155,8 @@ class Defaults:
     probe_timeout_s: float = 2.5
     system_prompt_append: str = ""
     dump_requests: bool = False
+    log_events: bool = False  # write events.jsonl per job (debugging; env LOCALAGENTS_LOG_EVENTS=1 also enables)
+    job_retention_days: int = 7  # delete job directories older than this; 0 disables
 
 
 def local_path(path: Path) -> Path:

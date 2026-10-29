@@ -13,7 +13,7 @@ import httpx
 from mcp.server.mcpserver import Context, MCPServer
 
 from . import status
-from .jobs import Job, JobStore
+from .jobs import Job, JobStore, prune
 from .registry import ModelUnavailable, Registry, config_path, local_path
 from .runner import run_job
 from .shim import Shim
@@ -283,6 +283,7 @@ async def run_agent(
         isolation=isolation,
         worktree=worktree,
         dump=reg.defaults.dump_requests,
+        log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",
         context=res.context,
     )
     await shim.start()
@@ -470,4 +471,8 @@ def main() -> None:
     if a.config:
         os.environ["LOCALAGENTS_CONFIG"] = str(Path(a.config).expanduser().resolve())
     atexit.register(status.remove)
+    try:  # retention: old job directories go at startup and after every job (see jobs.prune)
+        prune(_reg().defaults.job_retention_days)
+    except OSError:
+        pass
     mcp.run(transport=a.transport)

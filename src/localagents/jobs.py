@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
+import shutil
 import time
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -17,6 +19,38 @@ def state_dir() -> Path:
     d = Path(base) / "localagents"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+# A job directory is ``<YYYYMMDD>-<HHMMSS>-<4 hex>`` (see JobStore.new); prune touches nothing else.
+_JOB_DIR = re.compile(r"^(\d{8}-\d{6})-[0-9a-f]{4}$")
+
+
+def prune(days: int, now: float | None = None, dry_run: bool = False) -> list[Path]:
+    """Delete job directories whose id dates them more than ``days`` ago; returns what was (or
+    with ``dry_run`` would be) removed, oldest first.
+
+    The date in the directory name decides, never mtime, and a name that is not a job id is left
+    alone whatever its age. ``days <= 0`` disables pruning. A job can run for at most about 28
+    hours, so any sane cutoff is past every live job of every server on the machine.
+    """
+    if days <= 0:
+        return []
+    cutoff = (now if now is not None else time.time()) - days * 86400
+    root = state_dir() / "jobs"
+    out: list[Path] = []
+    for p in sorted(root.iterdir()) if root.is_dir() else []:
+        m = _JOB_DIR.match(p.name)
+        if not m or not p.is_dir():
+            continue
+        try:
+            stamp = time.mktime(time.strptime(m.group(1), "%Y%m%d-%H%M%S"))
+        except ValueError:
+            continue
+        if stamp < cutoff:
+            out.append(p)
+            if not dry_run:
+                shutil.rmtree(p, ignore_errors=True)
+    return out
 
 
 # How often a blocking wait sends a progress notification (well under Claude Code's idle timeouts).
@@ -48,6 +82,7 @@ class Job:
     last_activity: str = ""
     log_dir: str = ""
     dump: bool = False
+    log_events: bool = False  # write events.jsonl (every SDK message); debugging only
     context: int | None = None  # backend context window handed to the session
     ctx_tokens: int | None = None  # prompt size of the last backend request (shim-observed)
     gen_tps: float | None = None  # smoothed output tokens/s of recent backend responses
@@ -97,6 +132,10 @@ class Job:
 
     # ----- logging -----
     def log_event(self, obj: Any) -> None:
+        """Raw SDK message, one JSON line each. Off unless ``log_events`` (debugging: it carries
+        every tool result and was 98% of a 6 GB state directory)."""
+        if not self.log_events:
+            return
         with open(Path(self.log_dir) / "events.jsonl", "a") as f:
             f.write(json.dumps(obj, default=str) + "\n")
 

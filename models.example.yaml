@@ -8,6 +8,9 @@ defaults:
   max_turns: 60
   timeout_s: 1800
   probe_timeout_s: 2.5
+  job_retention_days: 7     # delete ~/.local/state/localagents/jobs/<job> older than this; 0 keeps everything
+  # log_events: true        # debugging: write events.jsonl (every SDK message) per job; large
+  # dump_requests: true     # debugging: write requests_full.jsonl (every request body) per job
   system_prompt_append: |
     You are running as a delegated sub-agent on a local model. Work only on the task you were given,
     verify your changes (run tests/builds where they exist), and finish with a concise report: what you changed (file paths),
