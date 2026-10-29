@@ -191,8 +191,10 @@ the duplicates go), then docs.
   `requests_processing`/`requests_deferred` are mapped; `rows.write` (dead in production) goes
   and tick's own transaction is pinned; retention deletes per endpoint through the existing
   index. Folded in 2.2a.)
-- ☐ **2.2a Fold of the 2.2 review** (reviewer fixes its own findings). Lane: DeepSeek, review
-  by Qwen.
+- ☑ **2.2a Fold of the 2.2 review** (DeepSeek/dgx1-a job 20261029-130402-63783c35, 115 turns,
+  every row mutation-checked; merged over 2.3a by three-way patch; the merge broke the seed
+  (the llama.cpp parser's new gauge keys reached a counters insert): coordinator fix in seed.py,
+  14 seed tests red then green; 420 tests. Review: Qwen3.8-27B, pending.)
 - ☑ **2.3 Display and node state.** (Qwen3.8-27B/llamacpp job 20261029-122542-1e3d7290, 82
   turns, 361 tests: `endpoint_state`/`node_state`/`node_dormant` with every truth-table row its
   own test, boundary shared with `interval_s`; `probe_port` against a real listener, a closed
