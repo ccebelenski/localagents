@@ -593,8 +593,36 @@ def test_endpoint_requests_holds_both_seeded_jobs_newest_first(world):
         "cache_read_tokens": sum(r["cache_read_tokens"] or 0 for r in both),
         "cache_creation_tokens": sum(r["cache_creation_tokens"] or 0 for r in both),
         "ms": sum(r["ms"] or 0 for r in both),
-        "errors": sum(1 for r in both if r["error"] is not None),
+        "errors": sum(1 for r in both if r["error"] is not None and r["error"] != ""),
     }
+
+
+def test_endpoint_requests_totals_count_only_real_errors(world):
+    """Review of 3.3 (its second server seam): the export writes clean requests with
+    ``error = ''`` and the totals read ``SUM(error IS NOT NULL)``, so the table's error figure
+    counted requests the page draws as clean — over the seeded world ai1 read 2. An error is a
+    column that is not null AND not the empty string (job.js's client-side totals follow the
+    same rule; §5a)."""
+    conn, _ = world
+    ep = endpoint_id(conn, "ai1")
+    since, until = NOW - 24 * HOUR, NOW
+    scope = " FROM requests r JOIN jobs j ON j.id = r.job_id" \
+            " WHERE j.endpoint_id = ? AND r.t >= ? AND r.t <= ?"
+    loose = conn.execute("SELECT COUNT(*)" + scope + " AND r.error IS NOT NULL",
+                         (ep, since, until)).fetchone()[0]
+    assert loose == 2  # the export's two '' rows: clean on the page, once counted as errors
+    true_errors = conn.execute("SELECT COUNT(*)" + scope +
+                               " AND r.error IS NOT NULL AND r.error != ''",
+                               (ep, since, until)).fetchone()[0]
+    assert read.endpoint_requests(conn, ep, since, until)["totals"]["errors"] == true_errors
+    # a constructed '' row is not an error either; a row with a sentence is
+    jid = conn.execute("SELECT id FROM jobs WHERE endpoint_id = ? LIMIT 1", (ep,)).fetchone()[0]
+    conn.execute("INSERT INTO requests (job_id, t, error) VALUES (?, ?, '')", (jid, NOW - 60.0))
+    conn.execute("INSERT INTO requests (job_id, t, error) VALUES (?, ?, 'upstream refused')"
+                 , (jid, NOW - 59.0))
+    out = read.endpoint_requests(conn, ep, since, until)
+    assert out["totals"]["errors"] == true_errors + 1
+    assert out["totals"]["count"] == 154  # the totals span the range, constructed rows included
 
 
 def test_endpoint_requests_endpoint_without_jobs_is_empty_with_zero_totals(world):

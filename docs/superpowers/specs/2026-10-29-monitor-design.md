@@ -410,7 +410,10 @@ collector's first tick does). Running jobs are listed whatever endpoint they ran
     "count": 152,                   requests in the range
     "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
     "ms",                           the ms sum (NULLs skipped)
-    "errors"                        requests whose error column is not null
+    "errors"                        requests whose error column is set: not null and not
+                                    the empty string a clean export request carries (review
+                                    of 3.3); the job detail page's client-side totals count
+                                    errors by this same rule
   }
 }
 ```

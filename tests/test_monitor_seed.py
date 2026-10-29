@@ -265,6 +265,9 @@ def test_ai1_rates_are_constant_and_non_zero(seeded):
     detail = conn.execute("SELECT detail FROM endpoint_events WHERE kind = 'restarted'").fetchone()[0]
     assert across.reason == detail
     assert "went backwards" in detail and "since changed" in detail
+    # review of 3.3 (third server seam): the figures the detail names are rounded, not the
+    # raw float repr the interpolated pass-2 reading carries (392777.0722222222 …)
+    assert "prompt_tokens 392777.07 → 388136" in detail
 
 
 def test_ai1_has_exactly_one_reset_and_it_is_the_restarted_event(seeded):

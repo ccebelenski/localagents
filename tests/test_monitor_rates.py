@@ -75,6 +75,17 @@ def test_llamacpp_pair_is_a_reset_with_no_rates():
     assert "generated_tokens 3822 → 0" in r.reason and "spec_accepted_tokens 2105 → 0" in r.reason
 
 
+def test_reset_reason_rounds_the_figures_it_names():
+    """Review of 3.3 (its third server seam): the stored restart detail carried the raw float
+    repr — ``prompt_tokens 392777.0722222222 → 388136``. The detail is an event-list sentence,
+    so the readings it names read rounded: whole numbers plain, fractions to two decimals."""
+    prev = {"prompt_tokens": 392777.0722222222, "generated_tokens": 222971.82222222222}
+    cur = {"prompt_tokens": 388136, "generated_tokens": 220395}
+    assert rates.reset_reason(prev, cur, None, None) == (
+        "counters went backwards: prompt_tokens 392777.07 → 388136,"
+        " generated_tokens 222971.82 → 220395")
+
+
 def test_ai1_idle_pair_rates_are_zero_not_none():
     """ai1 sat idle across both passes: every total identical, so every token rate is 0.0.
     No drafts were offered in the interval, so the acceptance ratio has no value (None)."""

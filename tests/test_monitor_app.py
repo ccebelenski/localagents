@@ -373,6 +373,29 @@ def test_one_tick_reaches_every_open_stream(dbpath, tmp_path):
     asyncio.run(main())
 
 
+def test_the_fanout_drains_from_app_start_not_the_first_subscriber(dbpath, tmp_path):
+    """Review of 3.3 (its first server seam): the drain task used to start inside the first
+    ``subscribe()``, so a collector tick before any browser connected was still set when the
+    task began and the first page load received TWO snapshots. It starts with the app instead:
+    the pre-connect tick is consumed, the first stream receives exactly one snapshot, and the
+    next tick brings exactly one more."""
+
+    async def main():
+        tick = asyncio.Event()
+        app = _app(dbpath, tmp_path, tick)  # make_app on this loop: the drain task starts here
+        assert app.state.fanout.task is not None
+        tick.set()                          # a collector tick before any browser connects
+        await asyncio.sleep(0.05)           # let the drain task consume it
+        s = _Stream(app)
+        assert _event(await s.next_chunk())[0] == "snapshot"
+        with pytest.raises(TimeoutError):   # and it earns no second snapshot
+            await s.next_chunk(timeout=0.5)
+        tick.set()                          # the first tick after the page loads: exactly one more
+        assert _event(await s.next_chunk())[0] == "snapshot"
+        await s.close()
+    asyncio.run(main())
+
+
 def test_the_stream_sends_keepalive_comments_when_idle(dbpath, tmp_path):
     async def main():
         app = _app(dbpath, tmp_path, keepalive_s=0.05)

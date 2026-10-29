@@ -58,17 +58,25 @@ def _sse(event: str, body: Any) -> str:
 class _Fanout:
     """Wakes every connected stream when the collector sets ``tick``: one task waits on it,
     clears it and sets each subscriber's own event, so no stream can miss a tick another
-    stream cleared. Started on the first subscriber, on the serving loop."""
+    stream cleared. Story 3.3a row 1 (the 3.3 review's first server seam): the task starts
+    with the app — ``make_app`` calls ``start`` whenever a loop is already running there
+    (serve.py's own loop, the SSE tests' loop) — so a tick before any browser connects is
+    consumed here and the first page load receives one snapshot, not two. Built outside a
+    loop (a Starlette ``TestClient``, whose app runs on a portal loop of its own), the loop of
+    the first subscriber gets it instead; ``start`` also re-homes the task if that loop is
+    not the one the app was built on."""
 
     def __init__(self, tick: asyncio.Event):
         self.tick = tick
         self.subscribers: set[asyncio.Event] = set()
         self.task: asyncio.Task | None = None
 
-    def subscribe(self) -> asyncio.Event:
-        loop = asyncio.get_running_loop()
+    def start(self, loop: asyncio.AbstractEventLoop) -> None:
         if self.task is None or self.task.done() or self.task.get_loop() is not loop:
             self.task = loop.create_task(self._run())
+
+    def subscribe(self) -> asyncio.Event:
+        self.start(asyncio.get_running_loop())
         ev = asyncio.Event()
         self.subscribers.add(ev)
         return ev
@@ -108,6 +116,10 @@ def make_app(
     window_s = float(settings.attention_hours) * 3600.0
     db_path_s = str(db_path) if db_path is not None else None
     fan = _Fanout(tick)
+    try:  # story 3.3a row 1: drain from the app's start (see _Fanout), not the first subscriber
+        fan.start(asyncio.get_running_loop())
+    except RuntimeError:  # built outside a loop (TestClient's portal): first subscribe starts it
+        pass
 
     async def in_thread(fn: Callable[..., Any], *args: Any) -> Any:
         def run() -> Any:

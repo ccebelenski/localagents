@@ -30,7 +30,12 @@ class Rates:
 
 
 def _num(v: float) -> str:
-    return str(int(v)) if float(v).is_integer() and abs(v) < 1e15 else repr(v)
+    """A counter reading as a reset detail names it (review of 3.3, third server seam): whole
+    numbers plain, fractions rounded to two decimals — the stored event used to carry the raw
+    repr (``prompt_tokens 392777.0722222222 → 388136``), which is a float artifact, not a
+    reading."""
+    v = round(float(v), 2)
+    return str(int(v)) if v.is_integer() and abs(v) < 1e15 else repr(v)
 
 
 def _present(counters: dict[str, Any] | None) -> dict[str, float]:

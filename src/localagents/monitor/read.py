@@ -446,7 +446,9 @@ def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t
     the range, newest first, at most ``limit``. Each row is rendered exactly as ``job_detail``
     renders its requests, plus ``job_id`` and ``job_name``. The ``totals`` object sums the
     whole range (not just the capped list): count, the four token columns, the ms sum (NULLs
-    skipped) and the number of requests whose error column is not null."""
+    skipped) and the number of requests whose error column is set — not null and not the empty
+    string the export writes on clean requests (review of 3.3: ``SUM(error IS NOT NULL)``
+    counted those as errors)."""
     rows_ = ([] if endpoint_id is None else conn.execute(
         "SELECT p.path, r.*, j.id AS job_id, j.name AS job_name FROM requests r"
         " JOIN jobs j ON j.id = r.job_id LEFT JOIN paths p ON p.id = r.path_id"
@@ -466,7 +468,7 @@ def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t
     sums = ([0] * 7 if endpoint_id is None else conn.execute(
         "SELECT COUNT(*), COALESCE(SUM(r.input_tokens), 0), COALESCE(SUM(r.output_tokens), 0),"
         " COALESCE(SUM(r.cache_read_tokens), 0), COALESCE(SUM(r.cache_creation_tokens), 0),"
-        " COALESCE(SUM(r.ms), 0), COALESCE(SUM(r.error IS NOT NULL), 0) FROM requests r"
+        " COALESCE(SUM(r.ms), 0), COALESCE(SUM(r.error IS NOT NULL AND r.error != ''), 0) FROM requests r"
         " JOIN jobs j ON j.id = r.job_id WHERE j.endpoint_id = ? AND r.t >= ? AND r.t <= ?",
         (endpoint_id, since_t, now)).fetchone()
     )
