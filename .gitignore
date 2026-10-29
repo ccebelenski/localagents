@@ -5,3 +5,4 @@ __pycache__/
 models.yaml
 models.local.yaml
 .claude/worktrees/
+t/

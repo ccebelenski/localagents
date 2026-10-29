@@ -15,6 +15,13 @@ def main() -> None:
             # script -n-tests the output, so "nothing" is an empty line, not silence
             print("\n".join(lines) if lines else "")
         return
+    if sys.argv[1:2] == ["smoke"]:
+        # lazy like prune: the smoke command is the only path that pulls in the monitor's
+        # smoke module (and through it runner/shim) — `import localagents` stays light
+        from .monitor.smoke import main as smoke_main
+
+        smoke_main(sys.argv[2:])
+        return
     if sys.argv[1:2] == ["prune"]:
         import argparse
 

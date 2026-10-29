@@ -334,6 +334,16 @@ way to aim it), so point it at a throwaway file, never the real one. It refuses 
 that already holds `jobs` or `probes` rows unless `--force` is given — and `--force`
 *replaces* (it deletes every row of every table and seeds fresh), never appends.
 
+#### Smoke test
+
+`localagents smoke --endpoint NAME --model SERVED_ID` is the online acceptance run:
+a few short `/v1/messages` requests to the named endpoint, one real agent job through
+the shim and runner with a fixed brief, a probe of a port nothing listens on, and a
+printed checklist of the rows and states that appeared (exit 1 on any missing row). It
+needs a model actually running on that endpoint (it runs a real job there, Bash included),
+and it writes real rows — into `LOCALAGENTS_DB` when set, otherwise this same shared
+database; point it at a throwaway file to rehearse.
+
 ## Config: `models.yaml`
 
 Start from `models.example.yaml`. It's re-read on every call, so edits take effect
