@@ -107,7 +107,7 @@ until the job ends; after two minutes Claude Code moves it to a background task 
 in `/tasks`), Claude keeps working, and the final job record arrives as a task
 notification. Claude reads `files_touched` (or the worktree diff) and checks the work.
 The server sends a progress notification every minute while it waits — e.g.
-`running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: {"command": "uv run pytest -q"…}`
+`running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: uv run pytest -q`
 — so the call never trips Claude Code's idle timeout, and the tool timeout itself
 defaults to about 28 hours.
 
@@ -142,7 +142,7 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 | `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
 | `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, … |
 | `wait_job` / `wait_jobs` / `cancel_job` | control jobs this server started; the waits report progress while they block, `wait_jobs` takes several ids (`mode` all/any) |
-| `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls, `list_jobs(all=True)` spans every server's |
+| `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls and carries a `note` when the job's directory was pruned, `list_jobs(all=True)` spans every server's and `list_jobs(limit=50, 0 = all)` caps the listing |
 | `foreign_job` | the answer `wait_job`, `wait_jobs`, `cancel_job` and `run_agent(resume_job=…)` give for a job another server started; the three reads above work on any job |
 | `register_endpoint` | add a server from inside a session (written to `models.local.yaml`) |
 | `local_complete` | one-shot generation with no tools — summaries, drafts, classification |
@@ -208,8 +208,8 @@ context window is (`ctx`, from the token usage recorded on every backend request
 tells you how close the agent is to compaction) and its recent generation speed. Then
 the load of each endpoint your jobs run on, probed every ten seconds while jobs run:
 slots busy for llama.cpp, requests running and queued and KV cache fill for vLLM.
-Finished jobs stay on the line for two minutes with a check mark (or a cross, clock or
-null sign for failed, timed out and cancelled).
+Finished jobs stay on the line for two minutes with a check mark (or a cross, clock, null
+sign or dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost).
 
 "Live" means the heartbeat: a server is shown while its last beat is under a minute
 old (and its pid still exists). A server that exited or was killed drops off the line

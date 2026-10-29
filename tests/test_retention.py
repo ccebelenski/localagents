@@ -106,7 +106,9 @@ def _cli(*args):
 
 
 def test_cli_prune_subcommand(tmp_path):
-    env = {**os.environ, "XDG_STATE_HOME": str(tmp_path)}
+    # story 1.7 item 8: LOCALAGENTS_DB is pinned alongside XDG_STATE_HOME — an inherited
+    # developer override would otherwise point the subprocess at the real database
+    env = {**os.environ, "XDG_STATE_HOME": str(tmp_path), "LOCALAGENTS_DB": str(tmp_path / "localagents.db")}
     old = _mkjob(tmp_path, "20200101-000000-abcd")
     keep = _mkjob(tmp_path, time.strftime("%Y%m%d-%H%M%S") + "-ffff")
     r = subprocess.run(_cli("prune", "--dry-run"), env=env, capture_output=True, text=True, check=True)

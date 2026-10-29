@@ -72,6 +72,30 @@ def test_finished_jobs_linger_then_drop(monkeypatch, tmp_path):
     assert status.render(now=1180.0 + status.KEEP_FINISHED_S + 1) == ""
 
 
+def test_null_lookup_ids_still_render(monkeypatch, tmp_path):
+    """Story 1.7 item 3: collect LEFT JOINs models/endpoints — a job whose model_id or
+    endpoint_id is NULL (a lookup that failed on another server, say) still shows on the line,
+    the model as `?` and with no endpoint load segment, instead of vanishing."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    now = time.time()
+    job.status, job.started_at = "running", now - 12
+    job.changed()
+    store.conn.execute("UPDATE jobs SET model_id = NULL, endpoint_id = NULL WHERE id = ?", (job.id,))
+    assert status.render(now=now, owner=os.getppid()) == "local: ⟳ ? 12s"
+
+
+def test_lost_job_has_a_mark(monkeypatch, tmp_path):
+    """Story 1.7 item 1: `lost` has a status mark, so render_entry never prints `?` for a job
+    the lost rule swept (story 1.5a wrote the status; MARK never grew its glyph)."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    now = time.time()
+    job.status, job.started_at, job.finished_at = "lost", now - 45, now - 5
+    job.changed()
+    assert status.render(now=now, owner=os.getppid()) == "local: † Qwen3.8-Flash-Next 40s"
+
+
 def test_dead_server_jobs_are_dropped(monkeypatch, tmp_path):
     """Liveness is heartbeat first, pid second: a live pid whose row stopped beating 61 s ago
     is not live, and neither is one marked stopped. The row itself is history and stays."""
@@ -105,16 +129,24 @@ def test_remove_deletes_own_file(monkeypatch, tmp_path):
     assert status.render(now=now, owner=os.getppid()) == ""
 
 
-def test_statusline_command_is_light():
-    """It must not import the server stack: it runs on every status-bar refresh."""
+def test_statusline_command_is_light(tmp_path):
+    """It must not import the server stack: it runs on every status-bar refresh.
+
+    Story 1.7 item 8: the subprocess runs with XDG_STATE_HOME and LOCALAGENTS_DB pointed at
+    this test's tmp_path — never the developer's real database (an inherited LOCALAGENTS_DB
+    used to send it there), and any file it ever creates must live under tmp_path."""
+    state = tmp_path / "state"
     out = subprocess.run(
         [sys.executable, "-c",
          "import sys; sys.argv=['localagents','statusline']; import localagents; localagents.main(); "
          "print(sorted(m for m in sys.modules if m in ('mcp','httpx','uvicorn','localagents.server')))"],
         capture_output=True, text=True, cwd="src",
+        env={**os.environ, "XDG_STATE_HOME": str(state), "LOCALAGENTS_DB": str(state / "localagents.db")},
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().splitlines()[-1] == "[]"
+    # the renderer never creates the database: nothing was written anywhere, real or tmp
+    assert not state.exists()
 
 
 def test_render_without_a_database_is_an_empty_line(monkeypatch, tmp_path):

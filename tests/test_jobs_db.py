@@ -50,6 +50,22 @@ def test_new_job_inserts_row(monkeypatch, tmp_path):
     assert m[0] == "served-model"
 
 
+def test_new_leaves_no_orphan_directory_when_the_database_refuses(monkeypatch, tmp_path):
+    """Story 1.7 item 5: new() mints the job directory before the INSERT. If the row cannot be
+    written the call fails loudly — but cleanly: no directory is left, and the store keeps no
+    job it never recorded."""
+    store = _store(monkeypatch, tmp_path)
+
+    def boom(conn, table, **cols):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(jobs.db, "lookup_id", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        _new(store)
+    assert list((jobs.state_dir() / "jobs").iterdir()) == []
+    assert store.jobs == {}
+
+
 def test_store_does_not_open_the_database_until_used(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     assert not db.db_path().exists(), "constructing a JobStore must not create the database"
@@ -275,10 +291,20 @@ def test_close_never_raises(monkeypatch, tmp_path):
     store.close()  # runs at exit: must swallow, not raise
 
 
+# A pid that does not exist (story 1.7 item 2: the sweep needs a *dead* pid, and the tests must
+# prove it). Asserted dead in test_mark_lost_jobs_sweeps_a_dead_pid.
+DEAD_PID = 2**22 - 1
+
+
 def _stale_store(monkeypatch, tmp_path, now):
-    """A second server whose heartbeat is 61 s old (row in the same database)."""
+    """A second server whose heartbeat is 61 s old *and* whose pid is dead (row in the same
+    database). The story-1.7 sweep is heartbeat first, pid second, like the status line: a stale
+    heartbeat with a live pid is a stalled server, not a dead one."""
     other = jobs.JobStore()
-    other.conn.execute("UPDATE mcp_servers SET updated = ? WHERE id = ?", (now - 61, other.server_id))
+    other.conn.execute(
+        "UPDATE mcp_servers SET updated = ?, pid = ? WHERE id = ?",
+        (now - 61, DEAD_PID, other.server_id),
+    )
     return other
 
 
@@ -318,10 +344,35 @@ def test_mark_lost_jobs_marks_a_server_with_no_heartbeat_at_all(monkeypatch, tmp
                   cwd="/tmp", run_cwd="/tmp", isolation="none")
     j.status = "running"
     j.changed()
-    other.conn.execute("UPDATE mcp_servers SET updated = NULL WHERE id = ?", (other.server_id,))
+    other.conn.execute("UPDATE mcp_servers SET updated = NULL, pid = ? WHERE id = ?", (DEAD_PID, other.server_id))
     other.conn.commit()
     assert mine.mark_lost_jobs() == 1
     assert mine.conn.execute("SELECT status, error FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "lost"
+
+
+def test_mark_lost_jobs_spares_a_stale_heartbeat_with_a_live_pid(monkeypatch, tmp_path):
+    """Story 1.7 item 2: heartbeat first, pid second, like status.collect. A server that stopped
+    beating 61 s ago but whose pid is this process is stalled, not dead: its running job is not
+    swept (the spec hides it from the status line, but does not bury it)."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    stalled = jobs.JobStore()  # pid = this process: alive
+    job = _new(stalled)
+    job.status, job.started_at = "running", now - 100
+    job.changed()
+    stalled.conn.execute("UPDATE mcp_servers SET updated = ? WHERE id = ?", (now - 61, stalled.server_id))
+    assert store.mark_lost_jobs(now) == 0
+    assert _row(store, job.id)["status"] == "running"
+    # and it is swept the moment the pid is gone
+    stalled.conn.execute("UPDATE mcp_servers SET pid = ? WHERE id = ?", (DEAD_PID, stalled.server_id))
+    assert store.mark_lost_jobs(now + 1) == 1
+    assert _row(store, job.id)["status"] == "lost"
+
+
+def test_mark_lost_jobs_sweeps_a_dead_pid(monkeypatch, tmp_path):
+    """The DEAD_PID the tests use is provably gone: os.kill raises ProcessLookupError."""
+    with pytest.raises(ProcessLookupError):
+        os.kill(DEAD_PID, 0)
 
 
 def test_mark_lost_jobs_marks_a_stopped_server_despite_a_fresh_heartbeat(monkeypatch, tmp_path):

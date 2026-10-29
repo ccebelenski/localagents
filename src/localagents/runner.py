@@ -224,7 +224,10 @@ async def run_job(
     metrics_before = await fetch_metrics(res.endpoint, d.probe_timeout_s)
     try:
         if job.isolation == "worktree":
-            job.worktree = make_worktree(job)
+            # to_thread: these are blocking git calls (story 1.7 item 7). subprocess.run would
+            # stall the event loop that carries this server's heartbeat and the shim's serving;
+            # neither function touches the thread-bound sqlite connection.
+            job.worktree = await asyncio.to_thread(make_worktree, job)
             job.run_cwd = job.worktree["path"]
             job.changed()  # another server's job_status sees the tree before the first message
             job.log_text(
@@ -278,7 +281,7 @@ async def run_job(
             if job.metrics:
                 job.log_text(f"[metrics] {json.dumps(job.metrics)}")
         try:
-            finish_worktree(job)
+            await asyncio.to_thread(finish_worktree, job)
         except Exception as e:  # noqa: BLE001
             job.log_text(f"[worktree-error] {e}")
         job._done.set()

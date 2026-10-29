@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import atexit
 import os
+import shutil
+import sqlite3
+import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -255,7 +258,7 @@ async def run_agent(
       endpoint: Force a specific endpoint; with no `model`, uses whatever it is serving.
       cwd: Working directory (default: this server's cwd, i.e. the current project).
       isolation: "none" (work in cwd) or "worktree" (fresh git worktree on branch
-        local-agent/<job>, kept only if the agent changed something; see job.worktree).
+        local-agent/<name>, kept only if the agent changed something; see job.worktree).
       wait_s: If > 0, block up to this many seconds and return the final record, else return
         the job id at once. Pass the job's timeout: Claude Code backgrounds a long call and
         delivers the record as a task notification; progress is reported every minute.
@@ -555,6 +558,22 @@ async def local_complete(
     }
 
 
+def _startup_writes(store: JobStore, config: str, transport: str) -> None:
+    """The two startup writes to this server's row and the crashed servers' jobs: fill the row
+    the status line hangs its jobs on, then sweep jobs a crashed server left behind (spec's lost
+    rule — the only status write to another server's jobs). A locked or broken database costs
+    both, never the server: the spec accepts a dropped update, not a dropped server (story 1.7
+    item 4). Factor of main(), so a test can drive it without mcp.run()."""
+    try:
+        store.describe_server(config=config, transport=transport)
+        store.mark_lost_jobs()
+    except sqlite3.Error as e:
+        print(f"localagents: startup database writes skipped: {e}", file=sys.stderr)
+    # story 1.7 item 6: the pre-1.5a status/<pid>.json files are dead weight — the tables and
+    # the heartbeat replaced them, and no code reads or writes that directory any more
+    shutil.rmtree(state_dir() / "status", ignore_errors=True)
+
+
 def main() -> None:
     import argparse
 
@@ -575,8 +594,7 @@ def main() -> None:
         os.environ["LOCALAGENTS_CONFIG"] = str(Path(a.config).expanduser().resolve())
     # the server row is the status line's spine: fill it, sweep jobs a crashed server left
     # behind (spec's lost rule — the only status write to another server's jobs), mark stopped at exit
-    store.describe_server(config=str(config_path()), transport=a.transport)
-    store.mark_lost_jobs()
+    _startup_writes(store, str(config_path()), a.transport)
     atexit.register(store.close)
     try:  # retention: old job directories go at startup and after every job (see jobs.prune)
         prune(_reg().defaults.job_retention_days)

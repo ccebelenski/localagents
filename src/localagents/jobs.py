@@ -323,23 +323,30 @@ class JobStore:
         self.jobs[jid] = job
         job._conn = self.conn
         # the task itself is the jobs.task column now (task.txt is dropped)
-        with db.immediate(self.conn):
-            endpoint_id = db.lookup_id(
-                self.conn, "endpoints",
-                name=job.endpoint, base_url=job.base_url, backend=backend, host=host,
-            )
-            model_id = db.lookup_id(self.conn, "models", served_id=job.model)
-            job.endpoint_id, job.model_id = endpoint_id, model_id
-            self.conn.execute(
-                """INSERT INTO jobs (id, name, mcp_server_id, endpoint_id, model_id, task, cwd,
-                                     isolation, status, created_at, updated, dump, log_events, worktree,
-                                     context, num_turns, last_activity)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (jid, name, self.server_id, endpoint_id, model_id, job.task, job.cwd, job.isolation,
-                 job.status, created_at, time.time(), 1 if job.dump else 0, 1 if job.log_events else 0,
-                 json.dumps(job.worktree) if job.worktree is not None else None,
-                 job.context, job.num_turns, job.last_activity),
-            )
+        try:
+            with db.immediate(self.conn):
+                endpoint_id = db.lookup_id(
+                    self.conn, "endpoints",
+                    name=job.endpoint, base_url=job.base_url, backend=backend, host=host,
+                )
+                model_id = db.lookup_id(self.conn, "models", served_id=job.model)
+                job.endpoint_id, job.model_id = endpoint_id, model_id
+                self.conn.execute(
+                    """INSERT INTO jobs (id, name, mcp_server_id, endpoint_id, model_id, task, cwd,
+                                         isolation, status, created_at, updated, dump, log_events, worktree,
+                                         context, num_turns, last_activity)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (jid, name, self.server_id, endpoint_id, model_id, job.task, job.cwd, job.isolation,
+                     job.status, created_at, time.time(), 1 if job.dump else 0, 1 if job.log_events else 0,
+                     json.dumps(job.worktree) if job.worktree is not None else None,
+                     job.context, job.num_turns, job.last_activity),
+                )
+        except sqlite3.Error:
+            # the job cannot be recorded, so the call fails loudly — but cleanly (story 1.7
+            # item 5): no orphan directory, and no in-memory job the database never saw
+            shutil.rmtree(log_dir, ignore_errors=True)
+            self.jobs.pop(jid, None)
+            raise
         return job
 
     # ----- server-row lifecycle (story 1.5a; spec Liveness) -----
@@ -379,19 +386,31 @@ class JobStore:
             pass  # a row left unstopped ages out by heartbeat instead
 
     def mark_lost_jobs(self, now: float | None = None) -> int:
-        """The spec's startup rule: a job whose server row is not live (no heartbeat for 60 s,
-        or ``stopped`` set) will never finish: mark it ``lost``. This is the only status write to
-        another server's jobs; this server's own row was written/heartbeated moments ago, so the
-        fresh ``updated`` keeps its jobs out of the sweep."""
+        """The spec's startup rule, heartbeat first and pid second like ``status.collect``: a
+        candidate server (``stopped`` set, or no heartbeat for 60 s) is dead — and its unfinished
+        jobs become ``lost`` — only when its pid is gone too. A stale heartbeat with a live pid is
+        a stalled server (a loop wedged on something), not a dead one: sweeping its running jobs
+        would lie about work that may still finish. A ``stopped`` row was written by the server
+        itself exiting, so its pid is not consulted. This is the only status write to another
+        server's jobs; this server's own row was heartbeated moments ago and stays out."""
         now = now if now is not None else time.time()
         with db.immediate(self.conn):
+            dead = [
+                r["id"]
+                for r in self.conn.execute(
+                    "SELECT id, pid, stopped FROM mcp_servers"
+                    " WHERE stopped IS NOT NULL OR updated IS NULL OR updated < ?",
+                    (now - 60,),
+                ).fetchall()
+                if r["stopped"] is not None or r["pid"] is None or not db.pid_alive(r["pid"])
+            ]
+            if not dead:
+                return 0
             cur = self.conn.execute(
-                """UPDATE jobs SET status = 'lost', error = 'server exited', finished_at = ?, updated = ?
-                   WHERE status IN ('queued', 'running')
-                     AND mcp_server_id IN (
-                       SELECT id FROM mcp_servers WHERE stopped IS NOT NULL OR updated IS NULL OR updated < ?
-                     )""",
-                (now, now, now - 60),
+                f"""UPDATE jobs SET status = 'lost', error = 'server exited', finished_at = ?, updated = ?
+                    WHERE status IN ('queued', 'running')
+                      AND mcp_server_id IN ({', '.join('?' * len(dead))})""",
+                (now, now, *dead),
             )
             return cur.rowcount
 

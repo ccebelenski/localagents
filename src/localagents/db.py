@@ -274,6 +274,19 @@ def lookup_id(conn: sqlite3.Connection, table: str, **cols: str) -> int:
     return row[0]
 
 
+def pid_alive(pid: int) -> bool:
+    """Is this pid still running? The liveness second check (spec Liveness: heartbeat first,
+    pid second, because pids are reused). Lives here because both ``status`` (the status line)
+    and ``jobs`` (the ``lost`` sweep) need it and neither may import the other."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def new_uuid() -> str:
     """A uuid4 as text with dashes: ``mcp_servers.id`` and ``jobs.id``."""
     return str(uuid.uuid4())

@@ -81,16 +81,6 @@ def my_owner() -> int | None:
     return None
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
 def collect(now: float | None = None, conn: sqlite3.Connection | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Job entries from every live server, oldest first, each tagged with its server's ``owner``,
     plus the merged endpoint load map (spec "Access patterns": the status line's budget).
@@ -113,13 +103,14 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
                 " WHERE stopped IS NULL AND updated >= ? AND pid IS NOT NULL",
                 (now - 60.0,),
             ).fetchall()
-            if _alive(s["pid"])  # heartbeat first, pid second (spec Liveness)
+            if db.pid_alive(s["pid"])  # heartbeat first, pid second (spec Liveness)
         ]
         out: list[dict[str, Any]] = []
         for s in servers:
             for j in conn.execute(
                 "SELECT j.*, m.served_id AS model_served, e.name AS endpoint_name"
-                " FROM jobs j JOIN models m ON m.id = j.model_id JOIN endpoints e ON e.id = j.endpoint_id"
+                " FROM jobs j LEFT JOIN models m ON m.id = j.model_id"
+                " LEFT JOIN endpoints e ON e.id = j.endpoint_id"
                 " WHERE j.mcp_server_id = ? AND (j.status IN ('queued', 'running') OR j.finished_at >= ?)",
                 (s["id"], now - KEEP_FINISHED_S),
             ).fetchall():
@@ -128,7 +119,9 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
                 tps = derive.gen_tps(conn, j["id"])
                 out.append({
                     "id": j["id"],
-                    "model": j["model_served"],
+                    # LEFT JOIN: a NULL model_id (or endpoint_id) must not drop the job from the
+                    # line (story 1.7 item 3); the model renders as ?, the endpoint as no segment
+                    "model": j["model_served"] or "?",
                     "endpoint": j["endpoint_name"],
                     "status": j["status"],
                     "started_at": j["started_at"] or j["created_at"],
@@ -157,7 +150,7 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
             conn.close()
 
 
-MARK = {"queued": "…", "running": "⟳", "succeeded": "✓", "failed": "✗", "timeout": "⏱", "cancelled": "∅"}
+MARK = {"queued": "…", "running": "⟳", "succeeded": "✓", "failed": "✗", "timeout": "⏱", "cancelled": "∅", "lost": "†"}
 
 
 def render_entry(e: dict[str, Any], now: float) -> str:

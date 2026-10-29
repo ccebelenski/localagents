@@ -274,3 +274,36 @@ def test_swarm_guidance_names_the_rearm_trap():
     desc = {t.name: t.description or "" for t in server.mcp._tool_manager.list_tools()}
     assert "Fallback only" in desc["wait_jobs"] and "re-arm" in desc["wait_jobs"]
     assert "swarms included" in desc["run_agent"]
+
+
+def test_startup_writes_survive_a_locked_database(monkeypatch, tmp_path, capsys):
+    """Story 1.7 item 4: a locked or broken database at startup costs the two status-line
+    writes, not the server (the spec accepts a dropped update, not a dropped server)."""
+    import sqlite3
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    store = jobs.JobStore()
+    store.describe_server(config="/cfg/models.yaml", transport="stdio")  # first write lands...
+
+    def boom(now=None):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "mark_lost_jobs", boom)
+    server._startup_writes(store, "/cfg/models.yaml", "stdio")  # must return normally
+    assert "database is locked" in capsys.readouterr().err
+    row = store.conn.execute(
+        "SELECT config, transport FROM mcp_servers WHERE id = ?", (store.server_id,)
+    ).fetchone()
+    assert row["config"] == "/cfg/models.yaml" and row["transport"] == "stdio"
+
+
+def test_startup_removes_the_old_status_directory(monkeypatch, tmp_path):
+    """Story 1.7 item 6: ~/.local/state/localagents/status/ held the pre-1.5a per-pid JSON
+    files; nothing writes or reads it any more, and the startup helper deletes it when present."""
+    old = tmp_path / "localagents" / "status"
+    old.mkdir(parents=True)
+    (old / "12345.json").write_text("{}")
+    store = jobs.JobStore()
+    server._startup_writes(store, "/cfg/models.yaml", "stdio")
+    assert not old.exists()
+    server._startup_writes(store, "/cfg/models.yaml", "stdio")  # absent: no-op, no error

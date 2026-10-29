@@ -76,6 +76,50 @@ def test_resume_recreates_removed_tree_at_base(repo, tmp_path):
     assert j2.worktree["kept"] is False and not Path(j2.worktree["root"]).exists()
 
 
+def test_run_job_offloads_worktree_git_to_a_thread(repo, tmp_path, monkeypatch):
+    """Story 1.7 item 7: make_worktree/finish_worktree are blocking subprocess.run calls; run_job
+    must run them through asyncio.to_thread, or a slow git status on a big repo stalls the
+    heartbeat and the shim that share the event loop."""
+    import asyncio
+    import threading
+
+    from localagents import runner
+    from localagents.registry import Defaults, Endpoint, Registry, Resolution
+
+    j = job("j7", repo, tmp_path / "logs" / "j7")
+    where = {}
+
+    def record(what, fn):
+        def wrapper(*a, **kw):
+            where[what] = threading.current_thread()
+            return fn(*a, **kw)
+        return wrapper
+
+    async def no_metrics(*a, **kw):
+        return None
+
+    def fake_query(prompt, options):
+        async def nothing():
+            return
+            yield  # an async generator that yields no message
+
+        return nothing()
+
+    monkeypatch.setattr(runner, "make_worktree", record("make", runner.make_worktree))
+    monkeypatch.setattr(runner, "finish_worktree", record("finish", runner.finish_worktree))
+    monkeypatch.setattr(runner, "fetch_metrics", no_metrics)
+    monkeypatch.setattr(runner, "query", fake_query)
+    ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
+    reg = Registry(path=None, endpoints={"e": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
+    asyncio.run(runner.run_job(
+        j, reg, Resolution(ep, "served-model"), permission_mode=None, max_turns=None, allowed_tools=None,
+        system_prompt_append=None, resume_session=None, timeout_s=5, shim_base_url="http://127.0.0.1:1/job/x",
+    ))
+    assert j.worktree is not None and j.worktree["branch"] == "local-agent/j7"
+    assert where["make"] is not None and where["make"] is not threading.main_thread()
+    assert where["finish"] is not None and where["finish"] is not threading.main_thread()
+
+
 def test_resume_reuses_kept_tree_and_reports_its_diff(repo, tmp_path):
     j1 = job("j1", repo, tmp_path / "logs" / "j1")
     j1.worktree = make_worktree(j1)
