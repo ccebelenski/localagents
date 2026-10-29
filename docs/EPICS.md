@@ -180,7 +180,19 @@ the duplicates go), then docs.
   rules, this line used to say otherwise); reset detection reads the raw counters, since
   `metrics_delta` has no NULL rule. Noticed: llama.cpp `requests_processing`/`requests_deferred`
   are not mapped, so llama.cpp rows carry NULL running/waiting; `parse_strata_metrics` reads a
-  missing counter as 0 not NULL. Review: DeepSeek, pending.)
+  missing counter as 0 not NULL. Reviewed by DeepSeek/dgx1-a job 20261029-122423-55ff9294, 106 turns, 38 min: the spec block
+  parsed mechanically against PRAGMA (44 columns, identical); every row value against the
+  captures; the four pairs' rates equal by hand; cancel-twice mid-tick clean; retention clean.
+  Defects: `kv_cache_usage` stores the prober's 3-decimal copy (0.17 for 0.1696...) while the
+  document's exact value is discarded; a Strata counter missing from `totals` is stored 0.0 not
+  NULL. Rulings taken by the coordinator: gauges come from the document first; an interval that
+  contains a down probe has no rate (a 1000 s gap deflated 33.5 prompt/s to 4.65); a probe
+  without counters has no `probe_counters` row (the spec sentence is corrected); llama.cpp
+  `requests_processing`/`requests_deferred` are mapped; `rows.write` (dead in production) goes
+  and tick's own transaction is pinned; retention deletes per endpoint through the existing
+  index. Folded in 2.2a.)
+- ☐ **2.2a Fold of the 2.2 review** (reviewer fixes its own findings). Lane: DeepSeek, review
+  by Qwen.
 - ☑ **2.3 Display and node state.** (Qwen3.8-27B/llamacpp job 20261029-122542-1e3d7290, 82
   turns, 361 tests: `endpoint_state`/`node_state`/`node_dormant` with every truth-table row its
   own test, boundary shared with `interval_s`; `probe_port` against a real listener, a closed
