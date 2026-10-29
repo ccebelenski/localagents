@@ -8,6 +8,18 @@ Standing rule (2026-10-29): every piece of work is reviewed, read-only, by a mod
 not do it, before it merges; designs and specs included. Findings carry file:line and a
 scenario; the disposition (accepted / declined with reason) is recorded.
 
+Standing rulings (lettered; rationale in `docs/retros/`):
+- **(a)** The reviewer fixes its own verified findings, test-first, and a third model reviews
+  the fix. (Epic 1 retro; operator: "that tightens the loop somewhat and all of our reviewers
+  are capable builders".)
+- **(d)** A change to cancellation or thread hand-off gets a cancel-mid-operation and a
+  cancel-twice probe before merge. (Epic 1 retro: three of eleven defects were there.)
+- **(e)** Defects found by a review are cleaned up during the build phase, as the next fold,
+  not deferred to a later story; a big perturbation (a contract or schema change) is discussed
+  with the operator first. (Operator 2026-10-29: "keep it clean as we go".)
+Declined as rulings (practice already in the hints file): a probe cap per review brief (b);
+briefs passed by path (c).
+
 Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before any parser;
 2.4 before any page story; 3.5 last.
 
@@ -78,13 +90,30 @@ the duplicates go), then docs.
   exceed the longest timeout_s"), `models.example.yaml`; version bump. Gate: full suite;
   README cites nothing that no longer exists. Lane: Qwen or Haiku.
 
-- ☐ **1.9 Consistency fold (open, operator to schedule).** From the final DeepSeek review:
+- ☐ **1.9 Consistency fold and contract tightening.** From the final DeepSeek review:
   `database_error` on EVERY read path, not only foreign rows (in-process `job_status`,
   `list_jobs(all=False)`, `job_log`, `_foreign_job_error`, and the progress reporter's derive
   reads inside `store.wait`); `wait_jobs`'s running branch with a None `created_at`;
   `make_worktree`'s post-add cleanup checks `branch -D`; `cancel_job` says when its 15 s wait
   timed out; the `[cancel]` line counts deliveries per step (two concurrent cancels print
-  nothing); `Job.summary()` returns a copy of `worktree`. Lane: Qwen (ai1), DeepSeek review.
+  nothing); `Job.summary()` returns a copy of `worktree`. The four recorded nits become
+  contract rules instead of work-arounds (operator 2026-10-29: "tighten up the contracts"):
+  `job_log(tail_lines=0)` is the whole transcript, like `list_jobs(limit=0)`;
+  `requests.http_status` is always the backend's status (the `count_tokens` fallback row
+  records 404, not 200); `mcp_servers.owner` is the pid of the nearest `claude` ancestor (the
+  session), parent pid only when there is none, so a wrapper launch (`uv run`) no longer folds
+  a session's own jobs into "+N other". Lane: Qwen (ai1), DeepSeek review.
+- ☐ **1.10 `wait_job`/`wait_jobs` on any job.** The waits work for any job on the machine: an
+  in-process job through its settle event as today; another server's job by polling its row
+  (2 s) until a terminal status or the timeout, with `mark_lost_jobs` applied every 30 s of
+  the wait so a job whose server died resolves as `lost` rather than running out the clock;
+  the progress line comes from the row. `foreign_job` remains only for `cancel_job` and
+  `run_agent(resume_job=)`, which need the process. README table rows follow. Lane: Qwen
+  (ai2) after 1.9 merges (same functions), DeepSeek review.
+- ☐ **1.11 Status line: one line per job, grouped by endpoint.** Claude Code renders each
+  printed line as a row (docs: "Multiple lines: each echo or print statement displays as a
+  separate row"). Shape to be approved by the operator before the lane. The one-line form
+  stays available (`localagents statusline --one-line`) for narrow bars.
 
 ## Epic 2: monitor core (collector and storage, no page)
 

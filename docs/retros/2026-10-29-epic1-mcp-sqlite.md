@@ -90,6 +90,22 @@ untested held four reviews of 48–50 turns each).
   (two defects found by cancelling mid-git) and its fold (one defect found by cancelling in
   the finally). Proposed as a ruling.
 
+### The operator's decisions on the proposals (2026-10-29)
+
+- (a) accepted: "that tightens the loop somewhat and all of our reviewers are capable builders".
+- (b) not a ruling: "Do we need a ruling on that actually? Why the cap?" The cap exists because a
+  DeepSeek review with too many probes runs out of turns in its tail and the report is never
+  written; it is already a hints-file rule, and tonight only confirmed it.
+- (c) not a ruling: "If necessary - what is this addressing?" It addresses compaction dropping the
+  tail of a long prompt; a file re-read survives. Already a hints-file practice.
+- (d) accepted for this project: "Addressing what issue?" Three of the eleven defects were in
+  cancellation and thread hand-off and were found only by constructing the cancel. Not made
+  cross-project: only projects with cancellation code need it.
+- New (e): defects found by a review are cleaned up as the next fold during the build, not
+  deferred; big perturbations are discussed first ("keep it clean as we go").
+- The four recorded nits are rebuilt as contract rules, not work-arounds ("can we tighten up
+  the contracts for the APIs instead"): stories 1.9 (three) and 1.10 (the wait).
+
 ## What cost
 
 - The real database was polluted twice by lanes' own isolation checks (a "poisoning" run that
