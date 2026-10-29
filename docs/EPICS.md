@@ -331,7 +331,20 @@ the duplicates go), then docs.
   endpoint's last-known model and context; `dropped_job` id (3.2a); the endpoint's `host`.
   Noticed: app.js keeps fetching fleet and history on detail pages; static files carry no
   Cache-Control, so a browser can run stale page code after an upgrade; Strata's `_mb`
-  fields' unit is unverified. Review: Qwen/ai2, pending.)
+  fields' unit is unverified. Reviewed by Qwen/ai2 job 20261029-145809-d00ccd83, 146 turns,
+  45 min: every tile against the tier table and the live JSON across five runs, fetch
+  discipline measured per bucket (zero calls in 65 s idle, four per range click, none after
+  teardown), the double-hash race under 300 ms emulated latency, a collection-on server with a
+  never-up endpoint for the 30 s refetch gate, the 1000-row cap over a 1,352-row construct with
+  totals from SQL; NO page defects. Rulings taken: the `_mb` fields are per-sample bytes whose
+  window Strata does not document, so the tiles read `MB` unitless until it does; a malformed
+  hash must not blank the pane. Server seams found: the stream fan-out starts draining only at
+  the first subscriber, so a tick before it makes the first page load fetch twice; totals count
+  `error = ''` rows the page draws as clean; the restart detail stores raw float repr. → 3.3a.)
+- ☐ **3.3a Server seams from the 3.3 review** (after 3.2a-server): the fan-out task starts with
+  the app, not the first subscriber; `endpoint_requests` totals count `error IS NOT NULL AND
+  error != ''` and job detail's client-side totals agree; `rates.reset_reason` rounds the
+  figures it names. Lane: Qwen (ai2).
 
 - ☑ **3.4 Job detail.** (Qwen3.8-27B/llamacpp job 20261029-144115-e9874e7c, 137 turns, 585
   tests; one file `job.js`; browser smoke over both seeded jobs with zero console errors; a
