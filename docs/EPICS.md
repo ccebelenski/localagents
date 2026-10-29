@@ -309,7 +309,8 @@ the duplicates go), then docs.
   `last_activity` in the snapshot carry the display form); from 3.3: the overview stops
   fetching fleet and history while a detail page is open; static files get
   `Cache-Control: no-cache` (ETag revalidation); the snapshot endpoint carries `host` and the
-  last-known `model`/`context` of a down endpoint. Lane: with the 3.2 review's findings.
+  last-known `model`/`context` of a down endpoint; the endpoint.js field-name test walks `state.`
+  chains as the shared gate now does. Lane: with the 3.2 review's findings.
 
 - ☑ **3.3 Endpoint detail.** (Opus-high, 88 tool uses, 584 tests; one file `endpoint.js` through
   the pages hook, plus a fix to the hook itself: teardown now runs on every route change;
@@ -335,7 +336,7 @@ the duplicates go), then docs.
   is not; the context fill uses the browser clock while the marks use the server's; the
   `file://` log-directory link is dead over http. Noticed: the field-name gate skips chains
   rooted at `state.`. Folded in 3.4a.)
-- ☐ **3.4a Fold of the 3.4 review** (reviewer fixes its own findings): the metrics order
+- ☑ **3.4a Fold of the 3.4 review** (Qwen/ai1 job 20261029-152401-00ad53ff, 79 turns, 587 tests; the clock fix measured in the browser; noted: endpoint.js's own field-name regex shares the `state.` blind spot → 3.2a; third-model probe folded into the 3.2a review) (reviewer fixes its own findings): the metrics order
   stated honestly; `contextFill` on the same clock as the marks; the log directory shown as
   selectable text with a copy affordance, no dead link; the field-name gate walks `state.`
   chains. Lane: Qwen (ai1).
