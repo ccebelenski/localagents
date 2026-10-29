@@ -300,7 +300,7 @@ the duplicates go), then docs.
   disappears from the status line mid-run; `--requests 0` skips silently where `--skip-job`
   announces; job directories go to the real state dir regardless of `LOCALAGENTS_DB`. Folded in
   3.5a. The merge gates and the README monitor section come with the pages.)
-- ☐ **3.5a Fold of the 3.5 review** (reviewer fixes its own findings): the smoke heartbeats
+- ☑ **3.5a Fold of the 3.5 review** (Qwen/ai2 job 20261029-135005-491f2d2b, 42 turns, 521 tests; third-model probe folded into the 3.6 live run) (reviewer fixes its own findings): the smoke heartbeats
   its server row while the job runs and closes it at exit; `--requests 0` prints a skip line,
   negative is an error; the shim estimates `count_tokens` on 404, 405 and 501. Lane: Qwen (ai2).
 - ☐ **3.6 Merge gates.** Smoke green against the real `models.yaml`; two-minute live run of
