@@ -637,6 +637,27 @@ def test_summary_metrics_follow_the_row_rule(monkeypatch, tmp_path, before, afte
         assert set(s["metrics"]) == set(derive._METRICS_COLUMNS)
 
 
+def test_metric_integer_columns_are_rounded_and_real_ones_keep_the_fraction(monkeypatch, tmp_path):
+    """Ruling A: ``metrics_delta`` keeps fractional deltas, and the ``jobs`` columns declared
+    INTEGER in ``db._V1`` (the three counters) are rounded when the row is written; the REAL
+    columns (ratios and t/s) keep their fraction."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    job.metrics = {
+        "generated_tokens": 6.47, "prompt_tokens_processed": 12.93, "prompt_tokens_cached": 1346.54,
+        "cache_hit_ratio": 0.99, "prompt_tps": 2.5855, "generate_tps": 1.4355,
+        "spec_decode_acceptance": 0.822,
+    }
+    job.changed()
+    row = _row(store, job)
+    assert row["generated_tokens"] == 6 and isinstance(row["generated_tokens"], int)
+    assert row["prompt_tokens_processed"] == 13 and isinstance(row["prompt_tokens_processed"], int)
+    assert row["prompt_tokens_cached"] == 1347 and isinstance(row["prompt_tokens_cached"], int)
+    assert row["prompt_tps"] == pytest.approx(2.5855)  # a REAL column: no rounding
+    s = derive.summary_from_row(store.conn, row)
+    assert s["metrics"]["generated_tokens"] == 6 and s["metrics"]["prompt_tps"] == pytest.approx(2.5855)
+
+
 def test_summary_metrics_none_when_unset(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     job = _new(store)

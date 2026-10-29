@@ -310,6 +310,19 @@ def test_lookup_id_is_stable_and_keyed_by_every_column(dbfile):
     conn.close()
 
 
+def test_lookup_id_writes_first_seen_from_its_reader_clock(dbfile):
+    """F4, ruling B: the endpoint lookup takes the clock to write ``first_seen`` with, so a
+    deterministic writer (the seed) is not made nondeterministic by the wall clock."""
+    conn = db.open_db()
+    ep = db.lookup_id(conn, "endpoints", now=1234.5, **EP)
+    assert conn.execute("SELECT first_seen FROM endpoints WHERE id = ?", (ep,)).fetchone()[0] == 1234.5
+    # the default is the wall clock, as before
+    ep2 = db.lookup_id(conn, "endpoints", **{**EP, "name": "other"})
+    first = conn.execute("SELECT first_seen FROM endpoints WHERE id = ?", (ep2,)).fetchone()[0]
+    assert first > 1234.5
+    conn.close()
+
+
 def test_lookup_id_refuses_a_partial_key_an_unknown_table_and_a_null(dbfile):
     conn = db.open_db()
     with pytest.raises(ValueError):

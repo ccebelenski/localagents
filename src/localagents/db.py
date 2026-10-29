@@ -336,12 +336,15 @@ _LOOKUPS: dict[str, tuple[str, ...]] = {
 }
 
 
-def lookup_id(conn: sqlite3.Connection, table: str, **cols: str) -> int:
+def lookup_id(conn: sqlite3.Connection, table: str, now: float | None = None, **cols: str) -> int:
     """The id of the row with exactly these key columns, inserting it on first sight.
 
     ``INSERT OR IGNORE`` then ``SELECT`` (never select-then-insert), so concurrent callers in
     other processes converge on one row. ``endpoints`` also gets ``first_seen`` on insert; it is
-    not part of the key. Every key column must be given and non-NULL.
+    not part of the key, and ``now`` is the clock it is written from (the seed passes its world
+    clock, so it stays a pure function of ``now``; the default is ``time.time()``). ``now`` can
+    never collide with a key column: ``_LOOKUPS`` names all of them, and none is ``now``. Every
+    key column must be given and non-NULL.
     """
     key = _LOOKUPS.get(table)
     if key is None:
@@ -353,7 +356,7 @@ def lookup_id(conn: sqlite3.Connection, table: str, **cols: str) -> int:
         raise ValueError(f"{table} key column(s) {', '.join(missing)} must not be NULL")
     values = [cols[c] for c in key]
     ins_cols = list(key) + (["first_seen"] if table == "endpoints" else [])
-    ins_vals = values + ([time.time()] if table == "endpoints" else [])
+    ins_vals = values + ([now if now is not None else time.time()] if table == "endpoints" else [])
     conn.execute(
         f"INSERT OR IGNORE INTO {table} ({', '.join(ins_cols)}) VALUES ({', '.join('?' * len(ins_cols))})",
         ins_vals,

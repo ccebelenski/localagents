@@ -174,7 +174,8 @@ def make_app(
     @guarded
     async def job(request: Request) -> Response:
         job_id = request.path_params["id"]
-        d = await in_thread(read.job_detail, job_id)
+        t = now()
+        d = await in_thread(read.job_detail, job_id, t)
         if d is None:
             return _error(404, "unknown_job", f"no job with id {job_id!r}")
         return JSONResponse(d)

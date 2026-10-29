@@ -139,6 +139,25 @@ def test_metrics_delta():
     assert metrics_delta(None, after) is None
 
 
+def test_metrics_delta_keeps_a_fractional_delta():
+    """Ruling A / F11: the counters are integers in production, but a fractional pair (an
+    interpolated series, a rate-of-change snapshot) must give a fractional delta — truncating
+    each interval's delta made the monitor's t/s read systematically low."""
+    from localagents.registry import metrics_delta
+
+    before = {"prompt_tokens": 0.5, "prompt_tokens_cached": 1.25, "generated_tokens": 2.5}
+    after = {"prompt_tokens": 3.0, "prompt_tokens_cached": 4.0, "generated_tokens": 5.0}
+    d = metrics_delta(before, after, backend="strata")
+    assert d["prompt_tokens_processed"] == pytest.approx(2.5)
+    assert d["prompt_tokens_cached"] == pytest.approx(2.75)
+    assert d["generated_tokens"] == pytest.approx(2.5)
+    # a negative difference is clamped for the prompt count (the processed/cached split), as before
+    assert metrics_delta(
+        {"prompt_tokens": 5.0, "prefix_hits": 0.0, "prefix_queries": 0.0},
+        {"prompt_tokens": 6.0, "prefix_hits": 2.0, "prefix_queries": 0.0},
+        backend="vllm")["prompt_tokens_processed"] == 0.0
+
+
 def test_metrics_delta_branches_on_the_backend_not_on_a_key():
     """A vLLM /metrics without the prefix-cache series must NOT be computed as llama.cpp's
     cached/(processed+cached): vLLM's ``prompt_tokens`` already includes cached tokens, so the

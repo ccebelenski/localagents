@@ -54,10 +54,18 @@ def main() -> None:
         ap.add_argument("--force", action="store_true",
                         help="replace an existing database: delete every row and seed fresh")
         a = ap.parse_args(sys.argv[2:])
+        # parse the clock BEFORE the file is opened: a typo'd --now must not create, migrate or
+        # lock the target (review of 2.4, F6), and its one-line answer is argument validation's
+        try:
+            now = seed.parse_now(a.now)
+        except ValueError:
+            print(f"localagents seed: --now {a.now!r} is neither epoch seconds nor an ISO-8601 time",
+                  file=sys.stderr)
+            sys.exit(2)
         path = Path(a.db).expanduser() if a.db else db.db_path()
         conn = db.open_db(path)
         try:
-            counts = seed.seed(conn, seed.parse_now(a.now), seed.default_fixtures_dir(), force=a.force)
+            counts = seed.seed(conn, now, seed.default_fixtures_dir(), force=a.force)
         except seed.SeedRefused as e:
             conn.close()
             print(e)

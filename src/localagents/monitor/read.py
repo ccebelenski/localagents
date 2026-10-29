@@ -386,7 +386,7 @@ def jobs_in_range(conn: sqlite3.Connection, since_t: float, now: float, limit: i
     """Jobs created in ``[since_t, now]``, newest first, at most ``limit``, each
     ``derive.summary_from_row(include_result=False)``."""
     return [
-        derive.summary_from_row(conn, row, include_result=False)
+        derive.summary_from_row(conn, row, include_result=False, now=now)
         for row in conn.execute(
             "SELECT * FROM jobs WHERE created_at >= ? AND created_at <= ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
             (since_t, now, limit))
@@ -449,14 +449,15 @@ def _transcript(name: str | None) -> tuple[str | None, str | None]:
     return "\n".join(tail), None
 
 
-def job_detail(conn: sqlite3.Connection, job_id: str) -> dict[str, Any] | None:
+def job_detail(conn: sqlite3.Connection, job_id: str, now: float | None = None) -> dict[str, Any] | None:
     """The job detail body (spec §5 "Job detail"; shape §5a): ``derive.summary_from_row`` plus
-    the job's requests and tool calls in time order and the transcript tail. None for an
-    unknown id."""
+    the job's requests and tool calls in time order and the transcript tail. ``now`` is the
+    route's clock for a running job's ``elapsed_s`` (ruling C); None reads the wall clock. None
+    for an unknown id."""
     row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if row is None:
         return None
-    d = derive.summary_from_row(conn, row)
+    d = derive.summary_from_row(conn, row, now=now)
     d["requests"] = [
         {"path": r["path"], "t": r["t"], "http_status": r["http_status"], "ms": r["ms"], "gen_ms": r["gen_ms"],
          "tokens": {"input": r["input_tokens"], "output": r["output_tokens"],

@@ -14,6 +14,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -36,15 +37,17 @@ def _seed(tmp_path, now=NOW, name="seed.db", force=False):
     return conn, counts
 
 
-# The hand-computed per-table row counts of the seeded world (item 1). ai1: 720 probes (a live
-# hour at 5 s) each with a counters and a hardware row. dgx1-a: 481 up + 240 down probes, the up
-# ones carrying counters. llamacpp: one up probe (a week ago) + 1441 dormant down probes. Jobs:
-# the finished export (112 requests, 142 tool calls) and the running truncation (40, 50).
+# The hand-computed per-table row counts of the seeded world (item 1). ai1: 721 probes (a live
+# hour at 5 s: 720 intervals, the counters restarting at the midpoint) each with a counters and
+# a hardware row. dgx1-a: 481 up + 240 down probes, the up ones carrying counters. llamacpp: one
+# up probe (a week ago) + 1441 dormant down probes. Jobs: the finished export (112 requests, 142
+# tool calls) and the running truncation (40, 50). Three events: dgx1-a down, ai1 restarted,
+# llamacpp down — ai1's up is dropped because the collector writes no event for a first probe.
 EXPECTED_COUNTS = {
-    "probes": 2883,
-    "probe_counters": 1202,
-    "probe_hardware": 720,
-    "endpoint_events": 4,
+    "probes": 2884,
+    "probe_counters": 1203,
+    "probe_hardware": 721,
+    "endpoint_events": 3,
     "endpoint_load": 1,
     "endpoints": 3,
     "models": 1,
@@ -94,8 +97,24 @@ def test_seed_is_deterministic_in_now(tmp_path):
            _dump(b, "probes", list(rows_mod.PROBE_COLUMNS), "endpoint_id, t")
     job_cols = [c for c in seed._JOB_COLS if c not in ("id", "mcp_server_id", "name")]
     assert _dump(a, "jobs", job_cols, "started_at") == _dump(b, "jobs", job_cols, "started_at")
+    # the lookup rows too: first_seen is the world's clock, not the wall clock (F4)
+    ep_cols = ("id", "name", "base_url", "backend", "host", "first_seen")
+    assert _dump(a, "endpoints", ep_cols, "id") == _dump(b, "endpoints", ep_cols, "id")
     a.close()
     b.close()
+
+
+def test_summary_from_row_elapsed_is_read_on_the_readers_clock(seeded):
+    """F9: the running job is 300 s old *at NOW* — the clock the reader passes — not at the
+    wall clock, which is what made the old summary negative for a seeded file."""
+    conn, _ = seeded
+    row = conn.execute("SELECT * FROM jobs WHERE status = 'running'").fetchone()
+    s = derive.summary_from_row(conn, row, now=NOW)
+    assert s["elapsed_s"] == 300.0
+    # a finished job's elapsed is its own span, whatever clock the reader has
+    done = conn.execute("SELECT * FROM jobs WHERE status = 'succeeded'").fetchone()
+    d = derive.summary_from_row(conn, done, now=NOW)
+    assert d["elapsed_s"] == round(done["finished_at"] - done["started_at"], 1)
 
 
 # --- item 2: the seeded database shows every state ----------------------------------------
@@ -187,31 +206,91 @@ def test_the_running_job_is_the_one_on_ai1(seeded):
     assert row["finished_at"] is None
 
 
-def test_ai1_rates_are_constant_and_non_zero(seeded):
-    """The counters were interpolated linearly across the hour, so the rate between any two
-    consecutive counters rows is the same non-zero figure (the busy ai2 pair spread over 719
-    intervals, per wall second). Pinned from the fixtures' pass-1 and pass-2 deltas."""
-    conn, _ = seeded
-    ai1 = _endpoint_id(conn, "ai1")
+def _ai1_counter_pairs(conn):
+    """(prev, cur) rows of ai1's counters in t order, each carrying t and since."""
+    return conn.execute(
+        "SELECT c.*, p.t, p.since FROM probe_counters c JOIN probes p ON p.id = c.probe_id"
+        " WHERE p.endpoint_id = ? ORDER BY p.t, c.probe_id", (_endpoint_id(conn, "ai1"),)).fetchall()
+
+
+def _rate(prev, cur):
     cols = tuple(rows_mod.COUNTER_COLUMNS)
-    cur = conn.execute(
-        "SELECT c.*, p.t, p.since FROM probe_counters c JOIN probes p ON p.id = c.probe_id"
-        " WHERE p.endpoint_id = ? ORDER BY p.t DESC, p.id DESC LIMIT 1", (ai1,)).fetchone()
-    prev = conn.execute(
-        "SELECT c.*, p.t, p.since FROM probe_counters c JOIN probes p ON p.id = c.probe_id"
-        " WHERE p.endpoint_id = ? AND p.t < ? ORDER BY p.t DESC, p.id DESC LIMIT 1",
-        (ai1, cur["t"])).fetchone()
-    r = rates.rates({k: prev[k] for k in cols}, {k: cur[k] for k in cols}, cur["t"] - prev["t"],
-                    "strata", prev["since"], cur["since"])
-    assert r.reset is False
-    assert (r.prompt_tps, r.gen_tps, r.cached_tps, r.spec_acceptance) == (1.2, 0.6, 134.8, 0.822)
-    # constancy: the same rate over the first interval too (linear interpolation)
-    first = conn.execute(
-        "SELECT c.*, p.t, p.since FROM probe_counters c JOIN probes p ON p.id = c.probe_id"
-        " WHERE p.endpoint_id = ? ORDER BY p.t ASC, p.id ASC LIMIT 2", (ai1,)).fetchall()
-    r0 = rates.rates({k: first[0][k] for k in cols}, {k: first[1][k] for k in cols},
-                     first[1]["t"] - first[0]["t"], "strata", first[0]["since"], first[1]["since"])
-    assert (r0.prompt_tps, r0.gen_tps, r0.cached_tps) == (r.prompt_tps, r.gen_tps, r.cached_tps)
+    return rates.rates({k: prev[k] for k in cols}, {k: cur[k] for k in cols},
+                       cur["t"] - prev["t"], "strata", prev["since"], cur["since"])
+
+
+def test_ai1_rates_are_constant_and_non_zero(seeded):
+    """The counters interpolate pass-1 -> pass-2 over each half-hour segment (360 intervals of
+    5 s), so the rate between any two consecutive counters rows is the same non-zero figure
+    before the restart and after it; across the restart (at ``now - 1800``) the interval is a
+    reset, never a cliff.
+
+    The ai2 capture pair's whole deltas are prompt 4654, generated 2584, cached 484756 (and
+    accepted/drafted 1731/2106); one 5 s interval carries 1/360 of each, so the per-second rate
+    is 4654/360/5 = 2.58556, 2584/360/5 = 1.43556, 484756/360/5 = 269.30889, with the spec
+    acceptance ratio 0.822 as ``metrics_delta`` rounds it."""
+    conn, _ = seeded
+    pairs = _ai1_counter_pairs(conn)
+    last = _rate(pairs[-2], pairs[-1])
+    assert last.reset is False
+    assert (last.prompt_tps, last.gen_tps, last.cached_tps) == pytest.approx(
+        (4654 / 1800, 2584 / 1800, 484756 / 1800))
+    assert last.spec_acceptance == pytest.approx(0.822)
+    # the same constant over the first interval of the first segment
+    first = _rate(pairs[0], pairs[1])
+    assert (first.prompt_tps, first.gen_tps, first.cached_tps) == pytest.approx(
+        (last.prompt_tps, last.gen_tps, last.cached_tps))
+    # the interval across the restart is a reset whose reason is the seeded event's detail
+    restart = next(i for i, cur in enumerate(pairs) if cur["t"] == NOW - 1800.0)
+    across = _rate(pairs[restart - 1], pairs[restart])
+    assert across.reset is True
+    detail = conn.execute("SELECT detail FROM endpoint_events WHERE kind = 'restarted'").fetchone()[0]
+    assert across.reason == detail
+    assert "went backwards" in detail and "since changed" in detail
+
+
+def test_ai1_has_exactly_one_reset_and_it_is_the_restarted_event(seeded):
+    """Replaying ``rates.rates`` over every consecutive ai1 pair finds exactly one reset, at the
+    probe the seeded event names — the uncorroborated event of F2 now matches its own rows."""
+    conn, _ = seeded
+    pairs = _ai1_counter_pairs(conn)
+    resets = []
+    for prev, cur in zip(pairs, pairs[1:]):
+        r = _rate(prev, cur)
+        if r.reason is not None:
+            resets.append((cur["t"], r.reason))
+    assert len(resets) == 1
+    ev = conn.execute("SELECT t, detail FROM endpoint_events WHERE kind = 'restarted'").fetchone()
+    assert resets[0] == (ev["t"], ev["detail"])
+    assert ev["t"] == NOW - 1800.0
+
+
+def test_every_event_sits_at_the_probe_that_would_have_written_it(seeded):
+    """Ruling D: the collector writes an event at the probe that produced it (a first probe
+    writes none), so each seeded event sits on a probe row of the same instant."""
+    conn, _ = seeded
+    events = {(r["ep"], r["kind"]): r for r in conn.execute(
+        "SELECT e.name AS ep, ev.kind, ev.t, ev.detail FROM endpoint_events ev"
+        " JOIN endpoints e ON e.id = ev.endpoint_id")}
+    assert set(events) == {("dgx1-a", "down"), ("ai1", "restarted"), ("llamacpp", "down")}
+    for name in ("dgx1-a", "llamacpp"):
+        ev = events[(name, "down")]
+        probe = conn.execute("SELECT up FROM probes WHERE endpoint_id = ? AND t = ?",
+                             (_endpoint_id(conn, name), ev["t"])).fetchone()
+        assert probe is not None and probe["up"] == 0, name
+    # nothing was running on dgx1-a at the instant its probe row says down
+    dgx = _endpoint_id(conn, "dgx1-a")
+    assert monitor_jobs.running_job_at(conn, dgx, events[("dgx1-a", "down")]["t"]) is None
+
+
+def test_the_running_job_has_ai1_context(seeded):
+    """F10: the running job was handed ai1's window (131072), not the export's 262144, so the
+    page's context bar and the endpoint's own reading agree."""
+    conn, _ = seeded
+    row = conn.execute("SELECT * FROM jobs WHERE status = 'running'").fetchone()
+    assert row["context"] == seed.AI1_CONTEXT
+    s = derive.summary_from_row(conn, row, now=NOW)
+    assert s["ctx_tokens"] is not None and s["ctx_tokens"] <= s["context"]
 
 
 def test_the_finished_job_carrries_its_usage_and_files(seeded):
@@ -287,8 +366,57 @@ def test_seed_cli_seeds_and_prints_counts_and_path(tmp_path):
     assert out.returncode == 0, out.stderr
     lines = out.stdout.strip().splitlines()
     assert lines[-1] == str(dbpath)
-    assert "probes: 2883" in lines and "jobs: 2" in lines and "requests: 152" in lines
+    assert "probes: 2884" in lines and "jobs: 2" in lines and "requests: 152" in lines
     assert dbpath.exists()
+
+
+def test_force_refuses_while_a_live_server_owns_the_database():
+    """F5, ruling E: --force must not delete a running server's row and jobs out from under it.
+    A JobStore in this process leaves a row with this pid and a fresh heartbeat, so the seed
+    refuses with a sentence naming the pid — against the WALL clock, not the world's --now
+    (a future ``now`` must not make the server look stale) — and proceeds once the store has
+    closed its row."""
+    from localagents.jobs import JobStore
+
+    store = JobStore()
+    conn = store.conn
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM mcp_servers WHERE stopped IS NULL").fetchone()[0] == 1
+        with pytest.raises(seed.SeedRefused, match=rf"pid {os.getpid()}"):
+            seed.seed(conn, time.time() + 3600.0, FX, force=True)
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0  # nothing was deleted
+        store.close()
+        assert seed.seed(conn, NOW, FX, force=True) == EXPECTED_COUNTS
+    finally:
+        store.close()
+        conn.close()
+
+
+def test_seed_cli_force_refuses_a_live_servers_database(tmp_path):
+    """The CLI path of ruling E: the SeedRefused sentence (naming the pid) on stdout, exit 2."""
+    dbpath = tmp_path / "live" / "localagents.db"
+    env = {**os.environ, "LOCALAGENTS_DB": str(dbpath)}
+    assert _run_cli(["seed", "--now", str(NOW)], env).returncode == 0
+    c = sqlite3.connect(dbpath)
+    try:
+        c.execute("INSERT INTO mcp_servers (id, pid, owner, started, updated, cwd, version)"
+                  " VALUES ('s', ?, 0, ?, ?, '', 'dev')", (os.getpid(), time.time(), time.time()))
+        c.commit()
+    finally:
+        c.close()
+    out = _run_cli(["seed", "--force"], env)
+    assert out.returncode == 2, (out.stdout, out.stderr)
+    assert str(os.getpid()) in out.stdout
+
+
+def test_a_bad_now_exits_2_with_one_line_and_creates_no_file(tmp_path):
+    """F6 (review of 2.4): --now is parsed before the file is opened, so a typo'd clock aimed
+    at a real path leaves nothing behind — no schema-only database, no traceback."""
+    dbpath = tmp_path / "never" / "world.db"
+    out = _run_cli(["seed", "--db", str(dbpath), "--now", "not-a-time"], {**os.environ})
+    assert out.returncode == 2, (out.stdout, out.stderr)
+    assert len((out.stderr or out.stdout).strip().splitlines()) == 1
+    assert not dbpath.exists() and not dbpath.parent.exists()
 
 
 def test_seed_cli_refuses_without_force_and_force_replaces(tmp_path):

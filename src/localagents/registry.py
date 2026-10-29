@@ -575,25 +575,29 @@ def metrics_delta(
     # Every counter read below is behind a presence check on `d`: a counter missing from either
     # snapshot gives no output key — never a KeyError (one reached run_job's finally and stranded
     # the job) and never a 0 standing in for an unknown (review of 1.8, construct-it).
+    # The deltas keep their precision (ruling A of the 2.4 fold): the counters are integers in
+    # production, so ints in give ints out, but a fractional pair gives a fractional delta — the
+    # old int() truncated every 5 s interval and made the monitor's t/s read low (F11). The
+    # ``jobs`` row rounds its three INTEGER columns; the REAL ones keep the fraction.
     out: dict[str, Any] = {}
     if "generated_tokens" in d:
-        out["generated_tokens"] = int(d["generated_tokens"])
+        out["generated_tokens"] = d["generated_tokens"]
     if vllm and "prefix_queries" in d:  # vLLM: prompt_tokens counts everything; hits are the cached part
         if "prefix_hits" in d:
             hits = d["prefix_hits"]
             if "prompt_tokens" in d:
-                out["prompt_tokens_processed"] = int(max(0.0, d["prompt_tokens"] - hits))
-            out["prompt_tokens_cached"] = int(hits)
+                out["prompt_tokens_processed"] = max(0.0, d["prompt_tokens"] - hits)
+            out["prompt_tokens_cached"] = hits
             if d.get("prefix_queries", 0.0) > 0:
                 out["cache_hit_ratio"] = round(hits / d["prefix_queries"], 3)
     elif vllm:  # vLLM without the prefix-cache series: prompt_tokens is itself the processed count
         if "prompt_tokens" in d:
-            out["prompt_tokens_processed"] = int(d["prompt_tokens"])
+            out["prompt_tokens_processed"] = d["prompt_tokens"]
     else:  # llama.cpp (and strata, whose parser already splits the two): separate counters
         if "prompt_tokens" in d:
-            out["prompt_tokens_processed"] = int(d["prompt_tokens"])
+            out["prompt_tokens_processed"] = d["prompt_tokens"]
         if "prompt_tokens_cached" in d:
-            out["prompt_tokens_cached"] = int(d["prompt_tokens_cached"])
+            out["prompt_tokens_cached"] = d["prompt_tokens_cached"]
         if "prompt_tokens" in d and "prompt_tokens_cached" in d:
             processed, cached = d["prompt_tokens"], d["prompt_tokens_cached"]
             if processed + cached > 0:

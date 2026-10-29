@@ -121,12 +121,20 @@ class Job:
     def _metric_values(self) -> list[Any]:
         """The seven metrics column values, in _METRIC_COLUMNS order: a key metrics_delta omitted
         is None, and a reset counter nulls the whole set (spec). The row and summary() both use
-        this, so in-process and row-derived summaries agree."""
+        this, so in-process and row-derived summaries agree.
+
+        ``metrics_delta`` keeps fractional deltas (ruling A of the 2.4 fold); the three counters
+        are INTEGER columns in the schema (``db._V1``), so they are rounded here, while the four
+        REAL columns (ratios and t/s) keep their fraction."""
         if self.metrics is None or any(
             isinstance(self.metrics.get(k), (int, float)) and self.metrics[k] < 0 for k in self._METRIC_COUNTERS
         ):
             return [None] * len(self._METRIC_COLUMNS)
-        return [self.metrics.get(k) for k in self._METRIC_COLUMNS]
+        out = [self.metrics.get(k) for k in self._METRIC_COLUMNS]
+        for i, k in enumerate(self._METRIC_COLUMNS):
+            if k in self._METRIC_COUNTERS and out[i] is not None:
+                out[i] = int(round(out[i]))
+        return out
 
     def _row_update(self) -> None:
         if self._conn is None:

@@ -87,7 +87,7 @@ def test_snapshot_is_the_overview(client):
     assert [h["name"] for h in ov["hosts"]] == ["ai1", "dgx1", "local"]
     assert [e["state"] for h in ov["hosts"] for e in h["endpoints"]] == ["live", "down", "dormant"]
     assert [j["tool_calls"] for j in ov["jobs"]] == [50]
-    assert len(ov["events"]) == 4
+    assert len(ov["events"]) == 3
 
 
 def test_the_attention_window_comes_from_the_settings(dbpath, tmp_path):
@@ -107,9 +107,9 @@ def test_endpoint_history_defaults_to_an_hour(client):
     r = client.get("/api/endpoints/ai1/history")
     assert r.status_code == 200
     h = r.json()
-    assert len(h["t"]) == 360 and h["step"] == 2 and h["t"][-1] == NOW
-    assert "gpu_util" in h and len(h["gpu_util"]) == 360
-    assert [e["kind"] for e in h["events"]] == ["up", "restarted"]
+    assert len(h["t"]) == 361 and h["step"] == 2 and h["t"][-1] == NOW
+    assert "gpu_util" in h and len(h["gpu_util"]) == 361
+    assert [e["kind"] for e in h["events"]] == ["restarted"]
 
 
 def test_endpoint_history_takes_the_range(client):

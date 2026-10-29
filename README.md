@@ -328,11 +328,19 @@ busy ai2 capture's counters interpolated across it, a running job on its one slo
 and tool calls (the real story-1.9 export, re-timed to have ended 10 min ago) and a running
 job (the same export truncated to its first 40 requests and 50 tool calls, started 5 min ago).
 
+A naive ISO `--now` (`2026-10-29T12:00:00`) is read in **local time** — noon where you are, not
+UTC — so the same command gives a different world on a CI box (UTC) than on a laptop. The file
+is a **snapshot at `--now`**: its up/down/dormant states and the running job's age are computed
+from that clock and decay after the attention window, so a file seeded a day ago shows three
+dormant endpoints and a job "running" for a day — re-seed to see the states again.
+
 `localagents seed` is for the monitor's smoke and route tests, not for your live fleet. It
 writes to the path `--db` names (default `db.db_path()`, so `LOCALAGENTS_DB` is the normal
 way to aim it), so point it at a throwaway file, never the real one. It refuses a database
 that already holds `jobs` or `probes` rows unless `--force` is given — and `--force`
-*replaces* (it deletes every row of every table and seeds fresh), never appends.
+*replaces* (it deletes every row of every table and seeds fresh), never appends. `--force`
+still refuses a database a running localagents server owns (a heartbeat in the last 60 s and a
+live pid), naming the pid: stop the server first, or point `--db` at a throwaway file.
 
 #### Smoke test
 

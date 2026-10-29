@@ -114,12 +114,17 @@ def _truncate(task: str | None) -> str | None:
     return task if task is None or len(task) < 300 else task[:300] + "…"
 
 
-def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result: bool = True) -> dict:
+def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result: bool = True,
+                     now: float | None = None) -> dict:
     """The full ``job_status`` dict for a ``jobs`` row read from the database — any server's
     job: every column under its Job field name, the lookup ids resolved to model/endpoint/
     base_url, worktree parsed from its JSON, metrics rebuilt from the seven columns or None,
     plus every read-time derivation. Storage details (mcp_server_id, endpoint_id, model_id)
-    stay out; ``name`` identifies the job. Same keys as ``Job.summary()`` for the same job."""
+    stay out; ``name`` identifies the job. Same keys as ``Job.summary()`` for the same job.
+
+    A running job's ``elapsed_s`` is computed against ``now``, the caller's clock (a route passes
+    its own; the seed's world runs on ``--now``), and only against ``time.time()`` when no clock
+    is given. A finished job's elapsed is its own span either way."""
     from .jobs import state_dir  # lazy: jobs.py imports this module at top level
 
     job_id = row["id"]
@@ -171,7 +176,8 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "ctx_tokens": ctx_tokens(conn, job_id),
         "gen_tps": gen_tps(conn, job_id),
     }
-    d["elapsed_s"] = round((row["finished_at"] or time.time()) - start, 1) if start is not None else 0
+    end = row["finished_at"] if row["finished_at"] is not None else (time.time() if now is None else now)
+    d["elapsed_s"] = round(end - start, 1) if start is not None else 0
     if not include_result:
         d.pop("result")
     return d

@@ -1,7 +1,8 @@
 """Story 3.1 item 2: the monitor's read model (monitor/read.py) over the seeded world (story 2.4):
 ai1 live with an hour of 5 s probes, dgx1-a down since NOW-20 min (a refusal), llamacpp dormant
 since a week ago; a finished job (112 requests, 142 tool calls) and a running one (40, 50), both
-on ai1; four endpoint events. The JSON shapes are the contract of spec §5a."""
+on ai1; three endpoint events (ai1's counters restart at NOW-1800). The JSON shapes are the
+contract of spec §5a."""
 import json
 import math
 
@@ -77,16 +78,21 @@ def test_the_live_endpoint_carries_its_gauges_rates_and_hardware(world):
     assert ai1["slots"] == {"total": 1, "busy": 1}
     assert ai1["requests"] == {"running": 1, "waiting": 0}
     assert ai1["latency_ms"] == seed.LATENCY_MS
-    assert ai1["since"] == NOW - 3 * 24 * 3600.0
+    # the restart at NOW-1800 changed since (the last probe is in the post-restart segment)
+    assert ai1["since"] == NOW - 1800.0
     assert ai1["error"] is None and ai1["dropped_job"] is None
-    # the seed test's pinned constant rate (test_ai1_rates_are_constant_and_non_zero)
+    # the seed test's pinned constant rate (test_ai1_rates_are_constant_and_non_zero): the ai2
+    # pair's deltas (4654 prompt, 2584 generated, 484756 cached) over one 360-interval half
+    # hour -> 4654/1800, 2584/1800, 484756/1800 per second; spec acceptance 0.822 = 1731/2106
     r = ai1["rates"]
     assert set(r) == {"prompt_tps", "gen_tps", "cached_tps", "spec_acceptance", "reason"}
-    assert (r["prompt_tps"], r["gen_tps"], r["cached_tps"], r["spec_acceptance"]) == (1.2, 0.6, 134.8, 0.822)
+    assert (r["prompt_tps"], r["gen_tps"], r["cached_tps"]) == pytest.approx(
+        (4654 / 1800, 2584 / 1800, 484756 / 1800))
+    assert r["spec_acceptance"] == pytest.approx(0.822)
     assert r["reason"] is None
     assert ai1["gen_tps_live"] is not None
     assert set(ai1["hardware"]) == set(rows.HARDWARE_COLUMNS)
-    assert ai1["hardware"]["gpu_util"] == pytest.approx(59.5 - 39.5 * math.cos(2 * math.pi * 719 / 720))
+    assert ai1["hardware"]["gpu_util"] == pytest.approx(59.5 - 39.5 * math.cos(2 * math.pi * 720 / 721))
     assert ai1["jobs_running"] == 1
 
 
@@ -144,7 +150,8 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
     assert isinstance(j["last_tool"], str)
     assert j["compactions"] == 0
     assert isinstance(j["files"], int)
-    assert j["ctx_pct"] is None or 0 <= j["ctx_pct"] <= 100
+    # F10: the job's window is ai1's, so the bar reads the same 94 % the endpoint would
+    assert j["context"] == seed.AI1_CONTEXT and j["ctx_pct"] == 94
     assert j["server_live"] is True  # the seed's server row: a live pid, a heartbeat at NOW
     assert set(j) == {
         "id", "name", "model", "endpoint", "status", "started_at", "finished_at", "elapsed_s",
@@ -156,10 +163,10 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
 def test_overview_events_are_the_newest_twenty_with_endpoint_names(world):
     conn, reg = world
     ev = read.overview(conn, reg, NOW, WINDOW_S)["events"]
-    assert len(ev) == 4
+    assert len(ev) == 3
     assert [e["t"] for e in ev] == sorted((e["t"] for e in ev), reverse=True)
     assert [(e["endpoint"], e["kind"]) for e in ev] == [
-        ("dgx1-a", "down"), ("ai1", "restarted"), ("ai1", "up"), ("llamacpp", "down")]
+        ("dgx1-a", "down"), ("ai1", "restarted"), ("llamacpp", "down")]
     assert set(ev[0]) == {"t", "endpoint", "kind", "detail"}
     # capped at twenty
     ai1 = endpoint_id(conn, "ai1")
@@ -199,16 +206,23 @@ def test_a_configured_endpoint_with_no_rows_is_dormant_cold_start(world, tmp_pat
 
 
 def _true_rate(key):
-    """ai1's real per-second rate: the busy ai2 pair's delta over the seeded hour (719 intervals
-    of 5 s). The counters are interpolated, so they are fractional; ``metrics_delta`` truncates
-    each delta to an int, so a rate over k intervals is within 1/(5k) t/s below this."""
+    """ai1's real per-second rate: the busy ai2 pair's delta spread over one half-hour segment
+    (360 intervals of 5 s, before the restart and after it). The counters are interpolated and
+    fractional; ``metrics_delta`` keeps the fraction (ruling A), so a rate over any number of
+    intervals equals this exactly."""
     w = seed._load(FX)
-    return (w.ai1_counters_2[key] - w.ai1_counters_1[key]) / (719 * 5.0)
+    return (w.ai1_counters_2[key] - w.ai1_counters_1[key]) / (360 * 5.0)
 
 
-def _within_truncation(values, key, k):
+def _all_are(values, key):
+    """Every non-null value is ai1's one real rate (the null one is the restart's span)."""
     true = _true_rate(key)
-    return all(true - 1.0 / (5 * k) - 1e-9 <= v <= true + 1e-9 for v in values)
+    return all(v == pytest.approx(true) for v in values if v is not None)
+
+
+def _one_reset(values):
+    """The history has exactly one gap in these rates: the span across the seeded restart."""
+    return sum(1 for v in values if v is None) == 1
 
 
 SERIES = ("prompt_tps", "gen_tps", "cache_hit", "slots_busy", "requests_running", "requests_waiting",
@@ -221,10 +235,10 @@ def test_ai1_history_over_an_hour_is_downsampled_to_at_most_600(world):
     conn, _ = world
     ai1 = endpoint_id(conn, "ai1")
     n = conn.execute("SELECT COUNT(*) FROM probes WHERE endpoint_id = ? AND t >= ?", (ai1, NOW - HOUR)).fetchone()[0]
-    assert n == 720
+    assert n == 721
     h = read.endpoint_history(conn, ai1, NOW - HOUR, NOW)
     assert 0 < len(h["t"]) <= 600
-    assert len(h["t"]) == 360 and h["step"] == 2
+    assert len(h["t"]) == 361 and h["step"] == 2
     assert h["t"][-1] == NOW  # the newest probe is always kept
     assert h["t"] == sorted(h["t"])
     for k in SERIES:
@@ -233,12 +247,12 @@ def test_ai1_history_over_an_hour_is_downsampled_to_at_most_600(world):
             continue
         assert k in h, k
         assert len(h[k]) == len(h["t"]), k
-    assert h["gpu_util"][-1] == pytest.approx(59.5 - 39.5 * math.cos(2 * math.pi * 719 / 720))
-    # the counters are linear: every point's rate (over two intervals) is the real rate,
-    # less metrics_delta's int truncation of the delta
-    assert _within_truncation(h["prompt_tps"][1:], "prompt_tokens", 2)
-    assert _within_truncation(h["gen_tps"][1:], "generated_tokens", 2)
-    assert set(h["prompt_tps"][1:]) == {1.2} and set(h["gen_tps"][1:]) == {0.7}
+    assert h["gpu_util"][-1] == pytest.approx(59.5 - 39.5 * math.cos(2 * math.pi * 720 / 721))
+    # the counters are linear within each segment: every point's rate (over two intervals) is
+    # the real rate; the span across the restart at NOW-1800 has no rate
+    assert _all_are(h["prompt_tps"][1:], "prompt_tokens")
+    assert _all_are(h["gen_tps"][1:], "generated_tokens")
+    assert _one_reset(h["prompt_tps"][1:])
     assert h["cache_hit"][-1] == pytest.approx(_true_rate("prompt_tokens_cached")
                                                / (_true_rate("prompt_tokens_cached") + _true_rate("prompt_tokens")),
                                                abs=0.001)
@@ -249,22 +263,26 @@ def test_history_without_downsampling_keeps_every_probe(world):
     conn, _ = world
     ai1 = endpoint_id(conn, "ai1")
     h = read.endpoint_history(conn, ai1, NOW - HOUR, NOW, max_points=1000)
-    assert len(h["t"]) == 720 and h["step"] == 1
+    assert len(h["t"]) == 721 and h["step"] == 1
     # the first in-range probe is ai1's first ever: no previous counters, no rate
     assert h["prompt_tps"][0] is None
-    # one interval each: the seed test's pinned figures, every interval
-    assert set(h["prompt_tps"][1:]) == {1.2} and set(h["gen_tps"][1:]) == {0.6}
+    # one interval each: the seed test's pinned figures, every interval except the restart's
+    assert _one_reset(h["prompt_tps"][1:])
+    assert _all_are(h["prompt_tps"][1:], "prompt_tokens")
+    assert _all_are(h["gen_tps"][1:], "generated_tokens")
 
 
 def test_history_downsampling_takes_every_kth_probe_ending_at_the_newest(world):
     conn, _ = world
     ai1 = endpoint_id(conn, "ai1")
     h = read.endpoint_history(conn, ai1, NOW - HOUR, NOW, max_points=100)
-    assert h["step"] == 8 and len(h["t"]) == 90
+    assert h["step"] == 8 and len(h["t"]) == 91
     assert h["t"][-1] == NOW and h["t"][-2] == NOW - 8 * 5.0
-    # the rate over a sampled interval (eight raw intervals) is the real rate within truncation
-    assert _within_truncation(h["prompt_tps"][1:], "prompt_tokens", 8)
-    assert _within_truncation(h["gen_tps"][1:], "generated_tokens", 8)
+    # the rate over a sampled interval (eight raw intervals) is the real rate too; the one
+    # sampled span holding the restart has no rate
+    assert _all_are(h["prompt_tps"][1:], "prompt_tokens")
+    assert _all_are(h["gen_tps"][1:], "generated_tokens")
+    assert _one_reset(h["prompt_tps"][1:])
 
 
 def test_ai1_history_serves_the_state_latency_and_every_hardware_series(world):
@@ -296,10 +314,11 @@ def test_dgx_history_has_latency_and_state_but_no_hardware_series(world):
         assert key not in h, key  # null throughout: absent, not a column of nulls
 
 
-def test_ai1_history_events_are_its_two(world):
+def test_ai1_history_event_is_the_restart(world):
+    """The collector writes no event for a first probe, so ai1 has only its restart."""
     conn, _ = world
     h = read.endpoint_history(conn, endpoint_id(conn, "ai1"), NOW - HOUR, NOW)
-    assert [(e["kind"], e["t"]) for e in h["events"]] == [("up", NOW - HOUR), ("restarted", NOW - 1800.0)]
+    assert [(e["kind"], e["t"]) for e in h["events"]] == [("restarted", NOW - 1800.0)]
     assert set(h["events"][0]) == {"t", "kind", "detail"}
 
 
@@ -348,7 +367,7 @@ def test_a_reset_interval_has_no_rate(world):
     h = read.endpoint_history(conn, ai1, NOW + 5 - HOUR, NOW + 5, max_points=1000)
     assert h["t"][-1] == NOW + 5
     assert h["prompt_tps"][-1] is None and h["gen_tps"][-1] is None and h["cache_hit"][-1] is None
-    assert h["prompt_tps"][-2] == 1.2
+    assert h["prompt_tps"][-2] == pytest.approx(_true_rate("prompt_tokens"))
     # the overview's rates name the reset
     ep = _ep(read.overview(conn, registry_from(conn), NOW + 5, WINDOW_S), "ai1")
     assert ep["rates"]["prompt_tps"] is None
@@ -373,7 +392,7 @@ def test_downsampled_rates_are_null_when_a_reset_lies_inside_the_interval(world)
     h = read.endpoint_history(conn, ai1, NOW - HOUR, NOW, max_points=100)
     assert h["t"][-1] == NOW and h["step"] == 8
     assert h["prompt_tps"][-1] is None  # NOW-40 .. NOW holds the reset at NOW-5
-    assert _within_truncation(h["prompt_tps"][-2:-1], "prompt_tokens", 8)
+    assert _all_are(h["prompt_tps"][-2:-1], "prompt_tokens")
 
 
 # --- fleet history -------------------------------------------------------------------------
@@ -413,11 +432,13 @@ def test_fleet_history_occupancy_follows_the_backend(world):
     conn, reg = world
     fh = read.fleet_history(conn, reg, NOW - HOUR, NOW)
     ai1 = fh["endpoints"]["ai1"]
-    # strata: its slots; None at grid times ai1 was never probed (the hour starts on dgx1-a's)
-    assert set(ai1["occupancy"]) == {0, 1, None}
+    # strata: its slots. Since story 2.4a ai1's hour is a true hour (721 probes from NOW-3600),
+    # so every grid time in the range has an ai1 probe and no null appears; the null-at-a-foreign-
+    # grid-time rule is pinned by the dgx1-a tail below and by the capped-grid test.
+    assert set(ai1["occupancy"]) == {0, 1}
     assert ai1["occupancy"][-1] == 1
     assert ai1["occupancy"][fh["t"].index(NOW - 3590.0)] == 0
-    assert ai1["occupancy"][fh["t"].index(NOW - 3600.0)] is None
+    assert ai1["occupancy"][fh["t"].index(NOW - 3600.0)] == 0
     dgx = fh["endpoints"]["dgx1-a"]
     assert set(dgx["occupancy"]) == {1, None}
     # null after its drop at NOW-20min: every grid point past the drop has no figure
@@ -537,6 +558,19 @@ def test_job_detail_tails_the_transcript_when_the_directory_exists(world):
 def test_job_detail_of_an_unknown_job_is_none(world):
     conn, _ = world
     assert read.job_detail(conn, "no-such-job") is None
+
+
+def test_jobs_in_range_and_job_detail_take_the_readers_now(world):
+    """F9, ruling C: every route passes its own ``now`` into ``derive.summary_from_row``, so the
+    running job reads 300 s old on the page's clock, not on the wall clock."""
+    conn, _ = world
+    running = next(j for j in read.jobs_in_range(conn, NOW - 24 * HOUR, NOW) if j["status"] == "running")
+    assert running["elapsed_s"] == 300.0
+    d = read.job_detail(conn, running["id"], now=NOW)
+    assert d["elapsed_s"] == 300.0
+    # the overview's running row (its own clock already)
+    j = read.overview(conn, registry_from(conn), NOW, WINDOW_S)["jobs"][0]
+    assert j["elapsed_s"] == 300.0
 
 
 def test_jobs_in_range_newest_first_without_result(world):

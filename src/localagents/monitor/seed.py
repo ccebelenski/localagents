@@ -4,7 +4,9 @@ to ``now``. It is the world the browser smoke and the route tests run against, a
 every display state at once:
 
 - ``ai1`` (strata, host ``ai1``) — live, an hour of probes at 5 s with the busy ai2 capture's
-  counters interpolated across it and a running job on its one slot;
+  counters interpolated across it and a running job on its one slot; the counters restart at
+  the midpoint (every counter drops to its pass-1 value and climbs again, ``since`` with it),
+  so the world exercises the real reset path instead of asserting one its rows deny;
 - ``dgx1-a`` (vllm, host ``dgx1``) — down since 20 min ago (a refused connection: the box
   answers, nothing listens);
 - ``llamacpp`` (llama.cpp, host ``local``) — dormant, last up a week ago;
@@ -32,17 +34,21 @@ from pathlib import Path
 
 from .. import db
 from ..registry import classify_connect_failure, parse_metrics, parse_strata_extra, parse_strata_metrics
-from . import rows
+from . import rates, rows
 from .collect import _event
 
 # The seed's own mcp_servers row lives under the repo it is run from.
 _REPO = Path(__file__).resolve().parents[3]
 
-# probe series shapes (pure in the world, not in now): ai1 a full hour at 5 s ending at now;
-# dgx1-a up for an hour then down for the last 20 min at 5 s; llamacpp one up probe a week
-# ago then dormant-cadence down probes every 60 s over the last 24 h.
-AI1_PROBES = 720
+# probe series shapes (pure in the world, not in now): ai1 a full hour at 5 s (720 intervals,
+# 721 probes) ending at now; dgx1-a up for an hour then down for the last 20 min at 5 s;
+# llamacpp one up probe a week ago then dormant-cadence down probes every 60 s over the last
+# 24 h. AI1_RESTART_I is the probe whose counters restarted: probe i sits at
+# now - (AI1_PROBES - 1 - i) * AI1_DT, so i = 360 is exactly now - 1800.
+AI1_PROBES = 721
 AI1_DT = 5.0
+AI1_RESTART_I = 360
+AI1_RESTART_S = AI1_RESTART_I * AI1_DT  # 1800.0: the restart, and the new ``since``
 DGX_UP_S = 3600.0  # the up window starts 3600 s ago; up from now-3600 to now-1200
 DGX_DOWN_SPAN_S = 20 * 60.0  # down from now-1200 to now
 LCPP_UP_AGO_S = 7 * 24 * 3600.0 + 60.0  # last up a week (plus a minute) ago: inside the 7-day
@@ -57,12 +63,33 @@ LATENCY_MS = 12
 
 class SeedRefused(RuntimeError):
     """The target database already holds a ``jobs`` or ``probes`` row and ``force`` was not
-    given: the seed must not append to, or clobber, an operator's live database by accident."""
+    given, or ``force`` was given while a localagents server is still running against it: the
+    seed must not append to, or clobber, an operator's live database by accident."""
 
 
 REFUSED_SENTENCE = (
     "the database already holds jobs or probes rows; pass --force to replace them"
 )
+LIVE_SERVER_S = 60.0  # a server's heartbeat is fresh this long (status.collect's rule)
+
+
+def _live_server_sentence(pid: int) -> str:
+    return (f"a live server (pid {pid}) is running against this database; stop it, "
+            f"or point --db at a throwaway file")
+
+
+def _live_server_pid(conn: sqlite3.Connection, now_wall: float) -> int | None:
+    """The pid of a running localagents server on this database, or None: ``stopped IS NULL``,
+    a heartbeat within the last 60 s, and the pid alive (the status line's liveness rule,
+    heartbeat first because pids are reused). Runs on the WALL clock: a server is live now or
+    not, whatever world clock ``--now`` names (ruling E)."""
+    for row in conn.execute(
+        "SELECT pid FROM mcp_servers WHERE stopped IS NULL AND updated >= ? AND pid IS NOT NULL",
+        (now_wall - LIVE_SERVER_S,),
+    ).fetchall():
+        if db.pid_alive(row["pid"]):
+            return row["pid"]
+    return None
 
 # the jobs columns, in the schema's order (db._V1 plus jobs.compactions from _V2)
 _JOB_COLS = (
@@ -204,15 +231,17 @@ def _job_insert(conn: sqlite3.Connection, job_id: str, name: str, server_id: str
                 endpoint_id: int, model_id: int, src: dict, *, status: str, created_at: float,
                 started_at: float, finished_at: float | None, updated: float, num_turns: int,
                 result: str | None, requests: list[dict], shift,
-                tool_calls: list[dict], shift_finished) -> None:
+                tool_calls: list[dict], shift_finished, context: int | None = None) -> None:
     """One ``jobs`` row plus its re-timed ``requests`` and ``tool_calls`` rows (``shift`` maps
-    a request ``t`` and ``shift_finished`` a tool-call ``t``/``finished``)."""
+    a request ``t`` and ``shift_finished`` a tool-call ``t``/``finished``). ``context`` overrides
+    the export's window: the running job was handed ai1's own (F10)."""
     conn.execute(
         f"INSERT INTO jobs ({', '.join(_JOB_COLS)}) VALUES ({', '.join('?' * len(_JOB_COLS))})",
         (job_id, name, server_id, endpoint_id, model_id, src["task"], src["cwd"],
          src["isolation"], status, created_at, started_at, finished_at, updated,
          src["session_id"], result, src["error"], src["last_activity"], num_turns,
-         src["context"], src["generated_tokens"], src["prompt_tokens_processed"],
+         src["context"] if context is None else context, src["generated_tokens"],
+         src["prompt_tokens_processed"],
          src["prompt_tokens_cached"], src["cache_hit_ratio"], src["prompt_tps"],
          src["generate_tps"], src["spec_decode_acceptance"], src["worktree"], src["dump"],
          src["log_events"], 0),
@@ -239,7 +268,9 @@ def seed(conn: sqlite3.Connection, now: float, fixtures_dir: Path | str, force: 
     Everything is written in ONE ``db.immediate()`` transaction. A database that already holds
     a ``jobs`` or ``probes`` row is refused (``SeedRefused``) unless ``force=True``, which
     deletes every row of every table and seeds fresh — the seed never appends to a live
-    database. Returns the number of rows written per table.
+    database. ``force`` itself refuses a database a running localagents server owns (a fresh
+    heartbeat and a live pid, read on the wall clock), naming the pid. Returns the number of
+    rows written per table.
     """
     fx = Path(fixtures_dir)
     has_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
@@ -250,6 +281,11 @@ def seed(conn: sqlite3.Connection, now: float, fixtures_dir: Path | str, force: 
 
     with db.immediate(conn):
         if force:
+            # a running server's rows (and jobs) must not be deleted from under it: the check
+            # is inside the delete's own transaction, so no server can appear between them
+            pid = _live_server_pid(conn, time.time())
+            if pid is not None:
+                raise SeedRefused(_live_server_sentence(pid))
             # children first (the foreign keys are enforced), then the lookup and job tables
             for table in ("probe_hardware", "probe_counters", "probes", "endpoint_events",
                           "endpoint_load", "requests", "tool_calls", "jobs", "mcp_servers",
@@ -261,11 +297,13 @@ def seed(conn: sqlite3.Connection, now: float, fixtures_dir: Path | str, force: 
 
 def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
     # --- lookup rows -------------------------------------------------------------
-    ai1 = db.lookup_id(conn, "endpoints", name="ai1", base_url="http://10.0.0.50:8080",
+    # first_seen is the world's clock, not the wall clock: two seeds with the same --now stay
+    # identical row for row (review of 2.4, F4; ruling B)
+    ai1 = db.lookup_id(conn, "endpoints", now=now, name="ai1", base_url="http://10.0.0.50:8080",
                        backend="strata", host="ai1")
-    dgx = db.lookup_id(conn, "endpoints", name="dgx1-a", base_url="http://10.0.0.70:8000",
+    dgx = db.lookup_id(conn, "endpoints", now=now, name="dgx1-a", base_url="http://10.0.0.70:8000",
                        backend="vllm", host="dgx1")
-    lcpp = db.lookup_id(conn, "endpoints", name="llamacpp", base_url="http://127.0.0.1:8080",
+    lcpp = db.lookup_id(conn, "endpoints", now=now, name="llamacpp", base_url="http://127.0.0.1:8080",
                         backend="llama.cpp", host="local")
     model = db.lookup_id(conn, "models", served_id="qwen3.8-flash-next-iq3_s")
 
@@ -310,13 +348,28 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
         conn, job_id_r, db.job_name(now - 300.0, job_id_r), server_id, ai1, model, j,
         status="running", created_at=now - 300.0, started_at=now - 300.0, finished_at=None,
         updated=now, num_turns=40, result=None, requests=reqs_r, shift=rshift,
-        tool_calls=tcs_r, shift_finished=rshift,
+        tool_calls=tcs_r, shift_finished=rshift, context=AI1_CONTEXT,
     )
 
-    # --- ai1: a live hour --------------------------------------------------------
-    since = now - 3 * 24 * 3600.0
+    # --- ai1: a live hour with a restart at its midpoint ------------------------
+    # The counters walk pass-1 -> pass-2 over each half-hour segment (360 intervals, so the
+    # per-interval delta and the rate are the same before and after); at AI1_RESTART_I they
+    # drop back to the pass-1 values and the backend's ``since`` moves forward — the restart
+    # ``rates.reset_reason`` finds in the rows. No ``up`` event: the collector writes none for
+    # an endpoint's first probe (ruling D).
+    since_before = now - 3 * 24 * 3600.0
+    since_after = now - AI1_RESTART_S
+    prev_counters = None
+    restart_detail = None
     for i in range(AI1_PROBES):
         t = now - (AI1_PROBES - 1 - i) * AI1_DT
+        restarted = i >= AI1_RESTART_I
+        fraction = (i - AI1_RESTART_I if restarted else i) / AI1_RESTART_I
+        counters = _interpolate(world.ai1_counters_1, world.ai1_counters_2, fraction)
+        since = since_after if restarted else since_before
+        if i == AI1_RESTART_I:
+            restart_detail = rates.reset_reason(prev_counters, counters, since_before, since_after)
+        prev_counters = counters
         busy = (now - t) <= BUSY_TAIL_S
         _insert_probe(
             conn,
@@ -325,11 +378,10 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
                        requests_running=1 if busy else 0, requests_waiting=0,
                        gen_tps=world.ai1_gen_tps, since=since,
                        state="busy" if busy else "idle"),  # ruling A: state by its own slots
-            _interpolate(world.ai1_counters_1, world.ai1_counters_2, i / (AI1_PROBES - 1)),
+            counters,
             _ai1_hardware(world.ai1_hardware, i),
         )
-    _event(conn, now - 3600.0, ai1, "up", None)
-    _event(conn, now - 30 * 60.0, ai1, "restarted", "prompt_tokens went backwards")
+    _event(conn, now - AI1_RESTART_S, ai1, "restarted", restart_detail)
 
     # --- dgx1-a: up for an hour, down for the last 20 min ------------------------
     refused_dgx = _refused_sentence("http://10.0.0.70:8000")
@@ -348,13 +400,16 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
     for k in range(1, down_n + 1):
         _insert_probe(conn, _probe_row(now - DGX_DOWN_SPAN_S + k * AI1_DT, dgx, None,
                                        up=False, host="up", error=refused_dgx), None, None)
-    _event(conn, now - DGX_DOWN_SPAN_S, dgx, "down", refused_dgx)
+    # at the first down probe's own t: the collector writes the down event with that probe's t,
+    # so a reader sorting events against probes sees the same instant (F1)
+    _event(conn, now - DGX_DOWN_SPAN_S + AI1_DT, dgx, "down", refused_dgx)
 
     # --- llamacpp: up a week ago, dormant-cadence down for the last 24 h ---------
     # The last up probe sits a minute past the 7-day prune cutoff, so retention removes exactly
-    # this one row (prune_probes deletes t < now-7d); the down event a week ago survives it.
+    # this one row (prune_probes deletes t < now-7d); the down event, at the first down probe's
+    # own t (the collector's placement), survives it.
     lcpp_up_t = now - LCPP_UP_AGO_S
-    lcpp_down_event_t = now - 7 * 24 * 3600.0 + 60.0
+    lcpp_down_event_t = now - LLAMACPP_DOWN_SPAN_S
     _insert_probe(
         conn,
         _probe_row(lcpp_up_t, lcpp, None, up=True, host="up", latency_ms=LATENCY_MS,
