@@ -3,7 +3,7 @@
 Claude Code targets Anthropic's API and uses features local servers do not all support.
 Every job points ``ANTHROPIC_BASE_URL`` at ``http://127.0.0.1:<port>/job/<job_id>``; the
 shim normalises the request, forwards it to the job's endpoint, streams the response back,
-and writes a per-job ``requests.jsonl`` for debugging.
+and records every request in the database's ``requests`` table.
 
 Normalisations (all no-ops when not needed):
 * ``role: system`` entries inside ``messages`` (Claude Code's mid-conversation system turns:
@@ -321,8 +321,7 @@ class Shim:
         rec = {k: v for k, v in rec.items() if v is not None}
         if path.endswith("/v1/messages"):
             job.note_usage(kw.get("usage"), int(kw.get("ms") or 0), kw.get("gen_ms"))
-        with open(os.path.join(job.log_dir, "requests.jsonl"), "a") as f:
-            f.write(json.dumps(rec) + "\n")
+        job.record_request(rec)
         if kw.get("error") and kw.get("status", 0) >= 400:
             job.log_text(f"[backend {kw['status']}] {str(kw['error'])[:300]}")
 

@@ -174,6 +174,34 @@ class Job:
         except sqlite3.Error as e:
             self.log_text(f"[db-error] tool result update: {e}")
 
+    def record_request(self, rec: dict[str, Any]) -> None:
+        """Write one shim request record to the ``requests`` table (shim._log builds ``rec``).
+
+        Column mapping: docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md. ``model`` is not
+        stored: the request's model is the job's. The record's token keys are the API's names."""
+        if self._conn is None:
+            return  # a Job built outside JobStore.new has no row to reference
+        usage = rec.get("usage") or {}
+        try:
+            with db.immediate(self._conn):
+                self._conn.execute(
+                    """INSERT INTO requests (job_id, path_id, t, http_status, ms, gen_ms, stream,
+                       input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                       messages, tools, bytes, moved_system, folded_text, context_exceeded, error)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (self.id, db.lookup_id(self._conn, "paths", path=rec["path"]), rec["t"],
+                     rec.get("status"), rec.get("ms"), rec.get("gen_ms"),
+                     (1 if rec["stream"] else 0) if "stream" in rec else None,
+                     usage.get("input_tokens"), usage.get("output_tokens"),
+                     usage.get("cache_read_input_tokens"), usage.get("cache_creation_input_tokens"),
+                     rec.get("messages"), rec.get("tools"), rec.get("bytes"),
+                     rec.get("moved_system_messages"), rec.get("folded_tool_result_text"),
+                     rec.get("context_exceeded"), rec.get("error")),
+                )
+        except sqlite3.Error as e:
+            # same rule as _row_update: the database observes the job and must never fail it
+            self.log_text(f"[db-error] record_request: {e}")
+
     def note_usage(self, usage: dict[str, Any] | None, ms: int, gen_ms: int | None = None) -> None:
         """Record a backend response's usage (called by the shim): live context fill and speed.
 
