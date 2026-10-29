@@ -176,10 +176,13 @@ the duplicates go), then docs.
   `metrics_delta` has no NULL rule. Noticed: llama.cpp `requests_processing`/`requests_deferred`
   are not mapped, so llama.cpp rows carry NULL running/waiting; `parse_strata_metrics` reads a
   missing counter as 0 not NULL. Review: DeepSeek, pending.)
-- ☐ **2.3 Display and node state.** Pure functions from rows: live / down-recent / dormant
-  with the attention window (24 h default, `monitor:` section), cold start → dormant; node
-  up/down/unknown from a host's endpoints; port-22 fallback behind an injected connector.
-  Gate: both sides of the boundary; every truth-table row. Lane: Qwen.
+- ☑ **2.3 Display and node state.** (Qwen3.8-27B/llamacpp job 20261029-122542-1e3d7290, 82
+  turns, 361 tests: `endpoint_state`/`node_state`/`node_dormant` with every truth-table row its
+  own test, boundary shared with `interval_s`; `probe_port` against a real listener, a closed
+  port and 10.255.255.1; `monitor/jobs.py` `running_job_at`; `monitor/config.py`
+  `MonitorSettings`/`load_settings`, `Registry.load` verified to ignore `monitor:`;
+  `run(window_s=)`. Disclosed: settings values are not type-validated. Review: pending, by a
+  model other than the 27B.)
 - ☐ **2.4 `localagents seed`.** Offline database from fixtures, timestamps shifted to now:
   three hosts; live endpoint with an hour of history; one down 20 min; one dormant a week;
   finished job with requests and tool calls; one running. Gate: seeded database passes the
