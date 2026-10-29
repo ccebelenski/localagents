@@ -306,12 +306,21 @@ the duplicates go), then docs.
   `db_path`, `endpoint.probe_state` and `dropped_job_id`; the page uses them; the header's
   window reads `24h` not `1d00h`; the job row's current tool and last activity are relativised
   to the job's root as the status bar does (1.11b's rule, server-side: `jobs[].last_tool` and
-  `last_activity` in the snapshot carry the display form). Lane: with the 3.2 review's findings.
+  `last_activity` in the snapshot carry the display form); from 3.3: the overview stops
+  fetching fleet and history while a detail page is open; static files get
+  `Cache-Control: no-cache` (ETag revalidation); the snapshot endpoint carries `host` and the
+  last-known `model`/`context` of a down endpoint. Lane: with the 3.2 review's findings.
 
-- ☐ **3.3 Endpoint detail.** Tiered stat tiles with sparklines (absent when no source), context
-  window, request table with totals line, jobs in range. Gate: browser smoke; tier table
-  from the spec checked against each fixture backend. Lane: Opus or Qwen with the tier table
-  quoted.
+- ☑ **3.3 Endpoint detail.** (Opus-high, 88 tool uses, 584 tests; one file `endpoint.js` through
+  the pages hook, plus a fix to the hook itself: teardown now runs on every route change;
+  browser smoke over all three states with zero console errors. Corrected the brief: no
+  snapshot callback exists in app.js, so the page observes the nodes the overview rewrites;
+  `state.snap` not `state.snapshot`; the sparkline helpers are not exported. §5a gaps: a down
+  endpoint's last-known model and context; `dropped_job` id (3.2a); the endpoint's `host`.
+  Noticed: app.js keeps fetching fleet and history on detail pages; static files carry no
+  Cache-Control, so a browser can run stale page code after an upgrade; Strata's `_mb`
+  fields' unit is unverified. Review: Qwen/ai2, pending.)
+
 - ☐ **3.4 Job detail.** Context gauge, request table, metrics delta, files touched, tool-call
   timeline strip with context fill overlaid, breakdown by tool, transcript tail. Gate:
   browser smoke over the seeded finished job. Lane: Qwen with the row shapes quoted.
