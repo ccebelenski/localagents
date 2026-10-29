@@ -4,7 +4,8 @@
  * host cards and the running-jobs table in place; the page never polls. The fleet charts, the
  * decode sparklines and the state strips need history: on a snapshot the page re-fetches
  * /api/fleet/history (one call for the whole fleet) and each live endpoint's
- * /api/endpoints/<name>/history (for its `state` series) at most once every 5 s.
+ * /api/endpoints/<name>/history (for its `state` series) at most once every 5 s. While a
+ * detail page is open the overview is hidden and fetches nothing; it fetches once on return.
  *
  * The JSON is the contract in docs/superpowers/specs/2026-10-29-monitor-design.md §5a; every
  * field read here is named there (tests/test_monitor_page.py checks it). The objects are read
@@ -57,10 +58,12 @@
       if (v == null || !isFinite(v)) return "";
       return Math.round(v) + "%";
     },
-    // durations: 42s, 4m12s, 2h03m, 3d04h
-    dur: function (s) {
+    // durations: 42s, 4m12s, 2h03m, 3d04h; with wholeHours, a whole number of hours reads as
+    // hours alone (24h, 48h: the attention window, a setting in hours), never 1d00h
+    dur: function (s, wholeHours) {
       if (s == null || !isFinite(s)) return "";
       s = Math.max(0, Math.floor(s));
+      if (wholeHours && s >= 3600 && s % 3600 === 0) return s / 3600 + "h";
       var pad = function (n) { return n < 10 ? "0" + n : String(n); };
       if (s < 60) return s + "s";
       if (s < 3600) return Math.floor(s / 60) + "m" + pad(s % 60) + "s";
@@ -300,11 +303,13 @@
     ]);
   }
 
-  function downEndpoint(snap, ep) {
+  // `quiet`: the host card already carries the one alert (a node-down card, spec §4: "one alert
+  // at the host card; endpoints greyed, not each alarming"), so the endpoint's sentence is left out
+  function downEndpoint(snap, ep, quiet) {
     return h("div", { class: "endpoint state-down", "data-endpoint": ep.name }, [
       h("div", { class: "ep-head" }, [endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
         h("span", { class: "ep-seen", text: ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "" })]),
-      ep.error ? h("div", { class: "ep-error", text: ep.error }) : null,
+      ep.error && !quiet ? h("div", { class: "ep-error", text: ep.error }) : null,
       ep.dropped_job ? h("div", { class: "ep-jobs", text: "running when it dropped: " + ep.dropped_job }) : null,
     ]);
   }
@@ -328,10 +333,17 @@
       });
       return h("div", { class: cls + " dormant", "data-host": host.name }, [h("div", { class: "host-head" }, line)]);
     }
-    var note = host.state === "down" ? "node unreachable" : host.state === "unknown" ? "node unknown" : "";
+    var nodeDown = host.state === "down";
+    var note = nodeDown ? "node unreachable" : host.state === "unknown" ? "node unknown" : "";
+    if (nodeDown) {
+      // the card's one alert is the probe's sentence (every endpoint on a down node reports the
+      // box unreachable): the first endpoint's that has one
+      var said = host.endpoints.filter(function (ep) { return ep.error; })[0];
+      if (said) note = said.error;
+    }
     var body = host.endpoints.map(function (ep) {
       if (ep.state === "live") return liveEndpoint(snap, ep);
-      if (ep.state === "down") return downEndpoint(snap, ep);
+      if (ep.state === "down") return downEndpoint(snap, ep, nodeDown);
       return dormantEndpoint(ep, false);
     });
     return h("div", { class: cls, "data-host": host.name }, [
@@ -403,7 +415,7 @@
     snap.hosts.forEach(function (host) {
       host.endpoints.forEach(function (ep) { state.order[ep.name] = i++; });
     });
-    byId("meta").textContent = "attention window " + fmt.dur(snap.window_s);
+    byId("meta").textContent = "attention window " + fmt.dur(snap.window_s, true);
     byId("updated").textContent = "snapshot " + fmt.time(snap.now);
     byId("hosts").replaceChildren.apply(byId("hosts"), snap.hosts.map(function (host) { return hostCard(snap, host); }));
     byId("jobs-body").replaceChildren(jobsTable(snap));
@@ -428,7 +440,8 @@
     return getJSON("/api/fleet/history?range=" + encodeURIComponent(range));
   }
 
-  var refresh = { last: 0, timer: null, inflight: false, again: false };
+  // `detail`: a detail page is open (route() sets it), and the hidden overview fetches nothing
+  var refresh = { last: 0, timer: null, inflight: false, again: false, detail: false };
 
   function liveNames(snap) {
     var out = [];
@@ -443,6 +456,12 @@
   // (one timer, however many snapshots arrive meanwhile)
   function scheduleHistory(force) {
     if (force) refresh.last = 0;
+    // behind a detail page the overview's charts, sparklines and strips are not on screen: no
+    // fetch (story 3.2a, C); route() asks again, forced, when the overview comes back
+    if (refresh.detail) {
+      if (refresh.timer) { clearTimeout(refresh.timer); refresh.timer = null; }
+      return;
+    }
     if (refresh.inflight) { refresh.again = true; return; }
     var wait = refresh.last + HISTORY_MIN_INTERVAL_MS - Date.now();
     if (wait > 0) {
@@ -523,10 +542,12 @@
     update: function (fleet) {
       var box = byId("fleet-charts");
       var note = byId("fleet-note");
-      var names = Object.keys(fleet.endpoints || {});
-      if (!fleet.t || !fleet.t.length) {
+      // spec §5: the charts draw and legend the LIVE endpoints only, in config order (the
+      // snapshot's); one that drops out of live leaves the legend on the next fleet fetch
+      var names = liveNames(state.snap);
+      if (!fleet.t || !fleet.t.length || !names.length) {
         charts.destroy();
-        note.textContent = "no probes in the last " + state.range;
+        note.textContent = !names.length ? "no live endpoint to chart" : "no probes in the last " + state.range;
         note.hidden = false;
         return;
       }
@@ -654,16 +675,27 @@
     var m = /^#\/(job|endpoint)\/(.+)$/.exec(window.location.hash);
     var detail = byId("detail");
     var overview = byId("overview");
+    // the name is decoded before anything is torn down or flipped: a malformed escape
+    // (#/endpoint/ai%zz) throws URIError, and the raw text stands in, so the page draws its
+    // "no endpoint named" / "no job" sentence for it instead of a blank pane (story 3.2a, E;
+    // on a cold load the throw used to stop start() before the stream connected)
+    var name = null;
+    if (m) {
+      try { name = decodeURIComponent(m[2]); } catch (e) { name = m[2]; }
+    }
     // the open detail page's teardown runs on EVERY route change, the overview's included
     if (pages.teardown) { try { pages.teardown(); } catch (e) { console.error(e); } pages.teardown = null; }
+    var wasDetail = refresh.detail;
+    refresh.detail = !!m;
     if (!m) {
       detail.hidden = true;
       overview.hidden = false;
       charts.resize();
+      // back from a detail page: the overview fetched nothing meanwhile, so fetch once now
+      if (wasDetail) scheduleHistory(true);
       return;
     }
     var what = m[1] === "job" ? "Job" : "Endpoint";
-    var name = decodeURIComponent(m[2]);
     overview.hidden = true;
     detail.hidden = false;
     // a detail page registers itself as pages.job / pages.endpoint (stories 3.3 and 3.4, each

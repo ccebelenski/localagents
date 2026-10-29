@@ -77,6 +77,10 @@
     return t === "" ? "" : t + (total != null ? " / " + fmt.gib(total) : "");
   }
 
+  // Strata's `_mb` hardware fields are megabytes per sample over a window Strata does not
+  // document (the 3.3 review's ruling): the tiles read `MB`, never a rate, until it does
+  var PER_SAMPLE = "per Strata sample; the sample window is not documented";
+
   var TILES = [
     // tier 0: every endpoint
     { tier: 0, key: "latency_ms", label: "probe latency", series: "latency_ms",
@@ -124,24 +128,24 @@
         var t = withUnit(fmt.int(v), "W");
         return t !== "" && hw && hw.gpu_power_limit != null ? t + " / " + fmt.int(hw.gpu_power_limit) + " W" : t;
       } },
-    { tier: 3, key: "gpu_pcie_rx_mb", label: "PCIe rx", series: "gpu_pcie_rx_mb",
+    { tier: 3, key: "gpu_pcie_rx_mb", label: "PCIe rx", series: "gpu_pcie_rx_mb", hint: PER_SAMPLE,
       now: function (ep, hw) { return hw ? hw.gpu_pcie_rx_mb : null; },
-      show: function (v) { return withUnit(fmt.speed(v), "MB/s"); } },
-    { tier: 3, key: "gpu_pcie_tx_mb", label: "PCIe tx", series: "gpu_pcie_tx_mb",
+      show: function (v) { return withUnit(fmt.speed(v), "MB"); } },
+    { tier: 3, key: "gpu_pcie_tx_mb", label: "PCIe tx", series: "gpu_pcie_tx_mb", hint: PER_SAMPLE,
       now: function (ep, hw) { return hw ? hw.gpu_pcie_tx_mb : null; },
-      show: function (v) { return withUnit(fmt.speed(v), "MB/s"); } },
+      show: function (v) { return withUnit(fmt.speed(v), "MB"); } },
     { tier: 3, key: "cpu", label: "CPU", series: "cpu",
       now: function (ep, hw) { return hw ? hw.cpu : null; },
       show: function (v) { return fmt.pct(v); } },
     { tier: 3, key: "ram_used", label: "RAM", series: "ram_used",
       now: function (ep, hw) { return hw ? hw.ram_used : null; },
       show: function (v, ep, hw) { return gibOf(v, hw ? hw.ram_total : null); } },
-    { tier: 3, key: "disk_read_mb", label: "disk read", series: "disk_read_mb",
+    { tier: 3, key: "disk_read_mb", label: "disk read", series: "disk_read_mb", hint: PER_SAMPLE,
       now: function (ep, hw) { return hw ? hw.disk_read_mb : null; },
-      show: function (v) { return withUnit(fmt.speed(v), "MB/s"); } },
-    { tier: 3, key: "disk_write_mb", label: "disk write", series: "disk_write_mb",
+      show: function (v) { return withUnit(fmt.speed(v), "MB"); } },
+    { tier: 3, key: "disk_write_mb", label: "disk write", series: "disk_write_mb", hint: PER_SAMPLE,
       now: function (ep, hw) { return hw ? hw.disk_write_mb : null; },
-      show: function (v) { return withUnit(fmt.speed(v), "MB/s"); } },
+      show: function (v) { return withUnit(fmt.speed(v), "MB"); } },
   ];
 
   function newest(ts, ys) {
@@ -149,12 +153,12 @@
     return null;
   }
 
-  // tilesFor(ep, hist, host) -> [{tier, key, label, value, series, note}]: the tiles whose source
+  // tilesFor(ep, hist, host) -> [{tier, key, label, value, series, note, hint}]: the tiles whose source
   // is present, in tier order. `ep` is the snapshot's endpoint (or null before the first
   // snapshot), `hist` the endpoint history (or null before it arrives), `host` the snapshot host
   // holding `ep` (optional: the node state tile needs it). `series` is {t, y} for the sparkline,
   // or null for a figure with no history series. `note` says where a figure came from when it is
-  // not the current snapshot's.
+  // not the current snapshot's; `hint` (the tile's title) qualifies its unit, or is null.
   function tilesFor(ep, hist, host) {
     var out = [];
     var hw = ep ? ep.hardware : null;
@@ -185,7 +189,8 @@
           note = "newest in range, " + fmt.time(last.t);
         }
       }
-      out.push({ tier: d.tier, key: d.key, label: d.label, value: value, series: { t: hist.t, y: ys }, note: note });
+      out.push({ tier: d.tier, key: d.key, label: d.label, value: value, series: { t: hist.t, y: ys }, note: note,
+        hint: d.hint || null });
     });
     out.sort(function (a, b) { return a.tier - b.tier; }); // stable: definition order within a tier
     return out;
@@ -234,7 +239,7 @@
   var TIER_NAME = ["tier 0: every endpoint", "tier 1: speeds", "tier 2: occupancy", "tier 3: hardware"];
 
   function tileEl(tile, t0, span, range) {
-    return h("div", { class: "tile " + TIER_CLASS[tile.tier], "data-tile": tile.key }, [
+    return h("div", { class: "tile " + TIER_CLASS[tile.tier], "data-tile": tile.key, title: tile.hint || null }, [
       h("div", { class: "tile-label", text: tile.label }),
       h("div", { class: "tile-value num", title: tile.value, text: tile.value }),
       tile.series ? sparkline(tile.series, t0, span, tile.label + " over the last " + range) : null,

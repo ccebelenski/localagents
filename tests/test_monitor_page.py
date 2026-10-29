@@ -132,20 +132,74 @@ def test_the_page_carries_every_class_the_smoke_and_spec_name():
         assert re.search(r"\." + re.escape(cls) + r"(?![\w-])", css), cls
 
 
-def _read_fields(js_text, vars):
-    """The field names read through the given variable names, the allow-list of the regex's
-    array-method false positives removed. A chain rooted at ``state.<name>.`` — the page's own
-    state object holding a route body, ``state.snap.now`` — is walked from its second segment
-    on, so ``state.snap.<field>`` is checked against §5a just like ``snap.<field>`` (story
-    3.4a: the old lookbehind skipped exactly those chains)."""
-    fields = set()
-    pat = r"(?<![\w.$])((?:state\.)?(?:" + "|".join(vars) + r"))((?:\.[A-Za-z_$][\w$]*)+)"
-    for m in re.finditer(pat, js_text):
-        segs = (m.group(1) + m.group(2)).split(".")
-        if segs[0] == "state":
-            segs = segs[1:]  # the state root names no body; the variable is the second segment
-        fields |= set(segs[1:])
-    return fields - JS_BUILTINS
+# one step of a property chain: `.name`, `["name"]` / `['name']` (a field read with a literal
+# key: a field like any other), `[0]` (an index: no field), or `[<expression>]` (a read with a
+# variable key, one level of nested brackets: `[m[0]]`)
+_CHAIN_STEP = re.compile(r"""\.([A-Za-z_$][\w$]*)|\[\s*"([^"\\\n]*)"\s*\]|\[\s*'([^'\\\n]*)'\s*\]|\[\s*(\d+)\s*\]"""
+                         r"""|\[([^\[\]\n]*(?:\[[^\[\]\n]*\][^\[\]\n]*)*)\]""")
+
+
+def _walk_chains(js_text, vars, holders=("state",)):
+    """(fields, variable-key reads) over every property chain rooted at one of ``vars``.
+
+    A chain may start at ``<holder>.<var>`` — the page's own object holding a route body,
+    ``state.snap.now`` — and is then walked from the variable on, so ``state.snap.<field>``
+    is checked against §5a just like ``snap.<field>`` (story 3.4a). A step is ``.field`` or a
+    bracket: ``fleetEp["gen_tps"]`` reads the field ``gen_tps`` (story 3.2a, ruling G: the old
+    pattern stopped at the bracket); ``[0]`` is an index; any other key is a read with a
+    variable key, returned as ``<chain>[<key>]`` (whitespace dropped) for the caller to
+    allow-list by name. The chain goes on past every bracket (``fleet.endpoints[name].gen_tps``),
+    and a chain nested inside a bracket is walked on its own."""
+    fields, var_keys = set(), set()
+    root = re.compile(r"(?<![\w.$])(?:(?:" + "|".join(holders) + r")\.)?(" + "|".join(vars) + r")(?![\w$])")
+    for m in root.finditer(js_text):
+        pos, path = m.end(), [m.group(1)]
+        while (step := _CHAIN_STEP.match(js_text, pos)) is not None:
+            ident, dq, sq, index, expr = step.groups()
+            field = next((f for f in (ident, dq, sq) if f is not None), None)
+            if field is not None:
+                fields.add(field)
+                path.append(field)
+            elif index is not None:
+                path.append("[" + index + "]")
+            else:
+                key = re.sub(r"\s+", "", expr)
+                var_keys.add(".".join(path) + "[" + key + "]")
+                path.append("[" + key + "]")
+            pos = step.end()
+    return fields - JS_BUILTINS, var_keys
+
+
+def _read_fields(js_text, vars, holders=("state",)):
+    """The field names read through the given variable names (dotted or with a literal bracket
+    key), the allow-list of the regex's array-method false positives removed."""
+    return _walk_chains(js_text, vars, holders)[0]
+
+
+# every read with a variable key off a route body, by name (story 3.2a, ruling G): such a key is
+# invisible to the §5a check, so each is listed here with what it reads, and a new one fails the
+# gate until it is listed. Index reads into a §5a array (`hist.t[i]`) are listed the same way.
+VARIABLE_KEY_READS = {
+    "app.js": {
+        "fleet.endpoints[n]",  # the fleet body's per-endpoint map, by a live endpoint's name
+        "fleet.endpoints[name]",  # the same map, the sparkline's endpoint
+        "fleetEp[key]",  # one endpoint's fleet series by CHARTS key: gen_tps, prompt_tps, occupancy
+        "fleet.t[i]",  # the fleet time axis, by index
+        "hist.t[i]", "hist.t[j+1]",  # the history time axis, by index (the state strip)
+        "hist.state[i]", "hist.state[j+1]", "hist.state[hist.state.length-1]",  # the state series, by index
+    },
+    "job.js": {
+        "detail.metrics[k]",  # the metrics delta by column: derive._METRICS_COLUMNS (a test pins METRICS)
+        "detail.metrics[m[0]]",  # the same, from a METRICS row's key
+    },
+    "endpoint.js": {
+        "hist[d.series]",  # a history series by TILES series name (a test pins them to read.py)
+        "snap.hosts[i]", "host.endpoints[k]",  # the snapshot's arrays, by index (find())
+        "hist.t[i]", "hist.t[j+1]",  # the history time axis, by index (the state strip)
+        "hist.state[i]", "hist.state[j+1]", "hist.state[hist.state.length-1]",  # the state series, by index
+        "hist.t[page.hist.t.length-1]",  # the newest time (nowOf, through page.hist)
+    },
+}
 
 
 def test_app_js_reads_only_section_5a_field_names():
@@ -163,6 +217,29 @@ def test_app_js_reads_only_section_5a_field_names():
              "files_touched", "transcript_tail", "elapsed_s", "server_live"} <= fields, name
         missing = sorted(f for f in fields if not re.search(r"(?<![A-Za-z_])" + re.escape(f) + r"(?![A-Za-z_])", spec))
         assert missing == [], (name, missing)
+
+
+@pytest.mark.parametrize("name, vars, holders", [
+    ("app.js", APP_JS_VARS, ("state",)),
+    ("job.js", JOB_JS_VARS, ("state",)),
+    ("endpoint.js", None, ("state", "page")),  # ENDPOINT_JSON_VARS, defined below
+])
+def test_every_variable_key_read_is_listed_by_name(name, vars, holders):
+    """Story 3.2a, ruling G: a read off a route body with a variable key (``fleetEp[key]``)
+    cannot be checked against §5a, so each one is listed in VARIABLE_KEY_READS with what it
+    reads; a new one, or a listed one that is gone, fails here."""
+    _, var_keys = _walk_chains((STATIC / name).read_text(), vars or ENDPOINT_JSON_VARS, holders)
+    assert var_keys == VARIABLE_KEY_READS[name]
+
+
+def test_the_field_walk_sees_literal_bracket_keys_and_holder_chains():
+    """The walk itself, over constructed lines: a literal bracket key is a field, also behind a
+    variable-key bracket and a holder; an index is not; a variable key is returned by name."""
+    js = '''var a = fleetEp["gen_tpz"]; var b = state.fleet.endpoints[name]['prompt_tpz'].length;
+    var c = hist.t[0].zzz; var d = page.hist.state[i]; var e = xfleet.nope; var f = obj.fleet.nope2;'''
+    fields, var_keys = _walk_chains(js, APP_JS_VARS, ("state", "page"))
+    assert fields == {"gen_tpz", "endpoints", "prompt_tpz", "t", "zzz", "state"}
+    assert var_keys == {"fleet.endpoints[name]", "hist.state[i]"}
 
 
 # --- story 3.4: the job detail page (job.js) ----------------------------------------------------
@@ -214,13 +291,12 @@ def test_endpoint_js_carries_every_class_the_smoke_names():
 
 
 def test_endpoint_js_reads_only_section_5a_field_names():
-    """The §5a field-name check of app.js, over endpoint.js with its own variable names."""
+    """The §5a field-name check of app.js, over endpoint.js with its own variable names, through
+    the shared walk (story 3.2a: its own regex skipped `state.` chains and bracket reads); the
+    page's own `page` object holds two route bodies (`page.hist`, `page.reqs`), so it is a
+    holder like `state`."""
     spec = _section_5a()
-    fields = set()
-    for m in re.finditer(r"(?<![\w.$])(" + "|".join(ENDPOINT_JSON_VARS) + r")((?:\.[A-Za-z_$][\w$]*)+)",
-                         _endpoint_js()):
-        fields |= set(m.group(2).split(".")[1:])
-    fields -= JS_BUILTINS
+    fields = _read_fields(_endpoint_js(), ENDPOINT_JSON_VARS, ("state", "page"))
     # the regex does see the reads, through every one of the names
     assert {"hosts", "endpoints", "now", "state", "fallback", "hardware", "rates", "gpu_mem_total", "ram_total",
             "prompt_tps", "cached_tps", "t", "jobs", "events", "requests", "totals", "tokens", "cache_read",
@@ -240,6 +316,17 @@ def test_endpoint_js_draws_one_tile_per_history_series():
     assert len(series) == len(set(series))
 
 
+def test_endpoint_js_reads_the_mb_fields_as_megabytes_per_sample():
+    """Story 3.2a ruling F: Strata's ``_mb`` hardware fields are megabytes per sample over a
+    window Strata does not document, so their tiles read ``MB``, never a rate, and each carries
+    the title that says so. The DOM is the browser smoke's; this pins the definitions."""
+    js = _endpoint_js()
+    assert "MB/s" not in js
+    assert 'var PER_SAMPLE = "per Strata sample; the sample window is not documented";' in js
+    mb = re.findall(r'series: "([a-z_]+_mb)", hint: PER_SAMPLE,', js)
+    assert sorted(mb) == ["disk_read_mb", "disk_write_mb", "gpu_pcie_rx_mb", "gpu_pcie_tx_mb"]
+
+
 def test_endpoint_js_registers_through_the_pages_hook_and_never_polls():
     js = _endpoint_js()
     assert "M.pages.endpoint = endpointPage;" in js
@@ -256,6 +343,18 @@ def test_route_tears_the_detail_page_down_on_every_route_change():
     body = js[js.index("function route() {"):js.index("// --- start")]
     assert body.count("pages.teardown()") == 1
     assert body.index("pages.teardown()") < body.index("if (!m) {")
+
+
+def test_route_decodes_the_name_in_a_try_before_it_tears_down():
+    """Story 3.2a ruling E: a malformed escape (``#/endpoint/ai%zz``) makes decodeURIComponent
+    throw URIError; route() decodes inside a try with the raw text as the fallback, before the
+    teardown and the visibility flips, so the pane never blanks (on a cold load the throw
+    stopped start() before the stream connected). The DOM is the browser smoke's."""
+    js = _app_js()
+    body = js[js.index("function route() {"):js.index("// --- start")]
+    decode = "try { name = decodeURIComponent(m[2]); } catch (e) { name = m[2]; }"
+    assert body.count("decodeURIComponent") == 1 and decode in body
+    assert body.index(decode) < body.index("pages.teardown()") < body.index("overview.hidden")
 
 
 def test_app_js_offers_the_server_ranges():

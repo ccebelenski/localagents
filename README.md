@@ -377,13 +377,18 @@ range), slots or running/waiting requests, KV-cache fill (vLLM), decode speed wi
 prompt speed, cache hit, GPU figures when the backend reports them (Strata), and the jobs
 running on it. An endpoint that was up within the attention window and is down now is drawn in
 the alert colour with the probe's sentence and when it was last seen; an older one is a single
-muted "last seen" line, and a host whose every endpoint is dormant collapses to one line.
+muted "last seen" line, and a host whose every endpoint is dormant collapses to one line. When
+the node itself is unreachable the card carries the probe's sentence once and its endpoints are
+greyed, not each alarming.
 Below the cards is the running-jobs table (elapsed, turns, tool calls, current tool, errors,
 context fill, speed, last activity; "server gone" when the job's MCP server no longer beats),
-then the fleet charts: decode speed, prompt speed and occupancy per endpoint on one time
-axis. The range buttons (`15m` to `7d`, default `1h`, remembered by the browser) apply to every
-chart and strip. The page redraws on each snapshot the server pushes and never polls; the dot
-in the header is green while the stream is open and red while it reconnects. The charting
+then the fleet charts: decode speed, prompt speed and occupancy per live endpoint on one time
+axis (a down or dormant endpoint has no line and no legend entry; one that drops out of live
+leaves the charts on the next refresh). The range buttons (`15m` to `7d`, default `1h`,
+remembered by the browser) apply to every chart and strip. The page redraws on each snapshot
+the server pushes and never polls; the dot in the header is green while the stream is open and
+red while it reconnects, and the header names the attention window in hours (`24h` by
+default; the `attention_hours` setting below). The charting
 library, uPlot 1.6.31, is vendored into the package
 (`src/localagents/monitor/static/VENDOR.md` has its checksums), so the page needs no internet.
 
@@ -396,7 +401,9 @@ reports: tier 0 for every endpoint (up/down, node state, served model, context w
 latency); tier 1 when it serves counters (llama.cpp with `--metrics`, vLLM, Strata: prompt and
 decode speed, cache hit ratio); tier 2 when it reports occupancy (llama.cpp with `--slots`,
 vLLM, Strata: slots busy, requests running and waiting, KV-cache fill); tier 3 when it reports
-hardware (Strata today: GPU use, VRAM, temperature, power, PCIe traffic, CPU, RAM, disk). A
+hardware (Strata today: GPU use, VRAM, temperature, power, PCIe traffic, CPU, RAM, disk; the
+PCIe and disk figures read `MB`, not a rate: Strata reports megabytes per sample and does not
+document the sample window, which each of those tiles' tooltip says). A
 tile whose source reported nothing in the range is left out rather than drawn empty, and a
 figure the newest probe lacks (a down endpoint) shows the newest value in the range, marked as
 such. Then come the state strip, the jobs that ran on the endpoint in the range, its up, down
