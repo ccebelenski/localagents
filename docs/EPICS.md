@@ -269,10 +269,18 @@ the duplicates go), then docs.
   three live runs pasted verbatim in the job's report: ai2 full green, llamacpp requests
   green, the real database once with one red line, an ai2 stall at the 60 s cap, classified
   (c) node fact; one (b) script bug found by the live run and fixed, the date match hit the
-  runner's own timestamp lines. Noticed: the shim answers 501 to `count_tokens` when the
-  backend does (only a 404 is estimated), so every job carries a 501 request row; the smoke's
-  server row is never `stopped`. The merge gates and the README monitor section come with the
-  pages. Review: pending.)
+  runner's own timestamp lines. Reviewed by Qwen/ai2 job 20261029-132945-5cb371e8, 83 turns: every
+  `store.new`/`run_job` kwarg tabled against `run_agent` (three deliberate pins); three
+  mutations caught by the tests; one live run, 17/17 ok. Corrected the record: the 501 row every
+  job carries is Claude Code's `/api/hello` startup handshake, not `count_tokens` (Strata answers
+  `count_tokens` 200, llama.cpp 404; three captures agree); the shim's estimate fallback should
+  still cover 405/501. Findings: the smoke's server row never heartbeats, so a job past 60 s
+  disappears from the status line mid-run; `--requests 0` skips silently where `--skip-job`
+  announces; job directories go to the real state dir regardless of `LOCALAGENTS_DB`. Folded in
+  3.5a. The merge gates and the README monitor section come with the pages.)
+- ☐ **3.5a Fold of the 3.5 review** (reviewer fixes its own findings): the smoke heartbeats
+  its server row while the job runs and closes it at exit; `--requests 0` prints a skip line,
+  negative is an error; the shim estimates `count_tokens` on 404, 405 and 501. Lane: Qwen (ai2).
 - ☐ **3.6 Merge gates.** Smoke green against the real `models.yaml`; two-minute live run of
   the monitor at the Epic 3 merge; README monitor section (with 3.1).
 
