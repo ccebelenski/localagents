@@ -114,7 +114,7 @@ the duplicates go), then docs.
   `db.SchemaError` too; the owner walk's node rule matches `comm` starting with `node` and only
   argv[0]/argv[1] basenames; `Job.log_text` keeps one line per entry (embedded newlines
   flattened). Lane: Qwen (ai1).
-- ☐ **1.10 `wait_job`/`wait_jobs` on any job.** The waits work for any job on the machine: an
+- ☑ **1.10 `wait_job`/`wait_jobs` on any job.** (Qwen/ai1 job 20261029-123812-e82215e7, 47 turns, 371 tests; two docs three-way patched over 1.11b; open design point: `_progress_reporter_many` covers in-process jobs only, each foreign wait reports its own line; review: Opus-high (race-shaped), pending.) The waits work for any job on the machine: an
   in-process job through its settle event as today; another server's job by polling its row
   (2 s) until a terminal status or the timeout, with `mark_lost_jobs` applied every 30 s of
   the wait so a job whose server died resolves as `lost` rather than running out the clock;
