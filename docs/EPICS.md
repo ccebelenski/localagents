@@ -343,7 +343,7 @@ the duplicates go), then docs.
   hash must not blank the pane. Server seams found: the stream fan-out starts draining only at
   the first subscriber, so a tick before it makes the first page load fetch twice; totals count
   `error = ''` rows the page draws as clean; the restart detail stores raw float repr. → 3.3a.)
-- ☐ **3.2b Page uses the new snapshot fields** (after 3.2a-server): the header shows `db_path`;
+- ☑ **3.2b Page uses the new snapshot fields** (Qwen3.8-27B/llamacpp job 20261029-160509-3acbf83e, 106 turns, 603 tests; the lane repaired a mangled edit of its own in row 4 and the coordinator read that diff; noticed: the endpoint page's strip still labels its now from the history's newest point, and two aria-labels name the range before the fetch catches up → 3.6's page notes; reviewed with 3.2a and 3.3a) (after 3.2a-server): the header shows `db_path`;
   the endpoint card's strip "now" reads `probe_state` (no history call for it); the down card
   links `dropped_job_id`; the endpoint page's header shows `host` from the endpoint object and
   `last_model`/`last_context` for a down or dormant endpoint. Lane: Qwen3.8-27B.
