@@ -212,10 +212,15 @@ the duplicates go), then docs.
   §4 gains the tie-break sentence; `classify_connect_failure` answers `host: up` for a
   `ReadTimeout`; `collect.run`'s interval computation inside the per-endpoint guard;
   `probe_port` reports a reset as `refused`. Lane: Qwen (ai2).
-- ☐ **2.4 `localagents seed`.** Offline database from fixtures, timestamps shifted to now:
-  three hosts; live endpoint with an hour of history; one down 20 min; one dormant a week;
-  finished job with requests and tool calls; one running. Gate: seeded database passes the
-  2.3 state functions with the expected states. Lane: Qwen.
+- ☑ **2.4 `localagents seed`.** (Qwen3.8-27B/llamacpp job 20261029-124114-c6fd9b31, 109 turns,
+  414 tests: 2883 probes, 1202 counters, 720 hardware, 4 events, 2 jobs, 152 requests, 192 tool
+  calls in one transaction, 22 ms; deterministic in `now`; refuses a populated file without
+  `--force`, which replaces. Corrected against the brief: `node_dormant(local)` is True (its
+  only endpoint is dormant) while `node_state` is up, the two are orthogonal; the running
+  job's rows are scaled onto its five minutes. Known limit: the seed's `mcp_servers.pid` is
+  the seeding process, so `localagents statusline` over a seeded file renders nothing once
+  that process exits; the monitor pages read status from rows and are the consumer. Review:
+  pending, by a model other than the 27B.)
 
 ## Epic 3: monitor web
 
