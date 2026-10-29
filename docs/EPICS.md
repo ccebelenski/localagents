@@ -48,19 +48,25 @@ the duplicates go), then docs.
   keeps `tool_use_id -> rowid` for pending calls in memory, and sets `finished`/`is_error`
   by rowid when the `ToolResultBlock` arrives. Gate: a replayed SDK message sequence (fixture
   built from the SDK dataclasses) yields the expected rows. Lane: DeepSeek (dgx1-a) or Qwen.
-- ☑ **1.5a Status line read path.** (3025d00, Qwen/ai1 job 20261029-035222-2edd; batch review 1.3+1.4+1.5a+1535399 by DeepSeek/dgx1-a dispatched 2026-10-29 04:20) `mcp_servers` heartbeat every 10 s (`updated`), `stopped`
+- ☑ **1.5a Status line read path.** (3025d00, Qwen/ai1 job 20261029-035222-2edd; batch review 1.3+1.4+1.5a+1535399 by DeepSeek/dgx1-a job 20261029-040715-24e0: all three constructed probes clean, three nits and seven possibles folded into 1.7) `mcp_servers` heartbeat every 10 s (`updated`), `stopped`
   at clean exit, config/transport/shim_port filled; sampler writes `endpoint_load` rows;
   `status.collect()` reads live servers + their queued/running/recent jobs + latest request
   rows + endpoint_load; `status/<pid>.json` and `publish()` removed; the `lost` rule at
   startup. Gate: `test_status.py` renders the same lines from the database; statusline still
   imports no server modules. Lane: Qwen (ai1).
-- ☐ **1.5b Summary read path and exposure.** `summary()` derives usage totals, tool call
+- ☑ **1.5b Summary read path and exposure.** (13551ac + e753ec4, Qwen/ai1 job 20261029-040631-a263; reviewed by Opus-high: no blocking defect, two low defects and the unbounded list_jobs(all=True); the reviewer is fixing its own findings, 2026-10-29 04:30) `summary()` derives usage totals, tool call
   count, `tool_counts`, `last_tool`, files touched, ctx_tokens, gen_tps, run_cwd, log_dir from
   the tables (derivations as in the spec); the in-memory duplicates are removed from `Job`;
   `job_log(tools=N)`; `list_jobs(all=False)`; the progress line names the current tool and
   the error count; `job_status`/`job_log`/`list_jobs` read any server's job, the in-process
   tools refuse another server's with a clear error. Gate: summaries over a seeded database
   match hand-computed values; progress line pinned. Lane: DeepSeek (dgx1-a).
+- ☐ **1.7 Review fold: liveness, loop hygiene, cleanup.** From the DeepSeek batch review and
+  the Opus 1.5b review: a `†` mark for lost; `mark_lost_jobs` checks the pid like `collect`
+  (a stalled server is not a dead one); `collect` LEFT JOINs the lookups; startup writes never
+  kill the server on a lock; `new()` removes its directory on a failed insert; the old
+  `status/` directory is removed at startup; worktree git calls run in `asyncio.to_thread`;
+  subprocess tests point at tmp. Gate: one test per item. Lane: Qwen (ai1), DeepSeek review.
 - ☐ **1.6 Docs and version.** README job records, status line, retention ("retention must
   exceed the longest timeout_s"), `models.example.yaml`; version bump. Gate: full suite;
   README cites nothing that no longer exists. Lane: Qwen or Haiku.
