@@ -183,10 +183,17 @@ user's process), so a stale heartbeat with a live pid of this user is spared as 
   negative `tail_lines` is `bad_argument` (story 1.9 item 7).
 - `requests.http_status` is always the status the backend answered: the `count_tokens` fallback
   records the backend's 404 with `error="count_tokens unsupported; estimated"` even though the
-  shim replies to Claude Code with its own 200 and the estimate (story 1.9 item 8).
-- `mcp_servers.owner` is the pid of the nearest `claude` ancestor the server runs under
-  (`db.session_pid`), the parent pid when there is none — the same walk `status.my_owner` does,
-  so a session's own jobs match their session on the status line (story 1.9 item 9).
+  shim replies to Claude Code with its own 200 and the estimate (story 1.9 item 8); the
+  context-overflow rewrite records the backend's status (vLLM answers 500) and its body in
+  `error`, with `context_exceeded` carrying the backend's original message, while the client
+  still gets Anthropic's 400 `prompt is too long` envelope (story 1.9a row 2).
+  `http_status` 0 is the sentinel for no answer at all — the backend connection failed — and
+  `error` says why.
+- `mcp_servers.owner` is the pid of the nearest Claude Code process the server runs under
+  (`db.session_pid`: an ancestor with `comm` `claude`, or `node` whose command line has an
+  argument named `claude` — an npm install runs as node), the parent pid when there is none —
+  the same walk `status.my_owner` does, so a session's own jobs match their session on the
+  status line (story 1.9 item 9; the node case added in 1.9a row 5).
 - `localagents prune` matches directories named `YYYYMMDD-HHMMSS-<hex>{4,}` (the old four-hex
   names and the new eight-hex names); retention must exceed the longest configured
   `timeout_s`, which the README says.

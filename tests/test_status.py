@@ -397,7 +397,13 @@ def test_shim_usage_feeds_context_and_speed(monkeypatch, tmp_path):
 def test_my_owner_walks_to_a_claude_process_or_none():
     owner = status.my_owner()
     if owner is not None:  # running under Claude Code's Bash tool
-        assert open(f"/proc/{owner}/comm").read().strip() == "claude"
+        comm = open(f"/proc/{owner}/comm").read().strip()
+        # native binary, or an npm install running as node with a claude entry (story 1.9a row 5)
+        assert comm == "claude" or (
+            comm == "node"
+            and any(os.path.basename(a) == "claude"
+                    for a in open(f"/proc/{owner}/cmdline").read().split("\0") if a)
+        )
 
 
 def test_my_owner_is_the_dbs_shared_walk(monkeypatch):

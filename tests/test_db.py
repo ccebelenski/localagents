@@ -1,6 +1,7 @@
 """The SQLite schema module (docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md)."""
 
 import calendar
+import os
 import sqlite3
 import subprocess
 import sys
@@ -368,6 +369,52 @@ def test_session_pid_walks_to_the_claude_ancestor(monkeypatch):
         "/proc/8/comm": "claude\n",
     })
     assert db.session_pid(start_pid=100) == 8
+
+
+def test_session_pid_finds_an_npm_installed_claude_running_as_node(monkeypatch):
+    """Story 1.9a row 5 (1.9 review, probe 3): an npm-installed Claude Code is a node process
+    whose command line runs the npm shim's entry (``.../bin/claude``), so the walk that looked
+    only for comm ``claude`` found nothing and the status line treated every session's jobs as
+    its own. A node ancestor whose cmdline has an argument named ``claude`` is the session."""
+    _fake_proc(monkeypatch, {
+        "/proc/100/stat": "100 (python) S 99 100 100 0 -1 4194304 1 0 0 0",
+        "/proc/99/stat": "99 (uv) S 8 99 99 0 -1 4194304 1 0 0 0",
+        "/proc/99/comm": "uv\n",
+        "/proc/8/stat": "8 (node) S 5 8 8 0 -1 4194304 1 0 0 0",
+        "/proc/8/comm": "node\n",
+        "/proc/8/cmdline": "/usr/bin/node\0/home/x/.npm/bin/claude\0",
+        "/proc/5/comm": "bash\n",
+    })
+    assert db.session_pid(start_pid=100) == 8
+
+
+def test_session_pid_ignores_a_node_running_something_else(monkeypatch):
+    """The cmdline rule is the basename ``claude``: a node app (or cli.js by another name) is
+    not the session, and the walk goes on past it."""
+    _fake_proc(monkeypatch, {
+        "/proc/100/stat": "100 (python) S 8 100 100 0 -1 4194304 1 0 0 0",
+        "/proc/8/stat": "8 (node) S 1 8 8 0 -1 4194304 1 0 0 0",
+        "/proc/8/comm": "node\n",
+        "/proc/8/cmdline": "/usr/bin/node\0/home/x/app/server.js\0--claude-ish\0",
+        "/proc/1/comm": "systemd\n",
+    })
+    assert db.session_pid(start_pid=100) is None
+
+
+def test_my_owner_agrees_with_the_walk_on_a_node_session(monkeypatch):
+    """status.my_owner is db.session_pid with no argument: both name the node ancestor."""
+    from localagents import status
+
+    me = os.getpid()
+    _fake_proc(monkeypatch, {
+        f"/proc/{me}/stat": f"{me} (pytest) S 4242 {me} {me} 0 -1 4194304 1 0 0 0",
+        "/proc/4242/stat": "4242 (node) S 1 4242 4242 0 -1 4194304 1 0 0 0",
+        "/proc/4242/comm": "node\n",
+        "/proc/4242/cmdline": "node\0/usr/local/bin/claude\0",
+        "/proc/1/comm": "systemd\n",
+    })
+    assert db.session_pid() == 4242
+    assert status.my_owner() == 4242
 
 
 def test_session_pid_is_none_below_init_or_without_proc(monkeypatch):

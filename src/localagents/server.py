@@ -398,7 +398,12 @@ async def run_agent(
     )
     if wait_s > 0:
         await store.wait(job.id, wait_s, progress=_progress_reporter(ctx))
-    return job.summary()
+    try:
+        return job.summary()
+    except (sqlite3.Error, db.SchemaError) as e:
+        # the final record's derive reads are reads too: their failure is the database's
+        # problem, not the caller's traceback (story 1.9a row 1)
+        return _database_error(e)
 
 
 @mcp.tool()
@@ -409,11 +414,13 @@ async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = Non
     """
     try:
         job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx))
+        # inside the guard: the summary()'s own derive reads are reads like the wait's
+        # (story 1.9 item 6, made true here by 1.9a row 1 — it sat after the try)
+        return job.summary()
     except KeyError as e:
         return _foreign_or_unknown(job_id, e)
     except (sqlite3.Error, db.SchemaError) as e:
-        return _database_error(e)  # the summary()'s own derive reads (story 1.9 item 6)
-    return job.summary()
+        return _database_error(e)
 
 
 @mcp.tool()
@@ -427,6 +434,8 @@ async def wait_jobs(
     Fallback only: prefer one blocking run_agent per job (each notifies on its own finish).
     mode="any" must be re-armed after every return or the rest finish unseen.
     Returns done (final records) and running (ids, status, elapsed). Progress every minute.
+    A done job's record is derived from the database: when that read fails, the whole call
+    answers database_error — a partial record would be a lie about the jobs it leaves out.
     """
     if mode not in ("all", "any"):
         return {"error": "bad_argument", "message": "mode must be 'all' or 'any'"}
@@ -455,9 +464,15 @@ async def wait_jobs(
         outcome = "some_done"
     else:
         outcome = "timeout"
+    try:
+        done_summaries = [j.summary() for j in done]
+    except (sqlite3.Error, db.SchemaError) as e:
+        # one done job's derive reads failing makes the whole record incomplete: answer
+        # database_error for the call rather than hand back a partial `done` (story 1.9a row 1)
+        return _database_error(e)
     return {
         "outcome": outcome,
-        "done": [j.summary() for j in done],
+        "done": done_summaries,
         "running": [
             # elapsed from the timestamps (summary()'s formula, None-settled 0.0 included —
             # story 1.9 item 2), not a whole summary's db reads
@@ -602,7 +617,12 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
     # a done job whose finally is still finishing its worktree gets the same wait as a cancelled
     # one: the record handed back is the settled one, with kept/note (DeepSeek review of 6005f94)
     await store.wait(job_id, 15)
-    out = job.summary()
+    try:
+        out = job.summary()
+    except (sqlite3.Error, db.SchemaError) as e:
+        # the record cancel_job waited for cannot be built: answer database_error, not the
+        # exception (story 1.9a row 1)
+        return _database_error(e)
     if not job.settled:
         # the 15 s wait timed out: say so — the record is mid-finally and may still move
         # (story 1.9 item 3)

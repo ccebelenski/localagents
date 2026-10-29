@@ -314,14 +314,31 @@ def pid_alive(pid: int, strict: bool = False) -> bool:
     return True
 
 
+def _is_claude(pid: int, comm: str) -> bool:
+    """Is ``pid`` the Claude Code session? The native binary's ``comm`` is ``claude``; an
+    npm-installed one runs as ``node`` with the npm shim's entry (``.../bin/claude``) as an
+    argument, so its ``cmdline`` is what names it. A cmdline that cannot be read is not the
+    session and the walk goes on (story 1.9a row 5)."""
+    if comm == "claude":
+        return True
+    if comm != "node":
+        return False
+    try:
+        with open(f"/proc/{pid}/cmdline") as f:
+            args = f.read().split("\0")
+    except OSError:
+        return False
+    return any(os.path.basename(arg) == "claude" for arg in args if arg)
+
+
 def session_pid(start_pid: int | None = None) -> int | None:
-    """Pid of the nearest ``claude`` process above ``start_pid`` (default: this process): the
-    Claude Code session this process runs under. Lives here because both ``status`` (the walk
-    the status line does) and ``jobs`` (the ``mcp_servers.owner`` the line matches against)
-    need the same answer — the server wrote its parent pid while the line walked to claude, so
-    a session's own jobs rendered as "+N other" (story 1.9 item 9). None when there is no
-    ``claude`` ancestor. Stdlib only; ``open`` goes through the module global so a test can
-    fake /proc."""
+    """Pid of the nearest Claude Code process above ``start_pid`` (default: this process): the
+    session this process runs under, native ``claude`` or an npm-installed one running as
+    ``node`` (story 1.9a row 5). Lives here because both ``status`` (the walk the status line
+    does) and ``jobs`` (the ``mcp_servers.owner`` the line matches against) need the same
+    answer — the server wrote its parent pid while the line walked to claude, so a session's own
+    jobs rendered as "+N other" (story 1.9 item 9). None when there is no such ancestor. Stdlib
+    only; ``open`` goes through the module global so a test can fake /proc."""
     pid = os.getpid() if start_pid is None else start_pid
     for _ in range(12):
         try:
@@ -332,7 +349,7 @@ def session_pid(start_pid: int | None = None) -> int | None:
                 comm = f.read().strip()
         except (OSError, ValueError, IndexError):
             return None
-        if comm == "claude":
+        if _is_claude(ppid, comm):
             return ppid
         if ppid <= 1:
             return None

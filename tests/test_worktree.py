@@ -402,6 +402,118 @@ def test_a_make_worktree_error_during_a_cancel_is_not_dropped(repo, monkeypatch)
     assert "[worktree-error] RuntimeError: git worktree add failed: fatal: simulated" in j.transcript_tail()
 
 
+WORKTREE_CANCEL_LINE = "[cancel] 2 cancel(s) arrived during the job's worktree step; the tree was finished and removed"
+
+
+def _block_worktree_add(monkeypatch):
+    """Block `git worktree add -b` in its thread until the returned Event is set."""
+    import threading
+
+    from localagents import runner
+
+    reached, release = threading.Event(), threading.Event()
+    real_git = runner._git
+
+    def blocking_git(cwd, *args):
+        if args[:3] == ("worktree", "add", "-b"):
+            reached.set()
+            release.wait(10)
+        return real_git(cwd, *args)
+
+    monkeypatch.setattr(runner, "_git", blocking_git)
+    return reached, release
+
+
+def test_a_partially_failed_add_deletes_the_branch_it_created(repo, tmp_path):
+    """Story 1.9a row 4 (1.9 review, probe 1g): git creates the branch before it checks the
+    target, so `git worktree add -b` against an existing directory fails with the branch left
+    behind and an error that never said so. The failed add removes the branch it created and
+    the raised error names it."""
+    j = job("j8", repo, tmp_path / "logs" / "j8")
+    wt = state_dir() / "worktrees" / repo.name / j.name
+    wt.mkdir(parents=True)
+    (wt / "occupied").write_text("leftover\n")  # the add fails: the target already exists
+    with pytest.raises(RuntimeError) as ei:
+        make_worktree(j)
+    assert "git worktree add failed" in str(ei.value)  # git's own reason is still there
+    assert f"branch local-agent/{j.name} removed" in str(ei.value)
+    assert not _branch_exists(repo, f"local-agent/{j.name}")
+    assert "main" in git(repo, "branch", "--list", "main")  # the clean-up touched nothing else
+
+
+def test_a_cancel_during_make_worktree_prints_a_cancel_line(repo, monkeypatch):
+    """Story 1.9a row 3 (1.9 review, probe 1b): a cancel absorbed while the shielded git thread
+    runs was counted nowhere and logged nowhere, and the [worktree] line is written only after
+    the shield returns — so a job cancelled during worktree creation had an empty transcript.
+    Every absorbed cancel is counted and named before the cancel is re-raised."""
+    import asyncio
+
+    from localagents import runner
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    _blocking_query(monkeypatch)
+    store, j = _store_job(repo)
+    reached, release = _block_worktree_add(monkeypatch)
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        assert await asyncio.get_running_loop().run_in_executor(None, reached.wait, 10)
+        await asyncio.sleep(0.1)  # the shield is awaiting the thread
+        j._task.cancel()
+        await asyncio.sleep(0.05)
+        j._task.cancel()  # a second cancel, while the shield absorbs the first
+        await asyncio.sleep(0.1)
+        release.set()
+        await store.wait(j.id, 10)
+        await asyncio.wait([j._task], timeout=10)
+        return j._task.cancelling()
+
+    cancelling = asyncio.run(go())
+    lines = [ln for ln in j.transcript_tail().splitlines() if ln.startswith("[cancel]")]
+    assert cancelling == 2
+    assert j.settled and j.status == "cancelled"
+    assert j.worktree is not None and j.worktree["kept"] is False
+    assert not Path(j.worktree["root"]).exists()
+    assert not _branch_exists(repo, f"local-agent/{j.name}")
+    assert lines == [WORKTREE_CANCEL_LINE]
+
+
+def test_two_cancel_job_calls_during_make_worktree_print_a_cancel_line(repo, monkeypatch):
+    """The tool door for the same window (1.9 review, probe 1e): two cancel_job calls while
+    `git worktree add` is in flight both return the cancelled record, and the transcript now
+    says what the cancels interrupted instead of being empty."""
+    import asyncio
+
+    from localagents import runner, server
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    _blocking_query(monkeypatch)
+    store, j = _store_job(repo)
+    monkeypatch.setattr(server, "store", store)
+    reached, release = _block_worktree_add(monkeypatch)
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        assert await asyncio.get_running_loop().run_in_executor(None, reached.wait, 10)
+        await asyncio.sleep(0.1)
+        c1 = asyncio.create_task(server.cancel_job(j.id))
+        await asyncio.sleep(0.1)
+        c2 = asyncio.create_task(server.cancel_job(j.id))  # job.done is still False: cancels too
+        await asyncio.sleep(0.1)
+        assert j._task.cancelling() == 2
+        release.set()
+        out = await asyncio.gather(c1, c2)
+        await asyncio.wait([j._task], timeout=10)
+        return out
+
+    out1, out2 = asyncio.run(go())
+    lines = [ln for ln in j.transcript_tail().splitlines() if ln.startswith("[cancel]")]
+    assert out1["status"] == "cancelled" and out2["status"] == "cancelled"
+    assert j.settled and j.worktree["kept"] is False
+    assert not Path(j.worktree["root"]).exists()
+    assert lines == [WORKTREE_CANCEL_LINE]
+
+
 def test_cancel_job_on_an_unsettled_job_returns_the_settled_record(repo, monkeypatch):
     """DeepSeek review of 6005f94, nit: cancel_job on a job whose status is final but whose
     finally is still finishing the worktree returned at once, without `kept`/`note`. It waits

@@ -81,7 +81,18 @@ def make_worktree(job: Job) -> dict[str, Any]:
     wt.parent.mkdir(parents=True, exist_ok=True)
     r = _git(repo, "worktree", "add", "-b", branch, str(wt), "HEAD")
     if r.returncode != 0:
-        raise RuntimeError(f"git worktree add failed: {r.stderr.strip()}")
+        # git creates the branch before it checks the target, so a failed add (the target
+        # directory already exists, say) leaves the branch behind. Delete what this attempt
+        # created, and name the branch in the error either way, never silently
+        # (story 1.9a row 4).
+        err = f"git worktree add failed: {r.stderr.strip()}"
+        if _git(repo, "branch", "--list", branch).stdout.strip():
+            br = _git(repo, "branch", "-D", branch)
+            if br.returncode == 0:
+                err += f"; branch {branch} removed"
+            else:
+                err += f"; branch {branch} left behind: {br.stderr.strip()}"
+        raise RuntimeError(err)
     try:
         base = _git(repo, "rev-parse", "HEAD").stdout.strip()
         # keep the relative position inside the repo
@@ -256,7 +267,12 @@ async def _make_worktree_shielded(job: Job) -> dict[str, Any]:
     A cancel cannot stop the thread: git goes on to create the tree and branch. So the thread's
     future is shielded, and on a cancel this waits for it (absorbing further cancels; the wait is
     bounded by the git calls), records the tree on the job so run_job's finally removes it, and
-    then re-raises the cancel."""
+    then re-raises the cancel. Every cancel that arrived during the step is counted (the task's
+    cancelling() delta, as _to_the_end counts the finish step's) and named in a [cancel] line
+    before the re-raise: the [worktree] line is written only after the shield returns, so without
+    it a job cancelled during worktree creation had an empty transcript (story 1.9a row 3)."""
+    task = asyncio.current_task()
+    started = task.cancelling() if task is not None else 0
     made = asyncio.ensure_future(asyncio.to_thread(make_worktree, job))
     try:
         return await asyncio.shield(made)
@@ -266,6 +282,13 @@ async def _make_worktree_shielded(job: Job) -> dict[str, Any]:
                 await asyncio.wait([made])
             except asyncio.CancelledError:
                 pass
+        absorbed = (task.cancelling() if task is not None else 0) - started
+        if absorbed:
+            _log_safe(
+                job,
+                f"[cancel] {absorbed} cancel(s) arrived during the job's worktree step; "
+                "the tree was finished and removed",
+            )
         if not made.cancelled() and made.exception() is None:
             job.worktree = made.result()
         elif not made.cancelled():

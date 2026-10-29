@@ -64,10 +64,11 @@ def load_summary(probe: dict[str, Any]) -> str | None:
 
 
 def my_owner() -> int | None:
-    """Pid of the nearest ``claude`` process above us: the Claude Code session whose status line
-    is asking. None when there is none (then every job counts as ours). The walk lives in
-    ``db.session_pid`` — the server writes the same answer as its row's ``owner``, so a
-    session's own jobs match instead of folding into "+N other" (story 1.9 item 9)."""
+    """Pid of the nearest Claude Code process above us (native ``claude``, or an npm install
+    running as ``node``): the session whose status line is asking. None when there is none
+    (then every job counts as ours). The walk lives in ``db.session_pid`` — the server writes
+    the same answer as its row's ``owner``, so a session's own jobs match instead of folding
+    into "+N other" (story 1.9 item 9)."""
     return db.session_pid()
 
 

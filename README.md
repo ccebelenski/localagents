@@ -228,10 +228,10 @@ context-tuning problem, worth seeing even after the job turned green.
 old (and its pid still exists). A server that exited or was killed drops off the line
 as its jobs age out; the next server to start marks that one's unfinished jobs `lost`.
 The line is scoped to the Claude Code session asking: each server records as its owner
-the nearest `claude` ancestor it runs under (its parent pid when there is none — the
-same walk the renderer does up from the status line script), so a session's own jobs
-match their session whichever way the server was started (`uv run localagents`
-included). Jobs of other sessions on the same machine fold into a trailing
+the nearest Claude Code process it runs under (native `claude`, or an npm install running
+as `node` with a `claude` entry in its command line; its parent pid when there is none —
+the same walk the renderer does up from the status line script), so a session's own jobs
+match their session whichever way the server was started (`uv run localagents` included). Jobs of other sessions on the same machine fold into a trailing
 `+N jobs in other sessions` line, because the boxes are shared and knowing one is
 busy matters even when the job isn't yours.
 

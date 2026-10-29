@@ -265,8 +265,10 @@ class Shim:
             est = max(1, len(raw) // 4)
             # the row records the backend's own status: http_status is always what the backend
             # answered, even though the reply to Claude Code is our 200 with the estimate
-            # (story 1.9 item 8)
-            self._log(job, path, body, note, status=404, ms=0, error="count_tokens unsupported; estimated")
+            # (story 1.9 item 8), and its own ms, not a 0 that says the round-trip was instant
+            # (story 1.9a row 2)
+            self._log(job, path, body, note, status=404,
+                      ms=int((time.monotonic() - t0) * 1000), error="count_tokens unsupported; estimated")
             return JSONResponse({"input_tokens": est})
 
         if body is not None and (job.dump or os.environ.get("LOCALAGENTS_DUMP_REQUESTS") == "1"):
@@ -279,14 +281,19 @@ class Shim:
             await resp.aclose()
             status = resp.status_code
             translated = translate_context_error(status, data) if status >= 400 else None
+            # the row records what the backend said — its status and its body — even when the
+            # client gets the rewrite. `context_exceeded` carries the backend's original
+            # message, so the rewrite is visible in the row (story 1.9a row 2; the contract in
+            # the spec: http_status is always the backend's status)
             if translated:
-                data, original = translated
-                status = 400
-                resp_headers["content-type"] = "application/json"
-                note = {**note, "context_exceeded": original[:300]}
+                note = {**note, "context_exceeded": translated[1][:300]}
             self._log(job, path, body, note, status=status, ms=int((time.monotonic() - t0) * 1000),
                       error=data[:800].decode(errors="replace") if status >= 400 else None,
                       usage=_usage_from_json(data))
+            if translated:
+                data = translated[0]  # the Anthropic envelope Claude Code compacts on
+                status = 400
+                resp_headers["content-type"] = "application/json"
             return Response(content=data, status_code=status, headers=resp_headers)
 
         async def gen():

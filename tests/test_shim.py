@@ -382,6 +382,84 @@ def test_count_tokens_fallback_records_the_backends_404(tmp_path, monkeypatch):
     assert row["error"] == "count_tokens unsupported; estimated"
 
 
+def _relay_and_row(tmp_path, monkeypatch, path, send, body):
+    """Drive shim.relay for one path against a fake upstream `send`; return (reply, request row)."""
+    import asyncio
+
+    from starlette.requests import Request
+
+    from localagents import jobs
+    from localagents.shim import Shim
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    job = jobs.JobStore().new(
+        task="t", model="m", endpoint="e", base_url="http://x:8080", backend="llama.cpp", host="local",
+        cwd="/tmp", run_cwd="/tmp", isolation="none",
+    )
+    shim = Shim(lambda jid: job)
+    shim._client.send = send
+    raw = json.dumps(body).encode()
+
+    async def receive():
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    scope = {
+        "type": "http", "method": "POST", "headers": [(b"content-type", b"application/json")],
+        "path": f"/job/{job.id}{path}", "query_string": b"", "root_path": "",
+        "path_params": {"job_id": job.id, "path": path.lstrip("/")},
+    }
+    resp = asyncio.run(shim.relay(Request(scope, receive)))
+    row = job._conn.execute(
+        "SELECT r.* FROM requests r JOIN paths p ON p.id = r.path_id"
+    ).fetchone()
+    return resp, row
+
+
+def test_overflow_rewrite_records_the_backends_status(tmp_path, monkeypatch):
+    """Story 1.9a row 2: the context-overflow translation rewrote the client's status to 400 and
+    stored that rewritten 400 in the row. The row records what the backend said (500, its own
+    body); `context_exceeded` carries the original message, so the rewrite is still visible. The
+    client keeps getting Anthropic's 400 envelope, which is what Claude Code compacts on."""
+    import httpx
+
+    backend_body = {"error": {"message": "This model's maximum context length is 131072 tokens. "
+                                         "However, you requested 200000 tokens (199990 in the messages, "
+                                         "10 in the completion). Please reduce.", "type": "BadRequestError"}}
+
+    async def too_long(upstream, stream=True):
+        return httpx.Response(500, json=backend_body, request=upstream)
+
+    resp, row = _relay_and_row(
+        tmp_path, monkeypatch, "/v1/messages", too_long,
+        {"model": "m", "messages": [{"role": "user", "content": "x"}], "stream": False},
+    )
+    assert resp.status_code == 400 and b"prompt is too long" in resp.body  # the client's rewrite
+    assert row["http_status"] == 500  # the backend's answer, not the rewrite
+    assert row["context_exceeded"].startswith("This model's maximum context length")
+    assert "maximum context length" in row["error"]  # the backend's body, not the envelope
+    assert "prompt is too long" not in row["error"]
+
+
+def test_count_tokens_fallback_records_its_real_ms(tmp_path, monkeypatch):
+    """Story 1.9a row 2: the fallback row's `ms` was hard-coded 0 although the round-trip took
+    time. It records the measured time, like every other row."""
+    import asyncio
+
+    import httpx
+
+    async def slow_not_found(upstream, stream=True):
+        await asyncio.sleep(0.01)  # a backend that takes 10 ms to say it has no count_tokens
+        return httpx.Response(404, request=upstream)
+
+    resp, row = _relay_and_row(
+        tmp_path, monkeypatch, "/v1/messages/count_tokens", slow_not_found,
+        {"model": "m", "messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert resp.status_code == 200
+    assert row["error"] == "count_tokens unsupported; estimated"
+    assert row["ms"] >= 10
+
+
 def test_stream_usage_merges_message_start_and_message_delta():
     from localagents.shim import _merge_usage, _usage_from_sse_head, _usage_from_sse_tail
 
