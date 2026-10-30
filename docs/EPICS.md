@@ -1232,7 +1232,17 @@ ruling (e). The lane is also the operator's first live job on the landed page.
   1201 → 490 ms at the function, 861 → 390 ms cold on the route. DeepSeek's notes: fleet_history
   is still serial per endpoint (~2 s cold for five dense 7 d endpoints); the cache is bounded but
   up to 5 × (endpoints + 2) bodies; a seed with `--now` near the wall clock now trips both
-  liveness checks. Review of the fold: Qwen (the R1 SQL is the deep door).
+  liveness checks. Review of the fold: Qwen/ai1 job 20261030-141817-f201ca86, 49 turns, 9 min,
+  construct-it over the pre-change function as the oracle: every edge world (n = 0/1, k = 1 with
+  a reset and a since change, the k boundaries, a down probe newest/oldest/pre-range, mixed
+  presence, same-t ties, max_points = 1) and 120 random worlds byte-identical, the kept fetch
+  exactly the points answered; fleet 7 d route 23 → 32 statements (narrower: the largest 1441 →
+  481 rows); the cache and seed guards as claimed, the 120 s boundary exact. NO DEFECT: the
+  3.9C chain closes. Possible, noted: the spans SQL's bare `id` sits beside two aggregates (SQLite
+  guarantees the lone min/max case; correct on 3.47.1); the non-force seed path has no inner
+  re-check; a `--now` in the future refuses later seeds until the wall clock catches up; the
+  history cache has no age term, so on a `--no-collect` server (the smoke's) a jobs-bearing body
+  freezes at its first answer (a real monitor's probes move newest-t every tick).
 - ☑ **3.9D The monitor's page**: `static/app.js`, `endpoint.js`, `job.js`, `app.css`,
   `index.html`, with `tests/test_monitor_page.py` and `tools/smoke/` (~2.9k). Qwen/ai2 job
   20261030-125256-9ee02e1b, 175 turns, 71 min, SIX compactions (the 131k window; it finished),
