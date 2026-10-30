@@ -984,7 +984,7 @@ The 3.7 chain's reviews are closed: no open defect.
   name shortened to its id tail ("…4b27af51", the full name in the link's title; the table and
   the timeline keep the full name), then elapsed, the ctx bar + %, t/s, the errors badge; calls
   and files last, so the ellipsis cuts counts, never the fill. Same two-line, fixed-height row.
-- ☐ **3.7t The handshake row is not an error.** Operator (2026-10-30, watching the first live job on
+- ☑ **3.7t The handshake row is not an error.** (Landed 6c65906: DeepSeek/dgx1-a job 20261030-193134-10ea9bc6, 23 turns, 5 min, 698 tests. The shim answers `/api/hello` (GET and HEAD) with 200 `{}` before the body read, forwards nothing, writes no row; three tests drive the real Starlette route over httpx's ASGI transport against an unreachable stub backend; schema spec True-now under `requests`. Lane's notes for later: `Shim.__init__`'s httpx client is never closed; the route's HEAD depends on GET being in the methods list (now guarded by a test); only content-type and cache-control are forwarded upstream→client (a 429's retry-after is dropped). Not active in the running MCP server until it restarts, 3.8b.) Operator (2026-10-30, watching the first live job on
   the landed page): "I see a few calls to /api/hello that return an error - what's those?" They
   are Claude Code's own startup handshake: every headless session opens with `GET /api/hello`
   to its base URL (the shim), the shim forwards it and records the backend's own status (501 on
@@ -1099,7 +1099,7 @@ The 3.7 chain's reviews are closed: no open defect.
   Lane: Opus (operator: "It can go to Opus."), given the oracle and the acceptance numbers, not
   the method; also the activity line's 60-char cut in `epJobRow` (`app.js:413-414`) and the
   active phrase's 12em ellipsis (`app.css:332`) go, since they are the same convention.
-- ☐ **3.7v "tool errors" 2 when the job page shows 1 error.** Operator: "tool errors sometimes
+- ☑ **3.7v "tool errors" 2 when the job page shows 1 error.** (Landed 39fdb3a: Qwen/ai1 job 20261030-193144-28191e60, 54 turns, 6 min, 700 tests on main. `requestsTable` draws a `/api/hello` row as a muted "handshake" pill, status in the title, no `req-err`; the job header says "tool errors" and "request errors" (status outside 2xx or an error text, handshake rows skipped); the requests-section total skips them too. DOM smoke over the seeded world, which carries one 501 handshake row per job: `pill-muted:handshake:501`, `pill-error:error:500`, `pill-ok:ok:200`, header tool errors=1 / request errors=0, zero exceptions. Lane's corrections and notes: the brief's "a test pins ES5" was FALSE — no test scans the static JS for let/const/arrow/template strings (a gate worth adding); the ENDPOINT page's requests totals are server-computed (`read.py`, error text non-empty) and do not skip handshake rows — moot once 3.7t's shim runs, and the seeded hello rows carry no error text; the spec's derived-columns prose already said "the hello handshake rows have no tokens".) Operator: "tool errors sometimes
   shows a count of 2 when the job only shows 1 error returned (often the /api/hello we will
   adress) - this could also be related to your earlier fix on dedupe." Coordinator's reading
   over the database (ten newest jobs): the table's count is tool RESULTS flagged `is_error`
