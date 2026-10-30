@@ -5,6 +5,7 @@ on ai1; three endpoint events (ai1's counters restart at NOW-1800). The JSON sha
 contract of spec §5a."""
 import json
 import math
+import os
 import time
 
 import pytest
@@ -27,6 +28,15 @@ def world(tmp_path):
     conn = db.open_db(path)
     yield conn, registry(tmp_path)
     conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _empty_finished_cache():
+    """Story 3.7-fold-4s: the finished-entry cache is module-level (per process), and every
+    test reads its own scratch world with hand-inserted ids; start each test from an empty
+    cache so a scratch database can never answer from another one's figures."""
+    read._FINISHED_CACHE.clear()
+    yield
 
 
 def _host(ov, name):
@@ -408,6 +418,118 @@ def test_finished_elapsed_is_frozen_across_clock_reads(world):
     by = lambda jobs_, s: next(j for j in jobs_ if j["status"] == s)
     assert by(b, "succeeded")["elapsed_s"] == by(a, "succeeded")["elapsed_s"]
     assert by(b, "running")["elapsed_s"] == pytest.approx(by(a, "running")["elapsed_s"] + 120.0)
+
+
+# --- story 3.7-fold-4s: the finished-row cache -------------------------------------------------
+
+
+def _add_finished(conn, n):
+    """``n`` hand-inserted finished rows, the shape test_only_the_ten_newest uses: 'failed',
+    started NOW-200+k s and finished NOW-100+k s (newer k is a newer finish)."""
+    with db.immediate(conn):
+        for k in range(n):
+            conn.execute(
+                "INSERT INTO jobs (id, name, status, created_at, started_at, finished_at, updated,"
+                " num_turns) VALUES (?, ?, 'failed', ?, ?, ?, ?, ?)",
+                (f"seedfin{k}", f"fin-{k}", NOW - 200.0 + k, NOW - 200.0 + k,
+                 NOW - 100.0 + k, NOW - 100.0 + k, k))
+
+
+def test_finished_rows_derive_once_across_pushes(world):
+    """Story 3.7-fold-4s (the review's P1 world): 12 hand-inserted finished rows plus the live
+    one; the SECOND overview's statement count equals the first's minus 6 per finished row
+    shown — the six derive statements each row costs come from the cache, only the SELECTs
+    re-run. (Pre-fix the two calls are equal: 86 and 86 measured; the review's world: 92.)"""
+    conn, reg = world
+    _add_finished(conn, 12)
+    stmts = []
+    conn.set_trace_callback(stmts.append)
+    read.overview(conn, reg, NOW, WINDOW_S)
+    first = len(stmts)
+    stmts.clear()
+    ov = read.overview(conn, reg, NOW, WINDOW_S)
+    second = len(stmts)
+    conn.set_trace_callback(None)
+    shown = [j for j in ov["jobs"] if j["status"] not in read.LIVE_STATUSES]
+    assert len(shown) == 10  # the tail cap: 12 in, plus the seeded finished one, 10 shown
+    assert first - second == 6 * len(shown)
+
+
+def test_a_job_finishing_between_pushes_enters_the_cache_with_its_figures(world):
+    """Story 3.7-fold-4s: a job live on one push and finished on the next appears in the
+    second with its figures (the cache computes them on the first finished push), and a third
+    push reads them from the cache unchanged."""
+    conn, reg = world
+    running_id = conn.execute("SELECT id FROM jobs WHERE status = 'running'").fetchone()["id"]
+    before = next(j for j in read.overview(conn, reg, NOW, WINDOW_S)["jobs"] if j["id"] == running_id)
+    assert before["status"] == "running" and before["tool_calls"] > 0
+    with db.immediate(conn):
+        conn.execute("UPDATE jobs SET status = 'succeeded', finished_at = ?, updated = ?, result = 'done'"
+                     " WHERE id = ?", (NOW - 1.0, NOW - 1.0, running_id))
+    after = next(j for j in read.overview(conn, reg, NOW + 60.0, WINDOW_S)["jobs"] if j["id"] == running_id)
+    assert after["status"] == "succeeded"
+    for key in ("num_turns", "tool_calls", "errors", "last_tool", "files", "ctx_tokens", "gen_tps"):
+        assert after[key] == before[key], key
+    assert after["elapsed_s"] == pytest.approx((NOW - 1.0) - before["started_at"], abs=0.05)
+    third = next(j for j in read.overview(conn, reg, NOW + 120.0, WINDOW_S)["jobs"] if j["id"] == running_id)
+    # the cached entry answers the third push with the same figures (server_live rides the
+    # server row's age and is not part of the cached entry)
+    assert {k: v for k, v in third.items() if k != "server_live"} == \
+           {k: v for k, v in after.items() if k != "server_live"}
+
+
+def test_the_finished_cache_holds_only_the_current_tail(world):
+    """Story 3.7-fold-4s: 11 finished jobs (10 hand-inserted plus the seeded one), the tail
+    shows 10 — after a call the cache holds exactly those 10 ids; the one that left the tail
+    (the seeded job, oldest finish) is evicted."""
+    conn, reg = world
+    _add_finished(conn, 10)
+    ov = read.overview(conn, reg, NOW, WINDOW_S)
+    tail = [j["id"] for j in ov["jobs"] if j["status"] not in read.LIVE_STATUSES]
+    assert len(tail) == 10
+    ids = {k[0] for k in read._FINISHED_CACHE}
+    assert ids == set(tail) and len(read._FINISHED_CACHE) == 10
+    seeded_finished = conn.execute("SELECT id FROM jobs WHERE status = 'succeeded'").fetchone()["id"]
+    assert seeded_finished not in ids  # finished NOW-600: the oldest, out of the 10-tail
+
+
+def test_server_live_recomputes_on_a_cached_finished_row(world):
+    """Story 3.7-fold-4s: the cached figures never change but the job's server still beats —
+    marking it stopped between pushes flips ``server_live`` on the cached entry while every
+    other field (the derive figures included) stays exactly as cached."""
+    conn, reg = world
+    with db.immediate(conn):
+        conn.execute("INSERT INTO mcp_servers (id, pid, owner, started, updated) VALUES (?, ?, ?, ?, ?)",
+                     ("srv-fin", os.getpid(), os.getuid(), NOW - 30.0, NOW))
+        conn.execute("INSERT INTO jobs (id, name, mcp_server_id, status, created_at, started_at,"
+                     " finished_at, updated) VALUES ('fin-srv', 'fin srv', 'srv-fin', 'succeeded', ?, ?, ?, ?)",
+                     (NOW - 400.0, NOW - 400.0, NOW - 200.0, NOW - 200.0))
+        conn.execute("INSERT INTO tool_calls (job_id, t, tool, tool_use_id, input)"
+                     " VALUES ('fin-srv', ?, 'Bash', 'tu1', 'ls')", (NOW - 300.0,))
+    a = next(j for j in read.overview(conn, reg, NOW, WINDOW_S)["jobs"] if j["id"] == "fin-srv")
+    assert a["server_live"] is True and a["tool_calls"] == 1
+    with db.immediate(conn):
+        conn.execute("UPDATE mcp_servers SET stopped = ? WHERE id = 'srv-fin'", (NOW + 5.0,))
+    b = next(j for j in read.overview(conn, reg, NOW + 10.0, WINDOW_S)["jobs"] if j["id"] == "fin-srv")
+    assert b["server_live"] is False and b["tool_calls"] == 1
+    assert {k: v for k, v in b.items() if k != "server_live"} == \
+           {k: v for k, v in a.items() if k != "server_live"}
+
+
+def test_a_terminal_row_with_null_finished_at_shows_no_moving_elapsed(world):
+    """Story 3.7-fold-4s (the review's POSSIBLE): the schema allows a terminal row with a
+    NULL ``finished_at`` (no write path produces one). Its ``elapsed_s`` is null on every
+    read — a finished row never shows a moving number. Pre-fix the frozen clock fell back
+    to ``now`` and the figure grew 120 s between the two reads below."""
+    conn, reg = world
+    with db.immediate(conn):
+        conn.execute("INSERT INTO jobs (id, name, status, created_at, started_at, updated)"
+                     " VALUES ('fin-nul', 'fin null', 'failed', ?, ?, ?)",
+                     (NOW - 400.0, NOW - 300.0, NOW - 300.0))
+    a = next(j for j in read.overview(conn, reg, NOW, WINDOW_S)["jobs"] if j["id"] == "fin-nul")
+    b = next(j for j in read.overview(conn, reg, NOW + 120.0, WINDOW_S)["jobs"] if j["id"] == "fin-nul")
+    assert a["status"] == "failed" and a["started_at"] == NOW - 300.0
+    assert a["elapsed_s"] is None and b["elapsed_s"] is None
 
 
 def test_overview_events_are_the_newest_twenty_with_endpoint_names(world):

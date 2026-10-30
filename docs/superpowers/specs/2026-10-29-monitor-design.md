@@ -374,7 +374,14 @@ event = {"t", "endpoint" (its name), "kind" ("up" | "down" | "restarted"), "deta
 An endpoint in the database but not in models.yaml is ignored: it has no host card and its
 events are left out of `events`. A configured endpoint with no `endpoints` row yet (never
 probed, never ran a job) is listed, dormant, every figure null; the read creates no row (the
-collector's first tick does). Jobs are listed whatever endpoint they ran on.
+collector's first tick does). Jobs are listed whatever endpoint they ran on. A finished log
+row's derived figures are computed once per monitor process and served from that cache after
+its first finished push (only `server_live` re-reads the server row, and a finished row's
+`elapsed_s` is the run's frozen length); the store's write rules make the cached figures
+static — after a job's terminal row UPDATE nothing writes its requests or tool_calls rows
+(story 3.7-fold-4s). A terminal row whose `finished_at` is NULL (no write path produces one;
+the schema allows it) reports `elapsed_s` null — a finished row never shows a moving number
+(story 3.7-fold-4s).
 
 **Endpoint history** (`GET /api/endpoints/{name}/history`):
 

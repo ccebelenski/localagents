@@ -199,16 +199,38 @@ _LIVE_TAIL = (" WHERE j.status IN ('queued', 'running')"
 _FINISHED_TAIL = (" WHERE j.status NOT IN ('queued', 'running')"
                   " ORDER BY j.finished_at DESC, j.rowid DESC LIMIT ?")
 
+# story 3.7-fold-4s: a finished row's derived figures are computed once per process. The store's
+# write rules make them static: run_job's finally sets ``finished_at`` and writes the row with the
+# job's LAST ``changed()`` (runner.py's tail), and record_request, record_tool_call and
+# record_tool_result (jobs.py) all run in the message loop before that UPDATE — after the terminal
+# UPDATE nothing writes the job's requests or tool_calls rows, and the row itself is final
+# (``mark_lost_jobs``, jobs.py, is the one cross-server write and it only touches live rows, in
+# the same transaction that stamps them terminal). ``server_live`` is the exception that leaves
+# the cache: the job's ``mcp_servers`` row beats on after the job ends, so ``_recent_jobs``
+# recomputes it each push from the joined server columns (already in the row, no statement).
+# The key is ``(id, finished_at, updated)``: ids are uuid primary keys, so in a real process the
+# id alone identifies the row; ``finished_at`` and ``updated`` are the row's finality stamps —
+# static by the rules above — and they keep a scratch database reusing a fixed id in tests from
+# answering from an earlier scratch database's figures.
+_FINISHED_CACHE: dict[tuple[str, float | None, float | None], dict[str, Any]] = {}
+
 
 def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: bool) -> dict[str, Any]:
     """One snapshot job row (spec §5a ``running_job``): the status line's entry
     (status.collect) plus id, name, elapsed, errors and the last tool. ``frozen`` marks a
     finished row: its ``elapsed_s`` reads finished_at - started_at, the run's length, so the
-    figure stops moving; every derived figure reads the job's rows as-is (static once the job
-    is done). Not limited to live servers: ``server_live`` says whether its server still beats."""
+    figure stops moving; a finished row whose ``finished_at`` is NULL (the schema allows it, no
+    write path produces one) has ``elapsed_s`` null — no end is known, and a finished row never
+    shows a moving number (story 3.7-fold-4s). Every derived figure reads the job's rows as-is
+    (static once the job is done). Not limited to live servers: ``server_live`` says whether its
+    server still beats."""
     jid = j["id"]
     start = j["started_at"] or j["created_at"]
-    clock = j["finished_at"] if frozen and j["finished_at"] is not None else now
+    if frozen and j["finished_at"] is None:
+        elapsed = None
+    else:
+        clock = j["finished_at"] if frozen else now
+        elapsed = round(clock - start, 1) if start is not None else None
     ctx = derive.ctx_tokens(conn, jid)
     tps = derive.gen_tps(conn, jid)
     # row 5 (3.2 review): the row carries the DISPLAY form the status bar shows — one line,
@@ -223,7 +245,7 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
         "status": j["status"],
         "started_at": start,
         "finished_at": j["finished_at"],
-        "elapsed_s": round(clock - start, 1) if start is not None else None,
+        "elapsed_s": elapsed,
         "num_turns": j["num_turns"],
         "tool_calls": derive.tool_call_count(conn, jid),
         "errors": derive.error_count(conn, jid),
@@ -245,12 +267,35 @@ def _recent_jobs(conn: sqlite3.Connection, now: float,
     """The snapshot's jobs list (story 3.7g): every queued or running job oldest first, then the
     last ``keep_finished`` finished jobs (any terminal status) newest-finished first — the page's
     Recent jobs log. Each entry is paired with the job's ``endpoint_id`` (the row, not the name:
-    two configs may share an endpoint name)."""
+    two configs may share an endpoint name).
+
+    Story 3.7-fold-4s: finished entries come from the module-level ``_FINISHED_CACHE`` (per
+    process; see there for the write rules that make the figures static) — a job whose status
+    moves live-to-finished enters the cache on its first finished push, and a finished row costs
+    no derive statements once cached. Live rows are never cached. After the finished loop every
+    cached entry whose id left the current tail is evicted, so the dict holds at most
+    ``keep_finished`` entries."""
     out = []
     for j in conn.execute(_JOB_SELECT + _LIVE_TAIL):
         out.append((j["endpoint_id"], _job_entry(conn, j, now, frozen=False)))
+    tail_ids = set()
     for j in conn.execute(_JOB_SELECT + _FINISHED_TAIL, (keep_finished,)):
-        out.append((j["endpoint_id"], _job_entry(conn, j, now, frozen=True)))
+        tail_ids.add(j["id"])
+        key = (j["id"], j["finished_at"], j["updated"])
+        cached = _FINISHED_CACHE.get(key)
+        if cached is None:
+            entry = _job_entry(conn, j, now, frozen=True)
+            kept = dict(entry)
+            kept.pop("server_live")  # the server's heartbeat can move after the job: recomputed
+            _FINISHED_CACHE[key] = kept
+        else:
+            entry = dict(cached)  # a fresh dict per push: the caller owns what overview returns
+            entry["server_live"] = _server_live(j, now)
+        out.append((j["endpoint_id"], entry))
+    # evict ids that left the tail; pop's default because worker threads share the dict and a
+    # concurrent push may have evicted the same key first
+    for key in [k for k in _FINISHED_CACHE if k[0] not in tail_ids]:
+        _FINISHED_CACHE.pop(key, None)
     return out
 
 

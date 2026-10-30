@@ -635,6 +635,51 @@ def test_a_cancel_during_the_finallys_await_still_awaits_every_task(reg, monkeyp
     assert sorted(got_unwound) == sorted(expected) and left == []
 
 
+def _monitor_import_hits(source):
+    """Story 3.7-fold-2b's guard walker, over module source text: every spelling of an import
+    of the monitor package. Story 3.7-fold-4s completed it (DeepSeek review of f670097/6e686bf:
+    the AST walk caught every static spelling except three) — it now also catches the runtime
+    forms ``importlib.import_module("localagents.monitor...")`` / ``__import__(...)`` and the
+    package-then-attribute form ``from localagents import monitor``."""
+    import ast
+
+    tree = ast.parse(source)
+    hits = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == "localagents.monitor" or a.name.startswith("localagents.monitor."):
+                    hits.append(f"import {a.name}")
+        elif isinstance(node, ast.ImportFrom):
+            # absolute: from localagents.monitor import x; relative inside the localagents
+            # package (these files are all one level below its root): from .monitor import x
+            if node.module is None:  # from . import x: the names are the modules
+                mods = [a.name for a in node.names] if node.level >= 1 else []
+            else:
+                mods = [node.module]
+            for m in mods:
+                top = m.split(".", 1)[0]
+                if top == "monitor" and node.level >= 1:
+                    hits.append(f"from {'.' * node.level}{node.module or ''}")
+                elif m == "localagents.monitor" or m.startswith("localagents.monitor."):
+                    hits.append(f"from {m}")
+            # from localagents import monitor (the package, then the attribute)
+            if node.module == "localagents" and any(a.name == "monitor" for a in node.names):
+                hits.append("from localagents import monitor")
+        elif isinstance(node, ast.Call):
+            # importlib.import_module("localagents.monitor..."), __import__("localagents.monitor...")
+            # and the from-import spelling import_module(...); only literal first arguments are
+            # decidable, and those are the forms a static import smuggles into a runtime call
+            f = node.func
+            fname = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+            if fname in ("import_module", "__import__") and node.args:
+                a0 = node.args[0]
+                if isinstance(a0, ast.Constant) and isinstance(a0.value, str) and (
+                        a0.value == "localagents.monitor" or a0.value.startswith("localagents.monitor.")):
+                    hits.append(f"{fname}({a0.value!r})")
+    return hits
+
+
 def test_the_mcp_server_side_never_imports_the_monitor_package():
     """The decided rule (HANDOFF "Decided, do not reopen", and db.py's module docstring): the
     MCP server never imports from ``localagents.monitor``. Story 3.7-fold-2 briefly broke it —
@@ -643,36 +688,35 @@ def test_the_mcp_server_side_never_imports_the_monitor_package():
     it parses the AST of every module the MCP server imports at steady state (``__init__.py`` is
     excluded on purpose: its monitor import is lazy, inside the ``monitor`` command branch, and
     that laziness is itself load-bearing) and fails on any absolute or relative import of the
-    monitor package, wherever it sits — including inside a function."""
-    import ast
-
+    monitor package, wherever it sits — including inside a function, and including the runtime
+    spellings the static import statements do not cover (3.7-fold-4s)."""
     src = Path(__file__).resolve().parent.parent / "src" / "localagents"
     core = ["server.py", "jobs.py", "runner.py", "status.py", "derive.py", "registry.py",
             "shim.py", "db.py"]
     assert all((src / m).is_file() for m in core), "a core module moved; update this guard"
-
-    def monitor_imports(path):
-        tree = ast.parse(path.read_text())
-        hits = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for a in node.names:
-                    if a.name == "localagents.monitor" or a.name.startswith("localagents.monitor."):
-                        hits.append(f"import {a.name}")
-            elif isinstance(node, ast.ImportFrom):
-                # absolute: from localagents.monitor import x; relative inside the localagents
-                # package (these files are all one level below its root): from .monitor import x
-                if node.module is None:  # from . import x: the names are the modules
-                    mods = [a.name for a in node.names] if node.level >= 1 else []
-                else:
-                    mods = [node.module]
-                for m in mods:
-                    top = m.split(".", 1)[0]
-                    if top == "monitor" and node.level >= 1:
-                        hits.append(f"from {'.' * node.level}{node.module or ''}")
-                    elif m == "localagents.monitor" or m.startswith("localagents.monitor."):
-                        hits.append(f"from {m}")
-        return hits
-
-    offenders = {m: hits for m in core if (hits := monitor_imports(src / m))}
+    offenders = {m: hits for m in core if (hits := _monitor_import_hits((src / m).read_text()))}
     assert not offenders, f"the MCP server side imports the monitor package: {offenders}"
+
+
+def test_the_guard_catches_the_runtime_import_spellings():
+    """Story 3.7-fold-4s (DeepSeek review of 6e686bf, the guard's three misses): each of
+    importlib.import_module("localagents.monitor..."), __import__("localagents.monitor...")
+    and from localagents import monitor is caught; look-alikes that name other packages are
+    not."""
+    caught = {
+        "importlib.import_module": 'import importlib\nm = importlib.import_module("localagents.monitor.read")\n',
+        "importlib.import_module (package)": 'import importlib\nm = importlib.import_module("localagents.monitor")\n',
+        "from importlib import import_module": "from importlib import import_module\nm = import_module('localagents.monitor.state')\n",
+        "__import__": '__import__("localagents.monitor")\n',
+        "from localagents import monitor": "from localagents import monitor\n",
+        "from localagents import db, monitor": "from localagents import db, monitor\n",
+    }
+    for form, source in caught.items():
+        assert _monitor_import_hits(source), f"the guard misses {form}"
+    clean = {
+        "other package via importlib": 'import importlib\nm = importlib.import_module("json.decoder")\n',
+        "sibling package": "from localagents import db, jobs\n",
+        "monitor as a substring only": '__import__("localagents2.monitor")\n',
+    }
+    for form, source in clean.items():
+        assert not _monitor_import_hits(source), f"the guard falsely flags {form}"
