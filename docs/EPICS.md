@@ -1301,6 +1301,19 @@ ruling (e). The lane is also the operator's first live job on the landed page.
     75 KB median); `IF NOT EXISTS` tolerates a same-named wrong index. Noticed: `make_worktree`
     can hand `run_job` a nonexistent `run_cwd` when `job.cwd` is an untracked subdirectory;
     `job_log` reads the row twice; `_FINISHED_TAIL` drops a NULL-status row like `list_jobs`.
+  Fold LANDED (DeepSeek/dgx1-a job 20261030-144409-f1c87ef2, 62 turns, 11 min, 692 tests):
+  `record_transcript` catches Exception on read and write with one `[db-error]` line through a
+  non-raising `Job._log_safe` (red: a MemoryError left the row `running` and the wait timed
+  out); `finish_worktree` reads the return codes of `status` and `rev-parse` and records "git
+  could not read the worktree … nothing was removed"; the invariant corrected in the runner
+  comment, the `_V8` comment, the schema spec and the test docstrings (1.11 → 1.12). DeepSeek's
+  notes: the other `record_*` handlers still call `log_text` inside their excepts (a failing
+  transcript write would break "the database never fails the job" there; `_log_safe` now exists
+  for them); `finish_worktree`'s changed branch ignores the return codes of `add -A`, `diff
+  --cached` and `reset`; `_restore_worktree` trusts an existing root without checking git can
+  read it. Review of the fold: the chain closes here unless the page review reopens the runner
+  (one defect found by the first review of these folds, each fixed test-first; the three notes
+  are the next small story, not a defect).
 
 ## Epic 4: operations (V2, not scheduled)
 
