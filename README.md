@@ -398,7 +398,7 @@ slot rather than vanishing, and the unit lives in the label so a value is always
 The KV tile is a bar meter. The decode tile's sparkline is drawn from the endpoint's own
 history over the chosen range; all live cards share one y scale, so a tall line on one card
 and a low line on another compare by height, the shared peak rides at each sparkline's right
-edge, and the tile's label and the strip row both name the window.) The head line carries a
+edge, and the strip row names the window once per card — True now, 3.7-fold-5: the decode label is plain "decode tok/s".) The head line carries a
 state dot, the served model in the status line's short form (the full served id in its
 title), and at the right the last-active phrase: "active 4m12s ago", the date form past 24 h,
 "no recent activity" when the retained history holds no advancing counters interval. The

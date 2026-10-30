@@ -876,7 +876,7 @@ hand-recomputed, `jobs_overlapping`'s predicate, the §5a fields. Mutation `s !=
 commit after 0d0fbae: the old card leaves the DOM before the map forgets it; the signature
 covers the drawn endpoints only; verified with the review's reproduction (1 card after a
 down/up flip, no full render for a hidden arrival). Rides the next DeepSeek review.
-- ☐ **3.7-fold-5 Page polish (after fold-4 and the DeepSeek review of fold-3/3.7l).** The
+- ☑ **3.7-fold-5 Page polish.** (0beaf24: Qwen/ai2 job 20261030-014102-3214a939, 85 turns, 18 min, 649 tests; the decode label plain, the window named once on the strip row; the card's job row two fixed lines, measured 265.66 px with and without the activity and 93.00 px for two more jobs; ticks without seconds. Review: DeepSeek, with fold-4, fold-4s and the D1 fix.) The
   three items above plus that review's findings.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
