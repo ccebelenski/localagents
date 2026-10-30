@@ -539,7 +539,7 @@ Coordinator's reading against the code (`monitor/read.py:101-135`, `runner.py:20
 - ☑ **3.7h One activity column.** (f670097: "current tool" dropped; the activity cell keeps the full text in its title.)
 - ☑ **3.7i The error count named.** (f670097: header "tool errors" with the title "tool results that came back as errors; the job page lists them by tool"; the badge links to the job page.)
 - ☑ **3.7j Turns while running.** (f670097: the runner increments `num_turns` per AssistantMessage, the result's count still wins; a running row with 0 shows a muted dash.)
-- ☐ **3.7k Requests table: the log look, our columns, Strata's rates added.** (DeepSeek/dgx1-a, running.) The endpoint
+- ☑ **3.7k Requests table: the log look, our columns, Strata's rates added.** (c37322c: DeepSeek/dgx1-a job 20261030-003202-5fe7d484, 101 turns, 22 min, 637 tests on its base; corrected the brief on the data model: `tokens.input` excludes cache reads, so prefill is (input + cache_creation) / prefill time, Strata's own "prompt − cached"; hand-checked 1,214.3 and 106.3 tok/s on the seed; the job page's totals redrawn as figs; gen_ms and stream no longer shown. The squash conflicted on the two lanes' appended CSS and probe blocks, composed by the coordinator. Review: the next DeepSeek-reviews-Qwen batch cannot review DeepSeek's own work; Qwen/ai2 reviews it with fold-3.) The endpoint
   page's requests table (endpoint.js:296 `REQ_COLUMNS`) keeps its columns (time, job, path,
   status, ms, tokens in, out, cache, stream, error) and gains the two rates Strata derives from
   the same facts (read.py:458-466): prefill t/s ((input − cache_read) / (ms − gen_ms)) and
