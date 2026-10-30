@@ -208,6 +208,49 @@ the duplicates go), then docs.
   `EXPLAIN QUERY PLAN` sweep over every statement in `read.py`, `derive.py`, `status.py` and
   `collect.py` (a table: statement, plan, index used or SCAN) is the cheap audit that pins it,
   for a lane after the 3.9 pass.
+- ☐ **1.13 Proposal, not scheduled: linkable tool errors and requests.** Operator (2026-10-30
+  evening, job page of 20261030-132735-94015337): "shows 8 errors, all 'Bash' on the details.
+  But then I can't go deeper into that - do we only record the error count? There's no link to
+  the actual request. And actually there's no link from the request to the response or request
+  prompt. I know that's in the transcript, but it would be useful to have it more linkable -
+  don't do it yet, let's examine the ramifications of that, since I don't want to add much
+  overhead." Examination (coordinator, from the code):
+  - What is recorded today. `tool_calls` (db.py:149): t, finished, tool, tool_use_id, `input`
+    (a Bash command's first 120 chars; a path for path-shaped tools; else 120 chars of JSON),
+    is_error — no result text, no request. `requests` (db.py:129): one row per HTTP request
+    through the shim — status, ms, tokens, message and tool counts, bytes, the backend's error
+    text — no content, no tool ids. The transcript (runner.py:240-282): `[assistant] text`,
+    `[tool] Bash <400 chars>`, `[result ERROR] <300 chars>`, `[backend NNN] …` — no tool_use_id,
+    no request marker, so nothing in it is addressable. `requests_full.jsonl` (shim.py:280) dumps
+    request bodies only when `LOCALAGENTS_DUMP_REQUESTS=1` or `job.dump`. The job page draws the
+    tool-call log as timeline marks whose hover title is "time tool (error): input" (job.js:335);
+    there is no tool-call table, so "8 errors, all Bash" is all the page can say.
+  - Sizes. 70 transcripts on disk average 71 KB, the largest 154 KB (5 MB in all); v8 already
+    stores them. A request BODY is the whole context every turn (a 70 %-full 1M-token DeepSeek
+    job ≈ 2.8 MB × 124 turns ≈ 350 MB for one job): storing prompts is a non-starter, and the
+    per-turn delta (one assistant message plus the tool results) IS the transcript.
+  - Options, cheapest first, each a few hundred bytes per row at most:
+    (a) the error text on the row: `tool_calls.result TEXT`, written by `record_tool_result`
+        only when is_error, capped (2 KB); schema v9, one UPDATE. Answers "what failed" with no
+        join. (b) request ↔ tool call: the shim already parses the response stream for usage
+        (shim.py:352-374); `content_block_start` events name the tool_use ids a response
+        produced, and the next request's body carries the matching tool_result blocks in its
+        last message (the body is parsed already, shim.py:330). A `request_rowid` on
+        `tool_calls`, set by the runner from a per-job in-memory id→rowid map the shim fills,
+        links each call to the request that asked for it; the request that returned its result
+        is the next row by (job_id, t). Same process, no new I/O. (c) an anchor in the
+        transcript: write the tool_use_id into the `[tool …]` and `[result …]` lines so a page
+        or `job_log` can jump to the line; zero storage, a line-format change that `job_log`
+        readers and the tests pinning the format see. (d) a tool-calls table on the job page
+        (error rows first: time, tool, input, duration, result text) with a jump to the
+        transcript line — the page story that makes (a)–(c) visible.
+  - Ramifications. Overhead is in the write path of every tool call (one UPDATE already
+    happens; (a) adds a column to it, (b) a dict lookup) and in the shim's stream pass (b: one
+    more event type to read in a loop that already reads two); storage is dominated by v8's
+    transcripts either way. (c) changes text other sessions read (the coordinator reads
+    `job_log`), benign but a contract change. Full prompt/response storage is the one thing not
+    to do; the opt-in dump covers debugging. Recommendation when scheduled: (a)+(b) as one
+    schema story, (c) with it, (d) as the page story after.
 
 ## Epic 2: monitor core (collector and storage, no page)
 
