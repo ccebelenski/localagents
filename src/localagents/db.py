@@ -302,11 +302,14 @@ _V7 = [
 
 # Version 8 (story 1.12, the operator's word 2026-10-30): the finished job's transcript text,
 # copied once at job completion (runner.run_job's finally, after the last transcript line and
-# before the row turns terminal). One row per finished job; the file keeps being written line by
-# line while the job runs (real-time reading) and keeps being pruned by `prune` — the row is
-# what survives the file's retention. Readers take the row when present, else the file. No
-# index: the primary key is the lookup (job_id). Nothing deletes these rows: database purge is
-# its own open item (EPICS 1.12), and ON DELETE CASCADE fires only if a jobs row ever goes.
+# before the row turns terminal). One row per finished job that logged a line: a terminal row
+# has its transcript row whenever a transcript file existed at completion; a job that never
+# logged a line (cancelled before [start]) has neither, and readers say so. The file keeps being
+# written line by line while the job runs (real-time reading) and keeps being pruned by `prune` —
+# the row is what survives the file's retention. Readers take the row when present, else the
+# file. No index: the primary key is the lookup (job_id). Nothing deletes these rows: database
+# purge is its own open item (EPICS 1.12), and ON DELETE CASCADE fires only if a jobs row ever
+# goes.
 _V8 = [
     """CREATE TABLE transcripts (
         -- job_id is NOT NULL beyond the design's text: a TEXT PRIMARY KEY admits NULLs (only an

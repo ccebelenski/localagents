@@ -326,7 +326,7 @@ def _transcript_row(conn, jid):
 
 
 def test_a_finished_job_gets_its_transcript_row_at_the_settle(repo, monkeypatch):
-    """Story 1.11: run_job's finally copies the transcript file into the row after _finish (so
+    """Story 1.12: run_job's finally copies the transcript file into the row after _finish (so
     the [worktree] line is in it) and the row exists the moment the wait returns. The text is
     the file's whole text at completion, ending with its last line."""
     import asyncio
@@ -378,16 +378,17 @@ def test_a_cancelled_job_gets_its_transcript_row_too(repo, monkeypatch):
     file_text = (Path(j.log_dir) / "transcript.txt").read_text()
     # The row is the file as of the settle. A still-pending cancel absorbed by the LATER prune
     # step (which runs after changed()/the settle, and after this row) appends lines the row
-    # does not chase: 1.11 populates at completion and does not update (operator's word).
+    # does not chase: 1.12 populates at completion and does not update (operator's word).
     assert file_text.startswith(row["text"])
     assert "[start]" in row["text"] and "[start]" in file_text
 
 
 def test_the_transcript_row_exists_before_the_row_turns_terminal(repo, monkeypatch):
-    """Story 1.11's invariant: a terminal ``jobs`` row always has its transcript row — another
-    server polling the row (the foreign wait, 1.10) must never see `succeeded` and no
-    transcript. Pinned by spying on every changed() that carries a terminal status: at that
-    moment, before the UPDATE runs, the transcripts row is already there."""
+    """Story 1.12's invariant: a terminal ``jobs`` row has its transcript row whenever the
+    transcript file existed at completion (this job logs [start]), so another server polling the
+    row (the foreign wait, 1.10) never sees `succeeded` and no transcript. Pinned by spying on
+    every changed() that carries a terminal status: at that moment, before the UPDATE runs, the
+    transcripts row is already there."""
     import asyncio
 
     from localagents import jobs, runner
@@ -406,6 +407,38 @@ def test_the_transcript_row_exists_before_the_row_turns_terminal(repo, monkeypat
     asyncio.run(runner.run_job(j, reg, res, **kw))
     assert store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "failed"
     assert terminal_seen == [True]  # the one changed() that writes the terminal status
+
+
+def test_an_unexpected_error_recording_the_transcript_still_settles_the_job(repo, monkeypatch):
+    """The finally's contract says nothing in it propagates past the tail. record_transcript
+    guarded only OSError on the read and sqlite3.Error on the write, so any other exception (a
+    MemoryError copying a huge transcript, a bug) escaped between the two shielded steps and
+    left the row `running` for good: _done unset, every waiter to its timeout. Now it is one
+    [db-error] line and the tail always runs."""
+    import asyncio
+
+    from localagents import runner
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    store, j = _store_job(repo, isolation="none")
+
+    def boom(self, *a, **k):
+        raise MemoryError("simulated: a transcript too large to copy")
+
+    monkeypatch.setattr(Path, "read_text", boom, raising=False)
+
+    async def go():
+        task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        got = await asyncio.wait_for(store.wait(j.id, 10), 2)  # the tail ran well inside 2 s
+        await task
+        return got
+
+    got = asyncio.run(go())
+    assert got.settled and j._done.is_set()
+    assert j.status == "failed"
+    assert store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "failed"
+    text = open(Path(j.log_dir) / "transcript.txt").read()
+    assert "[db-error] transcript: MemoryError: simulated: a transcript too large to copy" in text
 
 
 def test_cancel_during_make_worktree_leaves_no_tree(repo, monkeypatch):
@@ -490,6 +523,24 @@ def test_finish_over_a_missing_directory_records_it(repo, tmp_path):
     assert root not in git(repo, "worktree", "list")
     log = (tmp_path / "logs" / "j12" / "transcript.txt").read_text()
     assert f"[worktree-error] worktree directory missing at {root}" in log
+
+
+def test_finish_over_an_unreadable_git_pointer_records_it(repo, tmp_path):
+    """Review 3.9D F2: status and rev-parse ignored their return codes. With a corrupted .git
+    pointer both print nothing, so `changed` was True only because "" != base, and the record
+    claimed a clean-looking keep with an empty diffstat and a "Changes left ... Review with"
+    note pointing at two commands that fail. The truth is recorded instead."""
+    j = job("j13", repo, tmp_path / "logs" / "j13")
+    j.worktree = make_worktree(j)
+    root = Path(j.worktree["root"])
+    (root / ".git").write_text("this is not a gitdir pointer\n")
+    finish_worktree(j)  # no exception
+    assert j.worktree["kept"] is True  # the tree exists; nothing was removed
+    assert "could not read" in j.worktree["note"]
+    assert j.worktree.get("diffstat") is None
+    assert root.is_dir()
+    log = (tmp_path / "logs" / "j13" / "transcript.txt").read_text()
+    assert "[worktree-error] git could not read the worktree:" in log
 
 
 def test_cancel_during_make_worktree_sets_run_cwd_as_the_row_does(repo, monkeypatch):

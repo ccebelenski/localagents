@@ -984,7 +984,7 @@ def test_job_log_says_when_the_directory_is_gone(monkeypatch, tmp_path):
 
 
 def test_job_log_reads_the_transcript_row_first(monkeypatch, tmp_path):
-    """Story 1.11: a finished job's transcript comes from the ``transcripts`` row — foreign and
+    """Story 1.12: a finished job's transcript comes from the ``transcripts`` row — foreign and
     in-process alike — and the directory no longer matters. The note is said only when neither
     the row nor the directory exists."""
     import shutil

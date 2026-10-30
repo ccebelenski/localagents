@@ -152,8 +152,25 @@ def finish_worktree(job: Job) -> None:
                                    f"branch {wt['branch']} is left in {repo}")
         job.log_text(f"[worktree-error] worktree directory missing at {root}")
         return
-    status = _git(root, "status", "--porcelain").stdout.strip()
-    head = _git(root, "rev-parse", "HEAD").stdout.strip()
+    st = _git(root, "status", "--porcelain")
+    hd = _git(root, "rev-parse", "HEAD")
+    if st.returncode != 0 or hd.returncode != 0:
+        # git cannot read the tree (a corrupted .git pointer, a broken mount): both calls
+        # print nothing, so "" != base would call it changed and the note would send the user
+        # to two commands that fail. The tree exists and nothing is removed; record only that
+        # (review 3.9D, F2).
+        failed = st if st.returncode != 0 else hd
+        err = " ".join(failed.stderr.split()) or f"exit {failed.returncode}"  # one line
+        wt.pop("diffstat", None)  # a previous finish's diffstat is not this tree's truth
+        wt.update(
+            kept=True,
+            note=(f"git could not read the worktree at {root} ({err}); it is left in place "
+                  f"on branch {wt['branch']} in {repo}; nothing was removed"),
+        )
+        job.log_text(f"[worktree-error] git could not read the worktree: {err}")
+        return
+    status = st.stdout.strip()
+    head = hd.stdout.strip()
     changed = bool(status) or head != wt["base"]
     if not changed:
         # each step's return code is read: "removed" is said only when git removed it
@@ -417,8 +434,10 @@ async def run_job(
         await _to_the_end(job, _finish(job, res, metrics_before, d.probe_timeout_s), "finish")
         # story 1.12: the transcript row is written here — after _finish, so the [metrics] and
         # [worktree]/[worktree-error] lines (and any [cancel] line the finish step absorbed) are
-        # in it, and before _done.set()/changed(), so a terminal jobs row always has its
-        # transcript row. A lost job never reaches this (the server died): the file is all it has.
+        # in it, and before _done.set()/changed(). A terminal row has its transcript row whenever
+        # a transcript file existed at completion; a job that never logged a line (cancelled
+        # before [start]) has neither, and readers say so — "no file, no row". A lost job never
+        # reaches this (the server died): the file is all it has.
         job.record_transcript()
         job._done.set()
         job.changed()

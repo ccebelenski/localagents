@@ -538,7 +538,7 @@ def test_mark_lost_jobs_notes_an_unfinished_worktree(monkeypatch, tmp_path):
         assert _row(store, j.id)["status"] == "lost"
 
 
-# --- story 1.11: the transcript row, written once at completion, read before the file ---
+# --- story 1.12: the transcript row, written once at completion, read before the file ---
 
 
 def _trow(store, jid):
@@ -606,7 +606,7 @@ def test_record_transcript_failure_is_one_db_error_line(monkeypatch, tmp_path):
 
 
 def test_transcript_tail_reads_the_row_when_it_exists(monkeypatch, tmp_path):
-    """Story 1.11 read order: the row first (it survives file retention), the file second (a
+    """Story 1.12 read order: the row first (it survives file retention), the file second (a
     running job, or a job from before this change). A job whose file is deleted after the row
     exists still tails."""
     store = _store(monkeypatch, tmp_path)

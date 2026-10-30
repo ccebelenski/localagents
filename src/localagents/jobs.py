@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -228,23 +229,36 @@ class Job:
         """Story 1.12: copy the transcript file's text into the ``transcripts`` row, once, at
         completion (run_job's finally, after the last transcript line and before the row turns
         terminal). INSERT OR REPLACE: a re-finish replaces rather than duplicates. A job with no
-        transcript file gets no row — the file is what exists, and readers then say so. A failing
-        write is one ``[db-error]`` line and nothing else: same rule as record_tool_result — the
-        database observes the job and must never fail it or move its status."""
+        transcript file gets no row — the file is what exists, and readers then say so. Any other
+        failure, read or write, is one ``[db-error]`` line and nothing else: same rule as
+        record_tool_result — the database observes the job and must never fail it or move its
+        status. Not just OSError/sqlite3.Error: the finally sits between two shielded steps, so
+        an escaping MemoryError or bug would strand the row `running` for good."""
         if self._conn is None:
             return  # a Job built outside JobStore.new has no row to reference
         try:
             text = (Path(self.log_dir) / "transcript.txt").read_text(errors="replace")
         except OSError:
             return  # no file to record: the readers' note says the file is gone
+        except Exception as e:  # noqa: BLE001
+            self._log_safe(f"[db-error] transcript: {type(e).__name__}: {e}")
+            return
         try:
             with db.immediate(self._conn):
                 self._conn.execute(
                     "INSERT OR REPLACE INTO transcripts (job_id, text, bytes, written) VALUES (?, ?, ?, ?)",
                     (self.id, text, len(text.encode()), time.time()),
                 )
-        except sqlite3.Error as e:
-            self.log_text(f"[db-error] transcript: {e}")
+        except Exception as e:  # noqa: BLE001
+            self._log_safe(f"[db-error] transcript: {type(e).__name__}: {e}")
+
+    def _log_safe(self, text: str) -> None:
+        """A transcript line that must not raise: a failing write (ENOSPC, a read-only state
+        directory) falls back to stderr. The pattern runner._log_safe uses for its own lines."""
+        try:
+            self.log_text(text)
+        except Exception as e:  # noqa: BLE001
+            print(f"localagents: job {self.id}: {text} (transcript write failed: {e})", file=sys.stderr)
 
     @property
     def done(self) -> bool:

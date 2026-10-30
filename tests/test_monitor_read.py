@@ -1097,7 +1097,7 @@ def test_job_detail_tails_the_transcript_when_the_directory_exists(world):
 
 
 def test_job_detail_reads_the_transcript_row_before_the_file(world):
-    """Story 1.11: a ``transcripts`` row tails ahead of everything — no directory needed, and a
+    """Story 1.12: a ``transcripts`` row tails ahead of everything — no directory needed, and a
     present directory's transcript.txt does not win either. With neither, the note names both
     things the reader looked for."""
     conn, _ = world

@@ -104,8 +104,10 @@ tool_calls                          -- one row per ToolUseBlock the runner saw
 transcripts                         -- one row per FINISHED job: the transcript file's text as of
                                     --   job completion (version 8, story 1.12; written once in
                                     --   the runner's finally, after the last transcript line and
-                                    --   before the jobs row turns terminal, so a terminal jobs
-                                    --   row always has its transcript row; a `lost` job has none)
+                                    --   before the jobs row turns terminal. A terminal row has
+                                    --   its transcript row whenever a transcript file existed at
+                                    --   completion; a job that never logged a line has neither,
+                                    --   and readers say so; a `lost` job has none)
   job_id      TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id) ON DELETE CASCADE
                                     --   NOT NULL beyond the design's text: a TEXT PRIMARY KEY
                                     --   admits NULLs and a NULL key skips the foreign key
@@ -133,7 +135,9 @@ Versions 3–7 (the monitor's tables, their two extensions, `endpoints.last_acti
 `jobs_finished_at`) are recorded in `db.py` and in EPICS at their stories. Version 8 (story
 1.12, 2026-10-30): the `transcripts` table above — one appended migration step, nothing else;
 a file opens at user_version 8. Readers take the row when present, else the file. Database
-purge is its own open item (EPICS 1.12): nothing deletes these rows.
+purge is its own open item (EPICS 1.12): nothing deletes these rows. True now (1.12): a
+terminal row has its transcript row whenever a transcript file existed at completion; a job
+that never logged a line has neither, and readers say so.
 
 ## Derivations (read time; each reproduces today's value)
 
