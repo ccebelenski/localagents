@@ -466,19 +466,19 @@ Coordinator's reading of the screenshot against the code (`static/app.js` `hostC
   used-tokens figure exists in the snapshot. Per-job context fill exists (`ctx_pct`, in the
   jobs table). Which the operator means is the open question for 3.7e.
 
-- ☐ **3.7a Hide what has never been seen.** A never-seen endpoint is not drawn; a host with
+- ☑ **3.7a Hide what has never been seen.** (abc0613 with 3.7b/c: lane A, Qwen/ai1 job 20261029-222739-5b2fe50a, 61 turns, 7 min, 611 tests; smoke over a config with two never-seen endpoints and a hand-edited ai9 node-down snapshot; landed with tools/land.sh's predecessor by hand; DeepSeek/dgx1-a review of the merged batch pending.) A never-seen endpoint is not drawn; a host with
   nothing left to draw and its node not down is not drawn; one muted line under the cards says
   how many are hidden. Dormant-but-seen stays a muted line (spec §4). Spec §4's "never hidden"
   gets its True-now sentence.
-- ☐ **3.7b Card flow.** No full-width rows inside the card grid; config order, stable (a card
+- ☑ **3.7b Card flow.** (abc0613, lane A.) No full-width rows inside the card grid; config order, stable (a card
   never moves when its state changes; a down node keeps its place as a card); hidden hosts
   drop out and the grid packs. (Operator 2026-10-29: "live first" dropped for stability.)
-- ☐ **3.7c A down node is a card.** Same shape and size as a live host: the host name, the one
+- ☑ **3.7c A down node is a card.** (abc0613, lane A.) Same shape and size as a live host: the host name, the one
   alert sentence, its endpoints greyed (a never-seen endpoint on a down node is one muted line).
-- ☐ **3.7d Fixed field positions.** The figures and hardware rows are a grid with one slot per
+- ☑ **3.7d Fixed field positions.** (4c23d8b with 3.7e/f: lane B, Qwen/ai2 job 20261029-222749-53e44a10, 94 turns, 30 min, 1 compaction, 611 tests; the squash conflicted only on the two lanes' appended CSS blocks, composed by hand; the coordinator's DOM smoke of the merged page: 12 tiles in order, the hidden line, three dot variants, zero exceptions.) The figures and hardware rows are a grid with one slot per
   field in the same order on every card; a field the backend does not provide shows a dash in
   its slot.
-- ☐ **3.7e Jobs block on the card: per-job context fill.** The important number is each
+- ☑ **3.7e Jobs block on the card: per-job context fill.** (4c23d8b, lane B; the lane corrected the brief: the snapshot job has a `files` count; the error badge on the row is a bare number, 3.7i applies to the card too.) The important number is each
   job's own context fill against the window the harness enforces (the shim's probed limit),
   not an endpoint-level derivation: under unified KV the slot window and the pool differ, and
   vLLM has no slots, so KV percent times ctx is nobody's context used; KV percent stays as the
@@ -490,7 +490,7 @@ Coordinator's reading of the screenshot against the code (`static/app.js` `hostC
   occupied without one of ours, so the block never moves. All from the snapshot; no server
   change. (Operator: "we kind of already have the mini job display, it's in the MCP status
   line.")
-- ☐ **3.7f Colour.** The page is monochrome; the contrast is right. Colour carries state
+- ☑ **3.7f Colour.** (4c23d8b, lane B; the lane measured the fleet series: idle arrives as 0.0, the dots were the page's drawing.) The page is monochrome; the contrast is right. Colour carries state
   (live/busy/down/dormant) and backend, consistently with the strip and the endpoint page.
 
 The operator's second walk, the running-jobs table (2026-10-29, lanes A and B running), verbatim:
@@ -595,6 +595,17 @@ recreated, hover state lost — the jerk.
   when the page hears about them): a snapshot push every `refresh_s` (the `monitor:` section,
   default 5; the snapshot carries it so the page can show it and a later story can offer a
   control), and nothing between pushes. The first-connect snapshot stays immediate.
+
+### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
+
+- ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
+  `tools/monitor.sh start|stop|status|log`.** (88a7dbe: Haiku Agent worktree-agent-a3d878d89ce563991,
+  48 tool uses, 6 min, 614 tests; operator: "a startup script and default browser open would be
+  useful - the uv command isn't friendly, and having to navigate ourselves is friction"; "I think
+  open is the default? --noopen is the option." Every live test and the smoke recipe pass
+  `--no-open`. The coordinator ran the launcher live with a BROWSER fake and a scratch state
+  dir: start → status → start again ("already running … opening", the fake got the URL twice) →
+  stop, port free. Review: rides the next batch's review (coordinator read the whole diff).)
 
 ## Epic 4: operations (V2, not scheduled)
 
