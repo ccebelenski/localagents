@@ -8,7 +8,9 @@ Standing rule (2026-10-29): every piece of work is reviewed, read-only, by a mod
 not do it, before it merges; designs and specs included. Findings carry file:line and a
 scenario; the disposition (accepted / declined with reason) is recorded.
 
-Standing rulings (lettered; rationale in `docs/retros/`):
+Standing rulings (lettered; rationale in `docs/retros/`). These are guidelines, not stone
+tablets: the process is reworked to fit the work as we go (operator 2026-10-29); a ruling that
+fights the work in hand is raised and reworded, not obeyed literally.
 - **(a)** The reviewer fixes its own verified findings, test-first, and a third model reviews
   the fix. (Epic 1 retro; operator: "that tightens the loop somewhat and all of our reviewers
   are capable builders".)
