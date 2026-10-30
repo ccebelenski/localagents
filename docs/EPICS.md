@@ -1021,6 +1021,14 @@ The 3.7 chain's reviews are closed: no open defect.
     eight of nine mutants pass them; the smoke (wide.js, lines.js, drive.mjs) or Opus's own
     drivers caught six — the gates are tripwires, the smoke is the gate (same verdict as the
     Qwen review). Noticed: drive.mjs appends "/" to its URL, so a trailing-slash URL 404s.
+  Fold LANDED 146ae8a (Opus, 55 tool uses, 10 min, 694 tests): a flex-item line is measured through
+  its row at max-content (`.host-head` joins the measuring rule); the seeded world's floor 946 at
+  every step of 2200/2000/2200/1400/2200 against an independent oracle in `tools/smoke/floor.js`
+  (was 1078 → 2153 and one column); the in-place comparisons read the live node with the
+  `overflows` mark masked (`builtHTML`/`builtClass`), so a scrolling endpoint is kept across
+  pushes (`tools/smoke/keep.js`: replaced [] where dgx1-a was replaced 7 of 7). Two static gates
+  (every flex row holding an `ep-line` is in the measuring rule; the in-place helpers never read
+  raw outerHTML/className), each red on its mutant. Review of the fold: Qwen/ai1.
   Operator: "I don't like the '...' convention because it hides information - either set a
   minimum card width that can accomodate the widest text, or dynamically size the card to not
   truncate (and use that as min size so it can't shrink below that high water mark). We get
