@@ -79,6 +79,9 @@ requests                            -- one row per backend request the shim forw
   moved_system, folded_text   INTEGER   -- shim normalisation counts
   context_exceeded, error   TEXT    -- backend's original overflow message; first 800 bytes of a 4xx/5xx body
   -- the request's model is not stored: it is the job's model (dropped deliberately)
+  -- True now (3.7t, 2026-10-30): Claude Code's startup `/api/hello` handshake (a connection
+  --   warm-up) is answered by the shim itself with 200 and writes no row; rows with that path
+  --   in older databases are the forwarded handshakes of earlier versions.
 
 tool_calls                          -- one row per ToolUseBlock the runner saw
   rowid

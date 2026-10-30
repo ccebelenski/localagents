@@ -514,3 +514,83 @@ def test_stream_usage_merges_message_start_and_message_delta():
     assert merged == {"input_tokens": 1200, "cache_read_input_tokens": 38000, "cache_creation_input_tokens": 0, "output_tokens": 123}
     assert _merge_usage(None, {"output_tokens": 5}) == {"output_tokens": 5}
     assert _merge_usage(None, None) is None
+
+
+class _HelloStubJob:
+    """The little `relay` reads before the handshake branch: a base_url a forward would fail
+    against (nothing listens on port 9, so a forwarded handshake would come back 502 with an
+    `error` row) and a `record_request` that only remembers its calls."""
+    base_url = "http://127.0.0.1:9"
+    endpoint = "e"
+
+    def __init__(self):
+        self.calls = []
+
+    def record_request(self, rec):
+        self.calls.append(rec)
+
+    def log_text(self, line):  # only _log's error path calls this; it must never run here
+        raise AssertionError(f"handshake must not log: {line!r}")
+
+
+def _hello_client(job):
+    """Drive the real Starlette app (so HEAD goes through the GET route) with no uvicorn."""
+    import httpx
+
+    from localagents.shim import Shim
+
+    shim = Shim(lambda jid: job if jid == "known" else None)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=shim.app), base_url="http://test")
+
+
+def test_hello_handshake_is_answered_by_the_shim_with_no_row():
+    """Story 3.7t: Claude Code opens every job with `GET <job>/api/hello`, a connection warm-up
+    (its reply is discarded). Forwarded, it recorded the backend's 501/404 as a row the page
+    painted as an error; the spec's row is per forwarded backend request, so the shim answers
+    this one itself: 200, `{}`, nothing forwarded, no row."""
+    import asyncio
+
+    async def scenario():
+        job = _HelloStubJob()
+        async with _hello_client(job) as client:
+            resp = await client.get("/job/known/api/hello")
+        return resp, job.calls
+
+    resp, calls = asyncio.run(scenario())
+    assert resp.status_code == 200  # a forward to 127.0.0.1:9 would be a 502
+    assert resp.json() == {}
+    assert calls == []  # record_request never called: no row, no error row
+
+
+def test_hello_handshake_answers_head_with_no_body():
+    """Story 3.7t: Starlette serves HEAD through the GET route, and the client's probe is a HEAD;
+    it gets the same 200 with an empty body and still writes no row."""
+    import asyncio
+
+    async def scenario():
+        job = _HelloStubJob()
+        async with _hello_client(job) as client:
+            resp = await client.head("/job/known/api/hello")
+        return resp, job.calls
+
+    resp, calls = asyncio.run(scenario())
+    assert resp.status_code == 200
+    assert resp.content == b""  # HEAD carries headers only
+    assert calls == []
+
+
+def test_hello_handshake_unknown_job_is_still_404():
+    """Story 3.7t: the handshake branch sits after the job lookup, so an unknown job stays a 404
+    whatever the path — the shim must not answer for a job it does not know."""
+    import asyncio
+
+    async def scenario():
+        job = _HelloStubJob()
+        async with _hello_client(job) as client:
+            resp = await client.get("/job/unknown/api/hello")
+        return resp, job.calls
+
+    resp, calls = asyncio.run(scenario())
+    assert resp.status_code == 404
+    assert json.loads(resp.content)["error"]["type"] == "not_found"
+    assert calls == []

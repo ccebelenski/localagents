@@ -235,6 +235,12 @@ class Shim:
         if job is None:
             return JSONResponse({"error": {"type": "not_found", "message": "unknown job"}}, status_code=404)
         path = "/" + req.path_params["path"]
+        if path == "/api/hello":
+            # Claude Code opens every job with /api/hello: HEAD, and a GET, as a connection
+            # warm-up whose reply it discards (story 3.7t). Forwarded, it recorded the backend's
+            # 404/501 as a row the page painted as an error. The requests table records backend
+            # requests the shim forwarded, so this one is answered here, not sent, not logged.
+            return JSONResponse({})
         raw = await req.body()
         body: dict[str, Any] | None = None
         note: dict[str, Any] = {}
@@ -262,8 +268,9 @@ class Shim:
 
         # "this backend has no count_tokens" is not one status: llama.cpp answers 404, vLLM
         # 405, a gateway may say 501 (review of 3.5, F4: latent robustness; no backend here
-        # answered 501 to count_tokens, the 501 row every job carries is Claude Code's
-        # /api/hello handshake). Any other status — a 500 is a real failure — forwards
+        # answered 501 to count_tokens — the 501 row every job used to carry was Claude Code's
+        # /api/hello handshake, which the shim answers itself since 3.7t). Any other status — a
+        # 500 is a real failure — forwards
         # untouched: hiding a failure behind a plausible token count is worse than the failure.
         if path.endswith("/count_tokens") and resp.status_code in (404, 405, 501):
             await resp.aclose()
