@@ -85,6 +85,9 @@ self-check grepped it.
   cross-lane breaks, paid once each at the suite on main.
 
 Operator's verdict, 2026-10-29 closing interview: (f) through (i) all accepted; inked in `docs/EPICS.md` standing rulings.
+(g) as proposed carried a cap of three rounds; the operator: "the three-passes ruling might be better
+done as a ruling by you per pass to check if it needs another pass. Saying \"three is what you get\"
+seems arbitrary." Inked as a per-pass judgement; three is the observed count, kept here as history.
 
 ## What cost
 

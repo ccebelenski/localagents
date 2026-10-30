@@ -85,6 +85,8 @@ smoke` is the online acceptance run; the MCP server imports nothing from the mon
   reviews would have found one at a time, at a quarter of the lane time.
 
 Operator's verdict, 2026-10-29 closing interview: (j) through (m) all accepted; inked in `docs/EPICS.md` standing rulings.
+(m)'s "under thirty lines" was the observed size of the seven folds, not a threshold; inked as a
+per-fold coordinator judgement, with cancellation, contract and schema folds always reviewed on their own.
 
 ## What cost
 

@@ -20,8 +20,10 @@ Standing rulings (lettered; rationale in `docs/retros/`):
 - **(f)** Acceptance takes files by path; a file main moved since the lane's base is three-way
   patched; the suite runs on main before the commit, every time. (Epic 2 retro: twelve merges
   over a moved main, two cross-lane breaks caught only by the suite on main.)
-- **(g)** A fold chain closes when a review finds no defect, and that takes at most three
-  rounds. (Epic 2 retro: every chain closed inside three, each round smaller than the last.)
+- **(g)** A fold chain closes when a review finds no defect; after each pass the coordinator
+  judges whether another is needed from what the pass found, never from a count. (Epic 2
+  retro: every chain closed inside three, each round smaller than the last; the operator:
+  "three is what you get" is arbitrary, the count is the observation, not the rule.)
 - **(h)** A contract between stories is written into the spec as the shapes the code emits,
   with a test that fails when the code emits a key the spec does not name. (Epic 2 retro: §5a
   and its spec-vs-code test; the 3.1 review used it as the oracle.)
@@ -35,10 +37,12 @@ Standing rulings (lettered; rationale in `docs/retros/`):
   both smokes held.)
 - **(l)** A brief's "not provided by the contract" list is the next story's input, not a
   blocker. (Epic 3 retro: every page lane built without the missing fields; nothing faked.)
-- **(m)** A fold under thirty lines whose diff the coordinator read folds into the next review
-  of the same door instead of its own review. (Epic 3 retro: seven folds; the combined review
-  found two defects at a quarter of the lane time.)
-Rulings (f)–(m) accepted by the operator 2026-10-29 in the closing interview.
+- **(m)** A fold whose whole diff the coordinator read may fold into the next review of the
+  same door instead of its own review; the coordinator decides per fold, and a fold touching
+  cancellation, a contract or a schema always gets its own. (Epic 3 retro: seven folds of
+  under thirty lines; the combined review found two defects at a quarter of the lane time.)
+Rulings (f)–(m) accepted by the operator 2026-10-29 in the closing interview; (g) and (m) reworded
+at the operator's correction: a judgement per pass, not a fixed count or line limit.
 Declined as rulings (practice already in the hints file): a probe cap per review brief (b);
 briefs passed by path (c).
 
