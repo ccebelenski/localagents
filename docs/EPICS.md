@@ -1000,7 +1000,17 @@ The 3.7 chain's reviews are closed: no open defect.
   "tool errors" title. If the operator ever sees the per-tool table disagree with the column, the
   job name is what reproduces it.
 
-- ☐ **3.7w The monitor tab's memory.** Operator (2026-10-30, Firefox about:processes while hunting
+- ☑ **3.7w The monitor tab's memory.** (Probe landed: `tools/smoke/mem.mjs`, Haiku worktree
+  agent, 31 tool uses, 11 min. Measured at ~3 render passes a second over the seeded world:
+  overview 908 passes, DOM nodes 200 → a plateau of 1443–1568 → 200 after a forced GC, heap
+  0.5–1.0 MB, 10 listeners throughout; endpoint and job pages 245 passes each, nodes a sawtooth of
+  ~115 per pass that the browser collects every 80–100 s back to the baseline (262 / 1449), heap
+  ≤ 1.5 MB, listeners constant. Reading: the page owns no leak; the detached nodes are the
+  per-push table and detail re-renders awaiting collection. The 562 MB Firefox figure is not
+  JS heap or DOM; it is the content process's own footprint (the process holds more than the
+  tab) or Firefox's handling of the long-lived EventSource response. The operator's second
+  about:processes reading of the same tab decides whether anything grows; if it does, the next
+  probe is Firefox-side (about:memory on the tab), not the page's.) Operator (2026-10-30, Firefox about:processes while hunting
   a workstation memory hog that turned out to be a Proxmox console tab at 19 GB): the
   "localagents monitor" tab's process at 562 MB after roughly an hour on the live stream (the
   Strata UI tabs sat at 2 GB each, not ours). Coordinator's reading: no measurement exists; the
