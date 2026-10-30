@@ -860,6 +860,22 @@ for the operator's morning and the next polish fold:
 - The timeline's rows and bars read well; the "↑ 1.4" peak label sits on the line's right end.
 
 - ☑ **3.7-docs README's Monitor section to the 3.7 page.** (Qwen/ai1 job 20261030-013510-ee7c67cb, 41 turns, 6 min; True-now clauses on kept sentences, replaced paragraphs for the retired table, charts and collapse; a "Refresh and load" paragraph; one word pending fold-5: the decode label no longer names the window.)
+Review of 34e4fcd (fold-3 + 3.7r) and 075630e (3.7l) by DeepSeek/dgx1-a job
+20261030-011950-1510b72c, 108 turns, 33 min, four construct-it probes. DEFECT D1 (fold-3): a
+host card whose signature changed was rebuilt but the old element stayed in `#hosts` — 2 cards
+after one state flip, 2 → 6 → 12 in ten seconds across real pushes (the lane's node-identity
+smoke never flipped a state). P1: the signature counted never-seen endpoints, so one arriving
+on a live host forced a rebuild (and fired D1). P2: the `.ep-active` span added a head row at
+the 370 px seeded card (269.6 vs 243.9 px) — measured on the pre-fold-4 base; fold-4's flex
+rule holds the head to one line and the merged smoke reads 243.9 px with the span. NOTICED:
+15m draws 3 axis labels; a third concurrent job overlaps lane 1; a job finishing exactly at
+`t0` draws a 0.4 % sliver; uPlot (dropped by fold-4 since). Clean: the header's four states,
+last-active's four forms, in-place identity/skip/escaping/reorder, every timeline geometry case
+hand-recomputed, `jobs_overlapping`'s predicate, the §5a fields. Mutation `s !== "idle"` →
+`===` left all page tests green (no JS tests). 645 passed. FOLDED by the coordinator in the
+commit after 0d0fbae: the old card leaves the DOM before the map forgets it; the signature
+covers the drawn endpoints only; verified with the review's reproduction (1 card after a
+down/up flip, no full render for a hidden arrival). Rides the next DeepSeek review.
 - ☐ **3.7-fold-5 Page polish (after fold-4 and the DeepSeek review of fold-3/3.7l).** The
   three items above plus that review's findings.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
