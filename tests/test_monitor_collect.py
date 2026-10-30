@@ -129,6 +129,57 @@ def test_two_ticks_on_the_llamacpp_pair_write_a_restarted_event(monkeypatch, con
     assert detail.startswith("counters went backwards: prompt_tokens 4705 → 0, prompt_tokens_cached 18341 → 0")
 
 
+def _witness(conn, eid):
+    """The stored last-active witness (story 3.7-fold-2, D5) on the endpoint row."""
+    return conn.execute("SELECT last_active FROM endpoints WHERE id = ?", (eid,)).fetchone()[0]
+
+
+def test_the_tick_whose_counters_advanced_writes_the_witness(monkeypatch, conn):
+    """Story 3.7-fold-2 (D5): the counters pair the tick already computes is the witness check —
+    when generated_tokens advances, the tick's own ``t`` is stored on the endpoint row (in the
+    tick's transaction), which is all ``read._last_active`` then reads. The first probe of an
+    endpoint has no interval and writes nothing."""
+    probe = _real_probe(monkeypatch, STRATA_AI2, "strata")
+    reg = FakeRegistry({"ai2": [probe]})
+    _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json"), _strata("strata/ai2_metrics_2.json")])
+    ep = Endpoint(name="ai2", base_url=URL, backend="strata")
+    eid = collect.endpoint_id(conn, ep)
+    asyncio.run(collect.tick(reg, conn, ep, eid, T0, "strata"))
+    assert _witness(conn, eid) is None
+    asyncio.run(collect.tick(reg, conn, ep, eid, T0 + 139, "strata"))
+    assert _witness(conn, eid) == T0 + 139
+
+
+def test_a_tick_whose_counters_did_not_advance_leaves_the_witness(monkeypatch, conn):
+    """An idle engine: the same counters twice is an interval with nothing advanced — no witness.
+    The advancing tick after it writes one."""
+    probe = _real_probe(monkeypatch, STRATA_AI2, "strata")
+    reg = FakeRegistry({"ai2": [probe]})
+    _docs(monkeypatch, [_strata("strata/ai2_metrics_1.json"), _strata("strata/ai2_metrics_1.json"),
+                        _strata("strata/ai2_metrics_2.json")])
+    ep = Endpoint(name="ai2", base_url=URL, backend="strata")
+    eid = collect.endpoint_id(conn, ep)
+    asyncio.run(collect.tick(reg, conn, ep, eid, T0, "strata"))
+    asyncio.run(collect.tick(reg, conn, ep, eid, T0 + 5, "strata"))
+    assert _witness(conn, eid) is None
+    asyncio.run(collect.tick(reg, conn, ep, eid, T0 + 139, "strata"))
+    assert _witness(conn, eid) == T0 + 139
+
+
+def test_a_reset_interval_leaves_the_witness(monkeypatch, conn):
+    """The llama.cpp fixture pair resets (counters go backwards): the interval writes the
+    ``restarted`` event but never a witness — the drop is not activity."""
+    probe = _real_probe(monkeypatch, LLAMACPP, "llama.cpp")
+    reg = FakeRegistry({"local": [probe]})
+    _docs(monkeypatch, [_prom("llamacpp/llamacpp_metrics_1.txt"), _prom("llamacpp/llamacpp_metrics_2.txt")])
+    ep = Endpoint(name="local", base_url=URL, backend="llama.cpp")
+    eid = collect.endpoint_id(conn, ep)
+    asyncio.run(collect.tick(reg, conn, ep, eid, T0, "llamacpp"))
+    asyncio.run(collect.tick(reg, conn, ep, eid, T0 + 139, "llamacpp"))
+    assert _witness(conn, eid) is None
+    assert [kind for _, kind, _ in _events(conn)] == ["restarted"]
+
+
 def test_since_changing_writes_a_restarted_event(monkeypatch, conn):
     probe = _real_probe(monkeypatch, STRATA_AI2, "strata")
     reg = FakeRegistry({"ai2": [probe]})

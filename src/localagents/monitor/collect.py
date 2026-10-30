@@ -107,6 +107,12 @@ async def tick(reg: Any, conn: sqlite3.Connection, ep: Endpoint, endpoint_id: in
                                  prev["since"], r.probe["since"])
             if rt.reset:
                 _event(conn, now, endpoint_id, "restarted", rt.reason)
+            elif (rt.gen_tps or 0) > 0 or (rt.prompt_tps or 0) > 0:
+                # story 3.7-fold-2 (D5): store the witness at the tick that advanced, so
+                # read._last_active reads one value instead of walking the retained history per
+                # snapshot. A gap interval (rt built above with every rate None) and a reset
+                # never write; the probe's own t is the witness, in this same transaction
+                conn.execute("UPDATE endpoints SET last_active = ? WHERE id = ?", (now, endpoint_id))
     return probe_id
 
 

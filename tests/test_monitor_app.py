@@ -465,6 +465,77 @@ def test_snapshot_route_serves_the_current_push_from_its_cache(dbpath, tmp_path)
         assert len(opened) == 1
 
 
+def test_the_snapshot_cache_expires_by_age_not_only_by_push(dbpath, tmp_path):
+    """The 3.7 server-batch review's P2(d), re-created as a test (DEFECT D4): a ``--no-collect``
+    server — an app whose tick event nobody ever sets — had a push counter that never moved, so
+    ``/api/snapshot`` served its startup snapshot byte-identically forever (0 statements, the
+    jobs the MCP server wrote missing). The cache entry now also carries the monotonic time of
+    its compute and expires at ``refresh_s``: within the period the entry still answers without
+    a read; after it, the hand-inserted job is there."""
+    app = app_mod.make_app(lambda: db.open_db(dbpath), registry(tmp_path),
+                           MonitorSettings(refresh_s=0.3), asyncio.Event(),
+                           now=lambda: NOW, db_path=dbpath)
+    with TestClient(app) as c:
+        first = c.get("/api/snapshot").json()
+        assert [j["id"] for j in first["jobs"]] == [_job_id(dbpath, "running")]
+        conn = db.open_db(dbpath)
+        try:
+            with db.immediate(conn):
+                conn.execute("INSERT INTO jobs (id, name, status, created_at)"
+                             " VALUES ('hand', 'hand-insert', 'queued', ?)", (NOW,))
+        finally:
+            conn.close()
+        # inside the period the cached entry still answers: the job is not visible yet
+        assert len(c.get("/api/snapshot").json()["jobs"]) == 1
+        time.sleep(0.5)  # past refresh_s (0.3): the entry is stale, the call recomputes
+        third = c.get("/api/snapshot").json()
+        assert [j["id"] for j in third["jobs"]] == [_job_id(dbpath, "running"), "hand"]
+
+
+def test_a_no_collect_app_self_ticks_the_streams_every_refresh_period(dbpath, tmp_path):
+    """Story 3.7-fold-2 (D4): --no-collect has no collector ticks at all, so serve starts the
+    fan-out self-ticking — the one refresh clock drives itself. The review's P2(d) world on the
+    stream side: a job written by hand after the page connected arrives with the next push,
+    within two periods."""
+    async def main():
+        app = _app(dbpath, tmp_path, refresh_s=0.1, self_tick=True)
+        s = _Stream(app)
+        name, body = _event(await s.next_chunk())
+        assert name == "snapshot" and [j["id"] for j in body["jobs"]] == [_job_id(dbpath, "running")]
+        conn = db.open_db(dbpath)
+        try:
+            with db.immediate(conn):
+                conn.execute("INSERT INTO jobs (id, name, status, created_at)"
+                             " VALUES ('hand', 'hand-insert', 'queued', ?)", (NOW,))
+        finally:
+            conn.close()
+        name, body = _event(await s.next_chunk(timeout=0.7))  # the period is 0.1 s; 2x + slack
+        assert name == "snapshot"
+        assert [j["id"] for j in body["jobs"]] == [_job_id(dbpath, "running"), "hand"]
+        await s.close()
+    asyncio.run(main())
+
+
+def test_the_self_tick_ends_on_the_commands_stop_sequence(dbpath, tmp_path):
+    """The self-tick rides the same stop/close path as the collector-driven drain (story
+    3.7-fold-2 D4): ``serve.stopper``'s stop + tick + one loop turn + close leaves the stream
+    ended and nothing of the fan-out pending on this loop."""
+
+    async def main():
+        tick, stop = asyncio.Event(), asyncio.Event()
+        app = _app(dbpath, tmp_path, tick, stop=stop, self_tick=True)
+        s = _Stream(app)
+        assert _event(await s.next_chunk())[0] == "snapshot"
+        stop.set()
+        tick.set()  # what the command does on SIGTERM: wake the clock and the streams
+        await asyncio.sleep(0)
+        await app.state.fanout.close()
+        await asyncio.wait_for(s.task, 1)
+        assert _drain_tasks() == []
+        assert app.state.fanout.task is None
+    asyncio.run(main())
+
+
 def test_overview_history_batches_the_fleet_and_each_live_endpoint(client):
     """Story 3.7p: one call carries the fleet grid and every live endpoint's own history; the
     live set is the snapshot's classification (ai1 only in the seeded world)."""
@@ -505,6 +576,33 @@ def test_history_is_cached_until_a_new_probe(dbpath, tmp_path):
         third = c.get("/api/endpoints/ai1/history?range=1h").json()
         assert third == first  # the future probe is outside the range's answer
         assert len(stmts) > 2  # but it is a new generation: the body was recomputed
+
+
+def test_two_spellings_of_one_window_share_the_history_entry(dbpath, tmp_path):
+    """Story 3.7-fold-2 (the review's POSSIBLE row): ``history_cache`` keys on the parsed window
+    seconds, not the range text — ``parse_range`` reads 1h and 60m as one 3600 s window, so the
+    second spelling is the same entry (the two key statements only), and the cache cannot grow
+    with every spelling a caller invents."""
+    stmts: list[str] = []
+
+    def factory():
+        conn = db.open_db(dbpath)
+        conn.set_trace_callback(stmts.append)
+        return conn
+
+    app = app_mod.make_app(factory, registry(tmp_path), MonitorSettings(), asyncio.Event(),
+                           now=lambda: NOW, db_path=dbpath)
+    with TestClient(app) as c:
+        first = c.get("/api/endpoints/ai1/history?range=1h").json()
+        stmts.clear()
+        minute = c.get("/api/endpoints/ai1/history?range=60m").json()
+        assert minute == first
+        assert len(stmts) == 2  # the key pair only: one entry, two spellings
+        fleet_first = c.get("/api/fleet/history?range=24h").json()
+        stmts.clear()
+        fleet_day = c.get("/api/fleet/history?range=1440m").json()
+        assert fleet_day == fleet_first
+        assert len(stmts) == 2
 
 
 def _statements_during_one_push(dbpath, tmp_path, streams_n):

@@ -26,7 +26,7 @@ MONITOR_INDEXES = {"probes_endpoint_t", "endpoint_events_endpoint_t", "host_prob
 COLUMNS = {
     "mcp_servers": ["id", "pid", "owner", "cwd", "config", "version", "transport", "shim_port",
                     "started", "updated", "stopped"],
-    "endpoints": ["id", "name", "base_url", "backend", "host", "first_seen"],
+    "endpoints": ["id", "name", "base_url", "backend", "host", "first_seen", "last_active"],
     "endpoint_load": ["endpoint_id", "updated", "load"],
     "models": ["id", "served_id"],
     "paths": ["id", "path"],
@@ -74,12 +74,13 @@ def _names(conn, kind):
 def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     """A fresh file runs the version-1 DDL, the version-2 step (story 1.11: jobs.compactions),
     the version-3 step (story 2.2: the monitor's tables), the version-4 step (story 3.1a
-    ruling A: probes.state, probe_hardware's disk columns) and the version-5 step (story 3.1b:
-    host_probes), so it comes up at version 5 with the table."""
+    ruling A: probes.state, probe_hardware's disk columns), the version-5 step (story 3.1b:
+    host_probes) and the version-6 step (story 3.7-fold-2: endpoints.last_active), so it comes
+    up at version 6 with the table."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
-    assert db.SCHEMA_VERSION == 5 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert db.SCHEMA_VERSION == 6 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -252,8 +253,9 @@ def test_a_version_3_file_migrates_to_version_4_with_its_probe_rows_intact(dbfil
 def test_a_version_4_file_migrates_to_version_5_with_its_rows_intact(dbfile):
     """Story 3.1b: the version-5 step only adds the host_probes table. A file a 3.1a-era
     localagents left at version 4 (user_version 4, a probe carrying the v4 state string and a
-    hardware row with the v4 disk columns) opens at version 5 with the rows unchanged,
-    host_probes present and empty, and its index on (host, t)."""
+    hardware row with the v4 disk columns) opens at the current version (6 adds
+    endpoints.last_active) with the rows unchanged, host_probes present and empty, and its
+    index on (host, t)."""
     raw = sqlite3.connect(dbfile)
     for step in db.MIGRATIONS[:4]:
         step(raw)
@@ -265,7 +267,7 @@ def test_a_version_4_file_migrates_to_version_5_with_its_rows_intact(dbfile):
     assert "host_probes" not in (r[0] for r in raw.execute("SELECT name FROM sqlite_master"))
     raw.close()
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     row = conn.execute("SELECT * FROM probes WHERE id = 1").fetchone()
@@ -275,6 +277,38 @@ def test_a_version_4_file_migrates_to_version_5_with_its_rows_intact(dbfile):
     assert [r["name"] for r in conn.execute("PRAGMA table_info(host_probes)")] == MONITOR_COLUMNS["host_probes"]
     assert [r["name"] for r in conn.execute("PRAGMA index_info(host_probes_host_t)")] == ["host", "t"]
     assert conn.execute("SELECT COUNT(*) FROM host_probes").fetchone()[0] == 0
+    conn.close()
+
+
+def test_a_version_5_file_migrates_to_version_6_and_backfills_the_witness(dbfile):
+    """Story 3.7-fold-2 (D5): version 6 appends ``endpoints.last_active`` (NULL = no witness)
+    and backfills it ONCE per endpoint from the retained counters rows by the 3.7s pairing —
+    the newest probe whose counters advanced over the previous row, a reset interval not
+    counting. A counter backend with an advancing history gets its newest advancing ``t``; a
+    counter backend whose last interval was a reset gets the one before it; a counterless
+    backend (its witness is the requests table, read live) stays NULL."""
+    raw = sqlite3.connect(dbfile)
+    for step in db.MIGRATIONS[:5]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 5")
+    raw.execute("INSERT INTO endpoints (name, base_url, backend, host) VALUES ('ai1', 'http://ai1:8080', 'strata', 'ai1')")
+    raw.execute("INSERT INTO endpoints (name, base_url, backend, host) VALUES ('box', 'http://box:11434', 'ollama', 'box')")
+    # ai1: three counters rows, advancing 1.0 -> 2.0 -> 3.0, then a reset row (4.0 -> 1.0):
+    # the newest advancing interval is the 3.0 probe (t 30.0), the reset (t 40.0) never counts
+    for t, gen in ((10.0, 1.0), (20.0, 2.0), (30.0, 3.0), (40.0, 1.0)):
+        cur = raw.execute("INSERT INTO probes (t, endpoint_id, up) VALUES (?, 1, 1)", (t,))
+        raw.execute("INSERT INTO probe_counters (probe_id, prompt_tokens, generated_tokens)"
+                    " VALUES (?, ?, ?)", (cur.lastrowid, 10.0, gen))
+    raw.commit()
+    assert "last_active" not in [r[1] for r in raw.execute("PRAGMA table_info(endpoints)")]  # raw has no Row factory
+    raw.close()
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    assert [r["name"] for r in conn.execute("PRAGMA table_info(endpoints)")] == COLUMNS["endpoints"]
+    witness = {r["name"]: r["last_active"]
+               for r in conn.execute("SELECT name, last_active FROM endpoints")}
+    assert witness == {"ai1": 30.0, "box": None}
+    assert conn.execute("SELECT COUNT(*) FROM probes").fetchone()[0] == 4  # rows untouched
     conn.close()
 
 

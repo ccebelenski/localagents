@@ -6,11 +6,13 @@ library only, because ``localagents statusline`` will read this on every status-
 
 The monitor's tables (``probes``, ``probe_counters``, ``probe_hardware``, ``endpoint_events``,
 ``host_probes``; schema version 3, extended by version 4 — ``probes.state`` and the
-``probe_hardware`` disk columns — and version 5 — ``host_probes``, the node fallback's answers
-— per ``docs/superpowers/specs/2026-10-29-monitor-design.md`` §3) are monitor-owned:
+``probe_hardware`` disk columns —, version 5 — ``host_probes``, the node fallback's answers —
+and version 6 — ``endpoints.last_active``, the stored last-active witness — per
+``docs/superpowers/specs/2026-10-29-monitor-design.md`` §3) are monitor-owned:
 only ``localagents.monitor`` writes or prunes them. Their migration lives here because the file
 is shared and versioned as one, so the MCP server creates them too (an idle table costs nothing),
-but the MCP server never imports the monitor package.
+and the MCP server never uses the monitor package at steady state; the single exception is the
+version-6 step's one-time witness backfill, which borrows the monitor's rate pairing (see ``_v6``).
 
 Write rules every caller keeps:
 
@@ -267,9 +269,23 @@ _V5 = [
     "CREATE INDEX host_probes_host_t ON host_probes (host, t)",
 ]
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 5.
+# Version 6 (story 3.7-fold-2, the 3.7 server-batch review's D5): the stored last-active
+# witness. ``endpoints.last_active`` (NULL: no witness) holds the ``t`` of the collector's
+# newest advancing counters interval, written at the tick that advanced it, so ``read._last_active``
+# reads one value instead of walking the endpoint's retained counters rows on every snapshot
+# (the review measured a 7-day idle endpoint's walk at 745 ms per overview). At migration the
+# column is backfilled ONCE per endpoint row by the pairing that walk used — the one place core
+# db borrows the monitor's arithmetic (lazy import, runs only for files older than version 6).
+def _v6(conn: sqlite3.Connection) -> None:
+    conn.execute("ALTER TABLE endpoints ADD COLUMN last_active REAL")
+    from .monitor.read import backfill_last_active  # lazy: see the comment above
+
+    backfill_last_active(conn)
+
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 6.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
-    _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5),
+    _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5), _v6,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 

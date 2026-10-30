@@ -209,8 +209,8 @@ illustrative.
 |---|---|
 | `GET /` | the page: `monitor/static/index.html` from the package |
 | `GET /static/{path}` | a file of the package's `monitor/static/` directory (`app.js`, vendored uPlot); 404 otherwise; every answer carries `Cache-Control: no-cache` (story 3.2a: the browser revalidates against the ETag/Last-Modified StaticFiles computes, so an upgrade never runs stale page code) |
-| `GET /api/snapshot` | the snapshot object (below): what `/events` pushes, on demand (True now, 3.7p: served from the current push's shared cache — the bytes every stream of that push received — and only computed, once, when no snapshot of the current push exists yet) |
-| `GET /api/endpoints/{name}/history?range=<r>` | the history object of the endpoint named `{name}` in models.yaml; `range` defaults to `1h` |
+| `GET /api/snapshot` | the snapshot object (below): what `/events` pushes, on demand (True now, 3.7p: served from the current push's shared cache — the bytes every stream of that push received — and only computed, once, when no snapshot of the current push exists yet; True now, 3.7-fold-2 D4: the cache entry also expires by age — older than `refresh_s` recomputes — so a `--no-collect` server, whose push counter never moves, is at most `refresh_s` stale rather than frozen at its startup snapshot) |
+| `GET /api/endpoints/{name}/history?range=<r>` | the history object of the endpoint named `{name}` in models.yaml; `range` defaults to `1h` (True now, 3.7p: bodies are cached per endpoint and keyed on the endpoint's newest probe t; True now, 3.7-fold-2: the range half of the key is the parsed window in SECONDS, so `1h` and `60m` are one entry and the cache is bounded by the windows the page can ask for) |
 | `GET /api/fleet/history?range=<r>` | the fleet history object (below): speed and occupancy for the whole fleet on one time grid; `range` defaults to `1h` |
 | `GET /api/overview/history?range=<r>` | story 3.7p: one body combining the fleet history and the histories of the live endpoints (below); `range` defaults to `1h` |
 | `GET /api/endpoints/{name}/requests?range=<r>` | the endpoint's request table object (below): our jobs' requests that ran on it in the range, with totals; `range` defaults to `24h` |
@@ -281,8 +281,13 @@ endpoint = {
   "last_active": 1793287000.0,      story 3.7s: the t of the newest probe whose counters row
                                     advanced generated_tokens or prompt_tokens_processed over the
                                     previous counters row of that endpoint (the pairing
-                                    rates.rates uses; an interval that is a reset never counts);
-                                    null when no such pair is in the retained history. A backend
+                                    rates.rates uses; an interval that is a reset never counts).
+                                    True now, 3.7-fold-2 (D5): stored — the collector writes that
+                                    tick's `t` into the endpoint's row (`endpoints.last_active`,
+                                    schema version 6) inside the tick's own transaction, and the
+                                    read is that one value; null when no witness has ever been
+                                    written (a pre-v6 file gets it backfilled once from its
+                                    retained rows at migration). A backend
                                     that writes no counters (llamacpp/vllm/strata do; ollama and
                                     other do not) is witnessed by the newest requests row's t
                                     on its jobs instead, else null. Not "last seen": a probe
@@ -525,7 +530,12 @@ no-cache`):
   and every subscriber is woken once at its end; no snapshot is sent between pushes, and a
   stop still wakes and ends the streams at once). True now, 3.7p: the snapshot is read and
   serialised ONCE per push (a per-push counter keys the cache); every subscriber of that push
-  yields the same bytes, and a database error is the same `error` event for all of them;
+  yields the same bytes, and a database error is the same `error` event for all of them.
+  True now, 3.7-fold-2 (D4): when the server runs without a collector (`--no-collect`) no tick
+  will ever arrive, so the fan-out self-ticks — the same one refresh clock waits a period, calls
+  a period with no tick a round of nothing, and pushes: an open page keeps following the jobs
+  the MCP server writes, one snapshot per `refresh_s`; a real tick still pre-empts and rides
+  the same push;
 - `event: error` with data `{"error": "database_error", "message": ...}` in place of a
   snapshot the database could not answer; the stream goes on;
 - a `: keepalive` comment line after 15 s with nothing sent;
@@ -536,7 +546,9 @@ no-cache`):
 `--db`, else `monitor: db`, else `db.db_path()` (`LOCALAGENTS_DB`, else the state dir). The
 collector (`collect.run`, with `monitor: retention_days` pruning and `attention_hours` as the
 window) and uvicorn run on one loop; SIGINT or SIGTERM sets one stop event that ends both.
-`--no-collect` serves the file as it is (no probes, no pruning): the seeded demo.
+`--no-collect` serves the file as it is (no probes, no pruning): the seeded demo. True now,
+3.7-fold-2 (D4): a `--no-collect` server still refreshes the page — the fan-out self-ticks every
+`refresh_s` and `/api/snapshot` answers a cache entry at most `refresh_s` old.
 
 ## 6. Failure handling
 

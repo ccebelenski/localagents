@@ -152,7 +152,10 @@ async def serve(reg: Registry, settings: MonitorSettings, path: Path, host: str,
         def capture_signals(self) -> Iterator[None]:
             yield
 
-    app = make_app(lambda: db.open_db(path), reg, settings, tick, stop=stop, db_path=path)
+    # story 3.7-fold-2 (D4): with --no-collect there are no collector ticks, so the fan-out
+    # self-ticks every refresh_s — an open page still follows the jobs the MCP server writes.
+    app = make_app(lambda: db.open_db(path), reg, settings, tick, stop=stop, db_path=path,
+                   self_tick=not collect_)
     server = Server(uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False,
                                    timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_S))
 

@@ -103,12 +103,23 @@ class _Fanout:
     the first page load receives one snapshot, not two. Built outside a loop (a Starlette
     ``TestClient``, whose app runs on a portal loop of its own), the loop of the first
     subscriber gets it instead; ``start`` also re-homes the task if that loop is not the one
-    the app was built on."""
+    the app was built on.
 
-    def __init__(self, tick: asyncio.Event, stop: asyncio.Event | None = None, refresh_s: float = 5.0):
+    Story 3.7-fold-2 (D4, the self-tick): ``self_tick`` is set when serve started the app
+    WITHOUT a collector (``--no-collect``): no tick will ever come, so the same one refresh
+    clock drives itself — it waits a period for a tick, and a period with no tick is a round
+    of nothing, so it pushes. An open page keeps following the jobs the MCP server writes.
+    With a settle skipped (nothing is being probed, there is no round to wait for) the push
+    period is exactly ``refresh_s``; a real tick still pre-empts and rides the same push.
+    The stop and ``close()`` cover it as before: ``serve.stopper`` sets ``tick`` so the wait
+    ends at once, and close() cancels and awaits the task."""
+
+    def __init__(self, tick: asyncio.Event, stop: asyncio.Event | None = None, refresh_s: float = 5.0,
+                 self_tick: bool = False):
         self.tick = tick
         self.stop = stop
         self.refresh_s = refresh_s
+        self.self_tick = self_tick
         self.subscribers: set[asyncio.Event] = set()
         self.task: asyncio.Task | None = None
         self.closed = False
@@ -143,17 +154,30 @@ class _Fanout:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self.stop.wait(), self.refresh_s)
 
+    def _wake(self) -> None:
+        self.pushes += 1
+        for ev in list(self.subscribers):
+            ev.set()
+
     async def _run(self) -> None:
         while True:
+            if self.self_tick:
+                # story 3.7-fold-2 (D4): no collector, so the clock drives itself (see the
+                # class docstring): one period per push, no settle — with nothing probing
+                # there is no round to let settle. A tick that does arrive (or the stopper's
+                # wake) pre-empts the wait and rides this same push.
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self.tick.wait(), self.refresh_s)
+                self.tick.clear()
+                self._wake()
+                continue
             await self.tick.wait()
             self.tick.clear()
             await self._settle()
             # ticks that arrived during the settle are this round's: consume them, so the
             # next push waits for a fresh tick (a probe round is one push, not a train)
             self.tick.clear()
-            self.pushes += 1
-            for ev in list(self.subscribers):
-                ev.set()
+            self._wake()
 
     async def close(self) -> None:
         """Story 3.2c row 1 (the 3.2 combined review): this had no caller, so a stop on a loop
@@ -186,21 +210,28 @@ def make_app(
     stop: asyncio.Event | None = None,
     keepalive_s: float = KEEPALIVE_S,
     db_path: Any = None,
+    self_tick: bool = False,
 ) -> Starlette:
     """The monitor app. ``reg`` is the ``Registry`` whose endpoints the overview lists (config
     order); ``settings`` a ``MonitorSettings`` (``attention_hours`` is the attention window);
     ``tick`` is set by the collector after each endpoint's tick (``collect.run``'s ``on_tick``).
     ``now`` is the clock (a test pins it to the seeded world's); ``stop``, when set (and ``tick``
     set to wake the streams), ends every open event stream so the server can shut down;
-    ``db_path`` (story 3.2a row 3) is the database file serve opened — the snapshot names it."""
+    ``db_path`` (story 3.2a row 3) is the database file serve opened — the snapshot names it;
+    ``self_tick`` (story 3.7-fold-2 D4) makes the fan-out drive its own period — serve passes
+    it when it started the app without a collector (``--no-collect``), see ``_Fanout``."""
     window_s = float(settings.attention_hours) * 3600.0
     db_path_s = str(db_path) if db_path is not None else None
-    fan = _Fanout(tick, stop, float(settings.refresh_s))
+    fan = _Fanout(tick, stop, float(settings.refresh_s), self_tick=self_tick)
     # story 3.7p: ONE snapshot read per push, shared by every stream (and by /api/snapshot
     # while that push is current). Keyed on the fan-out's monotonic push counter; the first
     # caller after a push computes, the rest reuse — including a cached database error, so
     # every subscriber of one push hears the same answer.
-    snapshot_cache: dict[str, Any] = {"push": -1, "snap": None, "sse": None, "error": None}
+    # story 3.7-fold-2 (D4): the entry ALSO expires by age — ``at`` is the monotonic time of
+    # its compute and an entry older than refresh_s recomputes. Push-keying alone froze the
+    # snapshot on a --no-collect server, whose push counter never moves (the review's P2d:
+    # byte-identical forever, 0 statements, jobs the MCP server wrote missing).
+    snapshot_cache: dict[str, Any] = {"push": -1, "snap": None, "sse": None, "error": None, "at": 0.0}
     snapshot_lock = asyncio.Lock()
     try:  # story 3.3a row 1: drain from the app's start (see _Fanout), not the first subscriber
         fan.start(asyncio.get_running_loop())
@@ -219,19 +250,22 @@ def make_app(
     async def shared_snapshot() -> tuple[dict[str, Any] | None, str | None, str | None]:
         """The current push's ``(snapshot, sse body, error sentence)``, computed at most once.
         The lock spans the compute, so the subscribers woken by one push wait for the first
-        caller's read and then take its bytes (3.7p: one read and one serialisation per push)."""
+        caller's read and then take its bytes (3.7p: one read and one serialisation per push).
+        Story 3.7-fold-2 (D4): the entry recomputes when the push differs OR when it is older
+        than ``refresh_s`` — on the monotonic clock, so a test's ``now=`` wall-clock injection
+        cannot age or freeze it — which keeps a no-collect server (no pushes, no ticks) at most
+        ``refresh_s`` stale on a call rather than frozen at its startup snapshot."""
         async with snapshot_lock:
             push = fan.pushes
-            if snapshot_cache["push"] != push:
+            if (snapshot_cache["push"] != push
+                    or time.monotonic() - snapshot_cache["at"] >= float(settings.refresh_s)):
                 try:
                     body = await in_thread(read.overview, reg, now(), window_s, db_path_s,
                                            refresh_s=float(settings.refresh_s))
+                    entry: dict[str, Any] = {"snap": body, "sse": _sse("snapshot", body), "error": None}
                 except (sqlite3.Error, db.SchemaError) as e:
-                    snapshot_cache.update(push=push, snap=None, sse=None,
-                                          error=f"{type(e).__name__}: {e}")
-                else:
-                    snapshot_cache.update(push=push, snap=body, sse=_sse("snapshot", body),
-                                          error=None)
+                    entry = {"snap": None, "sse": None, "error": f"{type(e).__name__}: {e}"}
+                snapshot_cache.update(push=push, at=time.monotonic(), **entry)
             return snapshot_cache["snap"], snapshot_cache["sse"], snapshot_cache["error"]
 
     def guarded(handler: Callable[[Request], Any]) -> Callable[[Request], Any]:
@@ -248,16 +282,20 @@ def make_app(
     def range_s(request: Request, default: str) -> float:
         return parse_range(range_text(request, default))
 
-    # story 3.7p: history bodies are cached per (endpoint name or "fleet", range text) and
-    # keyed on the newest probe t, so a request between ticks is a dictionary hit and a
-    # request after a new probe recomputes. One entry per key (the newest); a test counts the
-    # statements a warm call costs (two for the id/newest-t read).
-    history_cache: dict[tuple[str, str], tuple[float | None, dict[str, Any]]] = {}
+    # story 3.7p: history bodies are cached per (endpoint name or "fleet", range) and keyed on
+    # the newest probe t, so a request between ticks is a dictionary hit and a request after a
+    # new probe recomputes. One entry per key (the newest); a test counts the statements a warm
+    # call costs (two for the id/newest-t read). Story 3.7-fold-2 (the review's POSSIBLE row):
+    # the range part of the key is the parsed window in SECONDS, not the request's text:
+    # ``parse_range`` accepts "1h" and "60m" as one window, and keying on the spelling let the
+    # cache grow with every spelling a caller invented; keyed in seconds its size is bounded by
+    # the windows the page can ask for.
+    history_cache: dict[tuple[str, float], tuple[float | None, dict[str, Any]]] = {}
 
     def cached_endpoint_history(conn: sqlite3.Connection, name: str, eid: int | None,
-                                newest_t: float | None, text: str, span: float,
+                                newest_t: float | None, span: float,
                                 t: float) -> dict[str, Any]:
-        key = (name, text)
+        key = (name, span)
         hit = history_cache.get(key)
         if hit is not None and hit[0] == newest_t:
             return hit[1]
@@ -265,10 +303,10 @@ def make_app(
         history_cache[key] = (newest_t, body)
         return body
 
-    def cached_fleet_history(conn: sqlite3.Connection, newest_t: float | None, text: str,
+    def cached_fleet_history(conn: sqlite3.Connection, newest_t: float | None,
                              span: float, t: float,
                              histories: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
-        key = ("fleet", text)
+        key = ("fleet", span)
         hit = history_cache.get(key)
         if hit is not None and hit[0] == newest_t:
             return hit[1]
@@ -299,13 +337,12 @@ def make_app(
             span = range_s(request, DEFAULT_RANGE)
         except ValueError as e:
             return _error(400, "bad_range", str(e))
-        text = range_text(request, DEFAULT_RANGE)
         t = now()
 
         def body(conn: sqlite3.Connection) -> dict:
             ids, newest = _configured_endpoint_rows(conn, reg)
             eid = ids.get(name)
-            return cached_endpoint_history(conn, name, eid, newest.get(eid), text, span, t)
+            return cached_endpoint_history(conn, name, eid, newest.get(eid), span, t)
         return JSONResponse(await in_thread(body))
 
     @guarded
@@ -330,12 +367,11 @@ def make_app(
             span = range_s(request, DEFAULT_RANGE)
         except ValueError as e:
             return _error(400, "bad_range", str(e))
-        text = range_text(request, DEFAULT_RANGE)
         t = now()
 
         def body(conn: sqlite3.Connection) -> dict:
             _ids, newest = _configured_endpoint_rows(conn, reg)
-            return cached_fleet_history(conn, _fleet_newest(newest), text, span, t)
+            return cached_fleet_history(conn, _fleet_newest(newest), span, t)
         return JSONResponse(await in_thread(body))
 
     @guarded
@@ -348,7 +384,6 @@ def make_app(
             span = range_s(request, DEFAULT_RANGE)
         except ValueError as e:
             return _error(400, "bad_range", str(e))
-        text = range_text(request, DEFAULT_RANGE)
         t = now()
         snap, _sse_body, error = await shared_snapshot()
         if error is not None:
@@ -361,10 +396,10 @@ def make_app(
             endpoints, histories = {}, {}
             for name in live:
                 eid = ids.get(name)
-                h = cached_endpoint_history(conn, name, eid, newest.get(eid), text, span, t)
+                h = cached_endpoint_history(conn, name, eid, newest.get(eid), span, t)
                 endpoints[name] = h
                 histories[name] = h
-            fleet = cached_fleet_history(conn, _fleet_newest(newest), text, span, t, histories)
+            fleet = cached_fleet_history(conn, _fleet_newest(newest), span, t, histories)
             return {"fleet": fleet, "endpoints": endpoints}
         return JSONResponse(await in_thread(body))
 

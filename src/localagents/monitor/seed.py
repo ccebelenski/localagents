@@ -34,7 +34,7 @@ from pathlib import Path
 
 from .. import db
 from ..registry import classify_connect_failure, parse_metrics, parse_strata_extra, parse_strata_metrics
-from . import rates, rows
+from . import rates, read, rows
 from .collect import _event
 
 # The seed's own mcp_servers row lives under the repo it is run from.
@@ -300,6 +300,9 @@ def seed(conn: sqlite3.Connection, now: float, fixtures_dir: Path | str, force: 
                           "paths", "models", "endpoints"):
                 conn.execute(f"DELETE FROM {table}")
         _write(conn, now, world)
+        # story 3.7-fold-2 (D5): the read path takes last_active from the stored witness, so the
+        # seeded world must carry it too — backfilled from its own rows by the migration's pairing
+        read.backfill_last_active(conn)
     return _counts(conn)
 
 

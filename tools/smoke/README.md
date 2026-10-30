@@ -22,3 +22,6 @@ node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/a.png '#/endpoin
 
 `conn.mjs <port> <url> <seconds>` prints the connection label every second (stream reconnects).
 The probe's field list is in cdp.mjs; add fields for new classes rather than reading pixels.
+A `--no-collect` server pushes a fresh snapshot every `refresh_s` anyway (the fan-out self-ticks,
+story 3.7-fold-2), so capture right after a hand-render — the next push overwrites the
+hand-edited DOM.

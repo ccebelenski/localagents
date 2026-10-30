@@ -368,7 +368,8 @@ Flags: `--port N` (default: the `monitor:` section's `port`, else **8765**), `--
 (default `127.0.0.1` — the page has no authentication, so bind another address only on a
 network you trust), `--db PATH` (default: `monitor: db`, else `LOCALAGENTS_DB`, else the state
 directory's `localagents.db`), `--config PATH`, and `--no-collect` (serve the database as it
-is, without probing or pruning). It prints one line at start — the URL, the database path and
+is, without probing or pruning — the page still follows the database, the server pushing a
+snapshot every `refresh_s`). It prints one line at start — the URL, the database path and
 the endpoint count — and stops on Ctrl-C or SIGTERM.
 
 By default the page also opens in the default browser, in a new tab, once the server is up

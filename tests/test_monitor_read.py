@@ -5,6 +5,7 @@ on ai1; three endpoint events (ai1's counters restart at NOW-1800). The JSON sha
 contract of spec §5a."""
 import json
 import math
+import time
 
 import pytest
 
@@ -120,11 +121,13 @@ ENDPOINT_KEYS = {
 
 
 def test_last_active_is_the_newest_advancing_counters_interval(world):
-    """Story 3.7s over the seeded world: ai1's counters advance on every 5 s interval of its
-    plan (both halves climb; the restart at the midpoint is a reset and is excluded), so the
-    newest probe at NOW is the last active one. dgx1-a's counters stop when it went down 20
-    minutes ago. llamacpp's one counters row (a week ago) has no predecessor in the retained
-    history, so it is null: a counter backend with no advancing pair."""
+    """Story 3.7s over the seeded world, read from the stored witness (3.7-fold-2 D5: the seed
+    backfills each endpoint's last_active at its end, the way the version-6 migration does):
+    ai1's counters advance on every 5 s interval of its plan (both halves climb; the restart at
+    the midpoint is a reset and is excluded), so the newest probe at NOW is the last active one.
+    dgx1-a's counters stop when it went down 20 minutes ago. llamacpp's one counters row (a week
+    ago) has no predecessor in the retained history, so it is null: a counter backend with no
+    advancing pair."""
     conn, reg = world
     ov = read.overview(conn, reg, NOW, WINDOW_S)
     assert _ep(ov, "ai1")["last_active"] == NOW
@@ -133,10 +136,11 @@ def test_last_active_is_the_newest_advancing_counters_interval(world):
 
 
 def test_last_active_skips_the_reset_interval(world):
-    """Rates pair consecutive counters rows and a reset interval has no rate; last_active uses
-    the same pairing, so the probe whose counters dropped (ai1's restart at NOW-1800) is not
-    active. Trim the world at that probe: the newest remaining advancing interval ends at
-    NOW-1805 (probe 359), not at the restart."""
+    """Rates pair consecutive counters rows and a reset interval has no rate; the witness is
+    written by that same pairing, so the probe whose counters dropped (ai1's restart at
+    NOW-1800) is not active. Trim the world at that probe and re-run the backfill — what the
+    migration does once, a hand-edited world must ask for: the newest remaining advancing
+    interval ends at NOW-1805 (probe 359), not at the restart."""
     conn, reg = world
     eid = endpoint_id(conn, "ai1")
     with db.immediate(conn):
@@ -145,7 +149,68 @@ def test_last_active_skips_the_reset_interval(world):
                          " (SELECT id FROM probes WHERE endpoint_id = ? AND t >= ?)",
                          (eid, NOW - 1800.0))
         conn.execute("DELETE FROM probes WHERE endpoint_id = ? AND t >= ?", (eid, NOW - 1800.0))
+        read.backfill_last_active(conn)
     assert _ep(read.overview(conn, reg, NOW, WINDOW_S), "ai1")["last_active"] == NOW - 1805.0
+
+
+def test_idle_seven_day_history_reads_like_a_two_probe_one(tmp_path):
+    """The 3.7 server-batch review's P3 world (DEFECT D5), re-created from its t/p3.py: one
+    llama.cpp endpoint with 7 d of idle 5 s probes whose counters never advanced (120,961 rows,
+    executemany in one transaction) and one endpoint whose counters advance. Before the stored
+    witness one read.overview cost 742 ms, 745 ms of it the idle endpoint's walk to None; after
+    it the same history reads in the seeded world's time (well under the 50 ms bound here) and
+    costs the same statements whether the history is 7 d deep or two probes deep — the per-push
+    statement count never walked the history, and must still not."""
+    path = tmp_path / "p3.db"
+    conn = db.open_db(path)
+    week = 7 * 86400.0
+    with db.immediate(conn):
+        idle = conn.execute(
+            "INSERT INTO endpoints (name, base_url, backend, host)"
+            " VALUES ('idle', 'http://127.0.0.1:8080', 'llama.cpp', 'local')").lastrowid
+        busy = conn.execute(
+            "INSERT INTO endpoints (name, base_url, backend, host)"
+            " VALUES ('busy', 'http://127.0.0.1:8081', 'llama.cpp', 'local')").lastrowid
+        n = int(week / 5) + 1  # 120,961 five-second probes
+        first = conn.execute("SELECT COALESCE(MAX(id), 0) FROM probes").fetchone()[0] + 1
+        conn.executemany("INSERT INTO probes (t, endpoint_id, up) VALUES (?, ?, 1)",
+                         [(NOW - week + 5 * i, idle) for i in range(n)])
+        conn.executemany("INSERT INTO probe_counters (probe_id, prompt_tokens, generated_tokens)"
+                         " VALUES (?, 1000.0, 500.0)", [(first + i,) for i in range(n)])
+        for t, gen in ((NOW - 10, 500.0), (NOW - 5, 640.0)):  # the active endpoint's advance
+            cur = conn.execute("INSERT INTO probes (t, endpoint_id, up) VALUES (?, ?, 1)", (t, busy))
+            conn.execute("INSERT INTO probe_counters (probe_id, prompt_tokens, generated_tokens)"
+                         " VALUES (?, 1000.0, ?)", (cur.lastrowid, gen))
+        read.backfill_last_active(conn)
+    cfg = tmp_path / "p3-models.yaml"
+    cfg.write_text(
+        "endpoints:\n"
+        "  idle:\n    base_url: http://127.0.0.1:8080\n    backend: llama.cpp\n    host: local\n"
+        "  busy:\n    base_url: http://127.0.0.1:8081\n    backend: llama.cpp\n    host: local\n")
+    reg = Registry.load(cfg)
+
+    def measured():
+        stmts: list[str] = []
+        conn.set_trace_callback(stmts.append)
+        t0 = time.monotonic()
+        ov = read.overview(conn, reg, NOW, WINDOW_S)
+        ms = (time.monotonic() - t0) * 1000
+        conn.set_trace_callback(None)
+        return ms, len(stmts), ov
+
+    ms, n_stmts, ov = measured()
+    assert ms < 50  # the review's before: 742 ms
+    assert _ep(ov, "idle")["last_active"] is None  # nothing in 7 d ever advanced
+    assert _ep(ov, "busy")["last_active"] == NOW - 5
+    with db.immediate(conn):  # same world, shallow idle history: the count must not move
+        conn.execute("DELETE FROM probe_counters WHERE probe_id IN"
+                     " (SELECT id FROM probes WHERE endpoint_id = ? AND t < ?)", (idle, NOW - 60))
+        conn.execute("DELETE FROM probes WHERE endpoint_id = ? AND t < ?", (idle, NOW - 60))
+    ms2, n2, ov2 = measured()
+    assert ms2 < 50
+    assert n2 == n_stmts  # one witness read per endpoint per push, not a walk: depth costs nothing
+    assert _ep(ov2, "idle")["last_active"] is None and _ep(ov2, "busy")["last_active"] == NOW - 5
+    conn.close()
 
 
 def test_the_live_endpoint_carries_its_gauges_rates_and_hardware(world):
