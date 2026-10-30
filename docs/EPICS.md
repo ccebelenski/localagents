@@ -716,7 +716,7 @@ page's stream to the monitor server (app.js `setConnected`: green "live" while t
 is open, red "reconnecting" when it drops; the "snapshot HH:MM:SS" beside it is the last
 snapshot's time). Useful when the server dies; misread as a fleet status beside the cards.
 
-- ☐ **3.7r The header says what it means.** The connection indicator and the snapshot time
+- ☑ **3.7r The header says what it means.** (34e4fcd: green dot + "updated HH:MM:SS", red + "connection lost, last update HH:MM:SS", "connecting" before the first snapshot; "live" gone.) The connection indicator and the snapshot time
   become one phrase: green dot + "updated 11:07:29 PM" while the stream is open (the time
   advances with each push, so staleness is visible); red dot + "connection lost, last update
   11:07:29 PM" while reconnecting; the dot's title says "stream from the monitor server". No
@@ -789,7 +789,7 @@ distinct range texts. 627 passed.
   construction re-created as a test, plus a stream test under `--no-collect` seeing a job
   written between pushes. (c) `history_cache` keys on the parsed window seconds, not the text.
   Spec §5a sentences appended as True-now.
-- ☐ **3.7-fold-3 Page: last active on the card, in-place updates, the refresh interval.**
+- ☑ **3.7-fold-3 Page: last active on the card, in-place updates, the refresh interval.** (34e4fcd with 3.7r: Qwen/ai1 job 20261030-004205-9f906d21, 116 turns, 17 min, 643 tests; measured: a changed tile → inPlace with node identity kept, the same snapshot → skipped, a changed state → full; the card height unchanged; the squash conflicted on the export literal and the CSS tail, composed. Decisions: a history generation in the snapshot signature; "no activity recorded". Noticed: a 70-char model id wraps the head; `.ep-model` max-width+ellipsis is the next fold's. Review: Qwen built; DeepSeek reviews with the next batch.)
   After the 3.7g-j lane lands (both touch `render`). `last_active` at the right of each
   endpoint's head line as 3.7s says ("active 3m ago", the date form past 24 h, "no activity in
   7d" when null, nothing on the host head); `HISTORY_MIN_INTERVAL_MS` follows the snapshot's
