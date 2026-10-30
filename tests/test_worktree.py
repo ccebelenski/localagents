@@ -321,6 +321,93 @@ def test_the_row_turns_terminal_only_after_the_finally_work(repo, monkeypatch):
     assert out["worktree"]["kept"] is False and out["worktree"]["note"] == "no changes; worktree removed"
 
 
+def _transcript_row(conn, jid):
+    return conn.execute("SELECT * FROM transcripts WHERE job_id = ?", (jid,)).fetchone()
+
+
+def test_a_finished_job_gets_its_transcript_row_at_the_settle(repo, monkeypatch):
+    """Story 1.11: run_job's finally copies the transcript file into the row after _finish (so
+    the [worktree] line is in it) and the row exists the moment the wait returns. The text is
+    the file's whole text at completion, ending with its last line."""
+    import asyncio
+
+    from localagents import runner
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    store, j = _store_job(repo)
+
+    async def go():
+        task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        got = await store.wait(j.id, 30)
+        row = _transcript_row(store.conn, j.id)  # observed at the settle, before the task returns
+        await task
+        return got, row
+
+    got, row = asyncio.run(go())
+    assert got.settled
+    file_text = (Path(j.log_dir) / "transcript.txt").read_text()
+    assert row is not None, "the settled job has no transcripts row"
+    assert row["text"] == file_text
+    assert row["bytes"] == len(file_text.encode())
+    last_line = file_text.splitlines()[-1]
+    assert row["text"].splitlines()[-1] == last_line
+    assert "[worktree]" in row["text"]  # the [worktree]/[metrics] tail is inside the row
+
+
+def test_a_cancelled_job_gets_its_transcript_row_too(repo, monkeypatch):
+    """The write is not reserved for successes: a job cancelled mid-session ends in the finally
+    like any other and its row carries the transcript as of the cancel."""
+    import asyncio
+
+    from localagents import runner
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    _blocking_query(monkeypatch)
+    store, j = _store_job(repo, isolation="none")
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        await asyncio.sleep(0.2)  # the blocking session is running
+        j._task.cancel()
+        return await store.wait(j.id, 10)
+
+    got = asyncio.run(go())
+    assert got.status == "cancelled"
+    row = _transcript_row(store.conn, j.id)
+    assert row is not None
+    file_text = (Path(j.log_dir) / "transcript.txt").read_text()
+    # The row is the file as of the settle. A still-pending cancel absorbed by the LATER prune
+    # step (which runs after changed()/the settle, and after this row) appends lines the row
+    # does not chase: 1.11 populates at completion and does not update (operator's word).
+    assert file_text.startswith(row["text"])
+    assert "[start]" in row["text"] and "[start]" in file_text
+
+
+def test_the_transcript_row_exists_before_the_row_turns_terminal(repo, monkeypatch):
+    """Story 1.11's invariant: a terminal ``jobs`` row always has its transcript row — another
+    server polling the row (the foreign wait, 1.10) must never see `succeeded` and no
+    transcript. Pinned by spying on every changed() that carries a terminal status: at that
+    moment, before the UPDATE runs, the transcripts row is already there."""
+    import asyncio
+
+    from localagents import jobs, runner
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    store, j = _store_job(repo)
+    terminal_seen = []
+    real_changed = jobs.Job.changed
+
+    def spy(self):
+        if self.status in ("succeeded", "failed", "cancelled", "timeout"):
+            terminal_seen.append(_transcript_row(self._conn, self.id) is not None)
+        real_changed(self)
+
+    monkeypatch.setattr(jobs.Job, "changed", spy)
+    asyncio.run(runner.run_job(j, reg, res, **kw))
+    assert store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "failed"
+    assert terminal_seen == [True]  # the one changed() that writes the terminal status
+
+
 def test_cancel_during_make_worktree_leaves_no_tree(repo, monkeypatch):
     """Review of 1.7, finding 2: a cancel landing while make_worktree runs in its thread used to
     leave the tree and branch the thread went on to create, with job.worktree None, so the finally

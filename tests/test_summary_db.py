@@ -983,6 +983,39 @@ def test_job_log_says_when_the_directory_is_gone(monkeypatch, tmp_path):
     assert out["log_dir"] is None and out["transcript"] == "" and "note" in out
 
 
+def test_job_log_reads_the_transcript_row_first(monkeypatch, tmp_path):
+    """Story 1.11: a finished job's transcript comes from the ``transcripts`` row — foreign and
+    in-process alike — and the directory no longer matters. The note is said only when neither
+    the row nor the directory exists."""
+    import shutil
+    from pathlib import Path
+
+    other = jobs.JobStore()
+    foreign = _new(other)
+    foreign.log_text("row line")
+    foreign.log_text("second line")
+    foreign.record_transcript()
+    (Path(foreign.log_dir) / "transcript.txt").write_text("only the file\n")  # row wins
+    out = asyncio.run(server.job_log(foreign.id))
+    assert out["transcript"] == "row line\nsecond line" and "note" not in out
+
+    shutil.rmtree(foreign.log_dir)  # the row survives the file's retention
+    out = asyncio.run(server.job_log(foreign.id, tail_lines=1))
+    assert out["transcript"] == "second line" and "note" not in out
+
+    other.conn.execute("DELETE FROM transcripts WHERE job_id = ?", (foreign.id,))  # neither
+    out = asyncio.run(server.job_log(foreign.id))
+    assert out["transcript"] == ""
+    assert out["note"] == f"transcript pruned or never written ({foreign.log_dir})"
+
+    mine = _new(server.store)
+    mine.log_text("mine row line")
+    mine.record_transcript()
+    shutil.rmtree(mine.log_dir)
+    out = asyncio.run(server.job_log(mine.id))
+    assert out["transcript"] == "mine row line" and "note" not in out
+
+
 def test_unknown_job_answers_are_uniform_and_unquoted(monkeypatch, tmp_path):
     """Every tool answers an id that exists nowhere with unknown_job, resume_job included, and
     the message is the KeyError's text, not its repr in quotes (review of 1.5b, nits)."""

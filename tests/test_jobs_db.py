@@ -538,6 +538,95 @@ def test_mark_lost_jobs_notes_an_unfinished_worktree(monkeypatch, tmp_path):
         assert _row(store, j.id)["status"] == "lost"
 
 
+# --- story 1.11: the transcript row, written once at completion, read before the file ---
+
+
+def _trow(store, jid):
+    return store.conn.execute("SELECT * FROM transcripts WHERE job_id = ?", (jid,)).fetchone()
+
+
+def test_record_transcript_row_equals_the_file(monkeypatch, tmp_path):
+    """The row is the file's text at completion; ``bytes`` is its UTF-8 length (multi-byte text
+    proves the difference from len(text)), ``written`` is the wall clock of the write."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    job.log_text("[start] line one")
+    job.log_text("résumé — ünïcøde")
+    job.log_text("[metrics] {}")
+    text = (tmp_path / "localagents" / "jobs" / job.name / "transcript.txt").read_text()
+    job.record_transcript()
+    row = _trow(store, job.id)
+    assert row["text"] == text
+    assert row["bytes"] == len(text.encode()) and row["bytes"] > len(text)
+    assert time.time() - 5 < row["written"] <= time.time()
+    assert job.status == "queued"  # recording never touches the job's own state
+
+
+def test_record_transcript_second_call_replaces(monkeypatch, tmp_path):
+    """INSERT OR REPLACE: a re-finish overwrites, it does not duplicate and does not fail."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    job.log_text("first")
+    job.record_transcript()
+    job.log_text("second")
+    job.record_transcript()
+    row = _trow(store, job.id)
+    assert row["text"] == "first\nsecond\n"
+    assert row["bytes"] == len("first\nsecond\n".encode())
+    assert store.conn.execute("SELECT COUNT(*) FROM transcripts").fetchone()[0] == 1
+
+
+def test_record_transcript_of_a_missing_file_writes_nothing(monkeypatch, tmp_path):
+    """No transcript file means no row: the readers fall back to the file and its absence is
+    their note's sentence, not a half-row or an error line here."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    job.record_transcript()  # job.log_text was never called: no file yet
+    assert _trow(store, job.id) is None
+    assert job.transcript_tail() == ""
+
+
+def test_record_transcript_failure_is_one_db_error_line(monkeypatch, tmp_path):
+    """Same pattern as record_tool_result: db.immediate raises, nothing propagates, the job's
+    status stays, and the only trace is a [db-error] transcript line."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    job.log_text("text exists")
+
+    @contextmanager
+    def boom(conn):
+        raise sqlite3.OperationalError("database is locked")
+        yield  # unreachable; makes this a context manager
+
+    monkeypatch.setattr(jobs.db, "immediate", boom)
+    job.record_transcript()  # must not raise
+    assert _trow(store, job.id) is None
+    assert job.status == "queued"
+    assert "[db-error] transcript: " in job.transcript_tail()
+
+
+def test_transcript_tail_reads_the_row_when_it_exists(monkeypatch, tmp_path):
+    """Story 1.11 read order: the row first (it survives file retention), the file second (a
+    running job, or a job from before this change). A job whose file is deleted after the row
+    exists still tails."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    for i in range(10):
+        job.log_text(f"line {i}")
+    # before the row: the file
+    assert job.transcript_tail(3).splitlines() == ["line 7", "line 8", "line 9"]
+    job.record_transcript()
+    # after the row: same text, from the row — and still there once the file is gone
+    import shutil
+
+    shutil.rmtree(job.log_dir)
+    assert job.transcript_tail(3).splitlines() == ["line 7", "line 8", "line 9"]
+    assert job.transcript_tail(0).splitlines() == [f"line {i}" for i in range(10)]
+    # a job with neither: ""
+    other = _new(store)
+    assert other.transcript_tail() == ""
+
+
 def test_record_endpoint_load_writes_by_running_jobs_endpoint(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     job = _new(store)

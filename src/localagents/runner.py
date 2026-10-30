@@ -415,6 +415,11 @@ async def run_job(
         # is a transcript line, never propagated past the tail.
         job.finished_at = time.time()
         await _to_the_end(job, _finish(job, res, metrics_before, d.probe_timeout_s), "finish")
+        # story 1.11: the transcript row is written here — after _finish, so the [metrics] and
+        # [worktree]/[worktree-error] lines (and any [cancel] line the finish step absorbed) are
+        # in it, and before _done.set()/changed(), so a terminal jobs row always has its
+        # transcript row. A lost job never reaches this (the server died): the file is all it has.
+        job.record_transcript()
         job._done.set()
         job.changed()
         # retention: this job's own directory is new, so only older ones can go

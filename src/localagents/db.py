@@ -300,10 +300,29 @@ _V7 = [
 ]
 
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 7.
+# Version 8 (story 1.11, the operator's word 2026-10-30): the finished job's transcript text,
+# copied once at job completion (runner.run_job's finally, after the last transcript line and
+# before the row turns terminal). One row per finished job; the file keeps being written line by
+# line while the job runs (real-time reading) and keeps being pruned by `prune` — the row is
+# what survives the file's retention. Readers take the row when present, else the file. No
+# index: the primary key is the lookup (job_id). Nothing deletes these rows: database purge is
+# its own open item (EPICS 1.11), and ON DELETE CASCADE fires only if a jobs row ever goes.
+_V8 = [
+    """CREATE TABLE transcripts (
+        -- job_id is NOT NULL beyond the design's text: a TEXT PRIMARY KEY admits NULLs (only an
+        -- INTEGER PRIMARY KEY is a rowid alias), and a NULL key skips the foreign key entirely
+        job_id  TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        text    TEXT NOT NULL,
+        bytes   INTEGER NOT NULL,
+        written REAL NOT NULL
+    )""",
+]
+
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 8.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5), _v6,
-    _statements(_V7),
+    _statements(_V7), _statements(_V8),
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 

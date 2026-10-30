@@ -675,19 +675,28 @@ def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t
     }}
 
 
-def _transcript(name: str | None) -> tuple[str | None, str | None]:
+def _transcript(conn: sqlite3.Connection, job_id: str, name: str | None) -> tuple[str | None, str | None]:
     """(tail, note): the last ``TRANSCRIPT_LINES`` lines of the job's transcript, or None and
-    the sentence saying why there is none."""
+    the sentence saying why there is none. Story 1.11 read order: the ``transcripts`` row when
+    present (the finished job — its text, surviving the file's retention), else the file (a
+    running job, or a job from before this change); the note names both things it looked for."""
     from ..jobs import state_dir  # the MCP server's module; the monitor may read it, never the reverse
 
+    row = conn.execute("SELECT text FROM transcripts WHERE job_id = ?", (job_id,)).fetchone()
+    if row is not None:
+        tail = deque(row["text"].splitlines(), maxlen=TRANSCRIPT_LINES)
+        return "\n".join(tail), None
     if not name:
-        return None, "the job has no name, so no job directory"
+        return None, "no transcripts row, and the job has no name, so no job directory"
     d = state_dir() / "jobs" / name
     if not d.is_dir():
-        return None, f"the job directory {d} is gone (pruned after the retention days, or never created here)"
+        return None, (
+            f"no transcripts row and the job directory {d} is gone "
+            "(pruned after the retention days, or never created here)"
+        )
     p = d / "transcript.txt"
     if not p.is_file():
-        return None, f"{d} holds no transcript.txt"
+        return None, f"no transcripts row, and {d} holds no transcript.txt"
     with open(p, errors="replace") as f:
         tail = deque((line.rstrip("\n") for line in f), maxlen=TRANSCRIPT_LINES)
     return "\n".join(tail), None
@@ -721,5 +730,5 @@ def job_detail(conn: sqlite3.Connection, job_id: str, now: float | None = None) 
             "SELECT t, finished, tool, tool_use_id, input, is_error FROM tool_calls"
             " WHERE job_id = ? ORDER BY t, rowid", (job_id,))
     ]
-    d["transcript_tail"], d["transcript_note"] = _transcript(row["name"])
+    d["transcript_tail"], d["transcript_note"] = _transcript(conn, job_id, row["name"])
     return d

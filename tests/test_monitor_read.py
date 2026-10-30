@@ -960,6 +960,34 @@ def test_job_detail_tails_the_transcript_when_the_directory_exists(world):
     assert out["transcript_note"] is None
 
 
+def test_job_detail_reads_the_transcript_row_before_the_file(world):
+    """Story 1.11: a ``transcripts`` row tails ahead of everything — no directory needed, and a
+    present directory's transcript.txt does not win either. With neither, the note names both
+    things the reader looked for."""
+    conn, _ = world
+    row = _finished(conn)
+    conn.execute(
+        "INSERT INTO transcripts (job_id, text, bytes, written) VALUES (?, ?, ?, ?)",
+        (row["id"], "".join(f"row {i}\n" for i in range(200)), 0, NOW),
+    )
+    out = read.job_detail(conn, row["id"])  # the seed world has no job directory: the row carries it
+    assert out["transcript_tail"].splitlines() == [f"row {i}" for i in range(120, 200)]
+    assert out["transcript_note"] is None
+
+    d = state_dir() / "jobs" / row["name"]
+    d.mkdir(parents=True)  # a file exists too: the row still wins
+    (d / "transcript.txt").write_text("only the file\n")
+    out = read.job_detail(conn, row["id"])
+    assert out["transcript_tail"].splitlines()[-1] == "row 199"
+    assert out["transcript_note"] is None
+
+    conn.execute("DELETE FROM transcripts WHERE job_id = ?", (row["id"],))
+    (d / "transcript.txt").unlink()  # neither: the note says what was looked for
+    out = read.job_detail(conn, row["id"])
+    assert out["transcript_tail"] is None
+    assert "no transcripts row" in out["transcript_note"] and row["name"] in out["transcript_note"]
+
+
 def test_job_detail_of_an_unknown_job_is_none(world):
     conn, _ = world
     assert read.job_detail(conn, "no-such-job") is None

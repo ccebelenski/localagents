@@ -175,7 +175,13 @@ the duplicates go), then docs.
   the 60 characters. The input rule stores the path for any path-shaped tool; the row's
   activity is one line with paths relative to the job's root. Lane: Qwen (ai2).
 
-- ☐ **1.11 (proposed, operator decides) Transcripts in the database.** Operator (2026-10-30, after
+- ☑ **1.11 Transcripts in the database.** Built 2026-10-30, one commit per step: schema v8
+  (`transcripts`, key-only PK, no index); `Job.record_transcript` (INSERT OR REPLACE, one
+  `[db-error]` line on failure) and row-first `transcript_tail`; called in `run_job`'s finally
+  tail — after `_finish`'s last transcript line, before `_done.set()`/the terminal `changed()`,
+  so a terminal jobs row always has its transcript row; `job_log` and the monitor's
+  `read._transcript` row-first, their note only when neither row nor file exists; a `lost` job
+  has no row; no purge rule written. Original proposal kept below. Operator (2026-10-30, after
   the 3.9B incident deleted 19 jobs' transcript files): "should we have a BLOB table to hold the
   transcripts? That would keep it independent of the files, and under database purge rules
   instead of file purge rules. It doesn't need to be updated, just populated at job completion,

@@ -783,13 +783,18 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
 
     tail_lines=0 is the whole transcript (as list_jobs(limit=0) is); a negative tail_lines is
     bad_argument. Works for any localagents server's job. tools=N also returns the last N
-    recorded tool calls (t, finished, tool, input, is_error), oldest first."""
+    recorded tool calls (t, finished, tool, input, is_error), oldest first.
+
+    Story 1.11 read order, in-process and foreign jobs alike: the ``transcripts`` row when
+    present (the finished job — its text, surviving the file's retention), else the file (a
+    running job, or a job from before this change); the note is said only when neither exists."""
     if tail_lines < 0:
         return {"error": "bad_argument", "message": "tail_lines must be >= 0 (0 is the whole transcript)"}
     try:
         try:
             job = store.get(job_id)
             status_, log_dir, transcript = job.status, job.log_dir, job.transcript_tail(tail_lines)
+            has_row = store.conn.execute("SELECT 1 FROM transcripts WHERE job_id = ?", (job_id,)).fetchone() is not None
         except KeyError as e:
             row = store.conn.execute("SELECT status, name FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if row is None:
@@ -797,12 +802,18 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
             # another server's job: its log directory follows from its name (spec derivation)
             status_ = row["status"]
             log_dir = str(state_dir() / "jobs" / row["name"]) if row["name"] else None
-            p = Path(log_dir) / "transcript.txt" if log_dir else None
-            lines = p.read_text(errors="replace").splitlines() if p is not None and p.exists() else []
+            trow = store.conn.execute("SELECT text FROM transcripts WHERE job_id = ?", (job_id,)).fetchone()
+            has_row = trow is not None
+            if trow is not None:
+                lines = trow["text"].splitlines()
+            else:
+                p = Path(log_dir) / "transcript.txt" if log_dir else None
+                lines = p.read_text(errors="replace").splitlines() if p is not None and p.exists() else []
             transcript = "\n".join(lines[-tail_lines:] if tail_lines else lines)
         out: dict[str, Any] = {"job_id": job_id, "status": status_, "log_dir": log_dir, "transcript": transcript}
-        if not log_dir or not Path(log_dir).is_dir():
-            # retention removed it (or it never existed): say so rather than an unexplained ""
+        if not has_row and (not log_dir or not Path(log_dir).is_dir()):
+            # retention removed the directory and there is no row (or it never existed):
+            # say so rather than an unexplained ""
             out["transcript"] = ""
             out["note"] = f"transcript pruned or never written ({log_dir})"
         if tools > 0:

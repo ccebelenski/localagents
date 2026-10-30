@@ -13,7 +13,9 @@ import pytest
 
 from localagents import db
 
-TABLES = {"mcp_servers", "endpoints", "endpoint_load", "models", "paths", "jobs", "requests", "tool_calls"}
+TABLES = {"mcp_servers", "endpoints", "endpoint_load", "models", "paths", "jobs", "requests", "tool_calls",
+          # version 8 (story 1.11): the finished job's transcript text, written once at completion
+          "transcripts"}
 # version 3 (story 2.2): the monitor's tables, monitor-design spec §3 "Storage"
 MONITOR_TABLES = {"probes", "probe_counters", "probe_hardware", "endpoint_events", "host_probes"}
 INDEXES = {
@@ -41,6 +43,8 @@ COLUMNS = {
                  "output_tokens", "cache_read_tokens", "cache_creation_tokens", "messages", "tools", "bytes",
                  "moved_system", "folded_text", "context_exceeded", "error"],
     "tool_calls": ["job_id", "t", "finished", "tool", "tool_use_id", "input", "is_error"],
+    # version 8 (story 1.11): one row per finished job, keyed by the job id itself
+    "transcripts": ["job_id", "text", "bytes", "written"],
 }
 # the monitor tables, every column in the spec's order (monitor-design §3, approved 2026-10-29)
 MONITOR_COLUMNS = {
@@ -77,13 +81,13 @@ def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     """A fresh file runs the version-1 DDL, the version-2 step (story 1.11: jobs.compactions),
     the version-3 step (story 2.2: the monitor's tables), the version-4 step (story 3.1a
     ruling A: probes.state, probe_hardware's disk columns), the version-5 step (story 3.1b:
-    host_probes), the version-6 step (story 3.7-fold-2: endpoints.last_active) and the
-    version-7 step (3.9E audit finding E1: jobs_finished_at), so it comes up at version 7
-    with the table."""
+    host_probes), the version-6 step (story 3.7-fold-2: endpoints.last_active), the
+    version-7 step (3.9E audit finding E1: jobs_finished_at) and the version-8 step (story
+    1.11: transcripts), so it comes up at version 8 with the table."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
-    assert db.SCHEMA_VERSION == 7 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+    assert db.SCHEMA_VERSION == 8 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -342,6 +346,37 @@ def test_a_version_6_file_migrates_to_version_7_with_its_job_rows_intact(dbfile)
     row = conn.execute("SELECT status, finished_at FROM jobs WHERE id = 'j1'").fetchone()
     assert row["status"] == "succeeded" and row["finished_at"] == 3.0
     assert conn.execute("SELECT finished_at FROM jobs WHERE id = 'j2'").fetchone()["finished_at"] is None
+    conn.close()
+
+
+def test_a_version_7_file_migrates_to_version_8_with_the_transcripts_table(dbfile):
+    """Story 1.11: version 8 appends the ``transcripts`` table (one row per finished job, the
+    transcript text written at completion) and nothing else. A version-7 file (all seven
+    steps, user_version 7, a job row) opens at version 8 with its row unchanged, the table
+    present and empty, no index of its own, and the foreign key to ``jobs`` on delete cascade."""
+    raw = sqlite3.connect(dbfile)
+    for step in db.MIGRATIONS[:7]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 7")
+    raw.execute(
+        "INSERT INTO jobs (id, name, status, created_at, started_at, finished_at, updated)"
+        " VALUES ('j1', '20261030-000000-00000001', 'succeeded', 1.0, 2.0, 3.0, 3.0)")
+    raw.commit()
+    assert "transcripts" not in (r[0] for r in raw.execute("SELECT name FROM sqlite_master"))
+    raw.close()
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    assert _names(conn, "table") == TABLES | MONITOR_TABLES
+    assert _names(conn, "index") == INDEXES | MONITOR_INDEXES  # the primary key is the lookup
+    assert [r["name"] for r in conn.execute("PRAGMA table_info(transcripts)")] == COLUMNS["transcripts"]
+    assert {r["name"] for r in conn.execute("PRAGMA table_info(transcripts)") if r["notnull"]} == {
+        "job_id", "text", "bytes", "written"}
+    assert conn.execute("SELECT COUNT(*) FROM transcripts").fetchone()[0] == 0
+    assert conn.execute("SELECT status FROM jobs WHERE id = 'j1'").fetchone()["status"] == "succeeded"
+    # the foreign key is real and cascades, like requests' and tool_calls'
+    conn.execute("INSERT INTO transcripts (job_id, text, bytes, written) VALUES ('j1', 'a\nb', 4, 4.0)")
+    conn.execute("DELETE FROM jobs WHERE id = 'j1'")
+    assert conn.execute("SELECT COUNT(*) FROM transcripts").fetchone()[0] == 0
     conn.close()
 
 

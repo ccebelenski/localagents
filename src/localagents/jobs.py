@@ -224,6 +224,28 @@ class Job:
             # same rule as _row_update: the database observes the job and must never fail it
             self.log_text(f"[db-error] record_request: {e}")
 
+    def record_transcript(self) -> None:
+        """Story 1.11: copy the transcript file's text into the ``transcripts`` row, once, at
+        completion (run_job's finally, after the last transcript line and before the row turns
+        terminal). INSERT OR REPLACE: a re-finish replaces rather than duplicates. A job with no
+        transcript file gets no row — the file is what exists, and readers then say so. A failing
+        write is one ``[db-error]`` line and nothing else: same rule as record_tool_result — the
+        database observes the job and must never fail it or move its status."""
+        if self._conn is None:
+            return  # a Job built outside JobStore.new has no row to reference
+        try:
+            text = (Path(self.log_dir) / "transcript.txt").read_text(errors="replace")
+        except OSError:
+            return  # no file to record: the readers' note says the file is gone
+        try:
+            with db.immediate(self._conn):
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO transcripts (job_id, text, bytes, written) VALUES (?, ?, ?, ?)",
+                    (self.id, text, len(text.encode()), time.time()),
+                )
+        except sqlite3.Error as e:
+            self.log_text(f"[db-error] transcript: {e}")
+
     @property
     def done(self) -> bool:
         return self.status in ("succeeded", "failed", "cancelled", "timeout", "lost")
@@ -290,7 +312,17 @@ class Job:
 
     def transcript_tail(self, n_lines: int = 80) -> str:
         """The last ``n_lines`` lines; 0 is the whole transcript (job_log's contract,
-        story 1.9 item 7 — stated here too so it is never the ``lines[-0:]`` accident)."""
+        story 1.9 item 7 — stated here too so it is never the ``lines[-0:]`` accident).
+
+        Story 1.11 read order: the ``transcripts`` row when present (the finished job: the text
+        as of completion, surviving the file's retention), else the file (a running job, or a
+        job from before this change); "" when neither exists. A database failure propagates —
+        the readers answer database_error, as they do for their other row reads."""
+        if self._conn is not None:
+            row = self._conn.execute("SELECT text FROM transcripts WHERE job_id = ?", (self.id,)).fetchone()
+            if row is not None:
+                lines = row["text"].splitlines()
+                return "\n".join(lines[-n_lines:] if n_lines else lines)
         p = Path(self.log_dir) / "transcript.txt"
         if not p.exists():
             return ""

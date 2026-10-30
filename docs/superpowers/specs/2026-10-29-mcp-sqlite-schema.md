@@ -101,6 +101,19 @@ tool_calls                          -- one row per ToolUseBlock the runner saw
                                     --   when it has no path key)
   is_error    INTEGER (0/1)         -- from the matching ToolResultBlock
 
+transcripts                         -- one row per FINISHED job: the transcript file's text as of
+                                    --   job completion (version 8, story 1.11; written once in
+                                    --   the runner's finally, after the last transcript line and
+                                    --   before the jobs row turns terminal, so a terminal jobs
+                                    --   row always has its transcript row; a `lost` job has none)
+  job_id      TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id) ON DELETE CASCADE
+                                    --   NOT NULL beyond the design's text: a TEXT PRIMARY KEY
+                                    --   admits NULLs and a NULL key skips the foreign key
+  text        TEXT NOT NULL
+  bytes       INTEGER NOT NULL      -- len(text.encode())
+  written     REAL NOT NULL         -- epoch seconds, when the row was written; no index: the
+                                    --   primary key is the lookup
+
 indexes
   jobs(name), jobs(mcp_server_id), jobs(endpoint_id), jobs(model_id), jobs(status, finished_at),
   jobs(created_at)                  -- added to v1 before the first release (story 1.8); after a
@@ -115,6 +128,12 @@ PRAGMA user_version = 1; journal_mode = WAL; busy_timeout = 5000; foreign_keys =
 Version 2 (story 1.11, 2026-10-29): `jobs.compactions` — one appended migration step
 (`ALTER TABLE jobs ADD COLUMN compactions INTEGER NOT NULL DEFAULT 0`); a file opens at
 user_version 2, and the version-1 history above stands as written.
+
+Versions 3–7 (the monitor's tables, their two extensions, `endpoints.last_active`, and
+`jobs_finished_at`) are recorded in `db.py` and in EPICS at their stories. Version 8 (story
+1.11, 2026-10-30): the `transcripts` table above — one appended migration step, nothing else;
+a file opens at user_version 8. Readers take the row when present, else the file. Database
+purge is its own open item (EPICS 1.11): nothing deletes these rows.
 
 ## Derivations (read time; each reproduces today's value)
 
@@ -227,7 +246,8 @@ user's process), so a stale heartbeat with a live pid of this user is spared as 
 
 `transcript.txt` (humans read it; `job_log` tails it) and the opt-in debug dumps
 `events.jsonl`, `requests_full.jsonl`. `task.txt`, `requests.jsonl` and `status/<pid>.json`
-are no longer written.
+are no longer written. True now (1.11): transcript.txt stays the live file while the job runs;
+at completion its text is copied into `transcripts`, and readers take the row first.
 
 ## Known limitation carried over
 
