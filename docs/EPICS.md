@@ -1081,6 +1081,24 @@ ruling (e). The lane is also the operator's first live job on the landed page.
   re-includes that one file), so every worktree carries the net from its first probe; the
   coordinator wrote it into the running 3.9C and 3.9D worktrees before either ran a probe. Retro
   candidate: "a probe outside tests/ runs without the suite's safety net".
+- ☑ **3.9E Every statement's query plan** (operator: "If all your queries are properly scoped and
+  keyed, the size of the database shouldn't affect performance until it grows unreasonably
+  large."). Qwen/ai1 job 20261030-130909-508658d5, 30 turns, 5 min, read-only, `t/plan_sql.py`
+  runs `EXPLAIN QUERY PLAN` over 88 statements against a seeded file (branch
+  `local-agent/20261030-130909-508658d5`). 85 are scoped and keyed. Findings:
+  - E1 `read.py:282` (`_JOB_SELECT + _FINISHED_TAIL`): the snapshot's finished tail scans every
+    jobs row and sorts them in a temp b-tree on EVERY refresh (`NOT IN` keeps SQLite off
+    `jobs_status_finished_at`). CONFIRMED by the coordinator on the real file; with
+    `jobs_finished_at` the plan is an index walk stopping at the LIMIT. ACCEPTED: schema v7.
+  - E2 `read.py:628` (`jobs_overlapping`): scan + sort per timeline request; the same index
+    gives the OR branch something to use. ACCEPTED, pinned to what the plan actually says.
+  - E3 `server.py:755` (`list_jobs(include_finished=False)`): walks `jobs_created_at` until
+    enough live rows surface. ACCEPTED to investigate: a partial index only if the plan uses it.
+  - Observations, not findings: `_NEWEST_REQUEST_SQL` (read.py:72) MAXes over an endpoint's
+    every request row (requests are never pruned); endpoint request reads cost with the
+    endpoint's all-time job count; `mcp_servers` grows one row per server start. All three
+    belong to the open purge item.
+  Fold 3.9E-fix to Qwen/ai1 (ruling (a)); 1.11 then becomes schema v8.
 - ☐ **3.9C The monitor's server**: `monitor/app.py`, `read.py`, `collect.py`, `serve.py`,
   `state.py`, `config.py`, `rows.py`, `rates.py`, `ranges.py`, `retention.py`, `jobs.py`,
   `seed.py` (~2.9k).
