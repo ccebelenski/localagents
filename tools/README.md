@@ -1,0 +1,13 @@
+# tools/ — the coordinator's scripts (no model call in any of them)
+
+Copied-and-adapted from ADOCK's `tools/` (2026-10-29). Each prints facts; the judgement stays
+with the reader. Run from anywhere inside the checkout (they find the root).
+
+| When | Command | What it removes from the by-hand list |
+|---|---|---|
+| accepting a branch | `tools/accept.sh <branch> [--files list] [--claims file]` | base (BEHIND → take by path), stash, worktree dirt, commits, stat, strays, package files, scratch artefacts, raw NUL, `/tmp` in added lines, the test functions the diff ADDS (cross-check the report), literal claims. Writes nothing. |
+| landing a branch, AFTER reading its diff against the brief | `tools/land.sh <branch> -F msg.txt` | the squash onto a clean main, the commit, the suite as its own step with its closing line. The one script that writes to git; refuses on dirt, stash, nothing to apply, or a conflict (behind is a note: the squash is three-way). |
+| a page story's acceptance | `tools/smoke/` (see its README) | the DOM-only browser probe over the DevTools protocol (ruling (j)). |
+
+The order is: `accept.sh` → read the diff → `land.sh` → remove the worktree by hand (never
+one a running review has as its cwd).
