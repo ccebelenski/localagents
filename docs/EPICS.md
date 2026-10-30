@@ -1089,6 +1089,14 @@ The 3.7 chain's reviews are closed: no open defect.
   short `refresh_s`, so hundreds of pushes happen in minutes; a count that grows with the push
   count is the leak, one that plateaus is not. Then a second reading of the tab by the operator
   an hour later says whether Firefox agrees.
+  Second reading (operator, 2026-10-30 22:29 UTC, about:processes): the tab's process at 667 MB,
+  5 h 12 min after the 562 MB reading, so +105 MB (~20 MB/h) with no forced collection; the
+  claude.ai tab in the same window sat at 619 MB and the GitHub tab at 488 MB. Reading: a
+  full-snapshot JSON parse and a re-render every tick leaves garbage Firefox collects on its own
+  schedule, and the page's heap measured flat in Chromium, so 20 MB/h of uncollected process
+  growth is not evidence of a page leak. What settles it: about:memory → "Minimize memory usage"
+  on that tab, then about:processes again; a drop back toward 560 MB is garbage, a figure that
+  stays and keeps climbing by the morning is retention and the next probe is Firefox-side.
 
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
