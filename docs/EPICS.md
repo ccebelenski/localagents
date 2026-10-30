@@ -593,7 +593,7 @@ overview (app.js:417-460: `replaceChildren` of every host card and the jobs tabl
 update (app.js:526). About five full DOM rebuilds per 5 s: text reflows, sparklines and strips
 recreated, hover state lost — the jerk.
 
-- ☐ **3.7m One redraw per tick, in place.** Server: the fan-out coalesces ticks, one snapshot
+- ☑ **3.7m One redraw per tick, in place.** (4627647, server half: DeepSeek/dgx1-a job 20261029-232403-f7e2c103, 152 turns, 37 min, 627 tests; the fan-out coalesces ticks into one push per `refresh_s`, default 5, `monitor: refresh_s` in (0, 3600]; three ticks in a 0.2 s period measured as one push. The page half, in-place card updates, is still open: see 3.7-fold-2.) Server: the fan-out coalesces ticks, one snapshot
   push per ≤1 s of quiet and at most one per 5 s (a tick during the quiet period extends it
   within that cap), so the page sees one snapshot per probe round. Page: `render` skips a
   snapshot whose content is unchanged (serialise minus `now`, compare), and updates a card's
@@ -655,7 +655,7 @@ ctx_tokens, gen_tps, tool_call_count, error_count, last_tool, files_touched). Th
 fetches the fleet history plus one history per live endpoint every 5 s (the Epic 3 retro's open
 N+1), each a downsampling read over the range. Two tabs double all of it.
 
-- ☐ **3.7p One read per tick, shared; histories cached and batched.** Server: the fan-out
+- ☑ **3.7p One read per tick, shared; histories cached and batched.** (4627647; measured over the seeded world with set_trace_callback: one push 25 statements with one subscriber and 25 with two; /api/overview/history 46 cold, 2 warm; /api/snapshot inside a push 0; one read.overview 25, of which 3 are last_active. Lane's note: read.overview is still 25 statements on three endpoints, well over a hundred on the real fleet with jobs; folding the per-endpoint probe reads into one windowed query is the next reduction.) Server: the fan-out
   computes the snapshot ONCE per push (3.7m's clock) and every subscriber receives the same
   bytes; the overview's per-job derivations run once per job per push. History responses are
   cached per (endpoint, range) and keyed on the endpoint's newest probe `t`, so a request between
@@ -697,7 +697,7 @@ advanced over the previous one (a rate row with gen_tps > 0, rates.py) is the la
 the box generated anything, ours or not (a curl from the operator counts; a probe does not).
 Our requests table is the fallback witness when counters are absent (an `other` backend).
 
-- ☐ **3.7s Per endpoint, "last active".** Server: §5a gains `last_active` per endpoint: the
+- ☑ **3.7s Per endpoint, "last active".** (server half in 4627647: `last_active` in §5a, paired with rates.rates so a reset never counts, seed pins ai1 = NOW, dgx1-a = NOW−1200, llamacpp null. Coordinator's concern: the walk is newest-first until an advancing interval, two rows for a busy box, the WHOLE retained history for an idle one, per push; 3.7-fold-2 stores the witness. The page half is open: 3.7-fold-2.) Server: §5a gains `last_active` per endpoint: the
   `t` of the newest probe whose counters advanced `generated_tokens` (or `prompt_tokens_processed`)
   over the previous row; null when no such row is in the retained history; the requests
   table's newest `t` on that endpoint when the backend has no counters. One indexed query per
@@ -722,6 +722,21 @@ Our requests table is the fallback witness when counters are absent (an `other` 
   endpoint's own history); 3.7q (one shared y scale across live cards, the peak label at the
   right, the window named in the label and once on the strip row). Review: DeepSeek, three
   probes (the card height invariant, the sparkline over the real-shaped history, the row form).
+- ☐ **3.7-fold-2 The stored last-active witness, and the page's half of 3.7m/3.7s.** Server:
+  the collector already pairs each tick's counters with the previous row (collect.py `tick`,
+  rates.rates for the reset check); when the pair advanced generated or prompt tokens it writes
+  the probe's `t` into a per-endpoint witness (a column on `endpoints` or a one-row-per-endpoint
+  table, schema bump in db.py's migration style, backfilled once from the existing rows at
+  migration); `_last_active` reads that one value; the counterless-backend fallback stays.
+  Evidence: the statement count per push with one idle endpoint holding 7 d of rows (seed a
+  long idle history in the test) is the same as with 1 h. Page: `last_active` drawn at the right
+  of each endpoint's head line as 3.7s says ("active 3m ago", the date form past 24 h, "no
+  activity in 7d" when null, nothing on the host head); `HISTORY_MIN_INTERVAL_MS` follows the
+  snapshot's `refresh_s`; `render` skips a snapshot whose content is unchanged (serialise
+  minus `now`), and updates a live card's tile values, meters, strip and sparkline in place by
+  `data-endpoint` key, rebuilding a card only when its endpoint list or state changes (3.7m's
+  page half). Evidence: the smoke counts renders per minute and checks a card's DOM node keeps
+  its identity across two snapshots.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
