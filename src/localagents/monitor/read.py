@@ -677,7 +677,7 @@ def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t
 
 def _transcript(conn: sqlite3.Connection, job_id: str, name: str | None) -> tuple[str | None, str | None]:
     """(tail, note): the last ``TRANSCRIPT_LINES`` lines of the job's transcript, or None and
-    the sentence saying why there is none. Story 1.11 read order: the ``transcripts`` row when
+    the sentence saying why there is none. Story 1.12 read order: the ``transcripts`` row when
     present (the finished job — its text, surviving the file's retention), else the file (a
     running job, or a job from before this change); the note names both things it looked for."""
     from ..jobs import state_dir  # the MCP server's module; the monitor may read it, never the reverse

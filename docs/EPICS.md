@@ -175,7 +175,7 @@ the duplicates go), then docs.
   the 60 characters. The input rule stores the path for any path-shaped tool; the row's
   activity is one line with paths relative to the job's root. Lane: Qwen (ai2).
 
-- ☑ **1.11 Transcripts in the database.** Built 2026-10-30, one commit per step: schema v8
+- ☑ **1.12 Transcripts in the database.** Built 2026-10-30, one commit per step: schema v8
   (`transcripts`, key-only PK, no index); `Job.record_transcript` (INSERT OR REPLACE, one
   `[db-error]` line on failure) and row-first `transcript_tail`; called in `run_job`'s finally
   tail — after `_finish`'s last transcript line, before `_done.set()`/the terminal `changed()`,
@@ -203,7 +203,7 @@ the duplicates go), then docs.
   kind of analytics path. If all your queries are properly scoped and keyed, the size of the
   database shouldn't affect performance until it grows unreasonably large." So: the story
   writes the row with no purge rule; purge (every table, not transcripts alone) and an
-  analytics path are open items of their own, not part of 1.11. Standing expectation from the
+  analytics path are open items of their own, not part of 1.12. Standing expectation from the
   same sentence: every query is scoped by job/endpoint/time and served by an index; an
   `EXPLAIN QUERY PLAN` sweep over every statement in `read.py`, `derive.py`, `status.py` and
   `collect.py` (a table: statement, plan, index used or SCAN) is the cheap audit that pins it,
@@ -1143,7 +1143,33 @@ ruling (e). The lane is also the operator's first live job on the landed page.
     every request row (requests are never pruned); endpoint request reads cost with the
     endpoint's all-time job count; `mcp_servers` grows one row per server start. All three
     belong to the open purge item.
-  Fold 3.9E-fix to Qwen/ai1 (ruling (a)); 1.11 then becomes schema v8.
+  Fold 3.9E-fix to Qwen/ai1 (ruling (a)); 1.12 (transcripts) is schema v8.
+  **3.9E-fix LANDED 5499c35** (Qwen/ai1 job 20261030-131541-468b0341, 50 turns, 8 min, 663 tests; the lane's own record:
+  `EXPLAIN QUERY PLAN` over the jobs-table statements; E1 verified on a copy of the real
+  database before the fold). Findings and disposition (all pinned with
+  `EXPLAIN QUERY PLAN` tests in `tests/test_query_plans.py`):
+  - E1 (cost) the snapshot's finished-jobs tail sorts the whole job history every snapshot:
+    `SCAN j` + `USE TEMP B-TREE FOR ORDER BY`. ACCEPTED: schema version 7 appends
+    `jobs_finished_at`; the plan becomes `SCAN j USING INDEX jobs_finished_at`, no sort.
+  - E2 (cost) `jobs_overlapping` (fleet timeline) scans the whole table: `SCAN j` + temp sort.
+    ACCEPTED on the same index: the OR terms gain `MULTI-INDEX OR` with two
+    `SEARCH j USING INDEX jobs_finished_at` seeks — the audit's OR-optimisation expectation
+    holds; the `started_at` sort stays (nothing indexes `started_at`), now over the window's
+    rows only.
+  - E3 (cost) `list_jobs(all=True, include_finished=False)` walks every job ever run through
+    `jobs_created_at` to keep two statuses: `SCAN jobs USING INDEX jobs_created_at`. ACCEPTED
+    as a predicate rewrite, NO new index: `status NOT IN (<five terminal>)` →
+    `status IN ('queued','running')` (the same set under the status CHECK — a NULL status
+    matches neither form), and the plan becomes
+    `SEARCH jobs USING INDEX jobs_status_finished_at (status=?)`. The candidate partial index
+    `jobs_live_created` is REJECTED: the plan never names it, even with a provably-implying
+    predicate — SQLite prefers the existing composite index.
+  Fold 3.9E-fix LANDED this branch (46b2a6b + 542d5b9 + ae8040f + docs): the v7 migration
+  (`test_a_version_6_file_migrates_to_version_7_with_its_job_rows_intact`, the fresh-file test
+  updated), six plan pins in `tests/test_query_plans.py` (E1/E2 red proven with the `_V7` step
+  commented out; E3 pins `server._LIST_JOBS_SQL` directly, plus a row-set-equality test for the
+  rewrite), 660 tests.
+
 - ☑ **3.9C The monitor's server**: `monitor/app.py`, `read.py`, `collect.py`, `serve.py`,
   `state.py`, `config.py`, `rows.py`, `rates.py`, `ranges.py`, `retention.py`, `jobs.py`,
   `seed.py` (~2.9k). DeepSeek/dgx1-a job 20261030-125246-bbdacb91, 89 turns, 32 min, 0.98 cache
@@ -1176,32 +1202,6 @@ ruling (e). The lane is also the operator's first live job on the landed page.
   Fold 3.9C-fix to DeepSeek/dgx1-a (ruling (a)), five rows small-first.
 - ☐ **3.9D The monitor's page**: `static/app.js`, `endpoint.js`, `job.js`, `app.css`,
   `index.html`, with `tests/test_monitor_page.py` and `tools/smoke/` (~2.9k).
-- ☑ **3.9E Query-plan audit** (coordinator 2026-10-30, the audit the 1.11 purge ruling names:
-  `EXPLAIN QUERY PLAN` over the jobs-table statements; E1 verified on a copy of the real
-  database before the fold). Findings and disposition (all pinned with
-  `EXPLAIN QUERY PLAN` tests in `tests/test_query_plans.py`):
-  - E1 (cost) the snapshot's finished-jobs tail sorts the whole job history every snapshot:
-    `SCAN j` + `USE TEMP B-TREE FOR ORDER BY`. ACCEPTED: schema version 7 appends
-    `jobs_finished_at`; the plan becomes `SCAN j USING INDEX jobs_finished_at`, no sort.
-  - E2 (cost) `jobs_overlapping` (fleet timeline) scans the whole table: `SCAN j` + temp sort.
-    ACCEPTED on the same index: the OR terms gain `MULTI-INDEX OR` with two
-    `SEARCH j USING INDEX jobs_finished_at` seeks — the audit's OR-optimisation expectation
-    holds; the `started_at` sort stays (nothing indexes `started_at`), now over the window's
-    rows only.
-  - E3 (cost) `list_jobs(all=True, include_finished=False)` walks every job ever run through
-    `jobs_created_at` to keep two statuses: `SCAN jobs USING INDEX jobs_created_at`. ACCEPTED
-    as a predicate rewrite, NO new index: `status NOT IN (<five terminal>)` →
-    `status IN ('queued','running')` (the same set under the status CHECK — a NULL status
-    matches neither form), and the plan becomes
-    `SEARCH jobs USING INDEX jobs_status_finished_at (status=?)`. The candidate partial index
-    `jobs_live_created` is REJECTED: the plan never names it, even with a provably-implying
-    predicate — SQLite prefers the existing composite index.
-  Fold 3.9E-fix LANDED this branch (46b2a6b + 542d5b9 + ae8040f + docs): the v7 migration
-  (`test_a_version_6_file_migrates_to_version_7_with_its_job_rows_intact`, the fresh-file test
-  updated), six plan pins in `tests/test_query_plans.py` (E1/E2 red proven with the `_V7` step
-  commented out; E3 pins `server._LIST_JOBS_SQL` directly, plus a row-set-equality test for the
-  rewrite), 660 tests.
-
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to

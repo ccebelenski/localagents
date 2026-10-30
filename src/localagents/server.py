@@ -785,7 +785,7 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
     bad_argument. Works for any localagents server's job. tools=N also returns the last N
     recorded tool calls (t, finished, tool, input, is_error), oldest first.
 
-    Story 1.11 read order, in-process and foreign jobs alike: the ``transcripts`` row when
+    Story 1.12 read order, in-process and foreign jobs alike: the ``transcripts`` row when
     present (the finished job — its text, surviving the file's retention), else the file (a
     running job, or a job from before this change); the note is said only when neither exists."""
     if tail_lines < 0:

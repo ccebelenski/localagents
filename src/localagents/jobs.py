@@ -225,7 +225,7 @@ class Job:
             self.log_text(f"[db-error] record_request: {e}")
 
     def record_transcript(self) -> None:
-        """Story 1.11: copy the transcript file's text into the ``transcripts`` row, once, at
+        """Story 1.12: copy the transcript file's text into the ``transcripts`` row, once, at
         completion (run_job's finally, after the last transcript line and before the row turns
         terminal). INSERT OR REPLACE: a re-finish replaces rather than duplicates. A job with no
         transcript file gets no row — the file is what exists, and readers then say so. A failing
@@ -314,7 +314,7 @@ class Job:
         """The last ``n_lines`` lines; 0 is the whole transcript (job_log's contract,
         story 1.9 item 7 — stated here too so it is never the ``lines[-0:]`` accident).
 
-        Story 1.11 read order: the ``transcripts`` row when present (the finished job: the text
+        Story 1.12 read order: the ``transcripts`` row when present (the finished job: the text
         as of completion, surviving the file's retention), else the file (a running job, or a
         job from before this change); "" when neither exists. A database failure propagates —
         the readers answer database_error, as they do for their other row reads."""
