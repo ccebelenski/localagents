@@ -1277,6 +1277,31 @@ ruling (e). The lane is also the operator's first live job on the landed page.
   notes: 15m yields 3 axis labels against the "4-7" comment (`TL_TICKS`); the range choice
   persists in localStorage, so smoke runs are order-sensitive on it. Review of the fold: the next
   page review.
+- ☑ **3.9 folds review, batch 1 (the package side)**: DeepSeek/dgx1-a job 20261030-141807-2b3de9d1,
+  57 turns, 25 min, four construct-it probes (17 assertions) over d2fbc24 (A1), 8335861 (B1-B3),
+  5499c35 (v7) and 52cb57b (v8/1.12), none of which it built; src/tests untouched; branch
+  `local-agent/20261030-141807-2b3de9d1`. Clean: v6→v8 with rows intact and the cascade; row ==
+  file at the terminal `changed()`; a second finish replaces; the prune-step race leaves the row
+  an exact prefix and every shipped reader takes the row; invalid UTF-8 and 2 MB whole; the
+  live predicates identical over every status and NULL; the worktree records; duplicate ids
+  (in-process and foreign) counted once in both modes. Findings, all ACCEPTED, fold to DeepSeek
+  (ruling (a)):
+  - F3 (correctness, low probability, high impact) `runner.py` finally: `record_transcript()` is
+    the one call neither shielded by `_to_the_end` nor catching beyond OSError/sqlite3.Error; a
+    MemoryError there escapes before `_done.set()` and strands the row `running`, every waiter
+    timing out. Fix: catch Exception inside, one `[db-error] transcript` line.
+  - F2 (correctness) `runner.py:155-157`: a kept tree whose `.git` cannot be read is recorded
+    `kept=True`, empty diffstat, "Changes left … Review with …" (return codes of `status` and
+    `rev-parse` ignored). Fix: record "git could not read the worktree", nothing removed.
+  - F1 (false invariant) the comment "a terminal jobs row always has its transcript row": a job
+    cancelled before its first line has no file and no row (readers say so). Fix: the record
+    states the exception; the tests' "1.11" docstrings become 1.12.
+  - Possible, noted: a `lost` job can carry a row (death between the two adjacent statements);
+    the completion copy is synchronous on the event loop with no size cap (fine at today's
+    75 KB median); `IF NOT EXISTS` tolerates a same-named wrong index. Noticed: `make_worktree`
+    can hand `run_job` a nonexistent `run_cwd` when `job.cwd` is an untracked subdirectory;
+    `job_log` reads the row twice; `_FINISHED_TAIL` drops a NULL-status row like `list_jobs`.
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
