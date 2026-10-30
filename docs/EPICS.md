@@ -523,7 +523,7 @@ Coordinator's reading against the code (`monitor/read.py:101-135`, `runner.py:20
 - `num_turns` is written once, from the final result (runner.py:268): the "turns" column reads
   0 for every running job.
 
-- ☐ **3.7g Recent jobs: a log, our columns.** Operator (2026-10-29, with a screenshot of Strata's
+- ☑ **3.7g Recent jobs: a log, our columns.** (f670097 with 3.7h/i/j: Qwen/ai2 job 20261030-000549-db188e2a, 132 turns, 31 min, 2 compactions; two queries, the jobs read 7 → 14 statements per push, the overview 25 → 32 on the seeded world; the cards' jobs block filters to live statuses; the merge broke two fold-2 tests that pinned the jobs list exactly, fixed by the coordinator to compare live ids: 640 tests. Review: with 3.7-fold-2b and 3.7k, the next DeepSeek batch.) Operator (2026-10-29, with a screenshot of Strata's
   "Recent requests"): "For the jobs list - Strata does it differently - we should compare the two
   approaches." Then: "I didn't mean 'Copy Strata Verbatim' - I like some of the data we display
   now that strata doesn't. But the log style concept I think is better." Strata's concept: a
@@ -536,7 +536,10 @@ Coordinator's reading against the code (`monitor/read.py:101-135`, `runner.py:20
   model, endpoint, elapsed, turns, tool calls, tool errors, context bar, speed, activity (as 3.7h-j
   settle them). Server side: the snapshot's jobs query takes finished rows too, capped; the
   page draws the pill.
-- ☐ **3.7k Requests table: the log look, our columns, Strata's rates added.** The endpoint
+- ☑ **3.7h One activity column.** (f670097: "current tool" dropped; the activity cell keeps the full text in its title.)
+- ☑ **3.7i The error count named.** (f670097: header "tool errors" with the title "tool results that came back as errors; the job page lists them by tool"; the badge links to the job page.)
+- ☑ **3.7j Turns while running.** (f670097: the runner increments `num_turns` per AssistantMessage, the result's count still wins; a running row with 0 shows a muted dash.)
+- ☐ **3.7k Requests table: the log look, our columns, Strata's rates added.** (DeepSeek/dgx1-a, running.) The endpoint
   page's requests table (endpoint.js:296 `REQ_COLUMNS`) keeps its columns (time, job, path,
   status, ms, tokens in, out, cache, stream, error) and gains the two rates Strata derives from
   the same facts (read.py:458-466): prefill t/s ((input − cache_read) / (ms − gen_ms)) and
@@ -768,7 +771,7 @@ walks 2 rows in 0.1 ms; the seeded world is 1.4 ms. POSSIBLE: `history_cache` gr
 distinct range texts. 627 passed.
 
 - ☑ **3.7-fold-2 Server: the stored witness, the cache that expires, bounded caches.** (0091694: Qwen/ai1 job 20261030-001427-3c94d3d7, 125 turns, 15 min, 636 tests; 7 d idle world 665.9 ms → 1.0 ms at 11 statements; schema v6; self-tick as a fan-out flag; the expiring-cache test fails on the pre-fix code. Noticed: the witness is not pruned with the probes, so a non-null value can be older than retention — fold-3's wording must allow it. Follow-up 3.7-fold-2b: the v6 migration imported the monitor package for the backfill, against the decided rule; moved to the monitor's start.)
-- ☐ **3.7-fold-2b db.py never imports the monitor.** (Qwen/ai1, running.) `_v6` adds the column only; `serve()` backfills null witnesses at start; a static guard test greps the MCP-side modules for monitor imports. Lane:
+- ☑ **3.7-fold-2b db.py never imports the monitor.** (6e686bf: Qwen/ai1 job 20261030-003152-66e8f175, 52 turns, 7 min, 643 tests; a 0.0 memo for walked-nothing so the idle walk is paid once ever; an AST guard over the eight MCP-side modules.) `_v6` adds the column only; `serve()` backfills null witnesses at start; a static guard test greps the MCP-side modules for monitor imports. Lane:
   the reviewer (Qwen/ai1) fixes its own verified findings. (a) D5: the collector already pairs
   each tick's counters with the previous row (collect.py `tick`, rates.rates for the reset
   check); when the pair advanced generated or prompt tokens it writes the probe's `t` into a
