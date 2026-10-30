@@ -293,33 +293,14 @@
     return h("table", null, [h("thead", null, [head]), h("tbody", null, rows)]);
   }
 
-  var REQ_COLUMNS = ["time", "job", "path", "status", "ms", "tokens in", "out", "cache", "stream", "error"];
-  var REQ_NUMERIC = { status: 1, ms: 1, "tokens in": 1, out: 1, cache: 1 };
-
-  function requestsSection(reqs, range, now) {
+  function requestsSection(reqs, range) {
     var body;
     if (!reqs) {
       body = h("div", { class: "empty", text: "loading" });
-    } else if (!reqs.requests.length) {
-      body = h("div", { class: "empty", text: "no requests in this range" });
     } else {
-      var rows = reqs.requests.map(function (req) {
-        var err = req.error || (req.context_exceeded ? "context exceeded" : "");
-        return h("tr", { class: req.error ? "req-err" : null }, [
-          h("td", { text: when(req.t, now) }),
-          h("td", null, [req.job_id ? jobLink(req.job_id, req.job_name) : null]),
-          h("td", { class: "cut", title: req.path || "", text: req.path || "" }),
-          h("td", { class: "n", text: req.http_status != null ? String(req.http_status) : "" }),
-          h("td", { class: "n", text: fmt.int(req.ms) }),
-          h("td", { class: "n", text: fmt.int(req.tokens.input) }),
-          h("td", { class: "n", text: fmt.int(req.tokens.output) }),
-          h("td", { class: "n", title: "cache read " + fmt.int(req.tokens.cache_read) + ", cache creation "
-            + fmt.int(req.tokens.cache_creation), text: fmt.int(req.tokens.cache_read) }),
-          h("td", { text: req.stream == null ? "" : req.stream ? "yes" : "no" }),
-          h("td", { class: "cut", title: err, text: err }),
-        ]);
-      });
-      body = h("div", { class: "table-wrap" }, [table(REQ_COLUMNS, rows, REQ_NUMERIC)]);
+      // the log look (3.7k): the one shared renderer, with the job column (this page's log
+      // spans jobs) and this page's empty sentence
+      body = M.requestsTable(reqs.requests, { empty: "no requests in this range" });
     }
     var totalsLine = null;
     if (reqs && reqs.totals) {
@@ -507,7 +488,7 @@
         // the short lists first: the request table can run to 1000 rows
         jobsSection(page.hist, range, now),
         eventsSection(page.hist, range, now),
-        requestsSection(page.reqs, range, now)
+        requestsSection(page.reqs, range)
       );
     }
 

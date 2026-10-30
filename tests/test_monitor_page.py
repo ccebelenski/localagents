@@ -110,7 +110,8 @@ JOB_SMOKE_CLASSES = ["job-detail", "gauge", "timeline", "by-tool", "job-requests
 # the names app.js reads the route bodies through (its header says so): snapshot, host, endpoint,
 # running job, endpoint hardware, endpoint rates, fleet history, one endpoint's fleet series,
 # endpoint history
-APP_JS_VARS = ("snap", "host", "ep", "job", "hw", "rates", "fleet", "fleetEp", "hist")
+# `req` is the shared requests renderer's request row (3.7k), read through the same walk
+APP_JS_VARS = ("snap", "host", "ep", "job", "hw", "rates", "fleet", "fleetEp", "hist", "req")
 # the names job.js (story 3.4) reads the route bodies through (its header says so): the job
 # detail through `detail`, a snapshot through `snap`, a request row through `req`, a tool call
 # through `tc`, a snapshot jobs[] entry through `job`
@@ -223,7 +224,9 @@ def test_app_js_reads_only_section_5a_field_names():
         fields = _read_fields((STATIC / name).read_text(), vars)
         # the regex does see the reads (a guard against a pattern that matches nothing)
         assert {"hosts", "endpoints", "jobs", "rates", "gen_tps", "state", "t", "server_live", "dropped_job",
-                "dropped_job_id", "db_path", "probe_state"} <= fields \
+                "dropped_job_id", "db_path", "probe_state",
+                # 3.7k: the shared requests renderer's row reads
+                "http_status", "tokens", "cache_read", "job_name", "gen_ms"} <= fields \
             if name == "app.js" else \
             {"requests", "tool_call_log", "ctx_tokens", "usage", "metrics", "tool_counts",
              "files_touched", "transcript_tail", "elapsed_s", "server_live"} <= fields, name
@@ -289,9 +292,11 @@ def test_job_js_totals_count_only_real_errors():
 
 # --- story 3.3: the endpoint detail page (endpoint.js) -------------------------------------------
 
-# the classes the endpoint page's browser smoke names (story 3.3's brief)
+# the classes the endpoint page's browser smoke names (story 3.3's brief; 3.7k adds the shared
+# requests-table renderer's classes — the table, the two status pills and the context-exceeded
+# row — defined in app.js, which the page loads first)
 ENDPOINT_CLASSES = ["endpoint-detail", "tiles", "tile", "tier-0", "tier-1", "tier-2", "tier-3", "requests", "totals",
-                    "events"]
+                    "events", "requests-table", "pill-ok", "pill-error", "req-ctx"]
 
 # the names endpoint.js reads the route bodies through (its header says so): snapshot, host,
 # snapshot endpoint, endpoint hardware, endpoint rates, endpoint history, one history job, one
@@ -305,13 +310,43 @@ def _endpoint_js():
 
 def test_endpoint_js_carries_every_class_the_smoke_names():
     """Each class is a whole word inside a string literal of endpoint.js (the tier classes are
-    picked from a list by tier), and the stylesheet styles it."""
-    js = _endpoint_js()
+    picked from a list by tier), and the stylesheet styles it. Story 3.7k moved the requests
+    table's markup into app.js's shared renderer, so the page's class literals are read from
+    app.js too — the page loads it before endpoint.js."""
+    js = _endpoint_js() + _app_js()
     tokens = {c for lit in re.findall(r'"([^"\n]*)"', js) for c in lit.split()}
     css = (STATIC / "app.css").read_text()
     for cls in ENDPOINT_CLASSES:
         assert cls in tokens, cls
         assert re.search(r"\." + re.escape(cls) + r"(?![\w-])", css), cls
+
+
+def test_requests_tables_share_one_renderer():
+    """Story 3.7k: the endpoint page and the job page draw their request logs through app.js's
+    one exported renderer. Its column order is the operator's (Strata's log look plus our
+    columns, with Strata's two derived rates), the job column is the endpoint page's alone, and
+    the formulas are the spec §5a sentences' — a change to either side fails here."""
+    app_js = _app_js()
+    assert "requestsTable: requestsTable," in app_js  # exported on window.localagentsMonitor
+    order = re.search(r'var columns = \["time", "status"\];.*?columns\.concat\(\[(.*?)\]\);', app_js, re.S)
+    assert order is not None
+    assert re.findall(r'"([^"]+)"', order.group(1)) == ["path", "prompt", "reused", "output", "prefill t/s",
+                                                         "decode t/s", "duration", "error"]
+    assert "if (withJob) columns.push(\"job\");" in app_js
+    assert "var withJob = opts.job !== false;" in app_js
+    assert "(req.ms - req.gen_ms) / 1000" in app_js  # prefill t/s
+    # the brief's "input − cache_read" is Strata's total-input model; ours excludes cache reads,
+    # so the processed count is input + cache_creation (Strata's processed = prompt − cached)
+    assert "req.tokens.input + req.tokens.cache_creation" in app_js
+    assert "req.tokens.output / (req.gen_ms / 1000)" in app_js  # decode t/s
+    # each page calls it, with the job column dropped on the job page
+    assert "M.requestsTable(reqs.requests, { empty: \"no requests in this range\" })" in _endpoint_js()
+    assert "M.requestsTable(reqs, { job: false })" in (STATIC / "job.js").read_text()
+    # the endpoint page's old column list and local numeric map are gone; the generic table()
+    # stays for its jobs and events sections
+    js = _endpoint_js()
+    assert "REQ_COLUMNS" not in js and "REQ_NUMERIC" not in js
+    assert "function table(columns, rows, numeric)" in js
 
 
 def test_endpoint_js_reads_only_section_5a_field_names():
@@ -321,10 +356,12 @@ def test_endpoint_js_reads_only_section_5a_field_names():
     holder like `state`."""
     spec = _section_5a()
     fields = _read_fields(_endpoint_js(), ENDPOINT_JSON_VARS, ("state", "page"))
-    # the regex does see the reads, through every one of the names
+    # the regex does see the reads, through every one of the names (3.7k: the request row's own
+    # fields — tokens, cache_read, job_id, job_name, http_status — moved with the table into
+    # app.js's shared renderer, whose `req` walk checks them there)
     assert {"hosts", "endpoints", "now", "state", "fallback", "hardware", "rates", "gpu_mem_total", "ram_total",
-            "prompt_tps", "cached_tps", "t", "jobs", "events", "requests", "totals", "tokens", "cache_read",
-            "job_id", "job_name", "http_status", "count", "cache_creation_tokens", "errors", "started_at",
+            "prompt_tps", "cached_tps", "t", "jobs", "events", "requests", "totals",
+            "count", "cache_creation_tokens", "errors", "started_at",
             "kind", "detail", "dropped_job", "last_seen", "base_url",
             "host", "last_model", "last_context"} <= fields
     missing = sorted(f for f in fields if not re.search(r"(?<![A-Za-z_])" + re.escape(f) + r"(?![A-Za-z_])", spec))

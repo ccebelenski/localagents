@@ -34,6 +34,11 @@ const probe = `(() => {
     jobRows: q('.jobs tbody tr').map(r => Array.from(r.cells).map(c => c.textContent.trim())),
     jobsEmpty: (document.querySelector('.jobs .empty')||{}).textContent || null,
     jobHeaders: q('.jobs thead th').map(e => e.textContent),
+    // 3.7k: the shared requests table's headers, first three rows and pills
+    reqHeaders: q('.requests-table thead th').map(e => e.textContent),
+    reqRows: q('.requests-table tbody tr').slice(0, 3).map(r => Array.from(r.cells).map(c => c.textContent.trim())),
+    reqPills: q('.requests-table .pill').slice(0, 5).map(e => e.className + ':' + e.textContent),
+    reqRowClasses: q('.requests-table tbody tr').slice(0, 5).map(r => r.className),
     canvases: q('.fleet canvas').length,
     chartTitles: q('.fleet .chart h3').map(e => e.textContent),
     legends: q('.fleet .chart').map(c => Array.from(c.querySelectorAll('.u-legend .u-series th')).map(t => t.textContent.trim())),
@@ -93,6 +98,9 @@ if (hashAfter) {
   // the hand-rendered states (js: hash-after) are read through the log's fields: the summary
   // line above long predates the Recent jobs log and cannot carry them
   console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote }));
+  console.log("AFTER " + hashAfter + ": detail=" + JSON.stringify(o.detail) + " overviewHidden=" + o.overviewHidden + " range=" + o.rangeButtons + " canvases=" + o.canvases + " strips=" + o.strips + " sparklines=" + o.sparklines + " banner=" + o.banner
+    + " reqHeaders=" + JSON.stringify(o.reqHeaders) + " reqRows=" + JSON.stringify(o.reqRows)
+    + " reqPills=" + JSON.stringify(o.reqPills) + " reqRowClasses=" + JSON.stringify(o.reqRowClasses));
   if (process.argv[8]) writeFileSync(process.argv[8], Buffer.from((await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true })).result.data, "base64"));
 }
 console.log("LOGS " + JSON.stringify(logs, null, 1));

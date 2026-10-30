@@ -299,3 +299,18 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .jobs a.badge { text-decoration: none; }
 /* the line under the log's table spelling out the row order */
 .jobs-note { padding: 6px 2px 0; font-size: 13px; }
+/* 3.7k requests tables */
+/* the endpoint page's and the job page's request logs share one renderer (app.js's
+   requestsTable): the same columns, the same status pill, numbers right-aligned (.n as every
+   table). The base .pill rule and the job-status variants belong to the jobs lane's block; this
+   block adds ONLY the two request outcomes, so the word still reads before that merge. */
+.requests-table { width: 100%; }
+.pill-ok { color: var(--good); }
+.pill-error { color: var(--critical); }
+/* a request that overran its context window: a mark on the row's edge, never colour on the
+   text (the error cell names it "context exceeded"); a non-2xx or errored row wears the same
+   mark — the pill's word is the state, the old colour-on-text rule is retired here (3.7k) */
+.requests-table tr.req-ctx td { color: inherit; }
+.requests-table tr.req-ctx td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
+.requests-table tr.req-err td { color: inherit; }
+.requests-table tr.req-err td:first-child { box-shadow: inset 3px 0 0 var(--critical); }

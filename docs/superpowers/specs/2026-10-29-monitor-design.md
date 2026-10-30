@@ -450,6 +450,25 @@ collector's first tick does). Jobs are listed whatever endpoint they ran on.
 }
 ```
 
+The endpoint page's requests table and the job page's requests table (below) are drawn through
+one renderer, `app.js`'s exported `requestsTable`: the endpoint's with a job column (its rows
+span jobs), the job page's without (every row is that job). The columns are time · status · job
+· path · prompt · reused · output · prefill t/s · decode t/s · duration · error. Status is a
+pill with the word (`ok` for a 2xx, `error` otherwise; the HTTP code in its title; a null status
+reads "–"); prompt is `tokens.input`, reused is `tokens.cache_read`, output is
+`tokens.output`; error is the row's error, cut to 60 characters with the full sentence in its
+title, or "context exceeded" when `context_exceeded` is true and the error is null. The derived
+columns are: **prefill t/s** = (input + cache_creation) / ((ms − gen_ms) / 1000), when `ms`
+and `gen_ms` are numbers, `ms > gen_ms` and `input + cache_creation > 0`; **decode t/s** =
+output / (gen_ms / 1000), when `gen_ms > 0` and `output > 0`; **duration** = `ms / 1000`. Each
+is blank when its inputs are missing (a non-stream request may have no `gen_ms`; the hello
+handshake rows have no tokens). Strata's prefill is "input − reused" because its input is the
+whole prompt; our `tokens.input` excludes cache reads (§5a's prompt is input + cache_read +
+cache_creation, `derive._PROMPT_SUM`), so the tokens a request actually prefilled are input +
+cache_creation — the analogue of Strata's processed count (`prompt_tokens − cached`,
+`registry.py:589`). Strata's VRAM hit rate is its own figure and has no counterpart here; it is
+not invented.
+
 **Fleet history** (`GET /api/fleet/history`; review of 3.1, ruling C):
 
 ```
@@ -522,6 +541,9 @@ the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoin
                                     (the job directory is gone — pruned after the retention days,
                                     or never created on this machine — or it holds no transcript.txt)
 ```
+
+The job page's requests table is the endpoint requests block's one renderer (`requestsTable`),
+with the job column omitted: these rows carry no `job_id`/`job_name` and are in time order.
 
 In the job detail the LIST of calls lives under `tool_call_log` and `tool_calls` stays the
 count (its length is `len(tool_call_log)`); in a job summary `tool_calls` is the count. Named

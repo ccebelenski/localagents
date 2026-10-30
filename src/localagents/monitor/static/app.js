@@ -995,6 +995,112 @@
 
   var pages = { job: null, endpoint: null, teardown: null };
 
+  // --- 3.7k: the one requests-table renderer --------------------------------------------------
+  //
+  // Both detail pages draw their request log through this: the endpoint page's requests across
+  // jobs (endpoint.js) and a job page's own requests (job.js). The columns are the operator's
+  // log look with the two rates Strata derives from the same facts: time, a status pill, job
+  // (omitted on a job page, where every row is the one job), path, prompt (tokens.input),
+  // reused (tokens.cache_read), output, prefill t/s, decode t/s, duration, error. The rows are
+  // the endpoint route's (newest first, with job_id/job_name) or the job detail's (time order,
+  // no job fields); neither is re-sorted here. `opts.job === false` drops the job column;
+  // `opts.empty` is the sentence an empty list draws (each page keeps its own).
+  //
+  // The rates are blank, never a placeholder number, when their inputs are missing:
+  //   prefill t/s = (input + cache_creation) / ((ms − gen_ms) / 1000), when ms > gen_ms and
+  //                 input + cache_creation > 0 (a non-stream request may have no gen_ms);
+  //   decode t/s  = output / (gen_ms / 1000), when gen_ms > 0 and output > 0.
+  // The brief wrote Strata's prefill as "input − cache_read", but that is Strata's model, where
+  // its input is the WHOLE prompt: our `tokens.input` excludes cache reads (derive._PROMPT_SUM
+  // is input + cache_read + cache_creation), so the subtraction went negative on 148 of the
+  // seed's 152 requests and the column read blank. Strata's processed count is
+  // `prompt_tokens − cached` (registry.py:589), i.e. the tokens this request actually
+  // prefilled: input + cache_creation here. The brief's literal subtraction was corrected on
+  // the data model, not as a display choice (2026-10-30).
+  var REQ_NUMERIC = { prompt: 1, reused: 1, output: 1, "prefill t/s": 1, "decode t/s": 1, duration: 1 };
+  var ERROR_CUT = 60; // the error cell's chars; the full sentence rides in its title
+
+  // the reads are spelled `req.tokens.<field>` so the §5a walk sees every field name (an
+  // alias would hide them from the gate)
+  function prefillRate(req) {
+    if (!req.tokens) return null;
+    if (typeof req.tokens.input !== "number" || typeof req.tokens.cache_creation !== "number") return null;
+    if (typeof req.ms !== "number" || typeof req.gen_ms !== "number") return null;
+    var prefill = req.tokens.input + req.tokens.cache_creation; // the tokens actually processed
+    if (req.ms <= req.gen_ms || prefill <= 0) return null;
+    return prefill / ((req.ms - req.gen_ms) / 1000);
+  }
+
+  function decodeRate(req) {
+    if (!req.tokens) return null;
+    if (typeof req.tokens.output !== "number" || typeof req.gen_ms !== "number") return null;
+    if (req.gen_ms <= 0 || req.tokens.output <= 0) return null;
+    return req.tokens.output / (req.gen_ms / 1000);
+  }
+
+  // the error cell's sentence: the error, else "context exceeded" when the request overran
+  // the window; "" when clean (the empty string a clean export writes is clean too)
+  function requestError(req) {
+    if (req.error != null && req.error !== "") return String(req.error);
+    if (req.context_exceeded === true) return "context exceeded";
+    return "";
+  }
+
+  function requestsTable(rows, opts) {
+    opts = opts || {};
+    rows = rows || [];
+    if (!rows.length) return h("div", { class: "empty", text: opts.empty || "no requests" });
+    var withJob = opts.job !== false;
+    var columns = ["time", "status"];
+    if (withJob) columns.push("job");
+    columns = columns.concat(["path", "prompt", "reused", "output", "prefill t/s", "decode t/s", "duration", "error"]);
+    var head = h("tr", null, columns.map(function (c) {
+      return h("th", { class: REQ_NUMERIC[c] ? "n" : null, text: c });
+    }));
+    var body = rows.map(function (req) {
+      var tokens = req.tokens || {};
+      // the cache cells read through req.tokens directly (the §5a walk sees a field only on a
+      // chain rooted at `req`; the display alias above would hide these two)
+      var cacheRead = req.tokens ? req.tokens.cache_read : null;
+      var cacheCreation = req.tokens ? req.tokens.cache_creation : null;
+      var error = requestError(req);
+      var bad = typeof req.http_status === "number" && (req.http_status < 200 || req.http_status >= 300);
+      if (req.error != null && req.error !== "") bad = true;
+      var cls = [];
+      if (bad) cls.push("req-err");
+      if (req.context_exceeded === true) cls.push("req-ctx");
+      var prefill = prefillRate(req);
+      var decode = decodeRate(req);
+      var cells = [h("td", { text: fmt.time(req.t) })];
+      if (req.http_status == null) {
+        cells.push(h("td", null, [h("span", { class: "pill", title: "no status", text: "–" })]));
+      } else {
+        var ok = req.http_status >= 200 && req.http_status < 300;
+        cells.push(h("td", null, [h("span", { class: "pill " + (ok ? "pill-ok" : "pill-error"),
+          title: String(req.http_status), text: ok ? "ok" : "error" })]));
+      }
+      if (withJob) {
+        cells.push(h("td", null, [req.job_id ? h("a", { href: "#/job/" + encodeURIComponent(req.job_id),
+          text: req.job_name || req.job_id }) : null]));
+      }
+      cells.push(
+        h("td", { class: "cut", title: req.path || "", text: req.path || "" }),
+        h("td", { class: "n", text: fmt.int(tokens.input) }),
+        h("td", { class: "n", title: "cache read " + fmt.int(cacheRead) + ", cache creation "
+          + fmt.int(cacheCreation), text: fmt.int(cacheRead) }),
+        h("td", { class: "n", text: fmt.int(tokens.output) }),
+        h("td", { class: "n", text: prefill == null ? "" : fmt.speed(prefill) }),
+        h("td", { class: "n", text: decode == null ? "" : fmt.speed(decode) }),
+        h("td", { class: "n", text: typeof req.ms === "number" ? fmt.speed(req.ms / 1000) + " s" : "" }),
+        h("td", { class: "cut", title: error || null,
+          text: error.length > ERROR_CUT ? error.slice(0, ERROR_CUT) : error })
+      );
+      return h("tr", { class: cls.length ? cls.join(" ") : null }, cells);
+    });
+    return h("div", { class: "table-wrap" }, [h("table", { class: "requests-table" },
+      [h("thead", null, [head]), h("tbody", null, body)])]);
+  }
+
   window.localagentsMonitor = {
     pages: pages,
     h: h,
@@ -1006,6 +1112,7 @@
     charts: charts,
     range: range,
     state: state,
+    requestsTable: requestsTable, // 3.7k: the one renderer both request logs draw through
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

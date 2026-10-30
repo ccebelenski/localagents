@@ -376,32 +376,15 @@
         h("div", { class: "table-wrap" }, [h("table", null, [h("thead", null, [head]), h("tbody", null, rows)])])]);
     }
 
-    // the request table in time order (the /api/hello handshake row shown as any other) with
-    // a client-side totals line: the ms sum skips nulls, errors count a non-null error
+    // the request log (3.7k): the same shared renderer as the endpoint page, without the job
+    // column (every row is this job; the route rows carry no job fields), in the server's time
+    // order (not re-sorted). The client-side totals line below stays this page's own: the ms
+    // sum skips nulls, errors count a non-null, non-empty error (3.2c row 2); it is drawn as
+    // the endpoint page's `.totals` figs, since the shared table's columns no longer align
+    // with the old twelve-cell footer (cache creation and ms have no column of their own).
     function requestsSection() {
       var reqs = detail.requests || [];
       if (!reqs.length) return null;
-      var cols = ["time", "path", "status", "ms", "gen ms", "in", "out", "cache read", "cache creation", "stream", "ctx exceeded", "error"];
-      var head = h("tr", null, cols.map(function (c, i) {
-        return h("th", { class: i === 1 || i === cols.length - 1 ? null : "n", text: c });
-      }));
-      var rows = reqs.map(function (req) {
-        var t = req.tokens || {};
-        return h("tr", null, [
-          h("td", { class: "n", text: fmt.time(req.t) }),
-          h("td", { class: "cut", title: req.path || "", text: req.path || "" }),
-          h("td", { class: "n", text: req.http_status == null ? "" : fmt.int(req.http_status) }),
-          h("td", { class: "n", text: req.ms == null ? "" : fmt.int(req.ms) }),
-          h("td", { class: "n", text: req.gen_ms == null ? "" : fmt.int(req.gen_ms) }),
-          h("td", { class: "n", text: fmt.int(t.input) }),
-          h("td", { class: "n", text: fmt.int(t.output) }),
-          h("td", { class: "n", text: fmt.int(t.cache_read) }),
-          h("td", { class: "n", text: fmt.int(t.cache_creation) }),
-          h("td", { class: "n", text: req.stream === true ? "yes" : "" }),
-          h("td", { class: "n", text: req.context_exceeded === true ? "yes" : "" }),
-          h("td", { class: "cut", title: req.error || "", text: req.error || "" }),
-        ]);
-      });
       var tot = { ms: 0, input: 0, output: 0, cache_read: 0, cache_creation: 0, errors: 0 };
       reqs.forEach(function (req) {
         var t = req.tokens || {};
@@ -412,23 +395,17 @@
         tot.cache_creation += t.cache_creation || 0;
         if (req.error != null && req.error !== "") tot.errors++;  // 3.2c row 2: '' is clean, as the row's own cell already treats it
       });
-      var totals = h("tr", { class: "totals" }, [
-        h("td", { class: "n", text: fmt.int(reqs.length) }),
-        h("td", { text: "totals" }),
-        h("td", { class: "n" }),
-        h("td", { class: "n", text: fmt.int(tot.ms) }),
-        h("td", { class: "n" }),
-        h("td", { class: "n", text: fmt.int(tot.input) }),
-        h("td", { class: "n", text: fmt.int(tot.output) }),
-        h("td", { class: "n", text: fmt.int(tot.cache_read) }),
-        h("td", { class: "n", text: fmt.int(tot.cache_creation) }),
-        h("td", { class: "n" }),
-        h("td", { class: "n" }),
-        h("td", { class: "n", text: tot.errors > 0 ? fmt.int(tot.errors) : "" }),
+      var totals = h("div", { class: "totals" }, [
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "requests" }), h("span", { class: "num", text: fmt.int(reqs.length) })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "tokens in" }), h("span", { class: "num", text: fmt.int(tot.input) })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "out" }), h("span", { class: "num", text: fmt.int(tot.output) })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "cache read" }), h("span", { class: "num", text: fmt.int(tot.cache_read) })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "cache creation" }), h("span", { class: "num", text: fmt.int(tot.cache_creation) })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "time" }), h("span", { class: "num", text: fmt.dur(tot.ms / 1000) })]),
+        h("span", { class: "fig" + (tot.errors > 0 ? " err" : "") }, [h("span", { class: "label", text: "errors" }), h("span", { class: "num", text: fmt.int(tot.errors) })]),
       ]);
-      return h("div", { class: "job-requests" }, [h("h3", { text: "Requests" }),
-        h("div", { class: "table-wrap" }, [h("table", { class: "job-requests-table" },
-          [h("thead", null, [head]), h("tbody", null, rows), h("tfoot", null, [totals])])])]);
+      return h("div", { class: "job-requests" }, [h("h3", { text: "Requests" }), totals,
+        M.requestsTable(reqs, { job: false })]);
     }
 
     // the transcript tail in a <pre> (the user text, textContent only) with the log directory
