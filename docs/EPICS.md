@@ -1218,8 +1218,28 @@ ruling (e). The lane is also the operator's first live job on the landed page.
     re-homing; the history and finished caches are unlocked dicts across worker threads (wasted
     work, not corruption).
   Fold 3.9C-fix to DeepSeek/dgx1-a (ruling (a)), five rows small-first.
-- ☐ **3.9D The monitor's page**: `static/app.js`, `endpoint.js`, `job.js`, `app.css`,
-  `index.html`, with `tests/test_monitor_page.py` and `tools/smoke/` (~2.9k).
+- ☑ **3.9D The monitor's page**: `static/app.js`, `endpoint.js`, `job.js`, `app.css`,
+  `index.html`, with `tests/test_monitor_page.py` and `tools/smoke/` (~2.9k). Qwen/ai2 job
+  20261030-125256-9ee02e1b, 175 turns, 71 min, SIX compactions (the 131k window; it finished),
+  four DOM probes over the smoke world plus a driver of its own (`t/probe_4_drive.mjs`: cdp.mjs's
+  fixed 2.5 s read cannot witness anything time-dependent); src/tests/tools untouched; report on
+  branch `local-agent/20261030-125256-9ee02e1b`. Clean: both request tables recompute exactly
+  (prefill/decode, totals, order, pills), tiles, tiers, gauge, marks, by-tool table, routing back
+  with zero console entries. Findings (each verified by the coordinator), all ACCEPTED:
+  - D1 (correctness) `app.js` render's rebuild branch: a host whose card vanishes (a down node's
+    never-seen endpoints come back up: hidden now) is removed but not forgotten in `oldCards`, so
+    the gone-host loop removes a detached node, render throws after `snapSig` is set, and the
+    skip path never repairs. The coordinator's fold-3 fix left this path. Fix: forget the host
+    unconditionally.
+  - D4 (contract drift) `endpoint.js:548` watches `#updated`, which nothing has written since
+    3.7r moved the phrase to `#conn-label`: an open endpoint page NEVER refreshes (36 s, 7
+    overview renders, 0 mutations, 0 fetches; the job page's own stream moved). Fix: an explicit
+    `onSnapshot` hook from app.js, the dead span removed, a gate that every watched id exists.
+  - D2, D3, D5 (tests): no gate for a vanishing card, the timeline's range redraw, or the endpoint
+    page's liveness past 30 s. Fix: smoke scenarios and `tools/smoke/drive.mjs`.
+  - Noticed: a tooltip prints "cache read " on a null; a failed range fetch leaves `histRange`
+    stale behind the pressed button; unguarded `tool_call_log.forEach` on the job page.
+  Fold 3.9D-fix to Qwen/ai2 (ruling (a)), five rows small-first.
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
