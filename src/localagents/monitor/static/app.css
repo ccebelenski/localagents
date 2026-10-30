@@ -271,12 +271,14 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 /* line-height 1.5 (3.7-fold-1): the row's line box is pinned so the inline-block 8 px ctx
    bar (vertical-align: middle) and the bordered badges cannot grow it — measured: at the
    default 1.4 a bare row stood 20.3 px and a row carrying a bar 21.3, so which bits a job
-   happened to carry moved the card's height by 1 px */
-.ep-job { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
+   happened to carry moved the card's height by 1 px. 3.7-fold-5: the ellipsis moved from the
+   row to its figures line (the row is two lines now; see the fold-5 block at the end). */
+.ep-job { line-height: 1.5; }
 .ep-job + .ep-job { margin-top: 3px; }
-/* the status line's activity tail: cut at 60 chars in the script, ellipsised here on a narrow card */
-.ep-act { display: inline-block; max-width: 34em; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; vertical-align: bottom; color: var(--muted); }
+/* the activity's own line (3.7-fold-5): cut at 60 chars in the script, ellipsised here on a
+   narrow card; its height is pinned to one line-box whether it carries text or not */
+.ep-act { display: block; height: 1.5em; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--muted); }
 
 /* 3.7-fold-1 */
 /* the ctx bar and its percent are one unit: they never split across lines, and with the row
@@ -375,3 +377,16 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .tl-axis-inner { flex: 1 1 auto; position: relative; min-width: 0; height: 16px; }
 .tl-axis-inner span { position: absolute; top: 0; font-size: 12px; color: var(--muted);
   white-space: nowrap; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+
+/* 3.7-fold-5 */
+/* the card's job row as two FIXED lines (the coordinator's screenshot read: the one-line row
+   cut after "2 files · …" at card width, hiding the ctx bar, the speed, the errors and the
+   activity — the figures the row exists for). Line 1: the mark, name, elapsed and the bits
+   that are there, nowrap with ellipsis, so what hides on a narrow card is the tail of the
+   figures, never a figure pushed off by the activity. Line 2 (.ep-act, styled above): the
+   activity. Both lines pin their own height at one line-box (height: 1.5em on the .ep-jobs
+   font, the same 1.5 fold-1 pinned) and .ep-job itself contributes no box of its own, so the
+   row is a constant 2 lines whatever the job carries — an empty .ep-act is an empty line of
+   the same height (3.7n: no value moves a card's height; measured in the browser smoke: one
+   job vs the same job with its activity removed report equal card heights). */
+.ep-job-figs { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 1.5em; }

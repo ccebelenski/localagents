@@ -102,6 +102,19 @@
       if (t == null || !isFinite(t)) return "";
       return new Date(t * 1000).toLocaleString();
     },
+    // 3.7-fold-5: the timeline's tick labels. The same clock face fmt.time prints, minus the
+    // seconds a fifteen-minute gridline never changes ("1:15 AM"); past 24 h the date form
+    // drops the year and the seconds too ("10/28 1:30 AM") — the axis's short ticks want the
+    // shortest honest time, the long forms stay for titles and the request rows
+    clock: function (t) {
+      if (t == null || !isFinite(t)) return "";
+      return new Date(t * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    },
+    dayClock: function (t) {
+      if (t == null || !isFinite(t)) return "";
+      return new Date(t * 1000).toLocaleDateString(undefined, { month: "numeric", day: "numeric" }) +
+        " " + fmt.clock(t);
+    },
     // "4m12s ago", measured on the server's clock (snap.now) so a skewed browser clock cannot lie
     ago: function (t, now) {
       if (t == null || now == null) return "";
@@ -345,8 +358,16 @@
 
   // one job as the MCP status line (status.py's `_job_row`): the mark, the name, the elapsed,
   // then the bits that are actually there joined by ` · ` — calls, files, ctx, t/s,
-  // compactions — then the last activity cut short. The marks are status.py's MARK (running
-  // "⟳", queued "…"): the mark is the queued word, no badge on the card row.
+  // compactions. The marks are status.py's MARK (running "⟳", queued "…"): the mark is the
+  // queued word, no badge on the card row.
+  // 3.7-fold-5 (the coordinator's read): the status line's activity tail no longer rides the
+  // figures' line — at card width the row cut after "2 files · …" and hid the ctx bar, the
+  // speed and the errors, the very figures the row exists for. Two FIXED lines instead:
+  // `.ep-job-figs` carries the figures, ellipsised so anything that overflows is the tail of
+  // the figures, never the activity pushing them off; `.ep-act` is the activity's own line,
+  // muted, cut at 60 chars here and ellipsised by CSS, ALWAYS present — an empty activity is
+  // an empty line of the same height, so the row's height is two pinned lines whatever the
+  // job carries (3.7n: a card's height never depends on its values).
   function epJobRow(job) {
     var row = [h("span", { text: job.status === "queued" ? "… " : "⟳ " }),
       jobLink(job.id, job.name),
@@ -382,10 +403,11 @@
       }));
     }
     var act = oneLine(job.last_activity);
-    if (act) {
-      trail(h("span", { class: "ep-act", title: act, text: act.length > 60 ? act.slice(0, 59) + "…" : act }));
-    }
-    return h("div", { class: "ep-job" }, row);
+    return h("div", { class: "ep-job" }, [
+      h("div", { class: "ep-job-figs" }, row),
+      h("div", { class: "ep-act", title: act || null,
+        text: act ? (act.length > 60 ? act.slice(0, 59) + "…" : act) : "" }),
+    ]);
   }
 
   // the card's jobs block (3.7e): always present, always the card's last child, so it never
@@ -453,17 +475,16 @@
     var power = hw.gpu_power != null
       ? fmt.int(hw.gpu_power) + (hw.gpu_power_limit != null ? " / " + fmt.int(hw.gpu_power_limit) : "")
       : "";
-    // the decode tile names the window its value, sparkline and strip share (3.7q: the time
-    // axis is the page's range control, and nothing else on the card says so); the sparkline
-    // carries the shared-scale peak label at its right edge. The label gets a title because
-    // at card width it can ellipsis before "last <range>".
-    var rangeWord = state.histRange || state.range;
-    var decodeLabel = "decode tok/s · last " + rangeWord;
+    // the decode tile's value, sparkline and strip share the page's window (3.7q: the time
+    // axis is the page's range control); the sparkline carries the shared-scale peak label at
+    // its right edge. 3.7-fold-5: 3.7q's two places become one — the strip row's left already
+    // names the window once per card, so the label is the bare unit again. At a quarter-card
+    // the longer form clipped to "decode tok/s · l…", and the title that hid the loss went
+    // with it: nothing left to hide.
     var spark = sparkline(ep.name, snap.now);
-    var decodeTile = fig(decodeLabel, rates.gen_tps != null ? fmt.speed(rates.gen_tps) : "",
+    var decodeTile = fig("decode tok/s", rates.gen_tps != null ? fmt.speed(rates.gen_tps) : "",
       spark ? h("span", { class: "spark-wrap" }, [spark,
         h("span", { class: "spark-peak muted", text: "↑ " + fmt.speed(sparkScale) })]) : null);
-    decodeTile.firstChild.setAttribute("title", decodeLabel);
     return h("div", { class: "figures" }, [
       fig("load", loadText(ep)),
       kvTile(ep),
@@ -990,11 +1011,12 @@
       var lines = h("div", { class: "tl-lines" });
       var axisInner = h("div", { class: "tl-axis-inner" });
       var step = tickStep(span, rangeWord);
-      var useDate = span > 86400; // DESIGN: fmt.time, and fmt.date past 24 h (the 7 d range)
+      var useDate = span > 86400; // DESIGN: the clock on the ticks, and the date+clock form past
+      // 24 h (the 7 d range); 3.7-fold-5 took the seconds off both (the bars' titles keep fmt.time)
       for (var t = Math.ceil(t0 / step) * step; t <= now; t += step) {
         var pos = pct(t).toFixed(2) + "%";
         lines.appendChild(h("span", { class: "tl-grid", style: "left:" + pos }));
-        axisInner.appendChild(h("span", { style: "left:" + pos, text: useDate ? fmt.date(t) : fmt.time(t) }));
+        axisInner.appendChild(h("span", { style: "left:" + pos, text: useDate ? fmt.dayClock(t) : fmt.clock(t) }));
       }
       lines.appendChild(h("span", { class: "tl-now", title: "now" }));
 

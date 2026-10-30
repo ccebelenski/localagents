@@ -86,7 +86,7 @@ SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant"
                  # that is always the card's last child, its status-line rows and their activity
                  # tail, and the state dot (this lane styles all three variants; the live card's
                  # span is the token the list checks, the down/dormant spans are lane A's markup)
-                 "figures", "ep-jobs", "ep-job", "ep-act", "sdot",
+                 "figures", "ep-jobs", "ep-job", "ep-job-figs", "ep-act", "sdot",
                  # 3.7-fold-1 (3.7n/3.7q): the job row's glued ctx bar+percent span; the
                  # shared-scale peak label, its wrap, and the strip row's range word
                  "ep-ctx", "spark-peak", "spark-wrap", "strip-range",

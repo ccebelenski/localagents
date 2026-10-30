@@ -94,6 +94,10 @@ const probe = `(() => {
     // (not "jobRows": the table's row field above already owns that key — a duplicate in an
     // object literal silently shadows it)
     epJobRows: q('.ep-job').map(e => e.textContent.replace(/\\s+/g, ' ').trim()),
+    // 3.7-fold-5: the card's job row as its two fixed lines — the figures line, the activity
+    // line (empty when the job has none), and the row's rendered height (the no-jump witness:
+    // two lines whatever the job carries)
+    epJobLines: q('.ep-job').map(e => ({ figs: (e.querySelector('.ep-job-figs')||{}).textContent, act: (e.querySelector('.ep-act')||{}).textContent, h: e.getBoundingClientRect().height })),
     // 3.7g-j (3.7g/3.7i): the Recent jobs log's status pills (class + word) and the
     // tool-errors badge links (href, so a broken route shows in the data, not the pixels)
     pills: q('.jobs .pill').map(e => e.className + ':' + e.textContent),
@@ -111,6 +115,10 @@ const probe = `(() => {
     activeTexts: q('.ep-active').map(e => e.textContent),
     connText: document.getElementById('conn-label').textContent,
     cardNodeId: (function () { var e = document.querySelector('.endpoint.state-live'); if (!e.__id) e.__id = Math.random(); return e.__id; })(),
+    // 3.7-fold-5: heights captured synchronously by a hand-rendering js: script (the next
+    // SSE push overwrites the hand-edited DOM before this probe reads it, so the script
+    // measures as it goes and leaves the numbers here)
+    t5: (typeof window !== "undefined" && window.__t5) || null,
   });
 })()`;
 let r = await send("Runtime.evaluate", { expression: probe, returnByValue: true });
@@ -127,7 +135,9 @@ if (hashAfter) {
   // the hand-rendered states (js: hash-after) are read through the log's fields: the summary
   // line above long predates the Recent jobs log and cannot carry them
   // 3.7l: the timeline fields ride along so a `js:` range switch (range.set('15m')) is read
-  console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote, tlTitle: o.tlTitle, tlAxis: o.tlAxis, tlRows: o.tlRows.map(r => ({ label: r.label, bands: r.bands, jobs: r.jobs.length })), tlHeight: o.tlHeight }));
+  // 3.7-fold-5: the two-line job row's fields and the hand-measured heights ride along too
+  // (the first probe long predates the js: script that captures them)
+  console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote, tlTitle: o.tlTitle, tlAxis: o.tlAxis, tlRows: o.tlRows.map(r => ({ label: r.label, bands: r.bands, jobs: r.jobs.length })), tlHeight: o.tlHeight, epJobLines: o.epJobLines, cardHeights: o.cardHeights, tileLabels: o.tileLabels, t5: o.t5 }));
   console.log("AFTER " + hashAfter + ": detail=" + JSON.stringify(o.detail) + " overviewHidden=" + o.overviewHidden + " range=" + o.rangeButtons + " canvases=" + o.canvases + " strips=" + o.strips + " sparklines=" + o.sparklines + " banner=" + o.banner
     + " reqHeaders=" + JSON.stringify(o.reqHeaders) + " reqRows=" + JSON.stringify(o.reqRows)
     + " reqPills=" + JSON.stringify(o.reqPills) + " reqRowClasses=" + JSON.stringify(o.reqRowClasses));
