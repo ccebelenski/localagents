@@ -311,7 +311,9 @@
   // at the host card; endpoints greyed, not each alarming"), so the endpoint's sentence is left out
   function downEndpoint(snap, ep, quiet) {
     return h("div", { class: "endpoint state-down", "data-endpoint": ep.name }, [
-      h("div", { class: "ep-head" }, [endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
+      // the state dot (3.7c lane contract): first child of the head; lane B styles .sdot
+      h("div", { class: "ep-head" }, [h("span", { class: "sdot sdot-" + ep.state, "aria-hidden": "true" }),
+        endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
         h("span", { class: "ep-seen", text: ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "" })]),
       ep.error && !quiet ? h("div", { class: "ep-error", text: ep.error }) : null,
       // the id beside the name makes the sentence clickable; the name alone stays plain text
@@ -320,25 +322,30 @@
     ]);
   }
 
-  function dormantEndpoint(ep, inline) {
+  function dormantEndpoint(ep) {
     var seen = ep.last_seen != null ? "last seen " + fmt.date(ep.last_seen) : "never seen";
-    return h(inline ? "span" : "div", { class: "endpoint state-dormant", "data-endpoint": ep.name },
-      [endpointLink(ep.name), " ", h("span", { text: ep.backend + ", " + seen })]);
+    // the state dot (3.7c lane contract) is the first child of this one-line element; it has no
+    // ep-head of its own; lane B styles .sdot
+    return h("div", { class: "endpoint state-dormant", "data-endpoint": ep.name },
+      [h("span", { class: "sdot sdot-" + ep.state, "aria-hidden": "true" }),
+       endpointLink(ep.name), " ", h("span", { text: ep.backend + ", " + seen })]);
   }
 
+  // 3.7a (operator 2026-10-29: "I would not display cards that are dormant and never seen, as
+  // they are just clutter"): a never-seen dormant endpoint is not drawn, except on a down node,
+  // whose card names every endpoint on it (3.7c). render() counts the hidden ones under a line.
+  function neverSeenOn(host, ep) {
+    return ep.state === "dormant" && ep.last_seen == null && host.state !== "down";
+  }
+
+  // 3.7b (operator 2026-10-29: "the flow isn't very logical ... taking an entirely different
+  // size, shape, and form"): every host is a card of the same shape — all-dormant collapses to
+  // a one-line full-width bar no more — in snapshot order, so a card never moves when its
+  // state changes; nothing spans the grid.
   function hostCard(snap, host) {
     var cls = "host";
     if (host.state === "down") cls += " node-down";
     else if (host.state === "unknown") cls += " node-unknown";
-    if (host.dormant) {
-      // every endpoint dormant: the host collapses to one line
-      var line = [h("span", { class: "host-name", text: host.name }), h("span", { text: " dormant: " })];
-      host.endpoints.forEach(function (ep, i) {
-        if (i) line.push(h("span", { text: "; " }));
-        line.push(dormantEndpoint(ep, true));
-      });
-      return h("div", { class: cls + " dormant", "data-host": host.name }, [h("div", { class: "host-head" }, line)]);
-    }
     var nodeDown = host.state === "down";
     var note = nodeDown ? "node unreachable" : host.state === "unknown" ? "node unknown" : "";
     if (nodeDown) {
@@ -350,8 +357,9 @@
     var body = host.endpoints.map(function (ep) {
       if (ep.state === "live") return liveEndpoint(snap, ep);
       if (ep.state === "down") return downEndpoint(snap, ep, nodeDown);
-      return dormantEndpoint(ep, false);
-    });
+      return neverSeenOn(host, ep) ? null : dormantEndpoint(ep);
+    }).filter(Boolean);
+    if (!body.length && !nodeDown) return null; // 3.7a: a host with nothing drawn
     return h("div", { class: cls, "data-host": host.name }, [
       h("div", { class: "host-head" }, [h("span", { class: "host-name", text: host.name }),
         note ? h("span", { class: "host-note", text: note }) : null]),
@@ -429,7 +437,25 @@
     }
     byId("meta").replaceChildren.apply(byId("meta"), meta);
     byId("updated").textContent = "snapshot " + fmt.time(snap.now);
-    byId("hosts").replaceChildren.apply(byId("hosts"), snap.hosts.map(function (host) { return hostCard(snap, host); }));
+    var cards = [];
+    var hidden = [];
+    snap.hosts.forEach(function (host) {
+      host.endpoints.forEach(function (ep) {
+        if (neverSeenOn(host, ep)) hidden.push(ep.name); // config order: hosts then endpoints
+      });
+      var card = hostCard(snap, host);
+      if (card) cards.push(card);
+    });
+    var hiddenLine = byId("hosts-hidden");
+    if (hidden.length) {
+      hiddenLine.textContent = hidden.length + (hidden.length === 1 ? " endpoint" : " endpoints")
+        + " never seen, not shown: " + hidden.join(", ");
+      hiddenLine.hidden = false;
+    } else {
+      hiddenLine.hidden = true;
+      hiddenLine.textContent = "";
+    }
+    byId("hosts").replaceChildren.apply(byId("hosts"), cards);
     byId("jobs-body").replaceChildren(jobsTable(snap));
   }
 

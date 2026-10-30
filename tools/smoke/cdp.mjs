@@ -29,7 +29,7 @@ await sleep(4000);
 const probe = `(() => {
   const q = (s) => Array.from(document.querySelectorAll(s));
   return JSON.stringify({
-    hosts: q('.host').map(e => ({ host: e.dataset.host, class: e.className, note: (e.querySelector('.host-note')||{}).textContent || null })),
+    hosts: q('.host').map(e => ({ host: e.dataset.host, class: e.className, note: (e.querySelector('.host-note')||{}).textContent || null, gridColumn: getComputedStyle(e).gridColumn })),
     endpoints: q('.endpoint').map(e => ({ endpoint: e.dataset.endpoint, class: e.className, text: e.textContent.replace(/\\s+/g,' ').trim().slice(0, 400) })),
     jobRows: q('.jobs tbody tr').map(r => Array.from(r.cells).map(c => c.textContent.trim())),
     jobsEmpty: (document.querySelector('.jobs .empty')||{}).textContent || null,
@@ -39,6 +39,7 @@ const probe = `(() => {
     legends: q('.fleet .chart').map(c => Array.from(c.querySelectorAll('.u-legend .u-series th')).map(t => t.textContent.trim())),
     rangeButtons: q('.range button').map(b => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')),
     conn: document.getElementById('conn').className + ' / ' + document.getElementById('conn-label').textContent,
+    hiddenLine: (document.getElementById('hosts-hidden')||{}).textContent || null,
     meta: document.getElementById('meta').textContent,
     updated: document.getElementById('updated').textContent,
     banner: document.getElementById('banner').hidden ? null : document.getElementById('banner').textContent,

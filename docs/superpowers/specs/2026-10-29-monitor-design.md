@@ -142,7 +142,7 @@ Per endpoint, derived from rows (so a restart reconstructs them from the databas
 |---|---|---|
 | live | last probe up | full content |
 | down, recent | up within the attention window (24 h default), unreachable now | full size, alert colour, the probe's sentence; names a job that was running on it when it dropped |
-| dormant | not seen within the window | one muted line inside its host card, "last seen <date>"; never hidden, never alarmed |
+| dormant | not seen within the window | one muted line inside its host card, "last seen <date>"; never hidden, never alarmed. (True now, 3.7a/3.7b, operator 2026-10-29: a never-seen endpoint is not drawn, a host with nothing to draw and its node not down is not drawn, and one muted line under the cards counts them; a seen-dormant endpoint stays a muted line inside a normal card; nothing collapses to a bar.) |
 
 A probe older than the window, up or not, counts as not seen: a monitor that was stopped for longer than the window shows every endpoint dormant until its first tick (ruling 2026-10-29).
 
@@ -153,7 +153,10 @@ kernel's errno): **up** if any endpoint answers, including a refusal (then an un
 endpoint is "endpoint down", shown on that line only); **down** if every endpoint reports host
 unreachable (one alert at the host card; endpoints greyed, not each alarming); **unknown** if
 every endpoint times out, resolved by the port-22 fallback. The attention window applies to
-nodes too: a node dormant past the window collapses to one line.
+nodes too: a node dormant past the window collapses to one line. (True now, 3.7b/3.7c, operator
+2026-10-29: nothing collapses — every host, down or all-dormant, is a card of the same shape as
+a live host's; a down node keeps the `node-down` border and its one alert sentence in the card
+head.)
 
 ## 5. Page and navigation
 
