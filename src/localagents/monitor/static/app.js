@@ -44,6 +44,14 @@
       if (v == null || !isFinite(v)) return "";
       return Math.round(v).toLocaleString();
     },
+    // a compact count (3.7n: the ctx tile's window, 262,144 -> "262k", 1,500 -> "1.5k";
+    // under 1,000 as is); the exact fmt.int number rides in the tile's title
+    compact: function (v) {
+      if (v == null || !isFinite(v)) return "";
+      if (Math.abs(v) < 1000) return String(Math.round(v));
+      var k = v / 1000;
+      return (Math.abs(k) >= 100 ? Math.round(k) : Math.round(k * 10) / 10) + "k";
+    },
     // speeds (tokens per second) with one decimal
     speed: function (v) {
       if (v == null || !isFinite(v)) return "";
@@ -130,10 +138,13 @@
   // holds the same twelve tiles in the same places (operator 2026-10-29: absent figures used to
   // vanish and every card packed differently — "hard to scan from card to card"). An absent
   // value is a muted dash, never a placeholder number.
-  function fig(label, text, extra) {
+  // `full` (3.7n): the complete value text when the drawn one is a shorter form (compact ctx);
+  // it goes into the value's title, so an elided tile can still be read in full.
+  function fig(label, text, extra, full) {
     var value = text == null || text === ""
       ? h("span", { class: "num muted", text: "–" })
       : h("span", { class: "num", text: text });
+    if (full != null && full !== text) value.setAttribute("title", full);
     return h("span", { class: "fig" }, [h("span", { class: "label", text: label }), value, extra || null]);
   }
 
@@ -172,6 +183,34 @@
 
   // --- the host cards -------------------------------------------------------------------------
 
+  // 3.7q: one y scale for every live card's sparkline — the maximum in-range gen_tps over all
+  // live endpoints' own histories, floored at 1 — so a tall line on one card and a low line
+  // on another compare by height across the row. Decision: a module variable computed once
+  // per render before the cards are drawn; threading it as a parameter would carry it past
+  // every tile that ignores it. The peak label shows it at each sparkline's right edge (the
+  // same text on every card); each card's aria-label keeps its own in-range peak.
+  var sparkScale = 1;
+
+  function computeSparkScale(snap) {
+    var span = rangeSeconds(state.histRange || state.range);
+    var t0 = snap.now - span;
+    var max = 0;
+    snap.hosts.forEach(function (host) {
+      host.endpoints.forEach(function (ep) {
+        if (ep.state !== "live") return;
+        var hist = state.hists[ep.name];
+        if (!hist || !hist.t || !hist.gen_tps) return;
+        var t = hist.t;
+        var ys = hist.gen_tps;
+        for (var i = 0; i < t.length; i++) {
+          var v = ys[i];
+          if (v != null && t[i] >= t0 && v > max) max = v;
+        }
+      });
+    });
+    return max > 1 ? max : 1;
+  }
+
   // the state strip: the endpoint history's `state` series over [now - range, now] as coloured
   // segments (a null, a down probe, is a gap); the current word is the snapshot's own
   // `probe_state` — the newest probe, fresher than the history grid the segments are drawn
@@ -180,9 +219,10 @@
   function stateStrip(ep, now) {
     var hist = state.hists[ep.name];
     if (!hist || !hist.state || !hist.t || !hist.t.length) return null;
-    var span = rangeSeconds(state.histRange || state.range);
+    var rangeWord = state.histRange || state.range;
+    var span = rangeSeconds(rangeWord);
     var t0 = now - span;
-    var strip = h("div", { class: "strip", role: "img", "aria-label": "state over the last " + state.range });
+    var strip = h("div", { class: "strip", role: "img", "aria-label": "state over the last " + rangeWord });
     var current = ep.probe_state;
     for (var i = 0; i < hist.t.length; i++) {
       var s = hist.state[i];
@@ -202,37 +242,47 @@
       }
       i = j;
     }
-    return h("div", { class: "strip-row" }, [strip,
+    // the window the strip (and the card's sparkline) spans, named once per card at the
+    // strip row's left: the time axis of a 22 px line has no ticks, so the row says it (3.7q)
+    return h("div", { class: "strip-row" }, [h("span", { class: "strip-range muted", text: rangeWord }), strip,
       current ? h("span", { class: "strip-now", text: current }) : null]);
   }
 
-  // a decode-speed sparkline from the fleet history's gen_tps for this endpoint (inline SVG,
-  // 3.7f per ANAS): it fills the tile's width; the area under the line carries 12% of the
-  // line's fleet colour, so the card ties itself to its line in the chart below; a real 0 is
-  // a point on the baseline (truthful idle — the server sends 0.0 for a quiet interval and
-  // null only for no-data), and a null is a hole — the pen lifts and the next point starts a
-  // new run. A lone point between holes shows as a dot; the dots are the page's business,
-  // the server only ever sends numbers.
+  // a decode-speed sparkline from the endpoint's OWN history's gen_tps (3.7o: the same
+  // state.hists entry the strip reads — the fleet grid is the union of every endpoint's probe
+  // times, so a healthy endpoint reads mostly nulls there and its card showed a row of dots;
+  // the fleet grid stays the fleet charts'). Inline SVG (3.7f per ANAS): it fills the tile's
+  // width; the area under the line carries 12% of the line's fleet colour, so the card ties
+  // itself to its line in the chart below; a real 0 is a point on the baseline (truthful idle
+  // — the server sends 0.0 for a quiet interval and null only for no-data), and a null is a
+  // hole — the pen lifts and the next point starts a new run. A lone point between holes shows
+  // as a dot; the dots are the page's business, the server only ever sends numbers. The peak
+  // and the scale are computed over the IN-RANGE points only (D3): an old spike outside the
+  // window used to shrink the visible line and put a peak outside the window in the label.
   function sparkline(name, now) {
-    var fleet = state.fleet;
-    if (!fleet || !fleet.endpoints || !fleet.t) return null;
-    var fleetEp = fleet.endpoints[name];
-    if (!fleetEp || !fleetEp.gen_tps) return null;
-    var ys = fleetEp.gen_tps;
-    var max = 0;
-    ys.forEach(function (v) { if (v != null && v > max) max = v; });
-    if (!ys.some(function (v) { return v != null; })) return null;
-    var span = rangeSeconds(state.fleetRange || state.range);
+    var hist = state.hists[name];
+    if (!hist || !hist.t || !hist.gen_tps) return null;
+    var t = hist.t;
+    var ys = hist.gen_tps;
+    var span = rangeSeconds(state.histRange || state.range);
     var t0 = now - span;
-    // the axis floors to 1 tok/s so an all-zero window draws a flat baseline, not a collapse;
-    // the aria peak still reports the real max
-    var scale = max > 1 ? max : 1;
-    var runs = [], run = null;
-    for (var i = 0; i < fleet.t.length; i++) {
+    var max = 0, seen = false;
+    for (var i = 0; i < t.length; i++) {
       var v = ys[i];
-      if (v == null || fleet.t[i] < t0) { run = null; continue; }
+      if (v == null || t[i] < t0) continue;
+      seen = true;
+      if (v > max) max = v;
+    }
+    if (!seen) return null;
+    // the line is drawn to the shared scale (3.7q, computed once per render); max stays this
+    // endpoint's own in-range peak and is what the aria-label reports
+    var scale = sparkScale;
+    var runs = [], run = null;
+    for (var i = 0; i < t.length; i++) {
+      var v = ys[i];
+      if (v == null || t[i] < t0) { run = null; continue; }
       if (!run) { run = []; runs.push(run); }
-      run.push((((fleet.t[i] - t0) / span) * 100).toFixed(1) + "," + (23 - (v / scale) * 21).toFixed(1));
+      run.push((((t[i] - t0) / span) * 100).toFixed(1) + "," + (23 - (v / scale) * 21).toFixed(1));
     }
     if (!runs.length) return null;
     var NS = "http://www.w3.org/2000/svg";
@@ -242,7 +292,8 @@
     svg.setAttribute("viewBox", "0 0 100 24");
     svg.setAttribute("preserveAspectRatio", "none");
     svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", "decode speed over the last " + state.range + ", peak " + fmt.speed(max) + " tok/s");
+    svg.setAttribute("aria-label", "decode speed over the last " + (state.histRange || state.range) +
+      ", peak " + fmt.speed(max) + " tok/s");
     var colour = colourOf(name);
     runs.forEach(function (pts) {
       if (pts.length > 1) {
@@ -278,8 +329,9 @@
   }
 
   // one job as the MCP status line (status.py's `_job_row`): the mark, the name, the elapsed,
-  // then the bits that are actually there joined by ` · `, then the last activity cut short.
-  // The marks are status.py's MARK (running "⟳", queued "…"); queued also keeps jobRow's badge.
+  // then the bits that are actually there joined by ` · ` — calls, files, ctx, t/s,
+  // compactions — then the last activity cut short. The marks are status.py's MARK (running
+  // "⟳", queued "…"): the mark is the queued word, no badge on the card row.
   function epJobRow(job) {
     var row = [h("span", { text: job.status === "queued" ? "… " : "⟳ " }),
       jobLink(job.id, job.name),
@@ -291,9 +343,12 @@
     if (job.tool_calls) {
       trail(h("span", { text: fmt.int(job.tool_calls) + (job.tool_calls === 1 ? " call" : " calls") }));
     }
+    if (job.files > 0) { // the status line's files bit (D1); `_n(files, "file")`'s form
+      trail(h("span", { text: fmt.int(job.files) + (job.files === 1 ? " file" : " files") }));
+    }
     if (job.ctx_pct != null) {
       var w = Math.max(0, Math.min(100, job.ctx_pct));
-      trail(h("span", { title: fmt.int(job.ctx_tokens) + " / " + fmt.int(job.context) + " tokens" }, [
+      trail(h("span", { class: "ep-ctx", title: fmt.int(job.ctx_tokens) + " / " + fmt.int(job.context) + " tokens" }, [
         h("span", { class: "bar" + (w >= 80 ? " high" : "") }, [h("span", { style: "width:" + w + "%" })]),
         h("span", { class: "num", text: fmt.pct(job.ctx_pct) }),
       ]));
@@ -302,7 +357,15 @@
     if (job.compactions > 0) {
       trail(h("span", { class: "badge", text: fmt.int(job.compactions) + " compaction" + (job.compactions === 1 ? "" : "s") }));
     }
-    if (job.errors > 0) trail(h("span", { class: "badge err", text: fmt.int(job.errors) }));
+    // D2 (the operator: "I see an error count, but don't know what it is or means"): the
+    // badge says what it counts, with 3.7i's wording so the jobs table can take it verbatim
+    if (job.errors > 0) {
+      trail(h("span", {
+        class: "badge err",
+        title: "tool results that came back as errors; the job page lists them by tool",
+        text: fmt.int(job.errors) + " tool error" + (job.errors === 1 ? "" : "s"),
+      }));
+    }
     var act = oneLine(job.last_activity);
     if (act) {
       trail(h("span", { class: "ep-act", title: act, text: act.length > 60 ? act.slice(0, 59) + "…" : act }));
@@ -362,25 +425,43 @@
     if (rates.cached_tps != null && rates.prompt_tps != null && rates.prompt_tps + rates.cached_tps > 0) {
       cacheHit = rates.cached_tps / (rates.prompt_tps + rates.cached_tps);
     }
+    // 3.7n: the unit lives in the label, the value is the bare number — the tile is always one
+    // label line and one value line, so a card's height never depends on its values
+    // (operator 2026-10-29: "when the prompt t/s isn't zero it overflows the size causing it
+    // to wrap down a line"). gibOf is fmt.gib without the unit.
+    var gibOf = function (b) {
+      return (b / 1073741824).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    };
     var vram = hw.gpu_mem_used != null
-      ? fmt.gib(hw.gpu_mem_used) + (hw.gpu_mem_total != null ? " / " + fmt.gib(hw.gpu_mem_total) : "")
+      ? gibOf(hw.gpu_mem_used) + (hw.gpu_mem_total != null ? " / " + gibOf(hw.gpu_mem_total) : "")
       : "";
     var power = hw.gpu_power != null
-      ? fmt.int(hw.gpu_power) + " W" + (hw.gpu_power_limit != null ? " / " + fmt.int(hw.gpu_power_limit) + " W" : "")
+      ? fmt.int(hw.gpu_power) + (hw.gpu_power_limit != null ? " / " + fmt.int(hw.gpu_power_limit) : "")
       : "";
+    // the decode tile names the window its value, sparkline and strip share (3.7q: the time
+    // axis is the page's range control, and nothing else on the card says so); the sparkline
+    // carries the shared-scale peak label at its right edge. The label gets a title because
+    // at card width it can ellipsis before "last <range>".
+    var rangeWord = state.histRange || state.range;
+    var decodeLabel = "decode tok/s · last " + rangeWord;
+    var spark = sparkline(ep.name, snap.now);
+    var decodeTile = fig(decodeLabel, rates.gen_tps != null ? fmt.speed(rates.gen_tps) : "",
+      spark ? h("span", { class: "spark-wrap" }, [spark,
+        h("span", { class: "spark-peak muted", text: "↑ " + fmt.speed(sparkScale) })]) : null);
+    decodeTile.firstChild.setAttribute("title", decodeLabel);
     return h("div", { class: "figures" }, [
       fig("load", loadText(ep)),
       kvTile(ep),
-      fig("decode", rates.gen_tps != null ? fmt.speed(rates.gen_tps) + " tok/s" : "", sparkline(ep.name, snap.now)),
-      fig("stream", ep.gen_tps_live != null ? fmt.speed(ep.gen_tps_live) + " tok/s" : ""),
-      fig("prompt", rates.prompt_tps != null ? fmt.speed(rates.prompt_tps) + " tok/s" : ""),
+      decodeTile,
+      fig("stream tok/s", ep.gen_tps_live != null ? fmt.speed(ep.gen_tps_live) : ""),
+      fig("prompt tok/s", rates.prompt_tps != null ? fmt.speed(rates.prompt_tps) : ""),
       fig("cache hit", fmt.frac(cacheHit)),
-      fig("ctx", fmt.int(ep.context)),
-      fig("probe", ep.latency_ms != null ? fmt.int(ep.latency_ms) + " ms" : ""),
+      fig("ctx", fmt.compact(ep.context), null, fmt.int(ep.context)),
+      fig("probe ms", ep.latency_ms != null ? fmt.int(ep.latency_ms) : ""),
       fig("GPU", fmt.pct(hw.gpu_util)),
-      fig("VRAM", vram),
-      fig("temp", hw.gpu_temp != null ? fmt.int(hw.gpu_temp) + " °C" : ""),
-      fig("power", power),
+      fig("VRAM GiB", vram),
+      fig("temp °C", hw.gpu_temp != null ? fmt.int(hw.gpu_temp) : ""),
+      fig("power W", power),
     ]);
   }
 
@@ -534,6 +615,7 @@
     snap.hosts.forEach(function (host) {
       host.endpoints.forEach(function (ep) { state.order[ep.name] = i++; });
     });
+    sparkScale = computeSparkScale(snap); // before the cards: every sparkline draws to this scale
     var meta = [h("span", { text: "attention window " + fmt.dur(snap.window_s, true) })];
     if (snap.db_path) {
       // the database the server opened: muted, elided from the left when long (the tail names

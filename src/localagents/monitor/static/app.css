@@ -114,8 +114,12 @@ h2 { font-size: 16.5px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 60
 .figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 12px;
   font-size: 14.5px; margin-top: 4px; }
 .figures .fig { display: flex; flex-direction: column; min-width: 0; white-space: normal; }
-.figures .fig .label { color: var(--muted); font-size: 12px; margin-right: 0; }
-.figures .fig .num { font-weight: 600; overflow-wrap: anywhere; }
+/* 3.7n: one label line, one value line, whatever the value — a card's height never
+   depends on it; an elided value is complete in the tile's title (the unit sits in the
+   label now, so the values are short) */
+.figures .fig .label { color: var(--muted); font-size: 12px; margin-right: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.figures .fig .num { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fig { white-space: nowrap; }
 .fig .label { color: var(--muted); margin-right: 4px; }
 .fig svg { vertical-align: middle; margin-left: 4px; }
@@ -256,11 +260,26 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .sdot-down { background: var(--critical); }
 .sdot-dormant { background: var(--muted); }
 /* the KV meter's line: the jobs table's bar with the percent beside it */
-.kv { display: inline-flex; align-items: center; }
+.kv { display: inline-flex; align-items: center; white-space: nowrap; }
 /* the decode tile's sparkline fills the tile (viewBox stretches; the stroke does not) */
 .figures .fig svg { display: block; width: 100%; margin: 3px 0 0; }
-.ep-job { white-space: normal; }
+/* line-height 1.5 (3.7-fold-1): the row's line box is pinned so the inline-block 8 px ctx
+   bar (vertical-align: middle) and the bordered badges cannot grow it — measured: at the
+   default 1.4 a bare row stood 20.3 px and a row carrying a bar 21.3, so which bits a job
+   happened to carry moved the card's height by 1 px */
+.ep-job { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
 .ep-job + .ep-job { margin-top: 3px; }
 /* the status line's activity tail: cut at 60 chars in the script, ellipsised here on a narrow card */
 .ep-act { display: inline-block; max-width: 34em; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; vertical-align: bottom; color: var(--muted); }
+
+/* 3.7-fold-1 */
+/* the ctx bar and its percent are one unit: they never split across lines, and with the row
+   nowrap they also never push the row's tail off (3.7n) */
+.ep-ctx { white-space: nowrap; }
+/* 3.7q: the sparkline and its peak label; the label sits at the line's right edge and names
+   the ONE shared y scale (the same text on every live card; the tile's label carries tok/s) */
+.spark-wrap { position: relative; display: block; }
+.spark-peak { position: absolute; right: 0; top: 2px; font-size: 10.5px; white-space: nowrap; }
+/* the window the strip and the sparkline span, from the range control, once per card */
+.strip-range { font-size: 12px; white-space: nowrap; }

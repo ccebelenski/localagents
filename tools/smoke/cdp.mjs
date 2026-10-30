@@ -53,6 +53,22 @@ const probe = `(() => {
     jobsBlocks: q('.ep-jobs').map(e => e.textContent.replace(/\\s+/g,' ').trim()),
     sparkPolylines: q('.fig svg polyline').length,
     sdots: q('.sdot').map(e => e.className),
+    // 3.7n height invariant: a live card's rendered height; two hand-rendered variants of the
+    // same snapshot (shortest/longest values) must report the same height here
+    cardHeights: q('.endpoint.state-live').map(e => ({ endpoint: e.dataset.endpoint, h: e.getBoundingClientRect().height })),
+    // 3.7-fold-1 (3.7n/o/q): the twelve tile labels per live card (units in the labels now,
+    // the decode label naming the window), the shared-scale peak labels, the strip rows'
+    // range words, each card's sparkline runs over its own history, the job rows' row form,
+    // and the sparklines' aria labels (own in-range peak) and drawn points (the shared scale)
+    tileLabels: q('.endpoint.state-live').map(e => Array.from(e.querySelectorAll('.fig .label')).map(l => l.textContent)),
+    sparkPeaks: q('.spark-peak').map(e => e.textContent),
+    stripRanges: q('.strip-range').map(e => e.textContent),
+    sparkRuns: q('.endpoint.state-live').map(e => ({ polylines: e.querySelectorAll('.fig svg polyline').length, circles: e.querySelectorAll('.fig svg circle').length })),
+    sparkAria: q('.endpoint.state-live .spark-wrap svg').map(s => s.getAttribute('aria-label')),
+    sparkPoints: q('.endpoint.state-live .spark-wrap svg polyline').map(p => p.getAttribute('points')),
+    // (not "jobRows": the table's row field above already owns that key — a duplicate in an
+    // object literal silently shadows it)
+    epJobRows: q('.ep-job').map(e => e.textContent.replace(/\\s+/g, ' ').trim()),
     detail: document.getElementById('detail').hidden ? null : document.getElementById('detail').textContent.replace(/\\s+/g,' ').trim(),
     overviewHidden: document.getElementById('overview').hidden,
     scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth,

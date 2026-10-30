@@ -93,7 +93,10 @@ SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant"
                  # that is always the card's last child, its status-line rows and their activity
                  # tail, and the state dot (this lane styles all three variants; the live card's
                  # span is the token the list checks, the down/dormant spans are lane A's markup)
-                 "figures", "ep-jobs", "ep-job", "ep-act", "sdot"]
+                 "figures", "ep-jobs", "ep-job", "ep-act", "sdot",
+                 # 3.7-fold-1 (3.7n/3.7q): the job row's glued ctx bar+percent span; the
+                 # shared-scale peak label, its wrap, and the strip row's range word
+                 "ep-ctx", "spark-peak", "spark-wrap", "strip-range"]
 # the classes the job page's smoke names (story 3.4's brief): the page root and its sections,
 # the status classes the header's mark takes (a queued job takes one more, styled but not
 # smoked)
@@ -187,10 +190,9 @@ def _read_fields(js_text, vars, holders=("state",)):
 VARIABLE_KEY_READS = {
     "app.js": {
         "fleet.endpoints[n]",  # the fleet body's per-endpoint map, by a live endpoint's name
-        "fleet.endpoints[name]",  # the same map, the sparkline's endpoint
         "fleetEp[key]",  # one endpoint's fleet series by CHARTS key: gen_tps, prompt_tps, occupancy
-        "fleet.t[i]",  # the fleet time axis, by index
-        "hist.t[i]", "hist.t[j+1]",  # the history time axis, by index (the state strip)
+        "hist.t[i]", "hist.t[j+1]",  # the history time axis, by index (the state strip, and
+                                     # the sparkline since 3.7o, which reads the endpoint's own history)
         "hist.state[i]", "hist.state[j+1]",  # the state series, by index (the strip's segments;
                                               # its "now" label is the snapshot's probe_state)
     },
