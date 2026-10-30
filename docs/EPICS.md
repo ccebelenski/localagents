@@ -878,6 +878,17 @@ covers the drawn endpoints only; verified with the review's reproduction (1 card
 down/up flip, no full render for a hidden arrival). Rides the next DeepSeek review.
 - ☑ **3.7-fold-5 Page polish.** (0beaf24: Qwen/ai2 job 20261030-014102-3214a939, 85 turns, 18 min, 649 tests; the decode label plain, the window named once on the strip row; the card's job row two fixed lines, measured 265.66 px with and without the activity and 93.00 px for two more jobs; ticks without seconds. Review: DeepSeek, with fold-4, fold-4s and the D1 fix.) The
   three items above plus that review's findings.
+Coordinator's read of the final merged page (2026-10-30 02:01, seeded world, 1400 px): the
+header, cards, log and timeline all read as designed. One item left for the operator's eye:
+- The card's job figures line still cuts after "⟳ 20261030-015626-4b27af51 5m05s · 50 calls ·
+  2 files · …" at three cards across, so the ctx bar, speed and errors — the figures the row
+  exists for (3.7e: "the important number is each job's own context fill") — hide behind the
+  ellipsis while the 25-char name and the call/file counts take the width.
+
+- ☐ **3.7-fold-6 The card's job line leads with what matters.** Proposed, operator decides: the
+  name shortened to its id tail ("…4b27af51", the full name in the link's title; the table and
+  the timeline keep the full name), then elapsed, the ctx bar + %, t/s, the errors badge; calls
+  and files last, so the ellipsis cuts counts, never the fill. Same two-line, fixed-height row.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
