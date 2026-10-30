@@ -357,7 +357,9 @@ database; point it at a throwaway file to rehearse.
 `localagents monitor` is a web dashboard for the endpoints in `models.yaml` and the jobs
 localagents runs on them: one process that probes every endpoint (every 5 s; a dormant one
 every 60 s) into the shared database and serves a page that redraws from a server-sent
-events stream after each probe.
+events stream after each probe. (True now, 3.7m: after each *round*, not each probe — the
+server's fan-out coalesces the collector's ticks and pushes one snapshot at a time, at most
+one per `refresh_s`; the probe cadence itself is unchanged.)
 
 ```bash
 localagents monitor                 # http://127.0.0.1:8765/
@@ -369,8 +371,9 @@ Flags: `--port N` (default: the `monitor:` section's `port`, else **8765**), `--
 network you trust), `--db PATH` (default: `monitor: db`, else `LOCALAGENTS_DB`, else the state
 directory's `localagents.db`), `--config PATH`, and `--no-collect` (serve the database as it
 is, without probing or pruning — the page still follows the database, the server pushing a
-snapshot every `refresh_s`). It prints one line at start — the URL, the database path and
-the endpoint count — and stops on Ctrl-C or SIGTERM.
+snapshot every `refresh_s`). It prints one line at start — the URL, the database path, the
+endpoint count, and "not collecting" when `--no-collect` was given — and stops on Ctrl-C or
+SIGTERM.
 
 By default the page also opens in the default browser, in a new tab, once the server is up
 (`$BROWSER` is honoured); `--no-open` keeps the browser shut, as the headless smokes do. If the
@@ -388,26 +391,77 @@ The overview shows one card per host, in `models.yaml` order. A live endpoint sh
 served model, a state strip (Strata's own state, `idle`/`busy` for the others, over the chosen
 range), slots or running/waiting requests, KV-cache fill (vLLM), decode speed with a sparkline,
 prompt speed, cache hit, GPU figures when the backend reports them (Strata), and the jobs
-running on it. An endpoint that was up within the attention window and is down now is drawn in
-the alert colour with the probe's sentence and when it was last seen; an older one is a single
-muted "last seen" line, and a host whose every endpoint is dormant collapses to one line. When
-the node itself is unreachable the card carries the probe's sentence once and its endpoints are
-greyed, not each alarming.
-Below the cards is the running-jobs table (elapsed, turns, tool calls, current tool, errors,
-context fill, speed, last activity; "server gone" when the job's MCP server no longer beats),
-then the fleet charts: decode speed, prompt speed and occupancy per live endpoint on one time
-axis (a down or dormant endpoint has no line and no legend entry; one that drops out of live
-leaves the charts on the next refresh). The range buttons (`15m` to `7d`, default `1h`,
-remembered by the browser) apply to every chart and strip. The page redraws on each snapshot
-the server pushes and never polls; the dot in the header is green while the stream is open and
-red while it reconnects, and the header names the attention window in hours (`24h` by
-default; the `attention_hours` setting below) and the database the server opened (the path
-elided from the left when long, the full path in the title). The charting
+running on it. (True now, 3.7d/3.7e/3.7n/3.7q: the card is a fixed grid of twelve tiles in
+the same slots on every live card — load, KV, decode and stream / prompt, cache hit, ctx and
+probe / GPU, VRAM, temp and power — a figure the backend does not report shows a dash in its
+slot rather than vanishing, and the unit lives in the label so a value is always one line.
+The KV tile is a bar meter. The decode tile's sparkline is drawn from the endpoint's own
+history over the chosen range; all live cards share one y scale, so a tall line on one card
+and a low line on another compare by height, the shared peak rides at each sparkline's right
+edge, and the tile's label and the strip row both name the window.) The head line carries a
+state dot, the served model in the status line's short form (the full served id in its
+title), and at the right the last-active phrase: "active 4m12s ago", the date form past 24 h,
+"no recent activity" when the retained history holds no advancing counters interval. The
+jobs block sits at the card's foot in the same place on every card: one row per running job
+in the MCP status line's form (mark, name, elapsed · calls · files · ctx bar · t/s ·
+compactions · tool errors · activity), a muted "no jobs" line when empty and "busy, no local
+job" when the engine is occupied without one of ours. An endpoint that was up within the
+attention window and is down now is drawn in the alert colour with the probe's sentence and
+when it was last seen; an older one is a single muted "last seen" line. Endpoints that were
+never seen are not drawn at all; one muted line under the cards names the hidden ones.
+(True now, 3.7a/3.7b: a host whose every endpoint is dormant no longer collapses to one
+line — every host is a card of the same shape, a card never moves when its state changes,
+and a host with nothing left to draw is not drawn.) When the node itself is unreachable the
+card carries the probe's sentence once and its endpoints are greyed, not each alarming.
+(True now, 3.7c: a down node's card has the same shape and size as a live host's.)
+Below the cards is the **Recent jobs** log: every running and queued job by start, then the
+last 10 finished newest first, with the columns job, status, model, endpoint, elapsed,
+turns, tool calls, tool errors, context, speed and last activity. (True now, 3.7g/3.7h: it
+replaces the running-jobs table — finished rows stay instead of vanishing on the next tick,
+the status is a word pill (running / queued / done / failed and friends) rather than a mark,
+"current tool" is gone as a column, a finished row's elapsed is frozen at its run's length,
+and a running row's turn count is a muted dash until its first turn lands.) A non-zero tool
+errors count is a link: the count is tool results that came back as errors, and the job page
+lists them by tool. "server gone" marks a job whose MCP server no longer beats.
+Beneath the log the fleet section is one **timeline** on a shared time axis. One 36 px row
+per live endpoint, in card order: the endpoint's busy intervals from its own history as a
+6 px band along the row's bottom (idle is not drawn, so a box idle all day reads as an empty
+row), and its jobs as labelled bars above it, each a link to the job page; two jobs
+overlapping on one endpoint stack as two thinner bars. One axis under the rows carries 4–7
+time labels with hairline gridlines up through the rows, and a "now" marker sits at the
+right edge. (True now, 3.7l: this replaces the three fleet charts — decode speed, prompt
+speed and occupancy per live endpoint on one time axis — which answered no question the
+operator had.) The range buttons (`15m` to `7d`, default `1h`, remembered by the browser)
+apply to every chart and strip (True now, 3.7l: the strips, the sparklines and the
+timeline). The page redraws on each snapshot the server pushes and never polls, and a
+snapshot identical to the last one redraws nothing — cards kept across pushes update their
+changed tiles in place, losing no hover state; the dot in the header is green while the
+stream is open and red while it reconnects, and the header names the attention window in
+hours (`24h` by default; the `attention_hours` setting below) and the database the server
+opened (the path elided from the left when long, the full path in the title). (True now,
+3.7r: beside the dot is one phrase, not the word "live" — "updated HH:MM:SS" while the
+stream is open, moving with every push; "connection lost, last update HH:MM:SS" while it
+reconnects; "connecting" before the first snapshot.) The charting
 library, uPlot 1.6.31, is vendored into the package
 (`src/localagents/monitor/static/VENDOR.md` has its checksums), so the page needs no internet.
 (True-now, 3.7-fold-4: story 3.7l replaced the fleet charts with the timeline, and once no page
 used uPlot the vendored files and `VENDOR.md` were dropped — the sentences above record the state
 when written; the page loads nothing but its own files.)
+
+Refresh and load. The fan-out is the one refresh clock, separate from the probe cadence: it
+coalesces the collector's ticks, so a probe round is one snapshot push and nothing is sent
+between pushes, at most one push per `refresh_s` (the `monitor:` setting, default 5 s; the
+snapshot on first connect stays immediate). The snapshot is read once per push and its bytes
+shared by every open tab, and it carries `refresh_s` so the page paces its one history call
+by the same clock, floored at 1 s. The history bodies are cached server-side per endpoint,
+fleet and window, keyed on the newest probe time, so a request between probes is a cache
+hit, and `/api/overview/history` answers the strips, sparklines and timeline — the timeline's
+job spans included — in one batched call. A `--no-collect` server has no probe ticks, so the
+same clock drives itself every `refresh_s`: an open page still follows the jobs the MCP
+server writes, at most `refresh_s` behind. The last-active figure rides the same read:
+`endpoints.last_active` (schema version 6) stores the newest probe at which the endpoint's
+counters advanced, the collector writes the witness at each advancing interval, and the
+monitor backfills null witnesses from the stored probes once, at its own start.
 
 An endpoint's name on the overview opens its detail page (`#/endpoint/<name>`), drawn from the
 monitor's own database for every backend, with no link to the endpoint's own UI. Its header
@@ -428,10 +482,16 @@ figure the newest probe lacks (a down endpoint) shows the newest value in the ra
 such. Then come the state strip, the jobs that ran on the endpoint in the range, its up, down
 and restart events, and the request table: our own jobs' requests to it (time, job, path,
 status, milliseconds, tokens in, out and from cache, streaming, error), newest first, under a
-totals line. The range buttons apply here too; the tiles follow each snapshot, and the series
-and tables are re-fetched on a range change and at most every 30 s.
+totals line. (True now, 3.7k/3.7-fold-4: both request tables — this one and the job page's —
+draw through one renderer with one look: time, a status pill, job, path, prompt, reused,
+output, prefill t/s, decode t/s, duration (whole ms under a second, tenths above) and error;
+the stream flag and the raw gen_ms are gone, the two rates are the per-request derivations
+Strata derives from the same facts, and the time cell reads clock time inside 24 h and the
+date past it.) The range buttons apply here too; the tiles follow each snapshot, and the
+series and tables are re-fetched on a range change and at most every 30 s.
 
-The job detail page (`#/job/<id>`, from the running-jobs table) fetches the job's record in
+The job detail page (`#/job/<id>`, from the running-jobs table — True now, 3.7g: from the
+Recent jobs log) fetches the job's record in
 one call and shows its status, model, endpoint and times; a context gauge when the job
 reported a window; the four usage counters and the seven /metrics deltas the runner recorded
 (or "metrics not recorded"); the files touched, shown relative to the job's worktree or cwd;
@@ -449,6 +509,7 @@ monitor:
   port: 8765
   attention_hours: 24     # an endpoint seen up within this window and down now is an alert; older is dormant
   retention_days: 7       # probe rows older than this are deleted (job rows never are)
+  refresh_s: 5            # the one refresh clock: at most one snapshot push per this many seconds, max 3600
   # db: /path/to/localagents.db
 ```
 
@@ -460,7 +521,8 @@ LOCALAGENTS_DB=/tmp/x localagents seed && LOCALAGENTS_DB=/tmp/x localagents moni
 ```
 
 The routes and their JSON (`/api/snapshot`, `/api/endpoints/<name>/history?range=1h`,
-`/api/fleet/history?range=1h`, `/api/endpoints/<name>/requests?range=24h`,
+`/api/fleet/history?range=1h`, `/api/overview/history?range=1h`,
+`/api/endpoints/<name>/requests?range=24h`,
 `/api/jobs?range=24h`, `/api/jobs/<id>`, `/events`) are specified in
 [`docs/superpowers/specs/2026-10-29-monitor-design.md`](docs/superpowers/specs/2026-10-29-monitor-design.md)
 §5a. Ranges run from `15m` to `7d`.
