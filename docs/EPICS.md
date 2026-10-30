@@ -580,6 +580,38 @@ question the operator has.
   overview one timeline. Operator 2026-10-29: "I think you're right - the single timeline is
   better." Settled: the overview's fleet section is the one timeline; speeds (per-request marks)
   go to the endpoint page.
+  DESIGN (coordinator, 2026-10-30, the brief's spec). The Fleet section becomes one block,
+  heading "Timeline · last 1h" (the range word from the control). Rows: one per live endpoint in
+  card order, each a 36 px row: a left label column (the endpoint name as `endpointLink`,
+  140 px, ellipsis) and a track spanning now − range .. now. In the track: (1) the endpoint's
+  busy intervals from its own history's `state` series as the state strip draws them
+  (`stateStrip`'s segment walk, the same colours: busy accent, Strata's own states by their
+  hashed colours, idle NOT drawn so an idle track is empty, a null a gap) as a 6 px band at the
+  row's bottom; (2) each JOB that ran on that endpoint inside the window as a 20 px bar above
+  the band, from `started_at` to `finished_at` (or now while running, with a 2 px accent edge at
+  the right), filled in the endpoint's categorical colour at 0.25 opacity with a 1 px border in
+  the full colour, the job NAME inside the bar in ink (ellipsis; hidden under ~40 px), the bar
+  an `<a href="#/job/<id>">` with a title "name · started HH:MM:SS · elapsed · status"; two
+  jobs overlapping on one endpoint (a two-slot box) stack as two 10 px bars. Jobs come from
+  `read.jobs_in_range` (`derive.summary_from_row` rows: `id`, `name`, `endpoint`, `status`,
+  `started_at`, `finished_at` verified; a job with no `started_at` is not drawn) delivered in
+  the overview's one history call: the batched `/api/overview/history` body gains `jobs`
+  (server row, cached like the rest, keyed on the newest job row's `created_at` and
+  `finished_at`), §5a appended. The axis: one row at the bottom with 4–7 tick labels at nice
+  intervals (15m: every 5 min; 1h: every 15 min; 6h: hourly; 24h: every 4 h; 7d: daily) as
+  `fmt.time` (`fmt.date` past 24 h) with hairline gridlines up through the rows; a "now" marker
+  at the right edge. Hover: the bars' titles; no tooltip layer. Empty: a live endpoint with
+  nothing in the window keeps its row; no live endpoints → the muted sentence "no live
+  endpoints". Removed: the three uPlot charts, the `charts` object, `CHARTS`,
+  `#fleet-charts`/`#fleet-note` and their CSS; `state.fleet`/`fetchFleet` are no longer read by
+  the overview (the fleet route stays; uPlot stays vendored until no page uses it — endpoint.js
+  and job.js do not, verified by grep: a later cleanup). Tests: SMOKE_CLASSES (`timeline`,
+  `tl-row`, `tl-track`, `tl-job`, `tl-axis`), VARIABLE_KEY_READS loses the `fleetEp[key]`
+  entries, the §5a gate admits `jobs` on the batched body. Smoke, DOM-only: the row count equals
+  the live count; each `.tl-job` bar's `left`/`width` styles recomputed by hand from the seeded
+  job's `started_at` and `now` (pasted); the axis labels for each of the five ranges; zero
+  exceptions; `scrollWidth == clientWidth`. Built after 3.7-fold-2 lands (the batched route
+  is in that lane's file).
 
 The operator's fifth finding (2026-10-29), verbatim: "What's our refresh trigger on this page?
 it seems jerky."
