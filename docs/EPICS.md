@@ -175,6 +175,24 @@ the duplicates go), then docs.
   the 60 characters. The input rule stores the path for any path-shaped tool; the row's
   activity is one line with paths relative to the job's root. Lane: Qwen (ai2).
 
+- ☐ **1.11 (proposed, operator decides) Transcripts in the database.** Operator (2026-10-30, after
+  the 3.9B incident deleted 19 jobs' transcript files): "should we have a BLOB table to hold the
+  transcripts? That would keep it independent of the files, and under database purge rules
+  instead of file purge rules. It doesn't need to be updated, just populated at job completion,
+  and otherwise we have the file itself while the job is in progress for real-time reading."
+  Coordinator's reading: sizes today are small (59 transcripts: median 75 KB, largest 152 KB,
+  4.2 MB in all), so a `transcripts (job_id TEXT PRIMARY KEY REFERENCES jobs, text TEXT, bytes
+  INTEGER, written REAL)` row per job costs nothing SQLite minds. The write is one statement in
+  the runner's finish step after the last `[result]` line (the `[metrics]`/`[worktree]` tail
+  included, so the row equals the file at completion); readers (`job_log`, `Job.transcript_tail`,
+  the monitor's `read._transcript`) take the file while the row is absent (the job running, or
+  pre-change jobs) and the row once present. Purge: the schema spec says rows are history and
+  nothing deletes them; a transcripts row would be the first bulky one, so the proposal needs a
+  rule ("transcripts older than N days are deleted, the job row stays", or none while sizes stay
+  this small). The opt-in debug dumps (`--dump`, `log_events`) stay files. Schema v7, a spec
+  edit (schema document "What stays a file"), an Epic 1 story: discussed here first per ruling
+  (e), built only on the operator's word.
+
 ## Epic 2: monitor core (collector and storage, no page)
 
 - ☑ **2.1 Fixtures.** (a1c3693, Qwen/ai2 job 20261029-112904-212f6c31, 66 turns: 26 verbatim
@@ -940,6 +958,9 @@ The 3.7 chain's reviews are closed: no open defect.
   the grid's minmax floor and raised but never lowered during the page's life (the high-water
   mark, so the no-jump rule holds); no `text-overflow: ellipsis` on any card text. Fewer
   columns is accepted.
+  Lane: Opus (operator: "It can go to Opus."), given the oracle and the acceptance numbers, not
+  the method; also the activity line's 60-char cut in `epJobRow` (`app.js:413-414`) and the
+  active phrase's 12em ellipsis (`app.css:332`) go, since they are the same convention.
 - ☐ **3.7v "tool errors" 2 when the job page shows 1 error.** Operator: "tool errors sometimes
   shows a count of 2 when the job only shows 1 error returned (often the /api/hello we will
   adress) - this could also be related to your earlier fix on dedupe." Coordinator's reading
