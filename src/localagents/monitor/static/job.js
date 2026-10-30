@@ -395,7 +395,10 @@
         tot.output += t.output || 0;
         tot.cache_read += t.cache_read || 0;
         tot.cache_creation += t.cache_creation || 0;
-        if (req.error != null && req.error !== "") tot.errors++;  // 3.2c row 2: '' is clean, as the row's own cell already treats it
+        // 3.2c row 2: '' is clean, as the row's own cell already treats it; 3.7v: a recorded
+        // /api/hello handshake is not an error either, exactly as the shared renderer marks
+        // the row and as the header's "request errors" figure counts it
+        if (req.path !== "/api/hello" && req.error != null && req.error !== "") tot.errors++;
       });
       var totals = h("div", { class: "totals" }, [
         h("span", { class: "fig" }, [h("span", { class: "label", text: "requests" }), h("span", { class: "num", text: fmt.int(reqs.length) })]),
@@ -452,6 +455,20 @@
       return h("span", { class: "fig" }, [h("span", { class: "label", text: label }), num]);
     }
 
+    // the header's "request errors" figure (3.7v): the shared renderer's own row rule — a
+    // status outside 2xx or a non-empty error — with the /api/hello handshake rows skipped
+    // exactly as the table skips them (the shim's startup probe recorded with the backend's
+    // 404/501: not a failure of this job). 0 draws as "0", not blank.
+    function requestErrors(reqs) {
+      var n = 0;
+      (reqs || []).forEach(function (req) {
+        if (req.path === "/api/hello") return;
+        if (typeof req.http_status === "number" && (req.http_status < 200 || req.http_status >= 300)) n++;
+        else if (req.error != null && req.error !== "") n++;
+      });
+      return n;
+    }
+
     function header() {
       var status = lost ? "lost" : detail.status;
       var mark = h("span", {
@@ -472,7 +489,12 @@
         liveFig("elapsed", "elapsed_s", fmt.dur(detail.elapsed_s)),
         liveFig("turns", "num_turns", fmt.int(detail.num_turns)),
         liveFig("tool calls", "tool_calls", fmt.int(detail.tool_calls)),
-        fig("errors", fmt.int(detail.errors)),
+        // 3.7v (the operator: a job showing one error next to a column saying two): the two
+        // figures count different things, so the header says both by their own names — the
+        // overview's tool errors (tool results flagged is_error, derive.error_count) and the
+        // request table's failures, handshake rows excluded (see requestErrors)
+        fig("tool errors", fmt.int(detail.errors)),
+        fig("request errors", fmt.int(requestErrors(detail.requests))),
         detail.compactions > 0 ? fig("compactions", fmt.int(detail.compactions)) : null,
         liveFig("last tool", "last_tool", oneLine(detail.last_tool)),
       ].filter(Boolean);

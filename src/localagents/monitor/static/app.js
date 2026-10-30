@@ -1452,10 +1452,18 @@
       var cacheRead = req.tokens ? req.tokens.cache_read : null;
       var cacheCreation = req.tokens ? req.tokens.cache_creation : null;
       var error = requestError(req);
+      // 3.7v (the operator: "tool errors sometimes shows a count of 2 when the job only shows
+      // 1 error returned (often the /api/hello…)" — the two figures count different things):
+      // Claude Code's startup handshake, forwarded by the shim and recorded with the backend's
+      // 404/501, is a fact about the backend's routing, never a failure of this job. The row
+      // wears a muted pill reading "handshake" (the status rides in its title), takes no
+      // req-err mark, and each caller's error count skips it (3.7t makes the shim answer 200
+      // and write no row, so NEW databases hold none; the rows already in history stay).
+      var handshake = req.path === "/api/hello";
       var bad = typeof req.http_status === "number" && (req.http_status < 200 || req.http_status >= 300);
       if (req.error != null && req.error !== "") bad = true;
       var cls = [];
-      if (bad) cls.push("req-err");
+      if (bad && !handshake) cls.push("req-err");
       if (req.context_exceeded) cls.push("req-ctx"); // the same truthy read: a non-empty string or true
       var prefill = prefillRate(req);
       var decode = decodeRate(req);
@@ -1473,7 +1481,10 @@
       if (fmt.int(cacheCreation) !== "") cacheHalves.push("cache creation " + fmt.int(cacheCreation));
       var reusedTitle = cacheHalves.join(", ");
       var cells = [h("td", { text: timeText, title: timeTitle })];
-      if (req.http_status == null) {
+      if (handshake) {
+        cells.push(h("td", null, [h("span", { class: "pill pill-muted",
+          title: req.http_status == null ? "no status" : String(req.http_status), text: "handshake" })]));
+      } else if (req.http_status == null) {
         cells.push(h("td", null, [h("span", { class: "pill", title: "no status", text: "–" })]));
       } else {
         var ok = req.http_status >= 200 && req.http_status < 300;

@@ -104,7 +104,10 @@ SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant"
 # smoked)
 JOB_SMOKE_CLASSES = ["job-detail", "gauge", "timeline", "by-tool", "job-requests", "transcript", "files",
                      "status-running", "status-succeeded", "status-failed", "status-timeout",
-                     "status-cancelled", "status-lost", "log-dir"]
+                     "status-cancelled", "status-lost", "log-dir",
+                     # 3.7v: the shared requests renderer's muted pill for the /api/hello
+                     # startup handshake (drawn by app.js, which the scan below reads)
+                     "pill-muted"]
 
 # the names app.js reads the route bodies through (its header says so): snapshot, host, endpoint,
 # running job (and, since 3.7l, a timeline job span), endpoint hardware, endpoint rates, endpoint
@@ -837,3 +840,30 @@ def test_a_down_node_card_head_says_down_and_keeps_the_probe_sentence_in_the_tit
     assert "if (said) note = said.error" not in head
     assert re.search(r'class: "host-note ep-line", title: \w+', head), head
     assert 'text: note' in head
+
+
+# --- story 3.7v: the two error figures, and the handshake row told apart --------------------------
+
+
+def test_requests_table_labels_a_handshake_row_as_no_error():
+    """3.7v (operator 2026-10-30: "tool errors sometimes shows a count of 2 when the job only
+    shows 1 error returned (often the /api/hello…)"): the shim's recorded startup handshake
+    rows (path /api/hello, the backend's 404/501) drew as the table's one red error pill.
+    The shared renderer draws them as a muted pill reading "handshake" — the numeric status
+    stays in the title — and pins the new class styled in the stylesheet. (The row class and
+    the counting exclusions are the DOM smoke's, t/REPORT.md.)"""
+    body = _js_function(_app_js(), "requestsTable")
+    assert '"handshake"' in body
+    assert "pill-muted" in body
+    assert '"/api/hello"' in body
+    assert re.search(r"\.pill-muted(?![\w-])", (STATIC / "app.css").read_text())
+
+
+def test_job_header_names_both_error_figures():
+    """3.7v: the job page's header says which errors it means — the counts of the overview's
+    "tool errors" column (tool results flagged is_error) and the request table's failures
+    sit side by side under their own words; the bare "errors" figure is gone."""
+    js = (STATIC / "job.js").read_text()
+    assert 'fig("tool errors"' in js
+    assert 'fig("request errors"' in js
+    assert 'fig("errors"' not in js

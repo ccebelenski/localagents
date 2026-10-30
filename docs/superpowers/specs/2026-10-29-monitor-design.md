@@ -479,7 +479,9 @@ whole prompt; our `tokens.input` excludes cache reads (§5a's prompt is input + 
 cache_creation, `derive._PROMPT_SUM`), so the tokens a request actually prefilled are input +
 cache_creation — the analogue of Strata's processed count (`prompt_tokens − cached`,
 `registry.py:589`). Strata's VRAM hit rate is its own figure and has no counterpart here; it is
-not invented.
+not invented. True now (3.7v, 2026-10-30): the job page's header says "N tool errors" (tool
+results flagged is_error) and "N request errors" (requests outside 2xx or with an error text)
+side by side; a `/api/hello` handshake row is labelled "handshake" and counted as neither.
 
 **Fleet history** (`GET /api/fleet/history`; review of 3.1, ruling C):
 
