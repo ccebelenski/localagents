@@ -439,6 +439,49 @@ the duplicates go), then docs.
   streaming, so a 5 s bin straddling a request can spike above the engine's ceiling). Live
   data the seed never showed: the monitor watching its own operator's session.)
 
+### 3.7 Presentation pass (operator walk, 2026-10-29)
+
+The operator's findings on the overview over the real fleet, verbatim, cards first. Each becomes
+a story below; the cut is the coordinator's and the operator corrects it before a lane is briefed.
+
+> First is the page looks very disorganized and monochromatic. There's good use of contrast for
+> readability. The cards should organize to available space and adjust as you have done, but the
+> flow isn't very logical. Ai9 - the node is down, but the display for that isn't good, taking an
+> entirely different size, shape, and form. I would not display cards that are dormant and never
+> seen, as they are just clutter right now. You have context on the card, but not context used.
+> The different cards have different information available, based on the capabilities of the
+> back-end - however you're moving around the positions on the card where information is
+> displayed making it hard to scan from card to card for a particular field.
+
+Coordinator's reading of the screenshot against the code (`static/app.js` `hostCard`,
+`liveEndpoint`; `static/app.css` `.host`, `.figures`):
+- The full-width dormant rows (`.host.dormant` spans `1 / -1`) break the card grid into bands,
+  so ai1 and ai2 each sit alone on a row: that is most of "disorganized".
+- ai9's shape: every endpoint dormant collapses the host to one line (`host.dormant`), and the
+  node-down class only adds a red border to that line. A down node never gets a card.
+- Never-seen endpoints appear inside live hosts too (local/vllm, dgx1/dgx1), not only as rows.
+- Field positions move because `.figures` is a wrapping flex row and absent figures are
+  filtered out, so each card packs differently.
+- Context used: the probe stores the window (`context`) and KV usage; no per-endpoint
+  used-tokens figure exists in the snapshot. Per-job context fill exists (`ctx_pct`, in the
+  jobs table). Which the operator means is the open question for 3.7e.
+
+- ☐ **3.7a Hide what has never been seen.** A never-seen endpoint is not drawn; a host with
+  nothing left to draw and its node not down is not drawn; one muted line under the cards says
+  how many are hidden. Dormant-but-seen stays a muted line (spec §4). Spec §4's "never hidden"
+  gets its True-now sentence.
+- ☐ **3.7b Card flow.** No full-width rows inside the card grid; live hosts first in config
+  order, then down nodes; the grid packs.
+- ☐ **3.7c A down node is a card.** Same shape and size as a live host: the host name, the one
+  alert sentence, its endpoints greyed (a never-seen endpoint on a down node is one muted line).
+- ☐ **3.7d Fixed field positions.** The figures and hardware rows are a grid with one slot per
+  field in the same order on every card; a field the backend does not provide shows a dash in
+  its slot.
+- ☐ **3.7e Context used on the card.** Pending the operator's answer: per-job fill on the
+  card's jobs line, or an endpoint-level figure (and if so from where).
+- ☐ **3.7f Colour.** The page is monochrome; the contrast is right. Colour carries state
+  (live/busy/down/dormant) and backend, consistently with the strip and the endpoint page.
+
 ## Epic 4: operations (V2, not scheduled)
 
 - ☐ **4.1 Guided SSH setup script.** Walks the operator through key placement per host; no
