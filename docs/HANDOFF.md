@@ -2,45 +2,46 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
-## 2026-10-29, late evening
+## 2026-10-30, overnight (in progress; the operator went AFK at ~00:20 saying "work ahead")
 
-**State.** The monitor MVP (Epics 1–3 in `EPICS.md`) is feature complete on local main at
-`c4eddee`: 611 tests, 126 commits ahead of origin, nothing pushed, no worktrees, no stray
-processes, no stash. Every story and fold was built by one model and reviewed by another;
-the live gate is green (`gates/2026-10-29-epic3-live-gate.md`); the three retros are under
-`retros/`. Standing rulings (a), (d), (e) and (f)–(m) are inked in `EPICS.md`; the operator's
-rule on them: guidelines, not stone tablets, reworked as the work needs.
+**State.** The 3.7 presentation pass is most of the way through on local main (nothing
+pushed). The operator's findings are captured verbatim in `EPICS.md` under "3.7 Presentation
+pass", each with the coordinator's reading of the code behind it; a story per finding; every
+landed story has its job record. Landed tonight, in order: 3.7a-c host cards (abc0613), 3.7d-f
+live card (4c23d8b), the launcher and default browser open (88a7dbe; `tools/monitor.sh
+start|stop|status|log`, `localagents monitor --no-open`), 3.7-fold-1 live card fold (fb47aac),
+3.7m/p/s server (4627647), 3.7-fold-2 server (0091694, schema v6: the stored last-active
+witness), 3.7g-j the recent-jobs log (f670097), 3.7-fold-2b (6e686bf). Suite at 643.
 
-**The operator's first impression of the page** (over the real fleet, `uv run localagents
-monitor`): "needs work - especially on presentation. The bones are looking okay." Looked at
-only briefly; the detailed findings come next session.
+**Tools.** `tools/accept.sh <branch>` prints the mechanical acceptance facts; `tools/land.sh
+<branch> -F msg` squashes onto a clean main and runs the suite (the only script that writes to
+git); `tools/smoke/` is the DOM-only browser probe (ruling (j)). The order: accept → read the
+diff → land → remove the worktree. See `tools/README.md`.
 
-**Next session starts here.**
-1. The operator walks the page and gives findings (overview, `#/endpoint/<id>`,
-   `#/job/<id>`); presentation first. Capture them verbatim in `EPICS.md` as a new story
-   group under Epic 3 (3.7 "Presentation pass", cut per finding) before any lane is briefed.
-2. Presentation work is page work: ruling (j) (DOM-only browser smokes, never a screenshot
-   read by a lane), (k) (one file per parallel page story, the `pages` hook in
-   `static/app.js`), (l) (contract gaps become the next story's input). The DeepSeek lane
-   reads at most one image per prompt; screenshots reach the operator only through the
-   coordinator. The DevTools harness is at the scratchpad `smoke/cdp.mjs` and `conn.mjs`
-   (chrome-headless-shell from Playwright's cache; node at
-   `/home/linuxbrew/.linuxbrew/bin/node`); copy it into the repo under `tools/` if the
-   scratchpad is gone.
-3. Each finding's fold is reviewed by a model that did not build it; the coordinator judges
-   per pass whether a chain needs another (ruling (g)).
+**Running at the time of this note** (each lands, is reviewed by the other model, and folds):
+- 3.7k requests tables (DeepSeek/dgx1-a): one renderer for the endpoint and job pages.
+- 3.7-fold-3 + 3.7r (Qwen/ai1): last-active on the card, in-place card updates, the refresh
+  interval from the snapshot, the header's "updated HH:MM:SS" phrase.
+Then 3.7l, the fleet timeline (design in its EPICS bullet), replaces the three uPlot charts.
 
-**Decided, do not reopen.**
-- Push: held. The operator gates it by reviewing the built work, then a refine cycle; feature
-  complete is not the gate.
-- The collector's lost-job sweep: deferred to Epic 4; the MCP server stays the only sweeper.
-- Epic 4 (SSH guided setup, start/stop recipes, node telemetry): "not yet".
-- The MCP server never imports from `localagents.monitor`; api keys are never stored.
+**For the operator in the morning.** Your monitor on 8765 is the process you started by hand
+last night: it serves the new page files on reload, but its SERVER is the old code. Stop it and
+run `tools/monitor.sh start` (or `localagents monitor`): the page opens by itself; the one
+refresh clock, the cached reads, last-active and the jobs log need the new server. The
+database migrates to schema v6 on first open (a column; the witness backfill runs at the
+monitor's start, once per endpoint).
 
-**Open, small.** The overview's history fetch is N+1 per refresh (one per live endpoint for
-the strip's segments); Strata's `_mb` tiles read `MB` unitless until Strata documents the
-sample window. Both in the Epic 3 retro's open rulings.
+**Decided tonight, do not reopen** (all in EPICS 3.7's text with the operator's words): cards
+in config order, stable; never-seen endpoints hidden with a count line, dormant-but-seen a
+muted line; per-JOB context fill is the number that matters; the jobs table is Strata's LOG
+concept with OUR columns; one fleet timeline replaces the three rate charts, speeds go to the
+endpoint page; one "refresh master" clock, `monitor: refresh_s`; tiles never wrap, units in the
+labels; the squash/suite step is a script, not a Haiku agent.
 
-**Endpoints as of tonight.** ai1 and ai2 (Strata), dgx1-a (vLLM, DeepSeek V4.1 Flash, one
-image per prompt), llamacpp (local llama.cpp, Qwen3.8-27B, 2 slots); ai9 dead. The operator
-brings models up by hand.
+**Open, small.** `read.overview` is still ~32 statements on three endpoints (one windowed
+probe query per push would cut it); uPlot is vendored but used only by the overview's charts
+(drop it after 3.7l); the header's `/api/jobs` has no cache; no all-jobs page yet (the log's
+"show all" waits for it).
+
+Earlier decisions (push held; the sweep deferred to Epic 4; Epic 4 "not yet"; the MCP server
+never imports the monitor, now guarded by a test) stand.
