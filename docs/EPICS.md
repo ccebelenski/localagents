@@ -208,7 +208,11 @@ the duplicates go), then docs.
   `EXPLAIN QUERY PLAN` sweep over every statement in `read.py`, `derive.py`, `status.py` and
   `collect.py` (a table: statement, plan, index used or SCAN) is the cheap audit that pins it,
   for a lane after the 3.9 pass.
-- ☐ **1.13 Proposal, not scheduled: linkable tool errors and requests.** Operator (2026-10-30
+- ☒ **1.13 Proposal, declined: linkable tool errors and requests.** Operator's verdict
+  (2026-10-30): "Doesn't seem worth it - if the error 'stuck' and was terminal, the whole job
+  would have failed." A tool error the model recovered from is routine; a terminal one ends the
+  job with its error on the job row. The examination below stays as the record of what is and
+  is not stored, for the next time the question comes up. Operator (2026-10-30
   evening, job page of 20261030-132735-94015337): "shows 8 errors, all 'Bash' on the details.
   But then I can't go deeper into that - do we only record the error count? There's no link to
   the actual request. And actually there's no link from the request to the response or request
