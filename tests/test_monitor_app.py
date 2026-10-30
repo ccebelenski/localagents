@@ -466,6 +466,12 @@ def test_snapshot_route_serves_the_current_push_from_its_cache(dbpath, tmp_path)
         assert len(opened) == 1
 
 
+def _live_ids(body):
+    """The snapshot's live job ids: since 3.7g the list also carries the finished tail (the
+    seeded world's succeeded job), so the fold-2 tests compare the live rows only."""
+    return [j["id"] for j in body["jobs"] if j["status"] in ("queued", "running")]
+
+
 def test_the_snapshot_cache_expires_by_age_not_only_by_push(dbpath, tmp_path):
     """The 3.7 server-batch review's P2(d), re-created as a test (DEFECT D4): a ``--no-collect``
     server — an app whose tick event nobody ever sets — had a push counter that never moved, so
@@ -478,7 +484,7 @@ def test_the_snapshot_cache_expires_by_age_not_only_by_push(dbpath, tmp_path):
                            now=lambda: NOW, db_path=dbpath)
     with TestClient(app) as c:
         first = c.get("/api/snapshot").json()
-        assert [j["id"] for j in first["jobs"]] == [_job_id(dbpath, "running")]
+        assert _live_ids(first) == [_job_id(dbpath, "running")]
         conn = db.open_db(dbpath)
         try:
             with db.immediate(conn):
@@ -487,10 +493,10 @@ def test_the_snapshot_cache_expires_by_age_not_only_by_push(dbpath, tmp_path):
         finally:
             conn.close()
         # inside the period the cached entry still answers: the job is not visible yet
-        assert len(c.get("/api/snapshot").json()["jobs"]) == 1
+        assert len(_live_ids(c.get("/api/snapshot").json())) == 1
         time.sleep(0.5)  # past refresh_s (0.3): the entry is stale, the call recomputes
         third = c.get("/api/snapshot").json()
-        assert [j["id"] for j in third["jobs"]] == [_job_id(dbpath, "running"), "hand"]
+        assert _live_ids(third) == [_job_id(dbpath, "running"), "hand"]
 
 
 def test_a_no_collect_app_self_ticks_the_streams_every_refresh_period(dbpath, tmp_path):
@@ -502,7 +508,7 @@ def test_a_no_collect_app_self_ticks_the_streams_every_refresh_period(dbpath, tm
         app = _app(dbpath, tmp_path, refresh_s=0.1, self_tick=True)
         s = _Stream(app)
         name, body = _event(await s.next_chunk())
-        assert name == "snapshot" and [j["id"] for j in body["jobs"]] == [_job_id(dbpath, "running")]
+        assert name == "snapshot" and _live_ids(body) == [_job_id(dbpath, "running")]
         conn = db.open_db(dbpath)
         try:
             with db.immediate(conn):
@@ -512,7 +518,7 @@ def test_a_no_collect_app_self_ticks_the_streams_every_refresh_period(dbpath, tm
             conn.close()
         name, body = _event(await s.next_chunk(timeout=0.7))  # the period is 0.1 s; 2x + slack
         assert name == "snapshot"
-        assert [j["id"] for j in body["jobs"]] == [_job_id(dbpath, "running"), "hand"]
+        assert _live_ids(body) == [_job_id(dbpath, "running"), "hand"]
         await s.close()
     asyncio.run(main())
 
