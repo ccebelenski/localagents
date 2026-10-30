@@ -885,6 +885,20 @@ header, cards, log and timeline all read as designed. One item left for the oper
   exists for (3.7e: "the important number is each job's own context fill") — hide behind the
   ellipsis while the 25-char name and the call/file counts take the width.
 
+Review of a2f9a1c (fold-4), 3aa1219 (fold-4s), 6249c03 (the D1 fix) and 0beaf24 (fold-5) by
+DeepSeek/dgx1-a job 20261030-020134-adf4f440, 89 turns, 21 min, four construct-it probes: the
+D1 reproduction stays at one ai1 card across flips and ten seconds of real pushes; a never-seen
+arrival advances no full render; heights 265.656 px with/without the span, with a 70-char id,
+with/without activity, three jobs +93.00 exactly; the finished-row cache 86 → 26 statements,
+eviction to 10 keys, `server_live` flips, NULL-finished elapsed null; all six import spellings
+hit, literals in prose do not; `context_exceeded` as text, ms/s durations, the dated time cell,
+matching pill borders. 649 passed. DEFECT (one, in a test): the fold-4s eviction test was
+blind — its cache started empty, so a mutant without the eviction loop still passed; the code
+is correct. FOLDED by the coordinator (5ab0b1d): the test primes the cache first; the mutant
+now goes red. NOTICED: a superseded cache key for an id still in the tail is never popped
+(unreachable through the store); `requestsTable` without `opts.now` dates even just-now rows
+(both call sites pass a clock); at a 200-char job name every figure clips behind it (fold-6).
+The 3.7 chain's reviews are closed: no open defect.
 - ☐ **3.7-fold-6 The card's job line leads with what matters.** Proposed, operator decides: the
   name shortened to its id tail ("…4b27af51", the full name in the link's title; the table and
   the timeline keep the full name), then elapsed, the ctx bar + %, t/s, the errors badge; calls

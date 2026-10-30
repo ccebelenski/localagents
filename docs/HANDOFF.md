@@ -11,8 +11,8 @@ pass" with the coordinator's reading of the code behind it, a story per finding,
 story carrying its job record (model, box, turns, minutes, tests, what the lane corrected in
 the brief). Every lane's work was reviewed by a different model with constructed inputs before
 the next fold; every review's defects were folded; the last review (DeepSeek over fold-4,
-fold-4s, fold-5 and the coordinator's render fix) was running when this note was written — its
-record goes under 3.7 when it lands, and any finding is the first fold of the morning.
+fold-4s, fold-5 and the coordinator's render fix) found one blind test and no code defect; the
+test was fixed and proven red on its mutant (5ab0b1d). No open defect; no lane running.
 
 **What the page is now** (the README's Monitor section describes it in full; `docs/EPICS.md`
 3.7a-s and the folds say why):
@@ -44,8 +44,8 @@ record goes under 3.7 when it lands, and any finding is the first fold of the mo
 2. Walk the page again and give findings as before; the capture-verbatim-then-brief loop is
    in `EPICS.md`. The one item the coordinator left for your eye is **3.7-fold-6** (the card's
    job line should lead with the ctx fill, not the long name and the counts).
-3. The last review's record (DeepSeek over fold-4/4s/5 and 6249c03) lands under 3.7 when it
-   finishes; if this note still says "running", `mcp__local__list_jobs` shows it.
+3. Nothing is running; every worktree is removed; the stash is empty. 56 commits since
+   feed05c, all local.
 
 **Tools.** `tools/accept.sh <branch>` (facts, no git writes) → read the diff → `tools/land.sh
 <branch> -F msg` (squash onto clean main, commit, suite) → remove the worktree. `tools/smoke/`
