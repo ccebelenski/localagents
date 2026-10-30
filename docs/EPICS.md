@@ -674,6 +674,26 @@ snapshot's time). Useful when the server dies; misread as a fleet status beside 
   advances with each push, so staleness is visible); red dot + "connection lost, last update
   11:07:29 PM" while reconnecting; the dot's title says "stream from the monitor server". No
   word "live" in the header. Fold with the next header/page story.
+Operator 2026-10-29: "How about extending that concept to the cards? In this case I mean
+perhaps a last-update timestamp top-right of the card - that would give me information about
+when that endpoint last ran something."
+
+Coordinator's reading: a different fact from the header's. The snapshot has `last_seen` (the
+last UP probe, read.py) and the history has a `state` series; neither says when the engine
+last did work. The engine's own counters do: the newest counters row whose `generated_tokens`
+advanced over the previous one (a rate row with gen_tps > 0, rates.py) is the last interval
+the box generated anything, ours or not (a curl from the operator counts; a probe does not).
+Our requests table is the fallback witness when counters are absent (an `other` backend).
+
+- ☐ **3.7s Per endpoint, "last active".** Server: §5a gains `last_active` per endpoint: the
+  `t` of the newest probe whose counters advanced `generated_tokens` (or `prompt_tokens_processed`)
+  over the previous row; null when no such row is in the retained history; the requests
+  table's newest `t` on that endpoint when the backend has no counters. One indexed query per
+  endpoint per snapshot, inside 3.7p's once-per-tick read. Page: at the right of each
+  endpoint's head line, muted: "active 3m ago" (`fmt.ago`, the absolute time in the title), or
+  "active 10/28, 9:14 PM" past 24 h, or "no activity in 7d" when null; nothing on the host
+  head (a host runs nothing). A down endpoint keeps "last seen" and gains nothing. Evidence: the
+  seeded world pins the value for ai1 (its interpolated counters) and null for llamacpp.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
