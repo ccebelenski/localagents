@@ -1126,6 +1126,13 @@ The 3.7 chain's reviews are closed: no open defect.
   Not proven. The A/B that proves it: the same page held an hour in a Private Window (extensions
   without private-browsing permission do not run there), then about:memory's orphan-nodes for
   that window's process beside the normal tab's.
+  Operator's Private-Window reading (webIsolated=http://127.0.0.1^privateBrowsingId=1): "3GB" is
+  the process's vsize (2,841 MB of address space); explicit 49.7 MB, resident-unique 56.7 MB.
+  No content-script realm in that process (realms: the page, a junk compartment, the system
+  one), so the extensions did not run there and the A/B is clean. `dom/orphan-nodes` 13.4 MB,
+  15 listeners, Array elements 5.9 MB (the history arrays). Open question: whether that reading
+  followed a minimize (pending cycle-collector garbage looks the same until it does) and how long
+  the window had been open; the post-minimize orphan figure decides.
 
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
