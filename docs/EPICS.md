@@ -664,6 +664,16 @@ N+1), each a downsampling read over the range. Two tabs double all of it.
   last 1h", following the control; the strip row carries the same window once per card at its
   left ("1h"), since both span it; no tick marks on a 22 px line. Fold with 3.7n/3.7o (one
   lane, the live card).
+Operator 2026-10-29: "Does that green dot and label 'live' actually mean anything?" It is the
+page's stream to the monitor server (app.js `setConnected`: green "live" while the EventSource
+is open, red "reconnecting" when it drops; the "snapshot HH:MM:SS" beside it is the last
+snapshot's time). Useful when the server dies; misread as a fleet status beside the cards.
+
+- ☐ **3.7r The header says what it means.** The connection indicator and the snapshot time
+  become one phrase: green dot + "updated 11:07:29 PM" while the stream is open (the time
+  advances with each push, so staleness is visible); red dot + "connection lost, last update
+  11:07:29 PM" while reconnecting; the dot's title says "stream from the monitor server". No
+  word "live" in the header. Fold with the next header/page story.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
