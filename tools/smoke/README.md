@@ -22,6 +22,18 @@ node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/a.png '#/endpoin
 # wide (a 200-char job name, a 120-char model id, a 300-char activity) -> seeded and measures
 # after each render into `u` (floor, columns, overflowing lines, scrolling lines, heights)
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/a.png "js:$(cat tools/smoke/wide.js)"
+# 3.9D D1: nodes.js renders the states the seed does not produce (node down, unknown host, empty
+# table) and then the transition it gatekeeps — one render hiding a card's only drawn endpoint
+# (dormant, never seen). The probe's `d1` field carries target/before/after and `threw`, which
+# held NotFoundError before the fix and must read null: remaining cards in #hosts, the hidden
+# line counting the new endpoint, and renders.full advanced by the pass.
+node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/nodes.png "js:$(cat tools/smoke/nodes.js)"
+# 3.9D D3: range.js clicks a real range button (not the internal setter — the handler, the
+# aria-pressed rebuild and the scheduled fetch are what is being tested), waits for each click's
+# fetch to land, and records the timeline axis labels and pressed button before, after 15m and
+# after 7d into the probe's `d3` field. The axis must follow the pressed range; read d3 in the
+# AFTER_JSON line. (cdp.mjs awaits the js: expression, so a step may await its own witnesses.)
+node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/range.png "js:$(cat tools/smoke/range.js)"
 ```
 
 The seeded world needs a `models.yaml` naming the seed's three endpoints (tests/monitor_seeded.py
@@ -32,6 +44,18 @@ The probe's field list is in cdp.mjs; add fields for new classes rather than rea
 A `--no-collect` server pushes a fresh snapshot every `refresh_s` anyway (the fan-out self-ticks,
 story 3.7-fold-2), so capture right after a hand-render — the next push overwrites the
 hand-edited DOM.
+
+## drive.mjs: hold a page for N seconds and report what changed
+
+`node tools/smoke/drive.mjs <devtools-port> <url> <hash> <seconds> [t/drive.json]` opens the shell,
+arms a `window.fetch` counter (every `/api/` call with its offset in seconds from arming), switches
+to `<hash>` (`'#/endpoint/ai1'`, `'#/job/<id>'`), then samples the detail pane every 2 s for N
+seconds. The report (JSON file plus a stdout summary) compares first and last sample: the snapshot
+clock and render counters, the clock-relative phrases (the endpoint page's "last seen … ago", the
+job page's elapsed), a hash of the latency tile — its whole `outerHTML`, so a sliding sparkline
+counts as changed — and the count of `/api/endpoints/<name>/(history|requests)` fetches that landed
+after the 30 s refetch window. This is the time axis cdp.mjs's fixed 2500 ms after-sleep cannot
+see: a page that never redraws on a snapshot freezes every field while the stream keeps ticking.
 
 ## mem.mjs: does the page grow with its pushes?
 

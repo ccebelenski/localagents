@@ -536,6 +536,41 @@ def test_endpoint_js_registers_through_the_pages_hook_and_never_polls():
     assert "innerHTML" not in js
 
 
+def test_endpoint_page_stays_live_on_the_snapshot_hook_not_a_dead_element():
+    """3.9D D4: the page watched #updated, whose phrase moved to #conn-label in 3.7r, so the
+    element never mutated again and the endpoint pane froze mid-sentence. Liveness is now the
+    onSnapshot hook app.js calls at the end of render() — on the skip path too, where only the
+    clock-relative phrases move. The dead span is gone from the shell."""
+    ep = _endpoint_js()
+    assert "M.onSnapshot(onSnapshot)" in ep
+    assert 'watch("updated"' not in ep
+    assert 'id="updated"' not in (STATIC / "index.html").read_text()
+    app = _app_js()
+    assert "onSnapshot: onSnapshot," in app
+    render = app[app.index("function render(snap) {"):app.index("function getJSON(url)")]
+    # the notifier on both exits: the skip path's early return and the full path's end
+    assert render.count("snapshotListeners.slice().forEach") == 2
+
+
+def test_every_element_id_a_page_script_names_exists_in_the_shell():
+    """3.9D D4's gate: the frozen page watched a name the shell no longer drew, and a missing
+    element is exactly what watch()/getElementById() fail silent on. Every literal id a page
+    script reads or watches must exist in index.html."""
+    ids = set(re.findall(r'id="([^"]+)"', (STATIC / "index.html").read_text()))
+    assert "updated" not in ids  # the dead span, removed 3.9D D4 (the phrase lives in #conn-label)
+    for name in ("app.js", "endpoint.js", "job.js"):
+        js = (STATIC / name).read_text()
+        used = (re.findall(r'\bbyId\("([^"]+)"\)', js)
+                + re.findall(r'getElementById\("([^"]+)"\)', js)
+                + re.findall(r'\bwatch\("([^"]+)"', js))
+        missing = sorted(set(used) - ids)
+        assert missing == [], (name, missing)
+    # job.js draws inside the container route() hands it and names no shell element; the other
+    # two must have reads, or the extraction above silently matched nothing
+    assert re.findall(r'\bbyId\("([^"]+)"\)', _app_js()), "app.js byId reads vanished"
+    assert re.findall(r'\bwatch\("([^"]+)"', _endpoint_js()), "endpoint.js watch reads vanished"
+
+
 def test_route_tears_the_detail_page_down_on_every_route_change():
     """app.js's route() calls the open detail page's teardown before it branches, so going back
     to the overview tears the page down too (story 3.3 found it ran only between detail

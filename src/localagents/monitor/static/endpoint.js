@@ -13,12 +13,13 @@
  *   - the request table with its totals line (/api/endpoints/<name>/requests);
  *   - the jobs that ran on it in the range and its events in the range (both from the history).
  *
- * Redraw. app.js exposes no snapshot or range callback, so the page watches the two elements
- * app.js rewrites: #updated (render() writes it on every snapshot) and #range (range.draw()
- * rebuilds it on every range change), through a MutationObserver: no timer, no polling. On a
- * snapshot the header and the tiles' current figures are redrawn from state.snap; the history
- * and the request table are fetched on open, on a range change, and on a snapshot only when the
- * last fetch is 30 s old or more (never per snapshot).
+ * Redraw. The page registers with app.js's snapshot hook (localagentsMonitor.onSnapshot: the
+ * listener runs at the end of every render(), the skip path included — 3.9D D4 replaced the
+ * MutationObserver on #updated, whose text moved to #conn-label in 3.7r and went dead), and it
+ * watches #range (range.draw() rebuilds it on every range change) through a MutationObserver:
+ * no timer, no polling. On a snapshot the header and the tiles' current figures are redrawn
+ * from state.snap; the history and the request table are fetched on open, on a range change,
+ * and on a snapshot only when the last fetch is 30 s old or more (never per snapshot).
  *
  * The JSON is §5a's (docs/superpowers/specs/2026-10-29-monitor-design.md); the route bodies are
  * read through fixed names, as app.js does: `snap` (the snapshot), `host`, `ep` (the snapshot's
@@ -436,6 +437,7 @@
       err: null,
       lastFetch: 0, inflight: false, again: false,
       observers: [],
+      off: null, // 3.9D D4: the snapshot hook's remover, called in teardown
     };
     var root = h("div", { class: "endpoint-detail" });
     var headBox = h("div");
@@ -523,8 +525,8 @@
       });
     }
 
-    // a snapshot arrived (app.js rewrote #updated): redraw the current figures; re-fetch the
-    // series and tables only when the last fetch is REFETCH_MIN_MS old
+    // a snapshot arrived (app.js's render() reached its end, hook or no skip): redraw the
+    // current figures; re-fetch the series and tables only when the last fetch is REFETCH_MIN_MS old
     function onSnapshot() {
       if (page.dead) return;
       drawCurrent();
@@ -545,13 +547,17 @@
       page.observers.push(obs);
     }
 
-    watch("updated", onSnapshot);
+    // 3.9D D4: the snapshot half of liveness is the hook, not a dead element's mutations; the
+    // range half stays the observer — #range is real (range.draw rebuilds it) and app.js has no
+    // range-change event, so building one here would be a second mechanism for one button.
+    page.off = M.onSnapshot(onSnapshot);
     watch("range", onRange);
     draw();
     fetchAll();
 
     return function teardown() {
       page.dead = true;
+      if (page.off) page.off();
       page.observers.forEach(function (obs) { obs.disconnect(); });
       page.observers = [];
       container.replaceChildren();

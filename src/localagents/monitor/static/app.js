@@ -866,6 +866,20 @@
     });
   }
 
+  // 3.9D D4 (fold-3 review): the detail pages' liveness hook. The endpoint page used to watch
+  // #updated's text, but that phrase moved into #conn-label in 3.7r and the span went dead —
+  // the page stopped redrawing and refetching on snapshots. render() calls every listener at
+  // its end, on the skip path too (a clock-relative sentence moves while nothing else draws).
+  // Returns the remover: a detail page drops its own listener in its teardown.
+  var snapshotListeners = [];
+  function onSnapshot(fn) {
+    snapshotListeners.push(fn);
+    return function () {
+      var i = snapshotListeners.indexOf(fn);
+      if (i >= 0) snapshotListeners.splice(i, 1);
+    };
+  }
+
   function render(snap) {
     state.snap = snap;
     // 3.7-fold-3: the refresh interval comes from the snapshot (the one refresh master, decided
@@ -880,6 +894,7 @@
       setUpdatedLine(snap);
       refreshAgoTexts(snap);
       raiseCardFloor(); // 3.7u: an "active …" phrase can grow by a few characters here
+      snapshotListeners.slice().forEach(function (fn) { fn(); }); // 3.9D D4: pages stay live here too
       return;
     }
     snapSig = sig;
@@ -926,10 +941,13 @@
         if (el) el.dataset.sig = sig;
         if (el || oldCards[host.name]) rebuilt = true; // built, replaced or gone; never-seen-and-still-seen is nothing
       }
-      if (el) {
-        wanted.push(el);
-        delete oldCards[host.name];
-      }
+      if (el) wanted.push(el);
+      // 3.9D D1: forget the host whether or not a card was built. Forgetting only inside
+      // `if (el)` left a host whose card became null (its last drawn endpoint hidden as
+      // never-seen) in oldCards, so the gone-host loop below called removeChild on the node
+      // this branch had already detached: NotFoundError, render aborted after snapSig was
+      // set — and the skip path then never repairs it.
+      delete oldCards[host.name];
     });
     Object.keys(oldCards).forEach(function (name) {
       hostsEl.removeChild(oldCards[name]);
@@ -952,6 +970,7 @@
     raiseCardFloor(); // 3.7u: the cards are in place; the floor follows their widest line
     renders[rebuilt ? "full" : "inPlace"]++;
     byId("jobs-body").replaceChildren(jobsTable(snap));
+    snapshotListeners.slice().forEach(function (fn) { fn(); }); // 3.9D D4: the snapshot redraw is done
   }
 
   // --- history: the one batched call, at most once per refresh_s -----------------------------
@@ -1021,6 +1040,12 @@
       timeline.update(body, state.snap);
       if (state.snap) render(state.snap);
     }).catch(function (e) {
+      // 3.9D: on a failed range fetch histRange stays the range the drawn charts and the
+      // timeline's bars were fetched for, and the heading and axis (which read it, :1074)
+      // stay with it. That is on purpose: the bars on screen belong to the old window, so
+      // naming the pressed-but-unfetched range would describe geometry that is not there. The
+      // pressed button (drawn at once) and this banner carry the pending switch, and the next
+      // snapshot's scheduleHistory re-fetches — the split is transient while the server is.
       showBanner("fleet history: " + e.message);
     }).then(function () {
       refresh.inflight = false;
@@ -1395,6 +1420,14 @@
       var timeTitle = req.t == null ? null : fmt.date(req.t);
       var timeText = req.t != null && opts.now != null && opts.now - req.t < 86400
         ? fmt.time(req.t) : fmt.date(req.t);
+      // the reused cell's title names both cache figures; a missing one drops its half of the
+      // sentence (3.9D NOTICED: the old inline build kept the other half's words anyway —
+      // null read and a present creation read "cache read , cache creation 300", both null
+      // "cache read " with a trailing space)
+      var cacheHalves = [];
+      if (fmt.int(cacheRead) !== "") cacheHalves.push("cache read " + fmt.int(cacheRead));
+      if (fmt.int(cacheCreation) !== "") cacheHalves.push("cache creation " + fmt.int(cacheCreation));
+      var reusedTitle = cacheHalves.join(", ");
       var cells = [h("td", { text: timeText, title: timeTitle })];
       if (req.http_status == null) {
         cells.push(h("td", null, [h("span", { class: "pill", title: "no status", text: "–" })]));
@@ -1412,9 +1445,7 @@
         h("td", { class: "n", text: fmt.int(tokens.input) }),
         // the reused cell's title names both cache figures; a missing one drops its half of
         // the sentence rather than trailing a blank (fold-3 review NOTICED)
-        h("td", { class: "n", title: "cache read " + fmt.int(cacheRead)
-          + (fmt.int(cacheCreation) !== "" ? ", cache creation " + fmt.int(cacheCreation) : ""),
-          text: fmt.int(cacheRead) }),
+        h("td", { class: "n", title: reusedTitle, text: fmt.int(cacheRead) }),
         h("td", { class: "n", text: fmt.int(tokens.output) }),
         h("td", { class: "n", text: prefill == null ? "" : fmt.speed(prefill) }),
         h("td", { class: "n", text: decode == null ? "" : fmt.speed(decode) }),
@@ -1443,6 +1474,7 @@
     state: state,
     requestsTable: requestsTable, // 3.7k: the one renderer both request logs draw through
     renders: renders, // 3.7-fold-3 smoke: {full, inPlace, skipped} counts of render passes
+    onSnapshot: onSnapshot, // 3.9D D4: the detail pages' snapshot hook; returns the remover
     cardLayout: cardLayout, // 3.7u smoke: {floor, need, raised} — the column floor's high-water mark
   };
 

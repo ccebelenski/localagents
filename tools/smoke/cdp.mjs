@@ -139,6 +139,12 @@ const probe = `(() => {
     // 3.7u-fix (U1/U2): the long-line measurements from lines.js (seeded vs the hand-edited
     // snapshot with a 200-char dormant name, a 300-char down error and a 200-char dropped job)
     lines: (typeof window !== "undefined" && window.__lines) || null,
+    // 3.9D D1: the before/after of the hide-the-last-drawn-endpoint render nodes.js performs
+    // (hosts left, hidden line, render counts, and the error the old code threw)
+    d1: (typeof window !== "undefined" && window.__d1) || null,
+    // 3.9D D3: the axis labels and pressed button before, after a 15m button click and after a
+    // 7d one, captured by range.js as each click's fetch lands
+    d3: (typeof window !== "undefined" && window.__d3) || null,
   });
 })()`;
 let r = await send("Runtime.evaluate", { expression: probe, returnByValue: true });
@@ -147,7 +153,9 @@ const shot = await send("Page.captureScreenshot", { format: "png", captureBeyond
 writeFileSync(png, Buffer.from(shot.result.data, "base64"));
 if (hashAfter) {
   const expr = hashAfter.startsWith("js:") ? hashAfter.slice(3) : `location.hash = ${JSON.stringify(hashAfter)}`;
-  await send("Runtime.evaluate", { expression: expr });
+  // 3.9D D3: awaitPromise so a js: step that awaits its own witnesses (range.js waits for the
+  // click's fetch to land) finishes before the after-probe; non-promise scripts are unaffected
+  await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true });
   await sleep(2500);
   r = await send("Runtime.evaluate", { expression: probe, returnByValue: true });
   const o = JSON.parse(r.result.result.value);
@@ -158,7 +166,7 @@ if (hashAfter) {
   // 3.7-fold-5: the two-line job row's fields and the hand-measured heights ride along too
   // (the first probe long predates the js: script that captures them)
   console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote, tlTitle: o.tlTitle, tlAxis: o.tlAxis, tlRows: o.tlRows.map(r => ({ label: r.label, bands: r.bands, jobs: r.jobs.length })), tlHeight: o.tlHeight, epJobLines: o.epJobLines, cardHeights: o.cardHeights, tileLabels: o.tileLabels, t5: o.t5,
-    cardOverflow: o.cardOverflow, cardFloor: o.cardFloor, hostsWidth: o.hostsWidth, gridCols: o.gridCols, columns: o.columns, hostBoxes: o.hostBoxes, u: o.u, lines: o.lines }));
+    cardOverflow: o.cardOverflow, cardFloor: o.cardFloor, hostsWidth: o.hostsWidth, gridCols: o.gridCols, columns: o.columns, hostBoxes: o.hostBoxes, u: o.u, lines: o.lines, d1: o.d1, d3: o.d3 }));
   console.log("AFTER " + hashAfter + ": detail=" + JSON.stringify(o.detail) + " overviewHidden=" + o.overviewHidden + " range=" + o.rangeButtons + " canvases=" + o.canvases + " strips=" + o.strips + " sparklines=" + o.sparklines + " banner=" + o.banner
     + " reqHeaders=" + JSON.stringify(o.reqHeaders) + " reqRows=" + JSON.stringify(o.reqRows)
     + " reqPills=" + JSON.stringify(o.reqPills) + " reqRowClasses=" + JSON.stringify(o.reqRowClasses));

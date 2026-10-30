@@ -318,7 +318,9 @@
       // one mark per call at its time: a tick at the bottom, coloured by tool, errors red;
       // the marks and the log share their order (the null-time entries are skipped by both)
       var i = 0;
-      detail.tool_call_log.forEach(function (tc) {
+      // the log is guarded as an absent field here too (3.9D): timelineMarks returns [] without
+      // it, so a context fill from the requests alone reaches these loops with nothing to walk
+      (detail.tool_call_log || []).forEach(function (tc) {
         if (tc.t == null) return;
         var mk = marks[i++];
         if (!mk) return;
@@ -338,7 +340,7 @@
       // the legend: one swatch per tool, first-seen order
       var seen = {};
       var legend = [];
-      detail.tool_call_log.forEach(function (tc) {
+      (detail.tool_call_log || []).forEach(function (tc) {
         if (seen[tc.tool]) return;
         seen[tc.tool] = true;
         legend.push(h("span", { class: "legend-item" }, [
