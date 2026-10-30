@@ -1264,7 +1264,19 @@ ruling (e). The lane is also the operator's first live job on the landed page.
     page's liveness past 30 s. Fix: smoke scenarios and `tools/smoke/drive.mjs`.
   - Noticed: a tooltip prints "cache read " on a null; a failed range fetch leaves `histRange`
     stale behind the pressed button; unguarded `tool_call_log.forEach` on the job page.
-  Fold 3.9D-fix to Qwen/ai2 (ruling (a)), five rows small-first.
+  Fold 3.9D-fix LANDED 688354a (Qwen/ai2 job 20261030-140556-75160044, 125 turns, 27 min, two
+  compactions; cdp.mjs's probe fields composed by hand with 3.7u-fix's, both kept; 690 tests):
+  `onSnapshot` hook fired at the end of both render paths, endpoint.js registered through it with
+  a remover in teardown, the dead `#updated` span gone; D4 measured over a 40 s hold with the new
+  `tools/smoke/drive.mjs`: the last-seen sentence and the latency tile moved, two refetches after
+  the 30 s window, 8 renders, 0 exceptions (frozen before). D1: the host forgotten whether or not
+  a card was built; nodes.js carries the vanishing transition (NotFoundError before, clean
+  after). D3: `tools/smoke/range.js` clicks the real buttons (15m axis 3 labels, 7d 7 labels);
+  `js:` steps may await a promise. Tooltip halves drop with their figure; `tool_call_log` loops
+  guarded; `histRange` stays with the drawn data on a failed fetch (by design, commented). Qwen's
+  notes: 15m yields 3 axis labels against the "4-7" comment (`TL_TICKS`); the range choice
+  persists in localStorage, so smoke runs are order-sensitive on it. Review of the fold: the next
+  page review.
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
