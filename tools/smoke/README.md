@@ -32,3 +32,12 @@ The probe's field list is in cdp.mjs; add fields for new classes rather than rea
 A `--no-collect` server pushes a fresh snapshot every `refresh_s` anyway (the fan-out self-ticks,
 story 3.7-fold-2), so capture right after a hand-render — the next push overwrites the
 hand-edited DOM.
+
+## mem.mjs: does the page grow with its pushes?
+
+`node tools/smoke/mem.mjs <devtools-port> <url> <seconds> [every_s=5]` opens a target, navigates, and
+prints a tab-separated header then one row per sample: ISO time, DOM `Nodes`, `JSEventListeners`,
+`Documents`, `JSHeapUsedSize` in MB, and the page's render-pass count (`window.localagentsMonitor.renders`
+full + inPlace + skipped; `-1` if the page does not export it). `HeapProfiler.collectGarbage` runs before
+the first and the last sample so the heap figure is what survives collection. Use `--no-collect` and a
+small `refresh_s` in the monitor's models.yaml to get many pushes quickly. Read the counters, not pixels.
