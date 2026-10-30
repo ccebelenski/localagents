@@ -511,37 +511,26 @@ Coordinator's reading against the code (`monitor/read.py:101-135`, `runner.py:20
 - `num_turns` is written once, from the final result (runner.py:268): the "turns" column reads
   0 for every running job.
 
-- ☐ **3.7g Recent jobs, Strata's shape.** Operator (2026-10-29, with a screenshot of Strata's
+- ☐ **3.7g Recent jobs: a log, our columns.** Operator (2026-10-29, with a screenshot of Strata's
   "Recent requests"): "For the jobs list - Strata does it differently - we should compare the two
-  approaches." Strata's list: a persistent recent-N log (10 rows, "Show all (500)"), newest
-  first, a status PILL with a word ("● Done"), every number right-aligned, columns prompt /
-  reused / output / prefill t/s / decode t/s / VRAM hit rate / duration. Ours: live-only (a
-  finished job vanishes on the next tick, read.py:106), oldest first, ✓/✗ marks, two text
-  columns that read the same. Decided: the overview's table becomes "Recent jobs": running and
-  queued first (by start), then the last N finished newest first (N = 10, "show all" to the
-  endpoint page's jobs section until an all-jobs page exists), a status pill with the word
-  (running / queued / done / failed) in place of marks, elapsed frozen on a finished row,
-  numbers right-aligned tabular (already `.n`). Server side: the snapshot's jobs query takes
-  finished rows too, capped; the page draws the pill.
-- ☐ **3.7k Requests table, Strata's columns.** The endpoint page's requests table
-  (endpoint.js:296 `REQ_COLUMNS`: time, job, path, status, ms, tokens in, out, cache, stream,
-  error) carries the same facts Strata's does (read.py:458-466: input, output, cache_read,
-  cache_creation, ms, gen_ms); derive and show Strata's columns in Strata's order: prompt
-  (input), reused (cache_read), output, prefill t/s ((input − cache_read) / (ms − gen_ms)),
-  decode t/s (output / gen_ms), duration (ms as s); a status pill; VRAM hit rate is Strata's
-  own and has no counterpart (a dash, never invented). Unverified until built: whether `ms`
-  and `gen_ms` are both recorded for every request shape (a non-stream request may have no
-  gen_ms).
-- ☐ **3.7h One activity column.** Drop "current tool"; "last activity" shows the assistant's
-  last sentence when the newest thing was text, else the tool call, as the runner records it;
-  the full text in the title. (Or keep both only when they differ: coordinator's call at the
-  brief.)
-- ☐ **3.7i The error count named.** Header "tool errors" with a title "tool results that came
-  back as errors; the job page lists them by tool"; the badge links to the job page's by-tool
-  table.
-- ☐ **3.7j Turns while running.** Either count assistant turns live (the runner increments on
-  each AssistantMessage, server side) or hide the column for running jobs; a column that reads
-  0 until the end is noise.
+  approaches." Then: "I didn't mean 'Copy Strata Verbatim' - I like some of the data we display
+  now that strata doesn't. But the log style concept I think is better." Strata's concept: a
+  persistent recent-N log (10 rows, "Show all (500)"), a status pill with a word ("● Done"),
+  numbers right-aligned. Ours today: live-only (a finished job vanishes on the next tick,
+  read.py:106), ✓/✗ marks. Decided: the table becomes "Recent jobs": running and queued first
+  (by start), then the last N finished newest first (N = 10; "show all" to the endpoint page's
+  jobs section until an all-jobs page exists); a status pill with the word (running / queued /
+  done / failed) in place of marks; elapsed frozen on a finished row. OUR columns stay: job,
+  model, endpoint, elapsed, turns, tool calls, tool errors, context bar, speed, activity (as 3.7h-j
+  settle them). Server side: the snapshot's jobs query takes finished rows too, capped; the
+  page draws the pill.
+- ☐ **3.7k Requests table: the log look, our columns, Strata's rates added.** The endpoint
+  page's requests table (endpoint.js:296 `REQ_COLUMNS`) keeps its columns (time, job, path,
+  status, ms, tokens in, out, cache, stream, error) and gains the two rates Strata derives from
+  the same facts (read.py:458-466): prefill t/s ((input − cache_read) / (ms − gen_ms)) and
+  decode t/s (output / gen_ms); the HTTP status as a pill with the word. VRAM hit rate is
+  Strata's own and has no counterpart (not invented). Unverified until built: whether `ms` and
+  `gen_ms` are both recorded for every request shape (a non-stream request may have no gen_ms).
 
 ## Epic 4: operations (V2, not scheduled)
 
