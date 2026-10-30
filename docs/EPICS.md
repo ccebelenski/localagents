@@ -767,7 +767,8 @@ new job missing); P3 DEFECT D5 measured: 7 d of idle probes (120,961 rows) make 
 walks 2 rows in 0.1 ms; the seeded world is 1.4 ms. POSSIBLE: `history_cache` grows with
 distinct range texts. 627 passed.
 
-- ☐ **3.7-fold-2 Server: the stored witness, the cache that expires, bounded caches.** Lane:
+- ☑ **3.7-fold-2 Server: the stored witness, the cache that expires, bounded caches.** (0091694: Qwen/ai1 job 20261030-001427-3c94d3d7, 125 turns, 15 min, 636 tests; 7 d idle world 665.9 ms → 1.0 ms at 11 statements; schema v6; self-tick as a fan-out flag; the expiring-cache test fails on the pre-fix code. Noticed: the witness is not pruned with the probes, so a non-null value can be older than retention — fold-3's wording must allow it. Follow-up 3.7-fold-2b: the v6 migration imported the monitor package for the backfill, against the decided rule; moved to the monitor's start.)
+- ☐ **3.7-fold-2b db.py never imports the monitor.** (Qwen/ai1, running.) `_v6` adds the column only; `serve()` backfills null witnesses at start; a static guard test greps the MCP-side modules for monitor imports. Lane:
   the reviewer (Qwen/ai1) fixes its own verified findings. (a) D5: the collector already pairs
   each tick's counters with the previous row (collect.py `tick`, rates.rates for the reset
   check); when the pair advanced generated or prompt tokens it writes the probe's `t` into a
