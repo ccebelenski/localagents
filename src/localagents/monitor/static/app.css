@@ -441,8 +441,11 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
    line and tile text takes its max-content width, so the read is the text's own width, never
    the width the card happens to stretch it to (a 1fr column wider than the floor would
    otherwise ratchet the floor up to whatever the window gave it); flex items also keep it
-   (flex-shrink: 0) so a shrinking parent cannot hide a line's true width from the read */
-.hosts.measuring .ep-head, .hosts.measuring .ep-job-figs, .hosts.measuring .ep-act,
+   (flex-shrink: 0) so a shrinking parent cannot hide a line's true width from the read. A line
+   that is a flex item is measured through its row (P-1: its own box left the row's free space
+   counted as chrome), so every flex row holding an .ep-line is here too: .ep-head (a down
+   endpoint's .ep-seen) and .host-head (.host-note) — a test pins the set */
+.hosts.measuring .ep-head, .hosts.measuring .host-head, .hosts.measuring .ep-job-figs, .hosts.measuring .ep-act,
 .hosts.measuring .figures .fig > .label, .hosts.measuring .figures .fig > .num,
 .hosts.measuring .figures .fig > .kv { width: max-content; }
 .hosts.measuring .ep-line { width: max-content; flex-shrink: 0; }

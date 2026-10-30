@@ -377,6 +377,102 @@ def test_no_webkit_scrollbar_rule_remains_in_the_stylesheet():
     assert offenders == [], offenders
 
 
+def _ep_line_parents(src):
+    """For every class literal in ``src`` that carries ``ep-line``: (the literal, the first class
+    of the ``h(...)`` call whose children array holds that line directly — None when the line is
+    not built inside another ``h()``, e.g. a function's return value). A small scanner: comments
+    and string literals are skipped, brackets tracked on a stack of (char, position)."""
+    out = []
+    stack = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if src.startswith("//", i):
+            i = src.index("\n", i)
+            continue
+        if src.startswith("/*", i):
+            i = src.index("*/", i) + 2
+            continue
+        if c in "\"'":
+            j = i + 1
+            while src[j] != c:
+                j += 2 if src[j] == "\\" else 1
+            lit = src[i + 1:j]
+            if c == '"' and re.search(r"class:\s*$", src[max(0, i - 12):i]) and "ep-line" in lit.split():
+                # the stack at a child's class literal: ( parent h-call, [ children, ( child h-call, { attrs
+                parent = None
+                if [ch for ch, _ in stack[-4:]] == ["(", "[", "(", "{"]:
+                    m = re.match(r'\("\w+",\s*\{\s*class:\s*"([^"]+)"', src[stack[-4][1]:])
+                    if m:
+                        parent = m.group(1).split()[0]
+                out.append((lit, parent))
+            i = j + 1
+            continue
+        if c in "([{":
+            stack.append((c, i))
+        elif c in ")]}":
+            stack.pop()
+        i += 1
+    return out
+
+
+def test_every_flex_row_holding_a_card_line_is_measured_at_max_content():
+    """P-1 (Opus review of the page folds, 3.7u-fix): a line that is a flex item — .ep-seen in a
+    down endpoint's head, .host-note beside the host name — is measured through its ROW: its own
+    box left the row's free space counted as chrome, so every such line needed its card's whole
+    width and the floor followed the window up for the page's life (one column at 2200 px). The
+    row reads its text only at max-content, which app.css's .measuring rule gives; this gate
+    reads the card builders for every ``ep-line`` built directly inside another element, and
+    every such parent the stylesheet makes a flex container must be in the .measuring
+    max-content set. What width the row then reads is the smoke's (tools/smoke/floor.mjs)."""
+    js = _app_js()
+    found = []
+    for name in ("liveEndpoint", "downEndpoint", "dormantEndpoint", "hostCard", "epJobRow", "jobsBlock"):
+        found += _ep_line_parents(_js_function(js, name))
+    parents = {p for _, p in found}
+    # the scan sees what it is about: the two flex rows and a block parent
+    assert {"ep-head", "host-head", "endpoint"} <= parents, found
+    flex, max_content = set(), set()
+    for sel, body in _css_rules((STATIC / "app.css").read_text()):
+        for part in (p.strip() for p in sel.split(",")):
+            if not part:
+                continue
+            classes = set(re.findall(r"\.([A-Za-z][\w-]*)", part.split()[-1]))
+            if re.search(r"display\s*:\s*(inline-)?flex\b", body):
+                flex |= classes
+            if part.startswith(".hosts.measuring") and re.search(r"width\s*:\s*max-content", body):
+                max_content |= classes
+    rows = {p for p in parents if p in flex}
+    assert rows >= {"ep-head", "host-head"}, (rows, sorted(flex))
+    assert rows <= max_content, sorted(rows - max_content)
+    # and the floor measures a flex item through its row (the substitution in raiseCardFloor)
+    assert re.search(r"/flex/\.test\(getComputedStyle\(line\.parentNode\)\.display\)",
+                     _js_function(js, "raiseCardFloor"))
+
+
+def test_in_place_comparisons_mask_the_overflows_mark():
+    """P-2 (Opus review of the page folds, 3.7u-fix): raiseCardFloor marks scrolling lines on the
+    LIVE nodes; the in-place update compares live nodes with freshly built ones, which never carry
+    the mark, so a raw outerHTML or className comparison replaced the whole endpoint (or host
+    head) on every push whenever a line scrolled. Every comparison in the two in-place helpers
+    reads the live side through the masking helpers, and the helpers mask the very class
+    raiseCardFloor toggles. (Node identity across pushes is the smoke's: tools/smoke/keep.js.)"""
+    js = _app_js()
+    toggled = re.findall(r'classList\.toggle\("([^"]+)"', _js_function(js, "raiseCardFloor"))
+    assert toggled == ["overflows"], toggled
+    assert re.search(r'var OVERFLOW_MARK = "' + toggled[0] + '";', js)
+    for helper in ("builtHTML", "builtClass"):
+        assert "OVERFLOW_MARK" in _js_function(js, helper), helper
+    update = _js_function(js, "updateHostInPlace")
+    swap = _js_function(js, "swapEndpointSubBlocks")
+    # no raw read of a live node's serialisation or class string is left in either helper; the
+    # one className read allowed is the freshly built side's
+    assert ".outerHTML" not in update and ".outerHTML" not in swap
+    assert re.findall(r"[\w\]\[.]+\.className", update + swap) == ["newEp.children[i].className"]
+    assert update.count("sameAsBuilt(") == 2 and swap.count("sameAsBuilt(") == 1
+    assert swap.count("builtClass(") == 1
+
+
 # --- story 3.4: the job detail page (job.js) ----------------------------------------------------
 
 

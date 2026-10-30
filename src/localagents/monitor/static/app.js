@@ -748,15 +748,41 @@
   // DOM re-serialisation difference (attribute order, colour form) means one extra swap, never
   // a missed one; node identity is kept at the endpoint and host level, which is what the
   // hover state and the smoke's identity probe rest on.
+  // P-2 (Opus review of the page folds, 3.7u-fix): the comparisons below read a live node as it
+  // was BUILT. raiseCardFloor marks a scrolling line with the `overflows` class on the live node
+  // after every render; a freshly built node never carries it, so comparing raw outerHTML or
+  // className made every marked line look changed — each push replaced the whole endpoint whose
+  // direct child scrolled (strip, figures and jobs with it) and the host head whose note
+  // scrolled. The mark is masked from the live side (a clone with it removed, made only when a
+  // mark is there); a node that is swapped in arrives unmarked and raiseCardFloor, which runs
+  // after the in-place update, marks it again. Masking, rather than moving the mark to a data
+  // attribute: an attribute is serialised by outerHTML too, so it would need the same masking,
+  // and the class keeps the CSS and the smoke's selectors as they are.
+  var OVERFLOW_MARK = "overflows";
+  function builtHTML(el) {
+    if (!el.classList.contains(OVERFLOW_MARK) && !el.querySelector("." + OVERFLOW_MARK)) return el.outerHTML;
+    var copy = el.cloneNode(true);
+    copy.classList.remove(OVERFLOW_MARK);
+    Array.prototype.forEach.call(copy.querySelectorAll("." + OVERFLOW_MARK), function (e) {
+      e.classList.remove(OVERFLOW_MARK);
+    });
+    return copy.outerHTML;
+  }
+  function builtClass(el) {
+    if (!el.classList.contains(OVERFLOW_MARK)) return el.className;
+    return Array.prototype.filter.call(el.classList, function (c) { return c !== OVERFLOW_MARK; }).join(" ");
+  }
+  function sameAsBuilt(liveEl, builtEl) { return builtHTML(liveEl) === builtEl.outerHTML; }
+
   function swapEndpointSubBlocks(oldEp, newEp) {
     if (oldEp.children.length !== newEp.children.length) return false;
     var i;
     for (i = 0; i < newEp.children.length; i++) {
-      if (oldEp.children[i].className !== newEp.children[i].className) return false;
+      if (builtClass(oldEp.children[i]) !== newEp.children[i].className) return false;
     }
     var newKids = Array.prototype.slice.call(newEp.children);
     for (i = 0; i < newKids.length; i++) {
-      if (oldEp.children[i].outerHTML !== newKids[i].outerHTML) oldEp.replaceChild(newKids[i], oldEp.children[i]);
+      if (!sameAsBuilt(oldEp.children[i], newKids[i])) oldEp.replaceChild(newKids[i], oldEp.children[i]);
     }
     return true;
   }
@@ -767,14 +793,14 @@
     var changed = false;
     var oldHead = oldCard.querySelector(".host-head");
     var newHead = newCard.querySelector(".host-head");
-    if (oldHead && newHead && oldHead.outerHTML !== newHead.outerHTML) {
+    if (oldHead && newHead && !sameAsBuilt(oldHead, newHead)) {
       oldCard.replaceChild(newHead, oldHead);
       changed = true;
     }
     var oldEls = Array.prototype.slice.call(oldCard.querySelectorAll(".endpoint"));
     var newEls = Array.prototype.slice.call(newCard.querySelectorAll(".endpoint"));
     for (var i = 0; i < newEls.length; i++) {
-      if (oldEls[i].outerHTML === newEls[i].outerHTML) continue;
+      if (sameAsBuilt(oldEls[i], newEls[i])) continue;
       if (!swapEndpointSubBlocks(oldEls[i], newEls[i])) oldCard.replaceChild(newEls[i], oldEls[i]);
       changed = true;
     }
@@ -823,11 +849,28 @@
     // border; a down endpoint's own box) and each field grid's column count and gap. The line
     // selector here and the CSS rules that scroll those lines name one set — a test pins the
     // two lists against each other (U1: an unmeasured line wraps, an unstyled one hides).
+    // P-1 (Opus review of the page folds): a line that is itself a flex item (.ep-seen in a down
+    // endpoint's head, .host-note beside the host name) is measured through its ROW. Its own box
+    // is only part of the row, so card width minus its width counted the row's free space (the
+    // space-between, an auto margin, the room a wide card gives) as chrome: every such line
+    // "needed" exactly its card's current width, and the floor followed the window up and never
+    // came down (one column for the page's life after one narrowing). The row's max-content width
+    // is its items' text plus its gaps; the chrome around the row is the card's own padding and
+    // border (the row is block-level). app.css's .measuring rule gives each such row max-content
+    // (a test pins every flex row that holds an .ep-line to that rule). `marked` keeps the
+    // original lines: the overflows mark below stays on the line that scrolls.
     var items = [];
+    var marked = [];
     each(hostsEl.children, function (card) {
       var cardW = card.getBoundingClientRect().width;
+      var rows = [];
       each(card.querySelectorAll(".ep-head, .ep-job-figs, .ep-act, .ep-line"), function (line) {
-        items.push({ line: line, chrome: cardW - line.getBoundingClientRect().width });
+        marked.push(line);
+        var box = line;
+        if (line.parentNode !== card && /flex/.test(getComputedStyle(line.parentNode).display)) box = line.parentNode;
+        if (rows.indexOf(box) >= 0) return; // the row is measured once (.ep-head is a line itself)
+        rows.push(box);
+        items.push({ line: box, chrome: cardW - box.getBoundingClientRect().width });
       });
       each(card.querySelectorAll(".figures"), function (grid) {
         var style = getComputedStyle(grid);
@@ -861,8 +904,8 @@
     // after the floor is applied, reading the layout the new floor produced: the band and the
     // ew-resize cursor mark exactly the lines that scroll in their own box (app.css
     // .overflows; lines that fit never wear it).
-    items.forEach(function (it) {
-      if (it.line) it.line.classList.toggle("overflows", it.line.scrollWidth > it.line.clientWidth);
+    marked.forEach(function (line) {
+      line.classList.toggle("overflows", line.scrollWidth > line.clientWidth);
     });
   }
 

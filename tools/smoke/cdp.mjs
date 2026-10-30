@@ -145,6 +145,10 @@ const probe = `(() => {
     // 3.9D D3: the axis labels and pressed button before, after a 15m button click and after a
     // 7d one, captured by range.js as each click's fetch lands
     d3: (typeof window !== "undefined" && window.__d3) || null,
+    // 3.7u-fix P-1/P-2 (Opus review of the page folds): floor.js's oracle beside the page's floor,
+    // and keep.js's node-identity record across pushes and one in-place render
+    floor: (typeof window !== "undefined" && window.__floor) || null,
+    keep: (typeof window !== "undefined" && window.__keep) || null,
   });
 })()`;
 let r = await send("Runtime.evaluate", { expression: probe, returnByValue: true });
@@ -166,7 +170,7 @@ if (hashAfter) {
   // 3.7-fold-5: the two-line job row's fields and the hand-measured heights ride along too
   // (the first probe long predates the js: script that captures them)
   console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote, tlTitle: o.tlTitle, tlAxis: o.tlAxis, tlRows: o.tlRows.map(r => ({ label: r.label, bands: r.bands, jobs: r.jobs.length })), tlHeight: o.tlHeight, epJobLines: o.epJobLines, cardHeights: o.cardHeights, tileLabels: o.tileLabels, t5: o.t5,
-    cardOverflow: o.cardOverflow, cardFloor: o.cardFloor, hostsWidth: o.hostsWidth, gridCols: o.gridCols, columns: o.columns, hostBoxes: o.hostBoxes, u: o.u, lines: o.lines, d1: o.d1, d3: o.d3 }));
+    cardOverflow: o.cardOverflow, cardFloor: o.cardFloor, hostsWidth: o.hostsWidth, gridCols: o.gridCols, columns: o.columns, hostBoxes: o.hostBoxes, u: o.u, lines: o.lines, d1: o.d1, d3: o.d3, floor: o.floor, keep: o.keep }));
   console.log("AFTER " + hashAfter + ": detail=" + JSON.stringify(o.detail) + " overviewHidden=" + o.overviewHidden + " range=" + o.rangeButtons + " canvases=" + o.canvases + " strips=" + o.strips + " sparklines=" + o.sparklines + " banner=" + o.banner
     + " reqHeaders=" + JSON.stringify(o.reqHeaders) + " reqRows=" + JSON.stringify(o.reqRows)
     + " reqPills=" + JSON.stringify(o.reqPills) + " reqRowClasses=" + JSON.stringify(o.reqRowClasses));

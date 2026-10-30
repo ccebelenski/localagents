@@ -65,3 +65,29 @@ prints a tab-separated header then one row per sample: ISO time, DOM `Nodes`, `J
 full + inPlace + skipped; `-1` if the page does not export it). `HeapProfiler.collectGarbage` runs before
 the first and the last sample so the heap figure is what survives collection. Use `--no-collect` and a
 small `refresh_s` in the monitor's models.yaml to get many pushes quickly. Read the counters, not pixels.
+
+## floor.mjs: the column floor is the text's, never the window's (P-1)
+
+`node tools/smoke/floor.mjs <devtools-port> <url> [widths=2200,2000,2200,1400,2200] [settle_s=3]` opens
+the overview at the first width, resizes through the rest (waiting `settle_s` of pushes: the floor is
+measured after every render, there is no resize listener) and evaluates `floor.js` at each step. floor.js
+measures every card line's need on its own — a block line's text extent through a Range, a flex row's
+items summed with their gaps, plus the chrome between the line's box and the card's edge, a flex item
+counted through its row — and reports it as `oracle` beside the page's `cardLayout.floor`/`need`, the
+grid's `columns`, `needIsText` and `floorIsText`. The process exits 1 when any step's floor or need is
+not the text's. Run it on the seeded world with no hand render (a hand render that shrinks the texts
+leaves the floor, a high-water mark, above the current text by design; `needIsText` still holds there).
+Seeded world, 3.7u-fix P-1 fold: floor 946 (the down endpoint's error line) at every step, columns
+2/2/2/1/2; before the fold the floor read 1078 → 1953 → 2153 → 2153 → 2153, columns 2/1/1/1/1.
+
+## keep.js: the overflow mark never costs a node its identity (P-2)
+
+`node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 900 900 t/keep.png "js:$(cat tools/smoke/keep.js)"`
+(run at 900 and at 1400). Read `keep` in the AFTER_JSON line: `pushes` stamps every `.endpoint` and
+`.host-head`, holds while 7 pushes render, and lists the nodes `replaced` (at 900 px the seeded down
+endpoint's error line scrolls: `overflowing` names it); `inPlace` hand-renders a world with a 300-char
+speeds note, down error and host note and a 200-char job name, then the same world with only the running
+job's elapsed changed (`path.inPlace` 1) and lists the nodes `replaced`. Both `replaced` lists must be
+empty. 3.7u-fix P-2 fold: before, `pushes.replaced` held "endpoint dgx1-a" at 900 px and
+`inPlace.replaced` held "endpoint ai1", "endpoint dgx1-a" and "head ai9" at both widths; after, [] and
+[] with `kept` 6 and 8.
