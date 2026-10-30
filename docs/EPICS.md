@@ -17,6 +17,28 @@ Standing rulings (lettered; rationale in `docs/retros/`):
 - **(e)** Defects found by a review are cleaned up during the build phase, as the next fold,
   not deferred to a later story; a big perturbation (a contract or schema change) is discussed
   with the operator first. (Operator 2026-10-29: "keep it clean as we go".)
+- **(f)** Acceptance takes files by path; a file main moved since the lane's base is three-way
+  patched; the suite runs on main before the commit, every time. (Epic 2 retro: twelve merges
+  over a moved main, two cross-lane breaks caught only by the suite on main.)
+- **(g)** A fold chain closes when a review finds no defect, and that takes at most three
+  rounds. (Epic 2 retro: every chain closed inside three, each round smaller than the last.)
+- **(h)** A contract between stories is written into the spec as the shapes the code emits,
+  with a test that fails when the code emits a key the spec does not name. (Epic 2 retro: §5a
+  and its spec-vs-code test; the 3.1 review used it as the oracle.)
+- **(i)** Two lanes writing the same module in parallel are three-way patched at acceptance,
+  not serialised. (Epic 2 retro: fourteen parallel pairs, zero lost hunks.)
+- **(j)** A page story's acceptance is a browser smoke driven over the DevTools protocol, DOM
+  dumps and JSON only, never a screenshot read by a lane. (Epic 3 retro: seven page lanes and
+  six page reviews; the one lane that read a second image died.)
+- **(k)** Two page stories in parallel each own one file and register through a hook; the
+  merge composes the shared files by hand. (Epic 3 retro: 3.3 and 3.4, four conflicts composed,
+  both smokes held.)
+- **(l)** A brief's "not provided by the contract" list is the next story's input, not a
+  blocker. (Epic 3 retro: every page lane built without the missing fields; nothing faked.)
+- **(m)** A fold under thirty lines whose diff the coordinator read folds into the next review
+  of the same door instead of its own review. (Epic 3 retro: seven folds; the combined review
+  found two defects at a quarter of the lane time.)
+Rulings (f)–(m) accepted by the operator 2026-10-29 in the closing interview.
 Declined as rulings (practice already in the hints file): a probe cap per review brief (b);
 briefs passed by path (c).
 

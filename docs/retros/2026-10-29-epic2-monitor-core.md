@@ -84,6 +84,8 @@ self-check grepped it.
   line by line and found every 2.3a line present and none duplicated). The cost is the two
   cross-lane breaks, paid once each at the suite on main.
 
+Operator's verdict, 2026-10-29 closing interview: (f) through (i) all accepted; inked in `docs/EPICS.md` standing rulings.
+
 ## What cost
 
 - The two cross-lane breaks: each under ten minutes, but each a coordinator fix that then needed a

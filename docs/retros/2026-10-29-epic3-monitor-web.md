@@ -84,6 +84,8 @@ smoke` is the online acceptance run; the MCP server imports nothing from the mon
   3.4a and 3.5a; the combined review of four folds then found two defects the single-fold
   reviews would have found one at a time, at a quarter of the lane time.
 
+Operator's verdict, 2026-10-29 closing interview: (j) through (m) all accepted; inked in `docs/EPICS.md` standing rulings.
+
 ## What cost
 
 - The DeepSeek lane's one-image limit: one review died at probe 1 and was continued in the same
@@ -98,10 +100,14 @@ smoke` is the online acceptance run; the MCP server imports nothing from the mon
 
 - Whether the collector runs the lost-job sweep on its own schedule. Asked three times, not yet
   answered; Epic 4 territory if the monitor becomes the long-lived process on the box.
+  Operator 2026-10-29: deferred to Epic 4; the MCP server stays the only sweeper for the MVP.
 - Strata's `_mb` fields: the tiles read `MB` unitless until Strata documents the sample window.
 - The overview's history fetch is N+1 per refresh (one per live endpoint, for the strip's
   segments); fine on this fleet, a fleet route carrying the state series would remove it.
 - Epic 4 (operations: SSH setup, start/stop recipes, node telemetry) is not scheduled.
+  Operator 2026-10-29: "not yet"; the operator reviews the MVP first, and the push is gated on
+  that review ("you built something, I review it - that's step 1. Then we refine - the work's
+  not complete until I'm satisfied with it").
 
 ## Closing step
 
