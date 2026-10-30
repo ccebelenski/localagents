@@ -1225,6 +1225,20 @@ The 3.7 chain's reviews are closed: no open defect.
   dir: start → status → start again ("already running … opening", the fake got the URL twice) →
   stop, port free. Review: rides the next batch's review (coordinator read the whole diff).)
 
+- **3.8b Operational fact (coordinator, 2026-10-30 19:40), not a story.** The `localagents` on
+  the PATH is a `uv tool install` of this checkout in EDITABLE mode
+  (`~/.local/share/uv/tools/localagents/…/direct_url.json`: `"editable": true`), so a landing on
+  main is what the next PROCESS start runs — and a running process keeps the code it loaded.
+  Tonight: the monitor was restarted at 19:06 and runs today's main (it migrated the real
+  database to v8); the MCP server process (pid 1813371) has run since 2026-10-29 21:57 and
+  still runs yesterday's package, so none of today's package-side landings are active in it —
+  `wait_jobs` dedup (A1), the runner's finish fixes (B1-B3), the live-jobs predicate (E2), and
+  1.12's `record_transcript`: the real `transcripts` table holds 0 rows after 16 finished jobs
+  since v8 landed. 3.7t (the shim's handshake answer) will be in the same position. The MCP
+  server restarts with the Claude Code session (or `/mcp` reconnect); the operator decides
+  when. Page files (static/) are served from disk, so a page landing needs only a browser
+  reload.
+
 ### 3.9 Codebase review pass (operator 2026-10-30)
 
 > Looking it over - much smoother, but I can't see it in action. Please push a full codebase
@@ -1481,6 +1495,27 @@ ruling (e). The lane is also the operator's first live job on the landed page.
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
 be done, but what shape that takes is not yet determined"); an analytics path over the database
 ("TBD"). Neither is a story yet.
+
+Facts for shaping them (coordinator, read-only over the real database, 2026-10-30 19:40, 32 h of
+use, 89 jobs): file 17 MB + 5 MB WAL. Of it the monitor's probe tables are ~12.7 MB (probes 5.3,
+probe_counters 3.1, probe_hardware 2.6, the (endpoint_id, t) index 1.6; 78,513 probe rows) and
+are already pruned at `retention_days` = 7 (`monitor/retention.py`, per endpoint through the
+index), so at this fleet size they level off near ~65 MB. The job side is ~4 MB for 89 jobs
+(jobs 1.2, tool_calls 1.4 + 0.4 index, requests 0.5 + 0.4 index; 5,869 requests, 6,782 tool
+calls): ~45 KB per job, plus ~70 KB per job of transcript once the server writes them (3.8b),
+so ~115 KB per job — at fifty jobs a day about 6 MB a day, 2 GB a year, all behind indexes that
+do not scan (3.9E). Nothing is urgent. Shapes on the table, for the operator to pick from or
+reject: (P1) one rule, `monitor: job_retention_days` (0 = keep, the default), applied by the
+collector beside `prune_probes` as `DELETE FROM jobs WHERE finished_at < ?` through the v7
+`jobs_finished_at` index — `requests`, `tool_calls` and `transcripts` all declare
+`ON DELETE CASCADE`, so the job row's deletion carries its children (one statement, keyed);
+(P2) tiered: transcripts (the bulk) at a shorter horizon than the rows, which stay for
+analytics — `DELETE FROM transcripts WHERE job_id IN (SELECT id FROM jobs WHERE finished_at < ?)`;
+(P3) a `localagents prune --rows N` for the hand-run shape, beside the directory prune. For the
+analytics path: the SQLite file IS a path — `sqlite3 "file:…?mode=ro"` or DuckDB's sqlite
+attach read it live under WAL without touching the writers (that is how these numbers were
+read); a `localagents export` to CSV/Parquet is the next shape if a tool wants files. The
+per-job aggregates (`jobs` + `tool_calls` + `requests`) are the analytics rows; P2 keeps them.
 
 - ☐ **4.1 Guided SSH setup script.** Walks the operator through key placement per host; no
   secrets stored by localagents; verifies with one `ssh host true`.

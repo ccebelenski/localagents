@@ -65,8 +65,12 @@ is landed but still harness-locked; `git worktree remove -f -f` it when the lock
   0.02 MB orphan / 46 MB resident, and the extension-free probe (`tools/smoke/ffmem.py` +
   `churn.js`, 960 rebuilds) holds 0.0 MB. A content script of the operator's profile holds the
   nodes; not a product defect. (Moved here from "awaiting" for the record; nothing to decide.)
-- Open items named, not shaped: database purge; an analytics path; fleet history serial per
+- Open items named, not shaped: database purge and an analytics path — EPICS Epic 4 now carries
+  the measured facts and three candidate shapes (P1 one job-retention rule through the v7 index
+  with cascades; P2 transcripts first; P3 a hand-run `prune --rows`); fleet history serial per
   endpoint (~2 s cold for five dense 7 d endpoints).
+- 3.8b: the MCP server process predates every package-side landing of today (editable install;
+  the transcripts table has 0 rows); it picks them up when the Claude Code session restarts.
 - The retrospective for the 3.7 + 3.9 arc (ANAS shape, `docs/retros/`) when the operator closes
   it: finds by finder, the operator's verdicts verbatim, lettered rulings only from repeated
   results (candidates: the reviewer fixes its own findings held all day; probes outside tests/
