@@ -826,7 +826,7 @@ POSSIBLE: the finished rows' per-push derivation cost; a terminal row with NULL 
 (no write path produces one) keeps a moving elapsed; the guard's three misses; "no activity
 recorded" for a box active 8 days ago with pruned probes. 644 passed.
 
-- ☐ **3.7-fold-4s Server: frozen rows computed once; the guard complete.** Lane: Qwen (the
+- ☑ **3.7-fold-4s Server: frozen rows computed once; the guard complete.** (3aa1219: Qwen/ai2 job 20261030-012128-55e6ea63, 81 turns, 18 min, 649 tests; measured 86 → 26 statements on the second push with 10 finished rows; the guard catches import_module, __import__ and `from localagents import monitor`; a NULL-finished terminal row reports elapsed null. Review: rides the next DeepSeek review of Qwen work.) Lane: Qwen (the
   reviewer of DeepSeek's work reviews this). (a) `_recent_jobs`: a finished row's entry is
   immutable, so its derived figures are computed once and kept in a module-level cache keyed by
   job id, evicted when the id leaves the tail; a finished row costs 0 derive statements on the
