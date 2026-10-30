@@ -511,9 +511,27 @@ Coordinator's reading against the code (`monitor/read.py:101-135`, `runner.py:20
 - `num_turns` is written once, from the final result (runner.py:268): the "turns" column reads
   0 for every running job.
 
-- ☐ **3.7g Finished jobs linger.** A job finished within the last 120 s stays in the table with
-  its mark (✓/✗), elapsed frozen, the status line's rule; then drops. Lands in the snapshot's
-  jobs query (server side, read.py:106) and the page's mark.
+- ☐ **3.7g Recent jobs, Strata's shape.** Operator (2026-10-29, with a screenshot of Strata's
+  "Recent requests"): "For the jobs list - Strata does it differently - we should compare the two
+  approaches." Strata's list: a persistent recent-N log (10 rows, "Show all (500)"), newest
+  first, a status PILL with a word ("● Done"), every number right-aligned, columns prompt /
+  reused / output / prefill t/s / decode t/s / VRAM hit rate / duration. Ours: live-only (a
+  finished job vanishes on the next tick, read.py:106), oldest first, ✓/✗ marks, two text
+  columns that read the same. Decided: the overview's table becomes "Recent jobs": running and
+  queued first (by start), then the last N finished newest first (N = 10, "show all" to the
+  endpoint page's jobs section until an all-jobs page exists), a status pill with the word
+  (running / queued / done / failed) in place of marks, elapsed frozen on a finished row,
+  numbers right-aligned tabular (already `.n`). Server side: the snapshot's jobs query takes
+  finished rows too, capped; the page draws the pill.
+- ☐ **3.7k Requests table, Strata's columns.** The endpoint page's requests table
+  (endpoint.js:296 `REQ_COLUMNS`: time, job, path, status, ms, tokens in, out, cache, stream,
+  error) carries the same facts Strata's does (read.py:458-466: input, output, cache_read,
+  cache_creation, ms, gen_ms); derive and show Strata's columns in Strata's order: prompt
+  (input), reused (cache_read), output, prefill t/s ((input − cache_read) / (ms − gen_ms)),
+  decode t/s (output / gen_ms), duration (ms as s); a status pill; VRAM hit rate is Strata's
+  own and has no counterpart (a dash, never invented). Unverified until built: whether `ms`
+  and `gen_ms` are both recorded for every request shape (a non-stream request may have no
+  gen_ms).
 - ☐ **3.7h One activity column.** Drop "current tool"; "last activity" shows the assistant's
   last sentence when the newest thing was text, else the tool call, as the runner records it;
   the full text in the title. (Or keep both only when they differ: coordinator's call at the
