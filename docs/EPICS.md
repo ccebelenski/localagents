@@ -722,22 +722,46 @@ Our requests table is the fallback witness when counters are absent (an `other` 
   endpoint's own history); 3.7q (one shared y scale across live cards, the peak label at the
   right, the window named in the label and once on the strip row). Review: DeepSeek, three
   probes (the card height invariant, the sparkline over the real-shaped history, the row form).
-- ☐ **3.7-fold-2 The stored last-active witness, and the page's half of 3.7m/3.7s.** Server:
-  the collector already pairs each tick's counters with the previous row (collect.py `tick`,
-  rates.rates for the reset check); when the pair advanced generated or prompt tokens it writes
-  the probe's `t` into a per-endpoint witness (a column on `endpoints` or a one-row-per-endpoint
-  table, schema bump in db.py's migration style, backfilled once from the existing rows at
-  migration); `_last_active` reads that one value; the counterless-backend fallback stays.
-  Evidence: the statement count per push with one idle endpoint holding 7 d of rows (seed a
-  long idle history in the test) is the same as with 1 h. Page: `last_active` drawn at the right
-  of each endpoint's head line as 3.7s says ("active 3m ago", the date form past 24 h, "no
-  activity in 7d" when null, nothing on the host head); `HISTORY_MIN_INTERVAL_MS` follows the
-  snapshot's `refresh_s`; `render` skips a snapshot whose content is unchanged (serialise
-  minus `now`), and updates a live card's tile values, meters, strip and sparkline in place by
-  `data-endpoint` key, rebuilding a card only when its endpoint list or state changes (3.7m's
-  page half). Evidence: the smoke counts renders per minute and checks a card's DOM node keeps
-  its identity across two snapshots.
-### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
+Review of 4627647 by Qwen/ai1 job 20261030-000539-a0413791, 55 turns, 7 min, three
+construct-it probes: P1 the clock clean under six timed races (one push at 0.312 s for three
+ticks inside 0.3 s; stop mid-settle ends the stream in 1 ms; a tick at 0.29 s is in the 0.3 s
+push because the read runs after the wake); P2 the caches: two spellings of one window
+duplicate an entry but never serve stale; a hand-inserted probe recomputes and the next call
+is 2 statements; the one-field config edit answers empty exactly as before 4627647; DEFECT D4:
+with no collector the push counter never moves, so a `--no-collect` server on a database the
+MCP server writes live serves its startup snapshot forever (byte-identical, 0 statements, the
+new job missing); P3 DEFECT D5 measured: 7 d of idle probes (120,961 rows) make one
+`read.overview` 742 ms, 745 ms of it the idle endpoint's walk to None; the active endpoint
+walks 2 rows in 0.1 ms; the seeded world is 1.4 ms. POSSIBLE: `history_cache` grows with
+distinct range texts. 627 passed.
+
+- ☐ **3.7-fold-2 Server: the stored witness, the cache that expires, bounded caches.** Lane:
+  the reviewer (Qwen/ai1) fixes its own verified findings. (a) D5: the collector already pairs
+  each tick's counters with the previous row (collect.py `tick`, rates.rates for the reset
+  check); when the pair advanced generated or prompt tokens it writes the probe's `t` into a
+  per-endpoint witness (a `last_active` column on `endpoints`, schema bump in db.py's
+  migration style, backfilled once at migration from the existing rows by the current walk);
+  `_last_active` reads that one value; the counterless-backend fallback stays. Evidence: the
+  review's 7 d idle world (its `t/p3.py` construction, re-created) reads in the seeded world's
+  time, and the statement count per push is unchanged. (b) D4: the shared snapshot cache
+  expires by age as well as by push: an entry older than `refresh_s` is recomputed on demand
+  (a `/api/snapshot` call or a connect), so a `--no-collect` server is at most `refresh_s`
+  stale; AND, since `--no-collect` has no collector ticks at all, the fan-out self-ticks every
+  `refresh_s` when serve starts it without a collector, so an open page still follows the jobs
+  the MCP server writes (the smoke's hand-rendered snapshots are already overwritten by the
+  next push; the lanes capture right after render). Evidence: the review's `t/p2d.py`
+  construction re-created as a test, plus a stream test under `--no-collect` seeing a job
+  written between pushes. (c) `history_cache` keys on the parsed window seconds, not the text.
+  Spec §5a sentences appended as True-now.
+- ☐ **3.7-fold-3 Page: last active on the card, in-place updates, the refresh interval.**
+  After the 3.7g-j lane lands (both touch `render`). `last_active` at the right of each
+  endpoint's head line as 3.7s says ("active 3m ago", the date form past 24 h, "no activity in
+  7d" when null, nothing on the host head); `HISTORY_MIN_INTERVAL_MS` follows the snapshot's
+  `refresh_s`; `render` skips a snapshot whose content is unchanged (serialise minus `now`), and
+  updates a live card's tile values, meters, strip and sparkline in place by `data-endpoint`
+  key, rebuilding a card only when its endpoint list or state changes (3.7m's page half).
+  Evidence: the smoke counts renders per minute and checks a card's DOM node keeps its
+  identity across two snapshots.
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
   `tools/monitor.sh start|stop|status|log`.** (88a7dbe: Haiku Agent worktree-agent-a3d878d89ce563991,
