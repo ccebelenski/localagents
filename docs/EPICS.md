@@ -985,6 +985,20 @@ The 3.7 chain's reviews are closed: no open defect.
   "tool errors" title. If the operator ever sees the per-tool table disagree with the column, the
   job name is what reproduces it.
 
+- ☐ **3.7w The monitor tab's memory.** Operator (2026-10-30, Firefox about:processes while hunting
+  a workstation memory hog that turned out to be a Proxmox console tab at 19 GB): the
+  "localagents monitor" tab's process at 562 MB after roughly an hour on the live stream (the
+  Strata UI tabs sat at 2 GB each, not ours). Coordinator's reading: no measurement exists; the
+  page replaces the jobs table and rebuilds the timeline on every push (`render`,
+  `timeline.update`), swaps card sub-blocks in place, keeps bounded history per endpoint, and
+  reconnects its EventSource with backoff; any of these can leak nodes or listeners if a
+  reference survives the replace. The probe (DOM-only, ruling (j)): a `tools/smoke/mem.mjs`
+  that samples the DevTools `Performance.getMetrics` counters (`Nodes`, `JSEventListeners`,
+  `JSHeapUsedSize`, `Documents`) every few seconds over a seeded `--no-collect` monitor with a
+  short `refresh_s`, so hundreds of pushes happen in minutes; a count that grows with the push
+  count is the leak, one that plateaus is not. Then a second reading of the tab by the operator
+  an hour later says whether Firefox agrees.
+
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
