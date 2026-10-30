@@ -483,14 +483,19 @@ def test_the_finished_cache_holds_only_the_current_tail(world):
     shows 10 — after a call the cache holds exactly those 10 ids; the one that left the tail
     (the seeded job, oldest finish) is evicted."""
     conn, reg = world
+    seeded_finished = conn.execute("SELECT id FROM jobs WHERE status = 'succeeded'").fetchone()["id"]
+    # the last review (DeepSeek, 2026-10-30): this test was blind — the cache started empty, so
+    # the seeded row never entered it and a mutant without the eviction loop still passed. The
+    # cache is PRIMED first: one call with the seeded job as the whole tail puts it in the cache
+    read.overview(conn, reg, NOW, WINDOW_S)
+    assert seeded_finished in {k[0] for k in read._FINISHED_CACHE}
     _add_finished(conn, 10)
     ov = read.overview(conn, reg, NOW, WINDOW_S)
     tail = [j["id"] for j in ov["jobs"] if j["status"] not in read.LIVE_STATUSES]
     assert len(tail) == 10
     ids = {k[0] for k in read._FINISHED_CACHE}
     assert ids == set(tail) and len(read._FINISHED_CACHE) == 10
-    seeded_finished = conn.execute("SELECT id FROM jobs WHERE status = 'succeeded'").fetchone()["id"]
-    assert seeded_finished not in ids  # finished NOW-600: the oldest, out of the 10-tail
+    assert seeded_finished not in ids  # finished NOW-600: the oldest, out of the 10-tail — evicted
 
 
 def test_server_live_recomputes_on_a_cached_finished_row(world):
