@@ -950,10 +950,34 @@ branch; the oracle is the spec, the schema document and the README, never the su
 models wrote the tests"). Findings are dispositioned here; accepted ones become folds under
 ruling (e). The lane is also the operator's first live job on the landed page.
 
-- ☐ **3.9A The MCP server's request path**: `server.py`, `registry.py`, `shim.py`, `status.py`,
-  `__init__.py` (~2.3k lines). Probes: shim bodies and error translation; metrics_delta and
-  the Strata parsers over the captured fixture; wait_jobs/job_log/cancel-twice edges; the
-  status line over NULL ids, a dead server, a 200-char name.
+- ☑ **3.9A The MCP server's request path**: `server.py`, `registry.py`, `shim.py`, `status.py`,
+  `__init__.py` (~2.3k lines). Qwen/ai1 job 20261030-123425-86d1444b, 55 turns, 11 min, 0.98 cache
+  hit; four probes (shim 16, registry 16, server 14, status 8: 54 assertions, re-run green by the
+  coordinator), src/ and tests/ untouched, report `t/REVIEW.md` on branch
+  `local-agent/20261030-123425-86d1444b`. The lane disclosed one process error of its own: it
+  wrote the P2 section before running probe 2 and one expected value was wrong (fixed, re-run,
+  the report states the measured behaviour); the 3.9B brief now says "run each probe before
+  writing its section".
+  Findings and disposition:
+  - A1 (correctness, minor) `server.py:646`: `wait_jobs([j, j])` answered the same record twice
+    and the progress total counted two jobs. ACCEPTED, folded by the coordinator: the ids are
+    deduped once at entry (`dict.fromkeys`), red test
+    `test_wait_jobs_counts_a_repeated_id_once` (650 tests). Review of the fix: rides the
+    cross-model review of the 3.9 folds.
+  - P1-a `shim.py:106-109` (an image-only system message is dropped by the fold): DECLINED, no
+    Claude Code request carries one; noted.
+  - P1-b `shim.py:175-177` (an error body with `error` as a bare string never matches the
+    overflow translation): DECLINED for now, no captured backend sends that shape; noted as the
+    first place to look if a proxy ever sits in front of a backend.
+  - P2-a `registry.py:601-604` (a negative `cache_hit_ratio` could reach the row): DECLINED with
+    evidence, `jobs.py:110` lists `prompt_tokens_cached` among the guarded counters, so a
+    backwards cached counter nulls the whole set.
+  - P2-b `registry.py:454` (processed clamped to 0 when reused exceeds prompt): the lane itself
+    judged it acceptable; agreed.
+  Noted beyond the door: the relay client has no read timeout (`shim.py:209`, right for streams,
+  the job's own `timeout_s` is the backstop); the synchronous sqlite writes on the event loop are
+  the spec's known choice; a task cancelled before its first step skips an in-body
+  `except CancelledError` (a probe-harness fact, unreachable through `run_agent`).
 - ☐ **3.9B Jobs and storage**: `runner.py`, `jobs.py`, `db.py`, `derive.py` (~1.7k).
 - ☐ **3.9C The monitor's server**: `monitor/app.py`, `read.py`, `collect.py`, `serve.py`,
   `state.py`, `config.py`, `rows.py`, `rates.py`, `ranges.py`, `retention.py`, `jobs.py`,

@@ -720,3 +720,23 @@ def test_the_guard_catches_the_runtime_import_spellings():
     }
     for form, source in clean.items():
         assert not _monitor_import_hits(source), f"the guard falsely flags {form}"
+
+
+def test_wait_jobs_counts_a_repeated_id_once(reg, monkeypatch):
+    """Review 3.9A, A1: an id given twice is one job. The classification loop walked job_ids
+    verbatim, so the same record came back twice in `done` (or twice in `running`) and the
+    progress line's total counted it twice."""
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+    ctx = _Ctx()
+    a = _prev_job()
+
+    async def run():
+        asyncio.create_task(_finish_later(a, 0.05))
+        return await server.wait_jobs([a.id, a.id], timeout_s=5, ctx=ctx)
+
+    out = asyncio.run(run())
+    assert out["outcome"] == "all_done"
+    assert [j["id"] for j in out["done"]] == [a.id] and out["running"] == []
+    assert ctx.reports and ctx.reports[-1][1] == 1  # total = number of distinct jobs
+    running = asyncio.run(server.wait_jobs([_prev_job().id] * 2, timeout_s=0))
+    assert running["outcome"] == "timeout" and len(running["running"]) == 1

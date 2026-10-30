@@ -595,6 +595,9 @@ async def wait_jobs(
         return {"error": "bad_argument", "message": "mode must be 'all' or 'any'"}
     if not job_ids:
         return {"error": "bad_argument", "message": "job_ids is empty"}
+    # an id given twice is one job: dedup once here so the wait, the progress total and the
+    # classification below all count it once (review 3.9A, A1)
+    job_ids = list(dict.fromkeys(job_ids))
     # split the ids: in-process wait on their events, foreign on their rows; an unknown id
     # anywhere answers unknown_job before any waiting (as today)
     try:
