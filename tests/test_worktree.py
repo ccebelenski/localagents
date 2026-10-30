@@ -372,6 +372,64 @@ def test_cancel_during_the_first_metrics_probe_finishes_cancelled(repo, monkeypa
     assert store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "cancelled"
 
 
+def test_kept_note_shows_untracked_files_to_the_reviewer(repo, tmp_path):
+    """Review 3.9B B1: a tree whose only change is an untracked file got a note saying
+    `Review with: git -C <root> diff <base>`, which prints nothing for an untracked file while
+    the diffstat names it. The review instruction now leads with `status --short`."""
+    j = job("j11", repo, tmp_path / "logs" / "j11")
+    j.worktree = make_worktree(j)
+    (Path(j.worktree["path"]) / "newfile.txt").write_text("brand new\n")
+    finish_worktree(j)
+    assert j.worktree["kept"] is True
+    assert "newfile.txt" in j.worktree["diffstat"]
+    assert "status --short" in j.worktree["note"]
+
+
+def test_finish_over_a_missing_directory_records_it(repo, tmp_path):
+    """Review 3.9B B2: if the worktree directory is gone at finish time, `git status` raised
+    FileNotFoundError from subprocess's cwd and the worktree JSON never gained kept/note.
+    A missing directory is recorded: prune, kept=False, a note naming it, the branch kept."""
+    import shutil
+
+    j = job("j12", repo, tmp_path / "logs" / "j12")
+    j.worktree = make_worktree(j)
+    root = j.worktree["root"]
+    shutil.rmtree(root)
+    finish_worktree(j)
+    assert j.worktree["kept"] is False
+    assert "removed while the job ran" in j.worktree["note"]
+    # the branch may hold commits the user wants: it is left for them to delete
+    assert _branch_exists(repo, "local-agent/j12")
+    assert root not in git(repo, "worktree", "list")
+    log = (tmp_path / "logs" / "j12" / "transcript.txt").read_text()
+    assert f"[worktree-error] worktree directory missing at {root}" in log
+
+
+def test_cancel_during_make_worktree_sets_run_cwd_as_the_row_does(repo, monkeypatch):
+    """Review 3.9B B3: a cancel absorbed during the worktree step recorded the tree on the job
+    but left job.run_cwd at the original cwd, while derive's row says the tree's path: the same
+    job answered run_cwd two ways depending on the reader."""
+    import asyncio
+
+    from localagents import derive, runner
+
+    reg, res, kw = _drive_setup(monkeypatch)
+    _slow(monkeypatch, "make_worktree", 0.5)
+    store, j = _store_job(repo)
+
+    async def go():
+        j._task = asyncio.create_task(runner.run_job(j, reg, res, **kw))
+        await asyncio.sleep(0.15)
+        j._task.cancel()
+        await store.wait(j.id, 10)
+
+    asyncio.run(go())
+    assert j.status == "cancelled" and j.worktree is not None
+    row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (j.id,)).fetchone()
+    assert j.run_cwd == j.worktree["path"]
+    assert derive.summary_from_row(store.conn, row)["run_cwd"] == j.worktree["path"]
+
+
 def test_make_worktree_removes_its_tree_when_a_step_after_the_add_fails(repo, monkeypatch):
     """DeepSeek review of 6005f94: make_worktree's steps after `git worktree add` (rev-parse,
     the relative_to of the cwd) could raise and leave a tree and branch nothing removes, since

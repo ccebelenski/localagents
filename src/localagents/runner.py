@@ -142,6 +142,16 @@ def finish_worktree(job: Job) -> None:
     if not wt:
         return
     root, repo = wt["root"], wt["repo"]
+    if not Path(root).is_dir():
+        # the directory is gone (deleted out from under the job): record what was found instead
+        # of raising. git is told to forget the tree; the branch may hold commits the user
+        # wants, so removing it stays the user's call (review of 3.9B, finding B2)
+        _git(repo, "worktree", "prune")
+        wt.update(kept=False, note=f"the worktree directory was removed while the job ran; "
+                                   f"it is left out of git (worktree prune); "
+                                   f"branch {wt['branch']} is left in {repo}")
+        job.log_text(f"[worktree-error] worktree directory missing at {root}")
+        return
     status = _git(root, "status", "--porcelain").stdout.strip()
     head = _git(root, "rev-parse", "HEAD").stdout.strip()
     changed = bool(status) or head != wt["base"]
@@ -172,7 +182,8 @@ def finish_worktree(job: Job) -> None:
         diffstat=diffstat,
         note=(
             f"Changes left in worktree {root} on branch {wt['branch']}. "
-            f"Review with: git -C {root} diff {wt['base']}  (uncommitted work) — "
+            f"Review with: git -C {root} status --short && git -C {root} diff {wt['base']}  "
+            "(uncommitted work; status also lists files git has not tracked yet) — "
             f"then merge/cherry-pick or `git worktree remove --force {root}`."
         ),
     )
@@ -311,6 +322,10 @@ async def _make_worktree_shielded(job: Job) -> dict[str, Any]:
             )
         if not made.cancelled() and made.exception() is None:
             job.worktree = made.result()
+            # the in-process record must answer run_cwd the way the row does: derive reads
+            # worktree.path, so leaving run_cwd at the original cwd made the same job
+            # report two different values depending on the reader (review of 3.9B, finding B3)
+            job.run_cwd = job.worktree["path"]
         elif not made.cancelled():
             # the cancel wins (the job is `cancelled`), but the thread's own error is not
             # dropped without a word (DeepSeek review of 6005f94)
