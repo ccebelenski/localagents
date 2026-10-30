@@ -1027,8 +1027,12 @@ ruling (e). The lane is also the operator's first live job on the landed page.
     shim always sets both); a duplicate `tool_use_id` strands a row (the SDK names calls
     uniquely); `transcript_tail(-1)` (guarded at the tool layer); a foreign worktree JSON without
     `repo`/`root` (the code only ever writes them).
-  Fold 3.9B-fix: the three rules to Qwen/ai1 (ruling (a): the reviewer fixes its own verified
-  findings, test first); the fix rides the cross-model review of the 3.9 folds.
+  Fold 3.9B-fix LANDED 8335861: Qwen/ai1 job 20261030-125954-3dadfa29, 24 turns, 2 min, one red
+  test per rule (`test_kept_note_shows_untracked_files_to_the_reviewer`,
+  `test_finish_over_a_missing_directory_records_it`,
+  `test_cancel_during_make_worktree_sets_run_cwd_as_the_row_does`), 653 tests; ruling (a): the
+  reviewer fixed its own verified findings. Review of the fix: rides the cross-model review of
+  the 3.9 folds.
   **Incident (process, not code).** The lane's words: "my first run of `test_prune_days_zero_disables`
   forgot the monkeypatch fixture, so `state_dir()` resolved to the real
   `~/.local/state/localagents/jobs` and the in-test control `prune(1)` deleted its directories
