@@ -1001,7 +1001,26 @@ The 3.7 chain's reviews are closed: no open defect.
   card text, measured: live card 265.656 at 900/1400/2200 before and after; dormant 30.6875
   unchanged where it wrapped to 74 before; page scrollWidth equals clientWidth at both widths.
   Noticed: the down card's head is 26.69 px (4 px from `.ep-seen`'s margin, pre-existing since
-  3.7c). Review of the fold: rides the next page review.
+  3.7c). Review of the fold: Opus worktree agent (77 tool uses, 19 min) over 4e14f35 and 688354a
+  with the parent commit's static files served side by side as the baseline. 3.9D-fix CLEAN: no
+  listener leak across four page visits, listeners see the fresh snapshot on both paths, 18 host
+  transitions render in order without a throw, refetch at most every 30 s. 3.7u-fix: TWO
+  REGRESSIONS, both ACCEPTED, fold to Opus (ruling (a)):
+  - P-1 the floor tracks the window, not the text: `chrome = cardW − lineWidth` counts a flex
+    row's free space for `.ep-seen` (the down head) and `.host-note` (the host head), so each
+    reports need = the card's current width; the seeded world at 2200 px: floor 1078 where the
+    widest line is 946, and a resize 2200 → 2000 → 2200 leaves the floor at 2153 and ONE column
+    for the page's life (the parent stayed at 812 and two columns). The operator's fleet has a
+    down host with a note, so their page is in this state until the fold lands.
+  - P-2 `overflows` toggled on live nodes defeats the in-place comparison (outerHTML, class
+    names): an endpoint with an overflowing line is REPLACED on every push (dgx1-a at 900 px, 7 of
+    7), hover state lost; the parent kept it.
+  - Possible: render calls listeners without a try/catch (one throwing listener stops the rest
+    and skips `scheduleHistory`); `.endpoint:first-of-type` never matches (the host head is the
+    first div), so every first endpoint shows a 1 px top border (pre-existing). Static gates:
+    eight of nine mutants pass them; the smoke (wide.js, lines.js, drive.mjs) or Opus's own
+    drivers caught six — the gates are tripwires, the smoke is the gate (same verdict as the
+    Qwen review). Noticed: drive.mjs appends "/" to its URL, so a trailing-slash URL 404s.
   Operator: "I don't like the '...' convention because it hides information - either set a
   minimum card width that can accomodate the widest text, or dynamically size the card to not
   truncate (and use that as min size so it can't shrink below that high water mark). We get
