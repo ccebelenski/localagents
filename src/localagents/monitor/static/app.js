@@ -574,13 +574,14 @@
     if (host.state === "down") cls += " node-down";
     else if (host.state === "unknown") cls += " node-unknown";
     var nodeDown = host.state === "down";
-    var note = nodeDown ? "node unreachable" : host.state === "unknown" ? "node unknown" : "";
-    if (nodeDown) {
-      // the card's one alert is the probe's sentence (every endpoint on a down node reports the
-      // box unreachable): the first endpoint's that has one
-      var said = host.endpoints.filter(function (ep) { return ep.error; })[0];
-      if (said) note = said.error;
-    }
+    // 3.7x (operator 2026-10-30: "We dont' need the exposition on ai9 card - 'down' is a good
+    // summary state"): the head's note is the state word; the probe's sentence (every endpoint
+    // on a down node reports the box unreachable: the first one's) rides in the title, so a
+    // ~120-character "timed out (host off, or a firewall dropping packets)" no longer sets the
+    // column floor (3.7u) — the sentence stays in the snapshot and on the endpoint page
+    var note = nodeDown ? "down" : host.state === "unknown" ? "unknown" : "";
+    var said = nodeDown ? host.endpoints.filter(function (ep) { return ep.error; })[0] : null;
+    var noteTitle = said ? said.error : null;
     var body = host.endpoints.map(function (ep) {
       if (ep.state === "live") return liveEndpoint(snap, ep);
       if (ep.state === "down") return downEndpoint(snap, ep, nodeDown);
@@ -589,7 +590,7 @@
     if (!body.length && !nodeDown) return null; // 3.7a: a host with nothing drawn
     return h("div", { class: cls, "data-host": host.name }, [
       h("div", { class: "host-head" }, [h("span", { class: "host-name", text: host.name }),
-        note ? h("span", { class: "host-note ep-line", text: note }) : null]),
+        note ? h("span", { class: "host-note ep-line", title: noteTitle, text: note }) : null]),
     ].concat(body));
   }
 

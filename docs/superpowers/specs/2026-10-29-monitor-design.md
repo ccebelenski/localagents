@@ -158,7 +158,9 @@ every endpoint times out, resolved by the port-22 fallback. The attention window
 nodes too: a node dormant past the window collapses to one line. (True now, 3.7b/3.7c, operator
 2026-10-29: nothing collapses — every host, down or all-dormant, is a card of the same shape as
 a live host's; a down node keeps the `node-down` border and its one alert sentence in the card
-head.)
+head.) (True now, 3.7x, operator 2026-10-30: the card head's alert is the one word "down" (or
+"unknown"); the probe's sentence rides in that note's title and on the endpoint page, so it no
+longer sets the card column's floor.)
 
 ## 5. Page and navigation
 

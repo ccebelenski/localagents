@@ -1066,6 +1066,21 @@ The 3.7 chain's reviews are closed: no open defect.
   "tool errors" title. If the operator ever sees the per-tool table disagree with the column, the
   job name is what reproduces it.
 
+- ☑ **3.7x A down node's card says "down".** Operator (2026-10-30 evening, the live page with
+  ai9 off: its card head read "10.0.0.62:8080 timed out (host off, or a firewall dropping
+  packets)" in red beside the name): "We dont' need the exposition on ai9 card - 'down' is a good
+  summary state." Decision: the host head's note is the one word of the state, "down" (and
+  "unknown" for the port-22 fallback's other answer); the probe's sentence is not lost, it rides
+  in the note's `title` (hover) and stays in the snapshot and the endpoint page. Consequence
+  that answers 3.7u's open question: that ~120-character sentence was the line setting the
+  column floor on the live page (one column at 1400 px); with it gone the floor is the widest
+  model id or activity phrase. Coordinator fold, test-first (a source pin in
+  tests/test_monitor_page.py), spec §4 True-now sentence appended; rides the next page review
+  (ruling (m): a fold whose whole diff the coordinator read). Smoke (cdp.mjs, seeded world,
+  a hand-rendered down node with the probe's sentence on its endpoint): the head note's text
+  "down", its title the sentence, class `host-note ep-line`, no exception; the card's need 812
+  against the seeded floor of 946 (that floor is the seeded world's down ENDPOINT on an up
+  node, whose `.ep-error` line is still drawn in full — a different case, unchanged). Suite 695.
 - ☑ **3.7w The monitor tab's memory.** (Probe landed: `tools/smoke/mem.mjs`, Haiku worktree
   agent, 31 tool uses, 11 min. Measured at ~3 render passes a second over the seeded world:
   overview 908 passes, DOM nodes 200 → a plateau of 1443–1568 → 200 after a forced GC, heap

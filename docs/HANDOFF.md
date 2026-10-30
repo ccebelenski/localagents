@@ -42,8 +42,10 @@ is landed but still harness-locked; `git worktree remove -f -f` it when the lock
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is
   forwarded and recorded as a 501/404 "error"); the page labels the history rows "handshake".
 - 3.7v: the job page labels "N tool errors" and "N request errors" side by side (the "2 vs 1").
-- 3.7u's consequence: the seeded world at 1400 px is ONE column (the ~120-char activity line sets
-  the floor); the one-line follow-up is to leave the activity line out of the floor so it scrolls.
+- 3.7u's consequence, half answered by 3.7x (the down node's head says "down", the probe's
+  sentence in its title): on the live page that sentence was the floor-setting line. The seeded
+  world is still one column at 1400 px from its down endpoint's `.ep-error` line and the
+  ~120-char activity line; leaving those out of the floor (they scroll) is the open follow-up.
 - 3.7w closed: the normal tab's 661 MB is 278 MB of `dom/orphan-nodes` that survive a
   minimize; the same page in a Private Window (no extension realm in its process) minimizes to
   0.02 MB orphan / 46 MB resident, and the extension-free probe (`tools/smoke/ffmem.py` +

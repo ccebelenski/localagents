@@ -824,3 +824,16 @@ def test_the_command_serves_the_endpoint_page_and_the_three_calls_it_makes_for_a
         assert len(reqs.json()["requests"]) == 152 and reqs.json()["totals"]["count"] == 152
         proc.send_signal(signal.SIGTERM)
         assert proc.wait(timeout=5) == 0
+
+
+def test_a_down_node_card_head_says_down_and_keeps_the_probe_sentence_in_the_title():
+    """3.7x (operator 2026-10-30): "We dont' need the exposition on ai9 card - 'down' is a good
+    summary state." The host head's note is the state word; the probe's sentence ("… timed out
+    (host off, or a firewall dropping packets)") rides in the note's title, never as its text,
+    so it no longer sets the card column's floor (3.7u)."""
+    js = _app_js()
+    head = js[js.index("function hostCard("):js.index("// --- the Recent jobs log")]
+    assert re.search(r'var note = nodeDown \? "down" : host\.state === "unknown" \? "unknown" : ""', head), head
+    assert "if (said) note = said.error" not in head
+    assert re.search(r'class: "host-note ep-line", title: \w+', head), head
+    assert 'text: note' in head
