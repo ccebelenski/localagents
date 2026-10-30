@@ -144,7 +144,7 @@ Per endpoint, derived from rows (so a restart reconstructs them from the databas
 |---|---|---|
 | live | last probe up | full content |
 | down, recent | up within the attention window (24 h default), unreachable now | full size, alert colour, the probe's sentence; names a job that was running on it when it dropped |
-| dormant | not seen within the window | one muted line inside its host card, "last seen <date>"; never hidden, never alarmed. (True now, 3.7a/3.7b, operator 2026-10-29: a never-seen endpoint is not drawn, a host with nothing to draw and its node not down is not drawn, and one muted line under the cards counts them; a seen-dormant endpoint stays a muted line inside a normal card; nothing collapses to a bar.) |
+| dormant | not seen within the window | one muted line inside its host card, "last seen <date>"; never hidden, never alarmed. (True now, 3.7a/3.7b, operator 2026-10-29: a never-seen endpoint is not drawn, a host with nothing to draw and its node not down is not drawn, and one muted line under the cards counts them; a seen-dormant endpoint stays a muted line inside a normal card; nothing collapses to a bar.) (True now (3.7y, 2026-10-30): a never-seen endpoint is hidden on a down node too, a down node with nothing left to draw has no card, and the hidden-count line names it "<endpoint> (node down)".) |
 
 A probe older than the window, up or not, counts as not seen: a monitor that was stopped for longer than the window shows every endpoint dormant until its first tick (ruling 2026-10-29).
 
@@ -160,7 +160,9 @@ nodes too: a node dormant past the window collapses to one line. (True now, 3.7b
 a live host's; a down node keeps the `node-down` border and its one alert sentence in the card
 head.) (True now, 3.7x, operator 2026-10-30: the card head's alert is the one word "down" (or
 "unknown"); the probe's sentence rides in that note's title and on the endpoint page, so it no
-longer sets the card column's floor.)
+longer sets the card column's floor.) (True now (3.7y, 2026-10-30): a never-seen endpoint is
+hidden on a down node too, a down node with nothing left to draw has no card, and the
+hidden-count line names it "<endpoint> (node down)".)
 
 ## 5. Page and navigation
 

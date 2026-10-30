@@ -559,10 +559,14 @@
   }
 
   // 3.7a (operator 2026-10-29: "I would not display cards that are dormant and never seen, as
-  // they are just clutter"): a never-seen dormant endpoint is not drawn, except on a down node,
-  // whose card names every endpoint on it (3.7c). render() counts the hidden ones under a line.
+  // they are just clutter"): a never-seen dormant endpoint is not drawn. The down-node
+  // exception this rule once carried is gone (3.7y, operator 2026-10-30: "ai9 is 'down' yes,
+  // but it's also 'never seen'. Perhaps it shouldn't have a card in that state?"): a never-seen
+  // endpoint is hidden on a down node too, and a host left with nothing to draw — down included
+  // — gets no card (hostCard). render() counts the hidden ones under a line naming each node's
+  // state, so the node's own alert stays visible without a card drawn for it.
   function neverSeenOn(host, ep) {
-    return ep.state === "dormant" && ep.last_seen == null && host.state !== "down";
+    return ep.state === "dormant" && ep.last_seen == null;
   }
 
   // 3.7b (operator 2026-10-29: "the flow isn't very logical ... taking an entirely different
@@ -587,7 +591,7 @@
       if (ep.state === "down") return downEndpoint(snap, ep, nodeDown);
       return neverSeenOn(host, ep) ? null : dormantEndpoint(ep);
     }).filter(Boolean);
-    if (!body.length && !nodeDown) return null; // 3.7a: a host with nothing drawn
+    if (!body.length) return null; // 3.7a: a host with nothing drawn; 3.7y: a down node included
     return h("div", { class: cls, "data-host": host.name }, [
       h("div", { class: "host-head" }, [h("span", { class: "host-name", text: host.name }),
         note ? h("span", { class: "host-note ep-line", title: noteTitle, text: note }) : null]),
@@ -731,11 +735,13 @@
   // 3.7m page half (3.7-fold-3): what identifies a host card for the in-place update — the
   // host's own state plus its endpoint list (names and states, in order). Same signature: keep
   // the element; anything changed, or a new host: rebuild as before. A hidden never-seen
-  // endpoint only disappears via a host-state flip, which is in the signature, so the drawn
+  // endpoint (hidden on every host, down included — 3.7y) can only join its card via its own
+  // state change or a first sighting, both of which are in the signature, so the drawn
   // children match whenever the signatures do.
   function hostSignature(host) {
-    // the DRAWN endpoints only (the review of fold-3, P1): a never-seen endpoint on a live host
-    // is hidden by 3.7a, so its arrival must not force a rebuild of a card it never joins
+    // the DRAWN endpoints only (the review of fold-3, P1): a never-seen endpoint (hidden by
+    // 3.7a on every host, 3.7y dropping the down-node exception) is not in the signature, so
+    // its arrival must not force a rebuild of a card it never joins
     var parts = [host.name, host.state];
     host.endpoints.forEach(function (ep) {
       if (!neverSeenOn(host, ep)) parts.push(ep.name + "\x00" + ep.state);
@@ -970,7 +976,11 @@
     var wanted = [];
     snap.hosts.forEach(function (host) {
       host.endpoints.forEach(function (ep) {
-        if (neverSeenOn(host, ep)) hidden.push(ep.name); // config order: hosts then endpoints
+        // 3.7y: the line names the node's state — a never-seen endpoint hidden on a node that
+        // cannot be reached is the node's own alert, and must not read like a merely idle one
+        if (!neverSeenOn(host, ep)) return;
+        hidden.push(ep.name + (host.state === "down" ? " (node down)"
+          : host.state === "unknown" ? " (node unknown)" : "")); // config order: hosts then endpoints
       });
       var el = oldCards[host.name];
       var sig = hostSignature(host);

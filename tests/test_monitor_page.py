@@ -867,3 +867,23 @@ def test_job_header_names_both_error_figures():
     assert 'fig("tool errors"' in js
     assert 'fig("request errors"' in js
     assert 'fig("errors"' not in js
+
+
+def test_a_never_seen_endpoint_is_hidden_on_a_down_node_which_then_gets_no_card():
+    """3.7y (operator 2026-10-30: "ai9 is 'down' yes, but it's also 'never seen'. Perhaps it
+    shouldn't have a card in that state?"): the 3.7a exception is dropped — a never-seen
+    endpoint is hidden on a down node too, a host with nothing drawn (down included) has no
+    card, and the hidden-count line names the node's state so the alert is not lost."""
+    js = _app_js()
+    # neverSeenOn: the `host.state !== "down"` clause is gone; the body speaks only of the
+    # endpoint (a never-seen endpoint is never drawn, whatever the node says)
+    never = js[js.index("function neverSeenOn("):js.index("function hostCard(")]
+    assert "host.state" not in never, never
+    # hostCard: an empty body returns null for ANY host — no `&& !nodeDown` rescue
+    head = js[js.index("function hostCard("):js.index("// --- the Recent jobs log")]
+    assert re.search(r"if \(!body\.length\) return null;", head), head
+    assert "!body.length && !nodeDown" not in head
+    # the hidden list names the node's state: a hidden endpoint on a down node reads
+    # "<name> (node down)", on an unknown node "<name> (node unknown)"
+    assert re.search(r'hidden\.push\(ep\.name \+ \(host\.state === "down" \? " \(node down\)"', js), js
+    assert "(node unknown)" in js

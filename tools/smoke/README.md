@@ -28,6 +28,14 @@ node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/a.png "js:$(cat 
 # held NotFoundError before the fix and must read null: remaining cards in #hosts, the hidden
 # line counting the new endpoint, and renders.full advanced by the pass.
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/nodes.png "js:$(cat tools/smoke/nodes.js)"
+# 3.7y: neverseen.js renders a fourth host ai9 — node down, its one endpoint never seen (the
+# state the operator looked at: "ai9 is 'down' yes, but it's also 'never seen'. Perhaps it
+# shouldn't have a card in that state?"). Three renders, the DOM read after each into
+# __d1.cases[]: (a) no ai9 card, the hidden line names it "ai9 (node down)"; (b) last_seen 3
+# days before snap.now — the card returns, .node-down border, head note "down" (3.7x), one
+# seen-dormant "last seen" line; (c) render (a) again — the card disappears (the 3.9D D1 path:
+# renders.full advances, threw stays null) and the hidden line returns. Read d1 in AFTER_JSON.
+node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/neverseen.png "js:$(cat tools/smoke/neverseen.js)"
 # 3.9D D3: range.js clicks a real range button (not the internal setter — the handler, the
 # aria-pressed rebuild and the scheduled fetch are what is being tested), waits for each click's
 # fetch to land, and records the timeline axis labels and pressed button before, after 15m and
