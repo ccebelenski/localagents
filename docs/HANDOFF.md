@@ -33,21 +33,11 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-30 ~19:32, the operator AFK: "work on those open items").**
-Three building in parallel, each in its own worktree under
-`~/.local/state/localagents/worktrees/claudelocalmcp/`, briefs in the session scratchpad
-(`brief-3.7t.md`, `brief-3.7v.md`, `brief-3.7y.md`), base 070f9c7, 150 turns / 45 min each:
-- 3.7t the shim answers `/api/hello` itself — DeepSeek/dgx1-a job 20261030-193134-10ea9bc6
-  (shim.py, tests/test_shim.py, schema spec True-now).
-- 3.7v "N tool errors" / "N request errors" on the job page, "handshake" pill for history rows —
-  Qwen/ai1 job 20261030-193144-28191e60 (job.js, app.js `requestsTable` only, app.css, tests).
-- 3.7y a never-seen down node gets no card, the hidden line says "(node down)" — Qwen/ai2 job
-  20261030-193154-912b1d90 (app.js `neverSeenOn`/`hostCard`/`render` only, tests).
-Then: `tools/accept.sh` each, read the diff, `tools/land.sh` (3.7v and 3.7y both touch app.js in
-different functions: land one, rebase-by-path if the other conflicts), tick EPICS, one
-cross-model construct-it review of the batch (Qwen reviews the shim, DeepSeek the two page
-stories, probes over the seeded world, no image reads), folds by the reviewer.
-Before this note: none running. Every chain opened today is closed: 3.9A/B/C/D/E with
+**Lanes at the last note (2026-10-30 ~20:00).** The three evening stories are landed: 3.7t
+(6c65906, DeepSeek; Qwen review clean), 3.7v (39fdb3a, Qwen/ai1), 3.7y (63df4de, Qwen/ai2); plus the
+coordinator's 3.7x (56364bb) and the ES5 gate (ab4ddb6). One review outstanding: DeepSeek over the
+page batch (3.7v, 3.7y, 3.7x, the gate) — see the EPICS records for its result when it lands.
+ Every chain opened today is closed: 3.9A/B/C/D/E with
 their folds, the package-side folds review (F1–F3 folded), the page folds review (P-1/P-2 folded
 and reviewed clean), 1.12, 3.7u, 3.7w. One Haiku worktree (`.claude/worktrees/agent-a793f5489d5ed8033`)
 is landed but still harness-locked; `git worktree remove -f -f` it when the lock is gone. Suite 694.

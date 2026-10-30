@@ -1128,7 +1128,7 @@ The 3.7 chain's reviews are closed: no open defect.
   "down", its title the sentence, class `host-note ep-line`, no exception; the card's need 812
   against the seeded floor of 946 (that floor is the seeded world's down ENDPOINT on an up
   node, whose `.ep-error` line is still drawn in full — a different case, unchanged). Suite 695.
-- ☐ **3.7y A down node nobody has ever seen gets no card.** Operator (2026-10-30 evening, going
+- ☑ **3.7y A down node nobody has ever seen gets no card.** (Landed 63df4de: Qwen/ai2 job 20261030-193154-912b1d90, 65 turns, 13 min; 702 tests on main. `neverSeenOn` without the down-node clause, `hostCard` null for any host with nothing drawn, the hidden line lists "<name> (node down)" / "(node unknown)"; `hostSignature`'s rationale comment rewritten by the lane (its stated mechanism rested on the exception). Smoke `tools/smoke/neverseen.js`: (a) no ai9 card, "1 endpoint never seen, not shown: ai9 (node down)"; (b) last_seen set → card back, `node-down`, note "down", one "last seen" line; (c) back to (a) through the in-place path, threw null. Landed by hand: both page lanes appended to tests/test_monitor_page.py, the branch applied as a patch and its test appended. Lane's notes: `hostCard`'s `said` reads hidden endpoints too (the node-level sentence, kept); README.md:411-416 already states the new rule.) Operator (2026-10-30 evening, going
   AFK: "work on those open items"): "One thing that is striking me again - ai9 is 'down' yes,
   but it's also 'never seen'. Perhaps it shouldn't have a card in that state?" Today
   (app.js:564 `neverSeenOn`, 3.7a) a never-seen endpoint is hidden EXCEPT on a down node, and
