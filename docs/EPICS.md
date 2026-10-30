@@ -996,7 +996,12 @@ The 3.7 chain's reviews are closed: no open defect.
   - The three static gates are red on the regression each names and blind to neighbours (a
     `::after` ellipsis, `Array.prototype.slice.call`, an `else` lowering the floor): copy-drift
     tripwires, not proofs; the browser smoke is the gate. Noted, kept.
-  Fold 3.7u-fix to Qwen/ai1 (ruling (a)).
+  Fold 3.7u-fix LANDED (Qwen/ai1 job 20261030-135433-9fbe205b, 68 turns, 12 min, 676 tests):
+  barless scrolling boxes, the `overflows` class as the affordance, `ep-line` on every one-line
+  card text, measured: live card 265.656 at 900/1400/2200 before and after; dormant 30.6875
+  unchanged where it wrapped to 74 before; page scrollWidth equals clientWidth at both widths.
+  Noticed: the down card's head is 26.69 px (4 px from `.ep-seen`'s margin, pre-existing since
+  3.7c). Review of the fold: rides the next page review.
   Operator: "I don't like the '...' convention because it hides information - either set a
   minimum card width that can accomodate the widest text, or dynamically size the card to not
   truncate (and use that as min size so it can't shrink below that high water mark). We get
