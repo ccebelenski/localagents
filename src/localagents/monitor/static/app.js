@@ -363,9 +363,9 @@
   // 3.7-fold-5 (the coordinator's read): the status line's activity tail no longer rides the
   // figures' line — at card width the row cut after "2 files · …" and hid the ctx bar, the
   // speed and the errors, the very figures the row exists for. Two FIXED lines instead:
-  // `.ep-job-figs` carries the figures, ellipsised so anything that overflows is the tail of
-  // the figures, never the activity pushing them off; `.ep-act` is the activity's own line,
-  // muted, cut at 60 chars here and ellipsised by CSS, ALWAYS present — an empty activity is
+  // `.ep-job-figs` carries the figures; `.ep-act` is the activity's own line, muted (3.7u: both
+  // drawn whole — the 60-char cut and the ellipsis are gone, the card's column floor grows to
+  // the widest line instead, raiseCardFloor below), ALWAYS present — an empty activity is
   // an empty line of the same height, so the row's height is two pinned lines whatever the
   // job carries (3.7n: a card's height never depends on its values).
   function epJobRow(job) {
@@ -402,11 +402,12 @@
         text: fmt.int(job.errors) + " tool error" + (job.errors === 1 ? "" : "s"),
       }));
     }
+    // 3.7u: the activity is drawn whole — no 60-char cut, no ellipsis; the card grows to hold
+    // it (raiseCardFloor). The title keeps the same text for a capped card whose line scrolls.
     var act = oneLine(job.last_activity);
     return h("div", { class: "ep-job" }, [
       h("div", { class: "ep-job-figs" }, row),
-      h("div", { class: "ep-act", title: act || null,
-        text: act ? (act.length > 60 ? act.slice(0, 59) + "…" : act) : "" }),
+      h("div", { class: "ep-act", title: act || null, text: act || "" }),
     ]);
   }
 
@@ -795,6 +796,64 @@
     return { text: "active " + fmt.ago(ep.last_active, snap.now), title: fmt.date(ep.last_active) };
   }
 
+  // --- 3.7u: the card's column floor, a high-water mark ----------------------------------------
+  // The operator (2026-10-30): "I don't like the '...' convention because it hides information -
+  // either set a minimum card width that can accomodate the widest text, or dynamically size the
+  // card to not truncate (and use that as min size so it can't shrink below that high water
+  // mark). We get fewer cards horizontally, but more complete information."
+  // After every render the page measures every card's one-line rows at their whole width — the
+  // endpoint head, the job row's figures and activity lines, and the field grid (its column
+  // count times the widest tile text, plus the gaps) — each plus the card's own chrome around
+  // it, and raises the #hosts grid's --card-floor to the widest need. The floor is never lowered
+  // during the page's life, so a card never narrows (and the grid never re-flows) when a long
+  // job ends. The stylesheet caps the floor at the grid's own width (min(--card-floor, 100%));
+  // past the cap the line still wider than its card scrolls in its own fixed-height box.
+  var CARD_FLOOR_MIN = 360; // app.css .hosts --card-floor (a test pins the copy)
+  // floor: the high-water mark in px (what --card-floor holds); need: the last measurement's
+  // widest card; raised: how many times the floor went up (the smoke reads all three)
+  var cardLayout = { floor: CARD_FLOOR_MIN, need: 0, raised: 0 };
+
+  function raiseCardFloor() {
+    var hostsEl = byId("hosts");
+    if (!hostsEl || !hostsEl.clientWidth) return; // behind a detail page: nothing laid out to read
+    var each = function (list, fn) { Array.prototype.forEach.call(list, fn); };
+    // pass 1, at the cards' own widths: the chrome around each line (the card's padding and
+    // border; a down endpoint's own box) and each field grid's column count and gap
+    var items = [];
+    each(hostsEl.children, function (card) {
+      var cardW = card.getBoundingClientRect().width;
+      each(card.querySelectorAll(".ep-head, .ep-job-figs, .ep-act"), function (line) {
+        items.push({ line: line, chrome: cardW - line.getBoundingClientRect().width });
+      });
+      each(card.querySelectorAll(".figures"), function (grid) {
+        var style = getComputedStyle(grid);
+        items.push({ texts: grid.querySelectorAll(".fig > .label, .fig > .num, .fig > .kv"),
+          chrome: cardW - grid.getBoundingClientRect().width,
+          columns: style.gridTemplateColumns.split(" ").length, gap: parseFloat(style.columnGap) || 0 });
+      });
+    });
+    // pass 2, every measured element at its max-content width (app.css's .measuring rules): the
+    // text's own width, never the width a stretched 1fr column happens to give it
+    hostsEl.classList.add("measuring");
+    var need = 0;
+    items.forEach(function (it) {
+      var w = 0;
+      if (it.line) w = it.line.getBoundingClientRect().width;
+      else {
+        each(it.texts, function (t) { w = Math.max(w, t.getBoundingClientRect().width); });
+        w = it.columns * w + (it.columns - 1) * it.gap;
+      }
+      need = Math.max(need, w + it.chrome);
+    });
+    hostsEl.classList.remove("measuring");
+    cardLayout.need = Math.ceil(need);
+    if (cardLayout.need > cardLayout.floor) {
+      cardLayout.floor = cardLayout.need;
+      cardLayout.raised++;
+      hostsEl.style.setProperty("--card-floor", cardLayout.floor + "px");
+    }
+  }
+
   function render(snap) {
     state.snap = snap;
     // 3.7-fold-3: the refresh interval comes from the snapshot (the one refresh master, decided
@@ -808,6 +867,7 @@
       renders.skipped++;
       setUpdatedLine(snap);
       refreshAgoTexts(snap);
+      raiseCardFloor(); // 3.7u: an "active …" phrase can grow by a few characters here
       return;
     }
     snapSig = sig;
@@ -877,6 +937,7 @@
       hiddenLine.hidden = true;
       hiddenLine.textContent = "";
     }
+    raiseCardFloor(); // 3.7u: the cards are in place; the floor follows their widest line
     renders[rebuilt ? "full" : "inPlace"]++;
     byId("jobs-body").replaceChildren(jobsTable(snap));
   }
@@ -1195,6 +1256,8 @@
     if (!m) {
       detail.hidden = true;
       overview.hidden = false;
+      // 3.7u: renders behind a detail page measured nothing (no layout); measure now
+      raiseCardFloor();
       // back from a detail page: the overview fetched nothing meanwhile, so fetch once now
       if (wasDetail) scheduleHistory(true);
       return;
@@ -1368,6 +1431,7 @@
     state: state,
     requestsTable: requestsTable, // 3.7k: the one renderer both request logs draw through
     renders: renders, // 3.7-fold-3 smoke: {full, inPlace, skipped} counts of render passes
+    cardLayout: cardLayout, // 3.7u smoke: {floor, need, raised} — the column floor's high-water mark
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

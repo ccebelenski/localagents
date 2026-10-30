@@ -119,6 +119,23 @@ const probe = `(() => {
     // SSE push overwrites the hand-edited DOM before this probe reads it, so the script
     // measures as it goes and leaves the numbers here)
     t5: (typeof window !== "undefined" && window.__t5) || null,
+    // 3.7u: no card text hidden. Every one-line card element with its scroll and client widths
+    // (scrollWidth > clientWidth is text the element cannot show at its width), its text length
+    // and whether its text ends in an ellipsis the page added; the overflowing ones by class;
+    // the grid's column floor (the page's high-water mark, a pixel number, null on a page
+    // without one) beside the #hosts width it is capped at, the column tracks it resolves to,
+    // and every card's rendered box
+    cardFit: q('.host .ep-head, .host .ep-model, .host .ep-active, .host .ep-job-figs, .host .ep-act, .host .figures .fig .label, .host .figures .fig .num')
+      .map(e => ({ cls: e.className, sw: e.scrollWidth, cw: e.clientWidth, len: e.textContent.length, ell: /\u2026\s*$/.test(e.textContent) })),
+    cardOverflow: q('.host .ep-head, .host .ep-model, .host .ep-active, .host .ep-job-figs, .host .ep-act, .host .figures .fig .label, .host .figures .fig .num')
+      .filter(e => e.scrollWidth > e.clientWidth).map(e => e.className + ' ' + e.scrollWidth + '>' + e.clientWidth),
+    cardFloor: (localagentsMonitor.cardLayout || {}).floor == null ? null : localagentsMonitor.cardLayout.floor,
+    hostsWidth: document.getElementById('hosts').clientWidth,
+    gridCols: getComputedStyle(document.getElementById('hosts')).gridTemplateColumns,
+    columns: getComputedStyle(document.getElementById('hosts')).gridTemplateColumns.split(' ').length,
+    hostBoxes: q('.host').map(e => ({ host: e.dataset.host, w: e.getBoundingClientRect().width, h: e.getBoundingClientRect().height })),
+    // 3.7u: the measurements a hand-rendering js: script (wide.js) takes as it goes
+    u: (typeof window !== "undefined" && window.__u) || null,
   });
 })()`;
 let r = await send("Runtime.evaluate", { expression: probe, returnByValue: true });
@@ -137,7 +154,8 @@ if (hashAfter) {
   // 3.7l: the timeline fields ride along so a `js:` range switch (range.set('15m')) is read
   // 3.7-fold-5: the two-line job row's fields and the hand-measured heights ride along too
   // (the first probe long predates the js: script that captures them)
-  console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote, tlTitle: o.tlTitle, tlAxis: o.tlAxis, tlRows: o.tlRows.map(r => ({ label: r.label, bands: r.bands, jobs: r.jobs.length })), tlHeight: o.tlHeight, epJobLines: o.epJobLines, cardHeights: o.cardHeights, tileLabels: o.tileLabels, t5: o.t5 }));
+  console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote, tlTitle: o.tlTitle, tlAxis: o.tlAxis, tlRows: o.tlRows.map(r => ({ label: r.label, bands: r.bands, jobs: r.jobs.length })), tlHeight: o.tlHeight, epJobLines: o.epJobLines, cardHeights: o.cardHeights, tileLabels: o.tileLabels, t5: o.t5,
+    cardOverflow: o.cardOverflow, cardFloor: o.cardFloor, hostsWidth: o.hostsWidth, gridCols: o.gridCols, columns: o.columns, hostBoxes: o.hostBoxes, u: o.u }));
   console.log("AFTER " + hashAfter + ": detail=" + JSON.stringify(o.detail) + " overviewHidden=" + o.overviewHidden + " range=" + o.rangeButtons + " canvases=" + o.canvases + " strips=" + o.strips + " sparklines=" + o.sparklines + " banner=" + o.banner
     + " reqHeaders=" + JSON.stringify(o.reqHeaders) + " reqRows=" + JSON.stringify(o.reqRows)
     + " reqPills=" + JSON.stringify(o.reqPills) + " reqRowClasses=" + JSON.stringify(o.reqRowClasses));

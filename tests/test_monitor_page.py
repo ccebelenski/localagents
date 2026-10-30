@@ -257,6 +257,78 @@ def test_the_field_walk_sees_literal_bracket_keys_and_holder_chains():
     assert var_keys == {"fleet.endpoints[name]", "hist.state[i]"}
 
 
+# --- story 3.7u: no ellipsis on the cards ---------------------------------------------------------
+
+# every `text-overflow: ellipsis` rule the stylesheet may hold, by its exact selector, each naming
+# something that is never inside a host card (3.7u, the operator: "I don't like the '...'
+# convention because it hides information"). A card rule with an ellipsis, or a new ellipsis rule
+# anywhere, fails until it is listed here with why it is not card text.
+ELLIPSIS_OUTSIDE_CARDS = {
+    "#meta .db",      # the header's database path (elided from the left; the title holds it)
+    "td.cut",         # the jobs and requests tables' long cells (the title holds the text)
+    ".tile-value",    # the endpoint page's tiles (#detail, never the overview's #hosts)
+    ".tl-label a",    # the timeline's endpoint labels (section.fleet, after the cards)
+    ".tl-job",        # the timeline's job bars
+}
+
+
+def _css_rules(css):
+    """(selector, declarations) for every rule of the stylesheet, comments removed; a rule inside
+    an @media block is returned on its own (the block's prelude is not a selector)."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    return [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)]
+
+
+def test_no_ellipsis_rule_applies_inside_a_host_card():
+    """3.7u: no card text ends in an ellipsis. Every selector of every rule that sets
+    ``text-overflow: ellipsis`` is one of the listed non-card selectors, and none of them names a
+    card class (the card's lines are ep-head, ep-model, ep-active, ep-job-figs, ep-act and the
+    field grid's tile label and value)."""
+    rules = _css_rules((STATIC / "app.css").read_text())
+    selectors = {s.strip() for sel, body in rules if re.search(r"text-overflow\s*:\s*ellipsis", body)
+                 for s in sel.split(",")}
+    assert selectors  # the scan sees the rules it is about (the header's path keeps one)
+    assert selectors <= ELLIPSIS_OUTSIDE_CARDS, sorted(selectors - ELLIPSIS_OUTSIDE_CARDS)
+    card = re.compile(r"\.(host|endpoint|ep-[\w-]+|figures|fig|hosts)(?![\w-])")
+    assert [s for s in ELLIPSIS_OUTSIDE_CARDS if card.search(s)] == []
+
+
+def _js_function(js, name):
+    """The source of a function declared at the IIFE's top level (two-space indent): from its
+    ``function`` line to its closing brace at the same indent."""
+    m = re.search(r"\n  function " + re.escape(name) + r"\(.*?\n  \}\n", js, re.S)
+    assert m is not None, name
+    return m.group(0)
+
+
+def test_ep_job_row_cuts_no_text():
+    """3.7u: the card's job row draws the activity whole (3.7-fold-5 cut it at 60 chars and
+    appended an ellipsis; the full text rode only in the title). No slice, substring or
+    ellipsis-appending concatenation in epJobRow."""
+    body = _js_function(_app_js(), "epJobRow")
+    assert "last_activity" in body  # the extraction found the row builder
+    assert re.search(r"\.(slice|substring|substr)\(", body) is None
+    assert re.search(r"\+\s*\"…\"", body) is None
+
+
+def test_the_card_floor_starts_where_the_stylesheet_does_and_only_rises():
+    """3.7u: the grid's column floor is app.css's ``--card-floor`` (360px, the old fixed
+    minimum) until app.js measures a wider card; app.js's copy is the same number, the grid
+    caps the floor at its own width, and raiseCardFloor only ever raises it (the high-water
+    mark: one assignment of the floor, behind a greater-than)."""
+    css = (STATIC / "app.css").read_text()
+    hosts = next(body for sel, body in _css_rules(css) if sel == ".hosts")  # the first: not @media's
+    css_floor = re.search(r"--card-floor:\s*(\d+)px", hosts)
+    assert css_floor is not None
+    assert "minmax(min(var(--card-floor), 100%), 1fr)" in hosts
+    js = _app_js()
+    js_floor = re.search(r"var CARD_FLOOR_MIN = (\d+);", js)
+    assert js_floor is not None and js_floor.group(1) == css_floor.group(1)
+    body = _js_function(js, "raiseCardFloor")
+    assert re.findall(r"cardLayout\.floor = [^;]+;", body) == ["cardLayout.floor = cardLayout.need;"]
+    assert "if (cardLayout.need > cardLayout.floor) {" in body
+
+
 # --- story 3.4: the job detail page (job.js) ----------------------------------------------------
 
 
