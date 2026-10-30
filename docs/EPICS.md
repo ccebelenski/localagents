@@ -1128,9 +1128,36 @@ ruling (e). The lane is also the operator's first live job on the landed page.
     endpoint's all-time job count; `mcp_servers` grows one row per server start. All three
     belong to the open purge item.
   Fold 3.9E-fix to Qwen/ai1 (ruling (a)); 1.11 then becomes schema v8.
-- ☐ **3.9C The monitor's server**: `monitor/app.py`, `read.py`, `collect.py`, `serve.py`,
+- ☑ **3.9C The monitor's server**: `monitor/app.py`, `read.py`, `collect.py`, `serve.py`,
   `state.py`, `config.py`, `rows.py`, `rates.py`, `ranges.py`, `retention.py`, `jobs.py`,
-  `seed.py` (~2.9k).
+  `seed.py` (~2.9k). DeepSeek/dgx1-a job 20261030-125246-bbdacb91, 89 turns, 32 min, 0.98 cache
+  hit; four probes (23 assertions, re-run green by the coordinator under `t/conftest.py`),
+  src/ and tests/ untouched, report on branch `local-agent/20261030-125246-bbdacb91`. Clean:
+  every §4 state, the reset sentence, the stored witness, the ten-row tail, the collector's
+  transactions and the host-probe interval, every range edge and error shape, the shared
+  snapshot (one connection for two calls), the batched route equal to its parts, one SSE push
+  per settle. Measured: a cold `overview` over six endpoints and fourteen jobs runs 107
+  statements, 47 warm. Findings (each verified by the coordinator), all ACCEPTED:
+  - C1 `app.py:293-323`: the history cache keys endpoint names and the literals `fleet`/`jobs`
+    in one namespace; an endpoint named `fleet` makes `/api/fleet/history` answer the endpoint
+    shape. Fix: a typed key.
+  - R1 `read.py:484`: a 7 d history loads every probe row in the range (120,961 rows for 599
+    points, 861 ms) and `fleet_history` does it once per endpoint. Fix: rows read bounded by the
+    points answered, body identical.
+  - R2 `app.py:293`: the history cache never evicts and the range grammar admits 10,241
+    windows per key. Fix: only the five page ranges are cached.
+  - C2 `seed.py:81-92`: `seed --force` is accepted while a collector writes the database (a
+    monitor writes no `mcp_servers` row); the collector's cached ids then store probes on the
+    wrong endpoint (measured). Fix: refuse when a probe row is younger than 120 s.
+  - T1 `serve.db_file` and the `--db` / `monitor: db` overrides have no test; T2
+    `seed.parse_now`'s ISO branch has no test. Fix: tests.
+  - `read.py:124` docstring says the witness is backfilled at the v6 migration; serve does it.
+  - Possible, noted: a zero or negative probe interval writes no rate and no witness; a host
+    whose last probe is a stale up row reads `up` while its endpoints read dormant; two
+    monitors on one database are not refused (each probe written twice); `_Fanout.start`
+    re-homing; the history and finished caches are unlocked dicts across worker threads (wasted
+    work, not corruption).
+  Fold 3.9C-fix to DeepSeek/dgx1-a (ruling (a)), five rows small-first.
 - ☐ **3.9D The monitor's page**: `static/app.js`, `endpoint.js`, `job.js`, `app.css`,
   `index.html`, with `tests/test_monitor_page.py` and `tools/smoke/` (~2.9k).
 - ☑ **3.9E Query-plan audit** (coordinator 2026-10-30, the audit the 1.11 purge ruling names:
