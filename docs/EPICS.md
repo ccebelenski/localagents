@@ -1109,6 +1109,23 @@ The 3.7 chain's reviews are closed: no open defect.
   gfx 426 (heap-textures 312), network/cache2 189 with no 127.0.0.1 partition among the entries
   of 22 MB and up (the stream body is NOT accumulating in Firefox's HTTP cache), js-non-window
   126, profiler/lul 73. The monitor tab's own tree is the "Web Content (pid 2951858)" section.
+  The tab's tree (webIsolated=http://127.0.0.1, 576 MB explicit, resident-unique 661): 309 MB
+  window-objects of which **278 MB `dom/orphan-nodes`** (nodes out of the document but still
+  reachable from JS, so a GC cannot free them), the window's js-zone 11 MB, js-non-window 30 MB
+  (LastPass 10 MB, uBlock Origin 7.5 MB, Download Manager (S3) content-script realms in the same
+  process), heap-unclassified 233 MB, 78 listeners, 26 event targets. Nothing in the page's code
+  keeps a node: the per-push card, the old-cards map, the floor measurement's lines are locals
+  (`render`, `updateHostInPlace`, `raiseCardFloor`). Coordinator's probe, Firefox-side and
+  extension-free: `tools/smoke/ffmem.py` (raw Marionette, `nsIMemoryInfoDumper` with minimize, the
+  tab's process by its `top(` path) with `tools/smoke/churn.js` driving the three detaching paths
+  every 250 ms. Firefox 158, seeded world at refresh_s 0.5, four minutes, 960 churn renders +
+  1,692 pushes: orphan-nodes 0.0 MB, dom 0.2 MB, js 2.4 MB at every sample; resident-unique
+  21 → 55 MB flattening. Reading: the page retains no node in Firefox either; the 278 MB in the
+  operator's tab is held by something else in that process, and the content scripts are the
+  candidates (an extension that notes nodes it has scanned keeps every rebuilt subtree alive).
+  Not proven. The A/B that proves it: the same page held an hour in a Private Window (extensions
+  without private-browsing permission do not run there), then about:memory's orphan-nodes for
+  that window's process beside the normal tab's.
 
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 

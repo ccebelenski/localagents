@@ -44,7 +44,10 @@ is landed but still harness-locked; `git worktree remove -f -f` it when the lock
 - 3.7v: the job page labels "N tool errors" and "N request errors" side by side (the "2 vs 1").
 - 3.7u's consequence: the seeded world at 1400 px is ONE column (the ~120-char activity line sets
   the floor); the one-line follow-up is to leave the activity line out of the floor so it scrolls.
-- The Firefox tab's second memory reading (the page measured clean; 562 MB was the process).
+- 3.7w: the tab's 661 MB is 278 MB of `dom/orphan-nodes` in Firefox's own measure; the page
+  holds none of them in an extension-free Firefox under churn (`tools/smoke/ffmem.py` +
+  `churn.js`, 960 rebuilds, 0.0 MB). The candidates are the content scripts in that process
+  (LastPass, uBlock Origin, Download Manager S3); the Private-Window A/B is the operator's.
 - Open items named, not shaped: database purge; an analytics path; fleet history serial per
   endpoint (~2 s cold for five dense 7 d endpoints).
 - The retrospective for the 3.7 + 3.9 arc (ANAS shape, `docs/retros/`) when the operator closes

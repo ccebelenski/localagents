@@ -91,3 +91,19 @@ job's elapsed changed (`path.inPlace` 1) and lists the nodes `replaced`. Both `r
 empty. 3.7u-fix P-2 fold: before, `pushes.replaced` held "endpoint dgx1-a" at 900 px and
 `inPlace.replaced` held "endpoint ai1", "endpoint dgx1-a" and "head ai9" at both widths; after, [] and
 [] with `kept` 6 and 8.
+
+## ffmem.py + churn.js: the Firefox side of 3.7w (orphan nodes)
+
+`python3 tools/smoke/ffmem.py <url> <seconds> [every_s=60] [--js tools/smoke/churn.js]` launches the
+workstation's Firefox headless on a fresh, extension-free profile (raw Marionette on port 2829, no
+geckodriver), opens the page and every `every_s` takes about:memory's "Minimize memory usage" +
+"Measure" reading of the tab's content process through `nsIMemoryInfoDumper`: `dom/orphan-nodes` MB
+(nodes out of the document but still reachable from JS — the thing a GC cannot free), DOM total,
+JS, derived heap-unclassified, resident-unique, and the page's render count. The dumps stay under
+`t/ff/memory-<n>.json.gz` for about:memory's "Load". `--js churn.js` renders two alternating
+hand-edited snapshots every 250 ms (a host card torn down and rebuilt, every endpoint's "active …"
+sub-block swapped in place, the jobs table rebuilt), the three paths that detach nodes.
+2026-10-30, Firefox 158, seeded world at refresh_s 0.5, four minutes: 960 churn renders + 1,692
+pushes → orphan 0.0 MB, dom 0.2 MB, js 2.4 MB throughout; resident-unique 21 → 55 MB (Firefox's
+own warm-up, flattening). The operator's tab held 278 MB of orphan nodes with LastPass, uBlock
+Origin and Download Manager (S3) content scripts in the same process.
