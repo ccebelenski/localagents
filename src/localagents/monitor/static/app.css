@@ -314,3 +314,10 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .requests-table tr.req-ctx td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
 .requests-table tr.req-err td { color: inherit; }
 .requests-table tr.req-err td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
+
+/* 3.7-fold-3 + 3.7r */
+/* 3.7s page half: the last-active phrase at the right end of the live head line, muted. One
+   line whatever the model id (the fold-1 height invariant): if a long model plus this phrase
+   will not share the head's first line, ellipsise it rather than grow the card (measured at
+   the 360 px card in the browser smoke). */
+.endpoint.state-live .ep-active { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 12em; }

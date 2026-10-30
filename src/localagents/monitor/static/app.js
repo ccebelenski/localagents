@@ -5,7 +5,8 @@
  * decode sparklines and the state strips' segments need history: on a snapshot the page
  * re-fetches /api/fleet/history (one call for the whole fleet) and each live endpoint's
  * /api/endpoints/<name>/history (for its `state` series; the strip's current word is the
- * snapshot's own `probe_state`, never a point of the series) at most once every 5 s. While a
+ * snapshot's own `probe_state`, never a point of the series) at most once per `refresh_s`
+ * (3.7-fold-3: the interval follows the snapshot's own clock). While a
  * detail page is open the overview is hidden and fetches nothing; it fetches once on return.
  *
  * The JSON is the contract in docs/superpowers/specs/2026-10-29-monitor-design.md §5a; every
@@ -24,7 +25,11 @@
   var RANGES = ["15m", "1h", "6h", "24h", "7d"];
   var DEFAULT_RANGE = "1h";
   var RANGE_STORE_KEY = "localagents.monitor.range";
-  var HISTORY_MIN_INTERVAL_MS = 5000; // fleet and strip history: at most one fetch per 5 s
+  // 3.7-fold-3 (3.7m): the history fetch follows the snapshot's own clock — `refresh_s`, the
+  // fan-out's push period — floored at 1 s so a tiny server setting cannot make the page hammer
+  // it. HISTORY_MIN_INTERVAL_MS stays the default until the first snapshot sets it.
+  var HISTORY_MIN_INTERVAL_DEFAULT_MS = 5000;
+  var HISTORY_MIN_INTERVAL_MS = HISTORY_MIN_INTERVAL_DEFAULT_MS;
   var RECONNECT_MIN_MS = 1000;
   var RECONNECT_MAX_MS = 30000;
 
@@ -190,6 +195,15 @@
   // every tile that ignores it. The peak label shows it at each sparkline's right edge (the
   // same text on every card); each card's aria-label keeps its own in-range peak.
   var sparkScale = 1;
+
+  // 3.7-fold-3 (3.7m page half): the skip comparison (serialise-minus-`now` of the last
+  // rendered snapshot, tagged with the history generation so the post-history render still
+  // runs), and the render counters the browser smoke reads: `full` = at least one host card
+  // rebuilt, `inPlace` = a changed snapshot whose cards were all kept and only sub-blocks
+  // swapped, `skipped` = a snapshot whose content equalled the last one's
+  var snapSig = null;
+  var historyGen = 0;
+  var renders = { full: 0, inPlace: 0, skipped: 0 };
 
   function computeSparkScale(snap) {
     var span = rangeSeconds(state.histRange || state.range);
@@ -484,12 +498,16 @@
 
   function liveEndpoint(snap, ep) {
     var rates = ep.rates || {};
+    var act = activeInfo(ep, snap);
     return h("div", { class: "endpoint state-live", "data-endpoint": ep.name }, [
       // the state dot (3.7f): the first thing on the head; the down/dormant kinds take the
       // same span with their variant (their CSS lives here too — see the 3.7d-f block)
       h("div", { class: "ep-head" }, [h("span", { class: "sdot sdot-live", "aria-hidden": "true" }),
         endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
-        ep.model ? h("span", { class: "ep-model", title: ep.model, text: shortModel(ep.model) }) : null]),
+        ep.model ? h("span", { class: "ep-model", title: ep.model, text: shortModel(ep.model) }) : null,
+        // 3.7-fold-3 (3.7s page half): the last-active phrase at the right of the head line;
+        // down/dormant endpoints keep their "last seen" lines and gain nothing here
+        h("span", { class: "ep-active muted", title: act.title || null, text: act.text })]),
       stateStrip(ep, snap.now),
       fieldGrid(snap, ep),
       rates.reason ? h("div", { class: "ep-note muted", text: "speeds: " + rates.reason }) : null,
@@ -647,8 +665,128 @@
 
   // --- render: the snapshot into the DOM, in place -------------------------------------------
 
+  // 3.7m page half (3.7-fold-3): a snapshot identical to the last rendered one in everything
+  // but `now` — the serialise-minus-now comparison — redraws nothing. `state.snap` still takes
+  // the new object (fmt.ago and the strips read its `now`). "Ago" freshness on the skip path:
+  // a cheap per-push text refresh (refreshAgoTexts below) — one querySelector per endpoint, no
+  // sub-block rebuilt — so the last-active and last-seen phrases keep pace with the pushes
+  // without costing a render. historyGen rides in the comparison so the post-history render
+  // still runs when only a history fetch changed the picture (its strips and sparklines).
+  function withoutNow(snap) {
+    var copy = Object.assign({}, snap);
+    delete copy.now;
+    return copy;
+  }
+
+  // the header's snapshot time (3.7r): the time half of the one conn phrase — while the stream
+  // is up the label reads "updated HH:MM:SS" and moves with every snapshot; while it is down
+  // the phrase keeps the last update's time and render does not touch it (setConnected drew it)
+  function setUpdatedLine(snap) {
+    if (streamUp) byId("conn-label").textContent = "updated " + fmt.time(snap.now);
+  }
+
+  // refresh the clock-relative phrases in place (the skip path): last-active on live heads,
+  // last-seen on down heads; dormant lines hold an absolute date and never go stale
+  function refreshAgoTexts(snap) {
+    var hosts = byId("hosts");
+    snap.hosts.forEach(function (host) {
+      host.endpoints.forEach(function (ep) {
+        var name = ep.name; // the selector is built from a local, not an `ep.` chain
+        var sel = '.endpoint[data-endpoint="' + name.replace(/["\\]/g, "\\$&") + '"] ';
+        var act = hosts.querySelector(sel + ".ep-active");
+        if (act) {
+          var info = activeInfo(ep, snap);
+          act.textContent = info.text;
+          if (info.title) act.setAttribute("title", info.title);
+          else act.removeAttribute("title");
+        }
+        var seen = hosts.querySelector(sel + ".ep-seen");
+        if (seen) {
+          seen.textContent = ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "";
+        }
+      });
+    });
+  }
+
+  // 3.7m page half (3.7-fold-3): what identifies a host card for the in-place update — the
+  // host's own state plus its endpoint list (names and states, in order). Same signature: keep
+  // the element; anything changed, or a new host: rebuild as before. A hidden never-seen
+  // endpoint only disappears via a host-state flip, which is in the signature, so the drawn
+  // children match whenever the signatures do.
+  function hostSignature(host) {
+    var parts = [host.name, host.state];
+    host.endpoints.forEach(function (ep) { parts.push(ep.name + "\x00" + ep.state); });
+    return parts.join("\x01");
+  }
+
+  // keep one endpoint element: swap only the sub-blocks whose rendering changed. Guard: the
+  // children must line up one-for-one (same count, same classes) — otherwise swap the whole
+  // endpoint element, still inside the kept host card. outerHTML compare is conservative: a
+  // DOM re-serialisation difference (attribute order, colour form) means one extra swap, never
+  // a missed one; node identity is kept at the endpoint and host level, which is what the
+  // hover state and the smoke's identity probe rest on.
+  function swapEndpointSubBlocks(oldEp, newEp) {
+    if (oldEp.children.length !== newEp.children.length) return false;
+    var i;
+    for (i = 0; i < newEp.children.length; i++) {
+      if (oldEp.children[i].className !== newEp.children[i].className) return false;
+    }
+    var newKids = Array.prototype.slice.call(newEp.children);
+    for (i = 0; i < newKids.length; i++) {
+      if (oldEp.children[i].outerHTML !== newKids[i].outerHTML) oldEp.replaceChild(newKids[i], oldEp.children[i]);
+    }
+    return true;
+  }
+
+  // one host card, kept: head and endpoint blocks compared by position (the signature says the
+  // lists match). Returns whether anything swapped.
+  function updateHostInPlace(oldCard, newCard) {
+    var changed = false;
+    var oldHead = oldCard.querySelector(".host-head");
+    var newHead = newCard.querySelector(".host-head");
+    if (oldHead && newHead && oldHead.outerHTML !== newHead.outerHTML) {
+      oldCard.replaceChild(newHead, oldHead);
+      changed = true;
+    }
+    var oldEls = Array.prototype.slice.call(oldCard.querySelectorAll(".endpoint"));
+    var newEls = Array.prototype.slice.call(newCard.querySelectorAll(".endpoint"));
+    for (var i = 0; i < newEls.length; i++) {
+      if (oldEls[i].outerHTML === newEls[i].outerHTML) continue;
+      if (!swapEndpointSubBlocks(oldEls[i], newEls[i])) oldCard.replaceChild(newEls[i], oldEls[i]);
+      changed = true;
+    }
+    return changed;
+  }
+
+  // 3.7s page half: the endpoint's last-active phrase (3.7-fold-3). Null reads "no activity
+  // recorded": 3.7s's record wrote "no activity in 7d", but fold-2 noticed the witness is not
+  // pruned with the probes, so a retention figure in the words can be a lie — the brief's
+  // wording stands. Past 24 h the date form; the absolute time rides in the title either way.
+  // The text is split from the span so a skipped render can refresh just the text (below).
+  function activeInfo(ep, snap) {
+    if (ep.last_active == null) return { text: "no activity recorded", title: "" };
+    if (snap.now - ep.last_active > 86400) {
+      return { text: "active " + fmt.date(ep.last_active), title: fmt.date(ep.last_active) };
+    }
+    return { text: "active " + fmt.ago(ep.last_active, snap.now), title: fmt.date(ep.last_active) };
+  }
+
   function render(snap) {
     state.snap = snap;
+    // 3.7-fold-3: the refresh interval comes from the snapshot (the one refresh master, decided
+    // in 3.7m): history fetches follow `refresh_s`, floored at 1 s. Set on every render,
+    // including a skipped one, before anything reads it.
+    if (typeof snap.refresh_s === "number" && isFinite(snap.refresh_s)) {
+      HISTORY_MIN_INTERVAL_MS = Math.max(1000, snap.refresh_s * 1000);
+    }
+    var sig = historyGen + " " + JSON.stringify(withoutNow(snap));
+    if (sig === snapSig) {
+      renders.skipped++;
+      setUpdatedLine(snap);
+      refreshAgoTexts(snap);
+      return;
+    }
+    snapSig = sig;
     state.order = {};
     var i = 0;
     snap.hosts.forEach(function (host) {
@@ -662,15 +800,45 @@
       meta.push(h("span", { class: "db", title: snap.db_path, text: "database " + snap.db_path }));
     }
     byId("meta").replaceChildren.apply(byId("meta"), meta);
-    byId("updated").textContent = "snapshot " + fmt.time(snap.now);
-    var cards = [];
+    setUpdatedLine(snap);
+    // 3.7m page half (3.7-fold-3): cards are keyed by host name, not rebuilt wholesale. A card
+    // whose signature (host state, endpoint names and states in order) is unchanged keeps its
+    // element and its endpoint elements; only the sub-blocks whose rendering changed swap. A
+    // changed list/state, or a new host, rebuilds as before; a gone host is removed; an order
+    // change moves elements without rebuilding. The jobs table keeps replaceChildren (a table,
+    // cheap, no hover state the operator loses mid-row the way cards have).
     var hidden = [];
+    var hostsEl = byId("hosts");
+    var oldCards = {};
+    Array.prototype.slice.call(hostsEl.children).forEach(function (el) { oldCards[el.dataset.host] = el; });
+    var rebuilt = false;
+    var wanted = [];
     snap.hosts.forEach(function (host) {
       host.endpoints.forEach(function (ep) {
         if (neverSeenOn(host, ep)) hidden.push(ep.name); // config order: hosts then endpoints
       });
-      var card = hostCard(snap, host);
-      if (card) cards.push(card);
+      var el = oldCards[host.name];
+      var sig = hostSignature(host);
+      if (el && el.dataset.sig === sig) {
+        updateHostInPlace(el, hostCard(snap, host));
+      } else {
+        el = hostCard(snap, host);
+        if (el) el.dataset.sig = sig;
+        if (el || oldCards[host.name]) rebuilt = true; // built, replaced or gone; never-seen-and-still-seen is nothing
+      }
+      if (el) {
+        wanted.push(el);
+        delete oldCards[host.name];
+      }
+    });
+    Object.keys(oldCards).forEach(function (name) {
+      hostsEl.removeChild(oldCards[name]);
+      rebuilt = true;
+    });
+    var cursor = hostsEl.firstChild; // reorder to the snapshot's order, moving kept elements
+    wanted.forEach(function (el) {
+      if (el === cursor) cursor = cursor.nextSibling;
+      else hostsEl.insertBefore(el, cursor);
     });
     var hiddenLine = byId("hosts-hidden");
     if (hidden.length) {
@@ -681,11 +849,11 @@
       hiddenLine.hidden = true;
       hiddenLine.textContent = "";
     }
-    byId("hosts").replaceChildren.apply(byId("hosts"), cards);
+    renders[rebuilt ? "full" : "inPlace"]++;
     byId("jobs-body").replaceChildren(jobsTable(snap));
   }
 
-  // --- history: the fleet route and each live endpoint's history, at most once per 5 s -------
+  // --- history: the fleet route and each live endpoint's history, once per refresh_s ---------
 
   function getJSON(url) {
     return fetch(url, { cache: "no-store" }).then(function (r) {
@@ -723,8 +891,9 @@
     return out;
   }
 
-  // ask for fresh history; a call inside 5 s of the last fetch is deferred to the 5 s mark
-  // (one timer, however many snapshots arrive meanwhile)
+  // ask for fresh history; a call inside HISTORY_MIN_INTERVAL_MS (the snapshot's refresh_s,
+  // 3.7-fold-3) of the last fetch is deferred to that mark (one timer, however many snapshots
+  // arrive meanwhile)
   function scheduleHistory(force) {
     if (force) refresh.last = 0;
     // behind a detail page the overview's charts, sparklines and strips are not on screen: no
@@ -749,6 +918,8 @@
       state.fleetRange = range;
       state.hists = body.endpoints || {};
       state.histRange = range;
+      historyGen++; // the strips and sparklines draw from these: the snapshot alone may not
+                    // have changed, but the picture has — the next render must not skip
       charts.update(state.fleet);
       if (state.snap) render(state.snap);
     }).catch(function (e) {
@@ -889,10 +1060,27 @@
   }
   function clearBanner() { byId("banner").hidden = true; }
 
+  // 3.7r: one phrase, not a status word beside a separate time. Green dot + "updated HH:MM:SS"
+  // while the stream is open (the time advances with each push, so staleness shows without
+  // looking away); red dot + "connection lost, last update HH:MM:SS" while reconnecting, the
+  // last snapshot's time kept. No "live" in the header: the old label claimed a fleet meaning
+  // it never had (operator: "Does that green dot and label 'live' actually mean anything?").
+  // Before the first snapshot there is no time to show: "connecting" (stream opening or
+  // already dropped with nothing yet to remember). setConnected sets the FORM (the stream's
+  // up/down and its words), render's setUpdatedLine moves the TIME while the stream is up.
+  var streamUp = false;
+
+  function connPhrase() {
+    if (state.snap == null) return "connecting";
+    if (streamUp) return "updated " + fmt.time(state.snap.now);
+    return "connection lost, last update " + fmt.time(state.snap.now);
+  }
+
   function setConnected(up) {
+    streamUp = up;
     var c = byId("conn");
     c.className = "conn " + (up ? "conn-up" : "conn-down");
-    byId("conn-label").textContent = up ? "live" : "reconnecting";
+    byId("conn-label").textContent = connPhrase();
   }
 
   var stream = { source: null, delay: RECONNECT_MIN_MS, timer: null };
@@ -1113,6 +1301,7 @@
     range: range,
     state: state,
     requestsTable: requestsTable, // 3.7k: the one renderer both request logs draw through
+    renders: renders, // 3.7-fold-3 smoke: {full, inPlace, skipped} counts of render passes
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

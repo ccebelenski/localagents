@@ -46,7 +46,9 @@ const probe = `(() => {
     conn: document.getElementById('conn').className + ' / ' + document.getElementById('conn-label').textContent,
     hiddenLine: (document.getElementById('hosts-hidden')||{}).textContent || null,
     meta: document.getElementById('meta').textContent,
-    updated: document.getElementById('updated').textContent,
+    // 3.7r: #updated is gone from the header (the phrase moved into #conn-label); the field
+    // stays valid by reading the new text
+    updated: document.getElementById('conn-label').textContent,
     banner: document.getElementById('banner').hidden ? null : document.getElementById('banner').textContent,
     strips: q('.strip').map(s => s.children.length),
     stripNow: q('.strip-now').map(s => s.textContent),
@@ -82,6 +84,15 @@ const probe = `(() => {
     detail: document.getElementById('detail').hidden ? null : document.getElementById('detail').textContent.replace(/\\s+/g,' ').trim(),
     overviewHidden: document.getElementById('overview').hidden,
     scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth,
+    // 3.7-fold-3 + 3.7r: the render counters; the last-active texts on live heads; the one
+    // header phrase; and a stamp on the first live endpoint element — re-probing keeps the
+    // same number only while the page keeps that very DOM node (in-place updates), a rebuilt
+    // card loses the expando (it is a property, never an attribute, so the HTML compares miss
+    // it by design)
+    renders: localagentsMonitor.renders,
+    activeTexts: q('.ep-active').map(e => e.textContent),
+    connText: document.getElementById('conn-label').textContent,
+    cardNodeId: (function () { var e = document.querySelector('.endpoint.state-live'); if (!e.__id) e.__id = Math.random(); return e.__id; })(),
   });
 })()`;
 let r = await send("Runtime.evaluate", { expression: probe, returnByValue: true });

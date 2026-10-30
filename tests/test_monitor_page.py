@@ -99,7 +99,9 @@ SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant"
                  "ep-ctx", "spark-peak", "spark-wrap", "strip-range",
                  # 3.7g: the status pill in the Recent jobs log (the pill-<status> colour
                  # variants are styled too, but the smoke reads the pill by its word)
-                 "pill"]
+                 "pill",
+                 # 3.7-fold-3 (3.7s page half): the last-active phrase on the live head line
+                 "ep-active"]
 # the classes the job page's smoke names (story 3.4's brief): the page root and its sections,
 # the status classes the header's mark takes (a queued job takes one more, styled but not
 # smoked)
