@@ -899,7 +899,7 @@ now goes red. NOTICED: a superseded cache key for an id still in the tail is nev
 (unreachable through the store); `requestsTable` without `opts.now` dates even just-now rows
 (both call sites pass a clock); at a 200-char job name every figure clips behind it (fold-6).
 The 3.7 chain's reviews are closed: no open defect.
-- ☐ **3.7-fold-6 The card's job line leads with what matters.** Proposed, operator decides: the
+- ☒ **3.7-fold-6 The card's job line leads with what matters.** SUPERSEDED by 3.7u (operator 2026-10-30: no ellipsis at all). Was proposed: the
   name shortened to its id tail ("…4b27af51", the full name in the link's title; the table and
   the timeline keep the full name), then elapsed, the ctx bar + %, t/s, the errors badge; calls
   and files last, so the ellipsis cuts counts, never the fill. Same two-line, fixed-height row.
@@ -925,6 +925,34 @@ The 3.7 chain's reviews are closed: no open defect.
   empty JSON body and writes no row (the spec's row is "one row per backend request the shim
   forwarded", schema spec line 69); the page labels the hello rows already in history as the
   handshake. One story; operator decides.
+
+- **Operator, 2026-10-30, after the first live jobs on the landed page (for the retro):** "Much
+  improved UI experience, I like the timeline now." "The cards sizing is better, but could still
+  be improved."
+- ☐ **3.7u No ellipsis on the cards: the card grows to its widest text and keeps that width.**
+  Operator: "I don't like the '...' convention because it hides information - either set a
+  minimum card width that can accomodate the widest text, or dynamically size the card to not
+  truncate (and use that as min size so it can't shrink below that high water mark). We get
+  fewer cards horizontally, but more complete information." Coordinator's reading: the grid is
+  `repeat(auto-fill, minmax(360px, 1fr))` (`app.css:72`); the model id line and the job rows
+  truncate with `text-overflow: ellipsis` (`app.css:49`, `:104`). The story: the card's minimum
+  column width is computed from its content (the widest head, tile and job line), applied as
+  the grid's minmax floor and raised but never lowered during the page's life (the high-water
+  mark, so the no-jump rule holds); no `text-overflow: ellipsis` on any card text. Fewer
+  columns is accepted.
+- ☐ **3.7v "tool errors" 2 when the job page shows 1 error.** Operator: "tool errors sometimes
+  shows a count of 2 when the job only shows 1 error returned (often the /api/hello we will
+  adress) - this could also be related to your earlier fix on dedupe." Coordinator's reading
+  over the database (ten newest jobs): the table's count is tool RESULTS flagged `is_error`
+  (`derive.error_count`, the `tool_calls` table; the jobs showing 2 have exactly two such rows,
+  both Bash), while the one red pill on the job page is the `/api/hello` REQUEST (one row of
+  status 501 per job, `requests` table): two different counts of two different things, both
+  right, badly told. Not the dedup fix (that touched `wait_jobs`'s answer, nothing stored). The
+  job page's own per-tool table sums the same column as the "tool errors" cell, so those two
+  agree. Resolution: 3.7t removes the handshake pill; this story makes the job page say "N tool
+  errors" and "N request errors" in words beside each other, and the overview column keeps its
+  "tool errors" title. If the operator ever sees the per-tool table disagree with the column, the
+  job name is what reproduces it.
 
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
@@ -978,7 +1006,46 @@ ruling (e). The lane is also the operator's first live job on the landed page.
   the job's own `timeout_s` is the backstop); the synchronous sqlite writes on the event loop are
   the spec's known choice; a task cancelled before its first step skips an in-body
   `except CancelledError` (a probe-harness fact, unreachable through `run_agent`).
-- ☐ **3.9B Jobs and storage**: `runner.py`, `jobs.py`, `db.py`, `derive.py` (~1.7k).
+- ☑ **3.9B Jobs and storage**: `runner.py`, `jobs.py`, `db.py`, `derive.py` (~1.7k). Qwen/ai1 job
+  20261030-124622-eaa27899, 44 turns, 9 min; four probes (23 assertions, re-run green by the
+  coordinator under a scratch state directory), src/ and tests/ untouched, report `t/REVIEW.md`
+  on branch `local-agent/20261030-124622-eaa27899`. Clean: v1→v6 migration parity, the two-process
+  `lookup_id` race converging on one row, the liveness sweep, gen_ms-0 span fallback,
+  `summary_from_row` key-for-key with `Job.summary()`.
+  Findings and disposition (each verified by the coordinator at the cited lines):
+  - B1 (correctness, minor) `runner.py:167-178`: a kept tree whose only change is an untracked
+    file has a `diffstat` naming it while the note's "Review with: git diff <base>" shows nothing.
+    ACCEPTED: the note's instruction adds `status --short`.
+  - B2 (correctness, minor) `runner.py:145`: a worktree directory deleted while the job runs
+    makes `finish_worktree` raise FileNotFoundError, so the JSON never gains `kept`/`note`.
+    ACCEPTED: a missing directory is recorded (`kept: False`, a note, `worktree prune`), the
+    branch left for the user.
+  - B3 (contract drift) `runner.py:312-313` vs `derive.py:151` and the schema spec line 135: a
+    cancel absorbed during the worktree step leaves the in-process `run_cwd` at the original cwd
+    while the row derives the tree's path. ACCEPTED: `run_cwd` is set where the tree is recorded.
+  - Possible (declined, noted): `record_request` KeyError on a record without `path`/`t` (the
+    shim always sets both); a duplicate `tool_use_id` strands a row (the SDK names calls
+    uniquely); `transcript_tail(-1)` (guarded at the tool layer); a foreign worktree JSON without
+    `repo`/`root` (the code only ever writes them).
+  Fold 3.9B-fix: the three rules to Qwen/ai1 (ruling (a): the reviewer fixes its own verified
+  findings, test first); the fix rides the cross-model review of the 3.9 folds.
+  **Incident (process, not code).** The lane's words: "my first run of `test_prune_days_zero_disables`
+  forgot the monkeypatch fixture, so `state_dir()` resolved to the real
+  `~/.local/state/localagents/jobs` and the in-test control `prune(1)` deleted its directories
+  older than one day — 66 job directories, ~20261023 through 20261029-12:54 … their database rows
+  are untouched … a probe-hygiene failure on my side, not a code finding." Inventory by the
+  coordinator: 19 database jobs (20261029-110844 to 20261029-124353) lost their directories
+  (transcripts; the job page now says "transcript pruned or never written" for them); the 47
+  older directories were pre-database, file-only records of jobs from other projects; no backup
+  exists. Operator: "On the door D incident, okay what was done is done - the data is still
+  development data, and only operational so nothing valuable was lost." (The incident was door
+  B's; door D runs on ai2.) Cause: probe files live under `t/`, outside `tests/`, so the suite's
+  `tests/conftest.py` redirect of the state directory never applied to them; the brief told the
+  lane to copy that shape and one test forgot. Fix (structural, not a reminder): `t/conftest.py`
+  is now a committed file with the same autouse redirect (`.gitignore` keeps `t/*` ignored and
+  re-includes that one file), so every worktree carries the net from its first probe; the
+  coordinator wrote it into the running 3.9C and 3.9D worktrees before either ran a probe. Retro
+  candidate: "a probe outside tests/ runs without the suite's safety net".
 - ☐ **3.9C The monitor's server**: `monitor/app.py`, `read.py`, `collect.py`, `serve.py`,
   `state.py`, `config.py`, `rows.py`, `rates.py`, `ranges.py`, `retention.py`, `jobs.py`,
   `seed.py` (~2.9k).
