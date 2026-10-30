@@ -29,7 +29,7 @@ from localagents.monitor import app as app_mod
 from localagents.monitor import serve as serve_mod
 from localagents.monitor.config import MonitorSettings
 
-from monitor_seeded import NOW, registry, seed_file, write_config
+from monitor_seeded import NOW, endpoint_id, registry, seed_file, write_config
 
 _SRC = Path(__file__).resolve().parent.parent / "src"
 
@@ -41,8 +41,11 @@ def dbpath(tmp_path):
     return p
 
 
-def _app(dbpath, tmp_path, tick=None, **kw):
-    return app_mod.make_app(lambda: db.open_db(dbpath), registry(tmp_path), MonitorSettings(),
+def _app(dbpath, tmp_path, tick=None, refresh_s=0.1, **kw):
+    # story 3.7m: the fan-out coalesces ticks into one push per refresh period; the stream tests
+    # use a short period so a test's tick need not wait the production 5 s
+    return app_mod.make_app(lambda: db.open_db(dbpath), registry(tmp_path),
+                            MonitorSettings(refresh_s=refresh_s),
                             tick or asyncio.Event(), now=lambda: NOW, db_path=dbpath, **kw)
 
 
@@ -345,7 +348,10 @@ def _event(chunk):
     return lines[0][len("event: "):], json.loads(lines[1][len("data: "):])
 
 
-def test_the_stream_sends_a_snapshot_on_connect_and_one_per_tick(dbpath, tmp_path):
+def test_the_stream_sends_a_snapshot_on_connect_and_one_per_refresh_period(dbpath, tmp_path):
+    """Story 3.7m: the collector's tick no longer wakes a stream by itself; the fan-out's clock
+    waits its refresh period for the round to settle, then pushes once. Nothing is sent between
+    pushes."""
     async def main():
         tick = asyncio.Event()
         app = _app(dbpath, tmp_path, tick)
@@ -357,6 +363,7 @@ def test_the_stream_sends_a_snapshot_on_connect_and_one_per_tick(dbpath, tmp_pat
         assert name == "snapshot"
         assert [h["name"] for h in body["hosts"]] == ["ai1", "dgx1", "local"]
         assert body["jobs"][0]["tool_calls"] == 50
+        assert body["refresh_s"] == 0.1
         # nothing more until the collector ticks
         with pytest.raises(TimeoutError):
             await s.next_chunk(timeout=0.2)
@@ -364,6 +371,28 @@ def test_the_stream_sends_a_snapshot_on_connect_and_one_per_tick(dbpath, tmp_pat
         name, body = _event(await s.next_chunk())
         assert name == "snapshot" and len(body["hosts"]) == 3
         assert not tick.is_set()  # the fan-out consumed it
+        with pytest.raises(TimeoutError):  # and no second push without a fresh tick
+            await s.next_chunk(timeout=0.15)
+        await s.close()
+    asyncio.run(main())
+
+
+def test_ticks_inside_one_refresh_period_are_one_push(dbpath, tmp_path):
+    """Story 3.7m's timing test: three ticks inside one period (0.2 s) coalesce into exactly one
+    snapshot after the first; a tick does not extend the period or earn a push of its own."""
+    async def main():
+        tick = asyncio.Event()
+        app = _app(dbpath, tmp_path, tick, refresh_s=0.2)
+        s = _Stream(app)
+        assert _event(await s.next_chunk())[0] == "snapshot"  # the immediate connect snapshot
+        tick.set()
+        await asyncio.sleep(0.05)
+        tick.set()
+        await asyncio.sleep(0.05)
+        tick.set()  # three ticks inside the first period
+        assert _event(await s.next_chunk(timeout=1.0))[0] == "snapshot"  # exactly one push
+        with pytest.raises(TimeoutError):  # and none of the coalesced ticks earns a second
+            await s.next_chunk(timeout=0.15)
         await s.close()
     asyncio.run(main())
 
@@ -384,6 +413,159 @@ def test_one_tick_reaches_every_open_stream(dbpath, tmp_path):
     asyncio.run(main())
 
 
+def test_the_snapshot_is_read_once_per_push_and_shared(dbpath, tmp_path):
+    """Story 3.7p: every subscriber of one push receives the same bytes from ONE read. The
+    second stream to connect in the same push opens no connection; a push opens one more for
+    both streams together, not one each."""
+    opened = []
+
+    def factory():
+        conn = db.open_db(dbpath)
+        opened.append(conn)
+        return conn
+
+    async def main():
+        tick = asyncio.Event()
+        app = app_mod.make_app(factory, registry(tmp_path), MonitorSettings(refresh_s=0.05),
+                               tick, now=lambda: NOW, db_path=dbpath)
+        a = _Stream(app)
+        _, first = _event(await a.next_chunk())
+        after_a = len(opened)
+        b = _Stream(app)
+        _, second = _event(await b.next_chunk())
+        assert second == first                        # the same snapshot, not a second read
+        assert len(opened) == after_a                 # the connect read was shared
+        tick.set()
+        assert _event(await a.next_chunk())[0] == "snapshot"
+        assert _event(await b.next_chunk())[0] == "snapshot"
+        assert len(opened) == after_a + 1             # one read for the push, not one per stream
+        await a.close()
+        await b.close()
+    asyncio.run(main())
+
+
+def test_snapshot_route_serves_the_current_push_from_its_cache(dbpath, tmp_path):
+    """Story 3.7p: the same cache answers /api/snapshot while its push is current; a second
+    call in that push computes nothing."""
+    opened = []
+
+    def factory():
+        conn = db.open_db(dbpath)
+        opened.append(conn)
+        return conn
+
+    app = app_mod.make_app(factory, registry(tmp_path), MonitorSettings(), asyncio.Event(),
+                           now=lambda: NOW, db_path=dbpath)
+    with TestClient(app) as c:
+        first = c.get("/api/snapshot")
+        assert first.status_code == 200
+        assert len(opened) == 1
+        second = c.get("/api/snapshot")
+        assert second.status_code == 200 and second.json() == first.json()
+        assert len(opened) == 1
+
+
+def test_overview_history_batches_the_fleet_and_each_live_endpoint(client):
+    """Story 3.7p: one call carries the fleet grid and every live endpoint's own history; the
+    live set is the snapshot's classification (ai1 only in the seeded world)."""
+    body = client.get("/api/overview/history?range=1h").json()
+    assert set(body) == {"fleet", "endpoints"}
+    assert set(body["endpoints"]) == {"ai1"}
+    assert body["fleet"] == client.get("/api/fleet/history?range=1h").json()
+    assert body["endpoints"]["ai1"] == client.get("/api/endpoints/ai1/history?range=1h").json()
+    assert client.get("/api/overview/history?range=nope").status_code == 400
+
+
+def test_history_is_cached_until_a_new_probe(dbpath, tmp_path):
+    """Story 3.7p: a second request in the same probe generation is a cache hit (only the
+    id/newest-t statement pair runs); a new probe changes the key and recomputes."""
+    stmts: list[str] = []
+
+    def factory():
+        conn = db.open_db(dbpath)
+        conn.set_trace_callback(stmts.append)
+        return conn
+
+    app = app_mod.make_app(factory, registry(tmp_path), MonitorSettings(), asyncio.Event(),
+                           now=lambda: NOW, db_path=dbpath)
+    with TestClient(app) as c:
+        first = c.get("/api/endpoints/ai1/history?range=1h").json()
+        stmts.clear()
+        second = c.get("/api/endpoints/ai1/history?range=1h").json()
+        assert second == first
+        assert len(stmts) == 2  # the endpoints read and the grouped MAX(t): the cache hit
+        conn = db.open_db(dbpath)
+        try:
+            with db.immediate(conn):
+                conn.execute("INSERT INTO probes (t, endpoint_id, up) VALUES (?, ?, 1)",
+                             (NOW + 5, endpoint_id(conn, "ai1")))
+        finally:
+            conn.close()
+        stmts.clear()
+        third = c.get("/api/endpoints/ai1/history?range=1h").json()
+        assert third == first  # the future probe is outside the range's answer
+        assert len(stmts) > 2  # but it is a new generation: the body was recomputed
+
+
+def _statements_during_one_push(dbpath, tmp_path, streams_n):
+    """The SQL statements executed across every connection during ONE push with ``streams_n``
+    subscribed streams (the connect snapshots' work is cleared away first)."""
+    stmts: list[str] = []
+
+    def factory():
+        conn = db.open_db(dbpath)
+        conn.set_trace_callback(stmts.append)
+        return conn
+
+    async def main():
+        tick = asyncio.Event()
+        app = app_mod.make_app(factory, registry(tmp_path), MonitorSettings(refresh_s=0.05),
+                               tick, now=lambda: NOW, db_path=dbpath)
+        streams = [_Stream(app) for _ in range(streams_n)]
+        for s in streams:
+            assert _event(await s.next_chunk())[0] == "snapshot"
+        stmts.clear()
+        tick.set()
+        for s in streams:
+            assert _event(await s.next_chunk())[0] == "snapshot"
+        await asyncio.sleep(0.05)  # let the losing subscriber take the cached answer
+        for s in streams:
+            await s.close()
+        return len(stmts)
+    return asyncio.run(main())
+
+
+def test_one_push_reads_the_snapshot_once_however_many_subscribers(dbpath, tmp_path):
+    """Story 3.7p's evidence: a push's database work is shared, so two subscribers cost the
+    same statements as one (the numbers are recorded in the story report)."""
+    one = _statements_during_one_push(dbpath, tmp_path, 1)
+    two = _statements_during_one_push(dbpath, tmp_path, 2)
+    assert one > 0
+    assert two == one
+
+
+def test_overview_history_warm_call_is_the_two_key_statements(dbpath, tmp_path):
+    """Story 3.7p's evidence: the first /api/overview/history call computes the snapshot (for
+    the live set) and the histories; the second, with no new probe, is two statements — the
+    configured-endpoint read and the grouped MAX(t) that key the caches."""
+    stmts: list[str] = []
+
+    def factory():
+        conn = db.open_db(dbpath)
+        conn.set_trace_callback(stmts.append)
+        return conn
+
+    app = app_mod.make_app(factory, registry(tmp_path), MonitorSettings(), asyncio.Event(),
+                           now=lambda: NOW, db_path=dbpath)
+    with TestClient(app) as c:
+        cold = c.get("/api/overview/history?range=1h").json()
+        assert stmts
+        stmts.clear()
+        warm = c.get("/api/overview/history?range=1h").json()
+        assert warm == cold
+        assert len(stmts) == 2, stmts
+
+
 def test_the_fanout_drains_from_app_start_not_the_first_subscriber(dbpath, tmp_path):
     """Review of 3.3 (its first server seam): the drain task used to start inside the first
     ``subscribe()``, so a collector tick before any browser connected was still set when the
@@ -396,7 +578,7 @@ def test_the_fanout_drains_from_app_start_not_the_first_subscriber(dbpath, tmp_p
         app = _app(dbpath, tmp_path, tick)  # make_app on this loop: the drain task starts here
         assert app.state.fanout.task is not None
         tick.set()                          # a collector tick before any browser connects
-        await asyncio.sleep(0.05)           # let the drain task consume it
+        await asyncio.sleep(0.2)            # let the drain consume it and finish its push
         s = _Stream(app)
         assert _event(await s.next_chunk())[0] == "snapshot"
         with pytest.raises(TimeoutError):   # and it earns no second snapshot
@@ -454,6 +636,29 @@ def test_stop_ends_the_streams_and_closes_the_fanout(dbpath, tmp_path):
         await asyncio.wait_for(a.task, 5)
         await asyncio.wait_for(b.task, 5)
         assert _drain_tasks() == []  # nothing of the fan-out survives the stop on this loop
+        assert app.state.fanout.task is None
+    asyncio.run(main())
+
+
+def test_the_commands_stop_sequence_wakes_the_streams_before_it_closes_the_fanout(dbpath, tmp_path):
+    """``serve.stopper``'s exact sequence on SIGTERM: ``stop.set()``, ``tick.set()``, one loop
+    turn (``sleep(0)``), then ``fanout.close()``. The drain must have set every subscriber's
+    event in that one step (story 3.7m's settle has to return without suspending when the stop
+    is already set), or the streams would wait for their keepalive and the shutdown would
+    hang."""
+    async def main():
+        tick, stop = asyncio.Event(), asyncio.Event()
+        app = _app(dbpath, tmp_path, tick, stop=stop)
+        a, b = _Stream(app), _Stream(app)
+        for s in (a, b):
+            assert _event(await s.next_chunk())[0] == "snapshot"
+        stop.set()
+        tick.set()
+        await asyncio.sleep(0)
+        await app.state.fanout.close()
+        await asyncio.wait_for(a.task, 1)
+        await asyncio.wait_for(b.task, 1)
+        assert a.chunks == [] and b.chunks == []  # woken by the stop, no snapshot computed
         assert app.state.fanout.task is None
     asyncio.run(main())
 
@@ -840,6 +1045,9 @@ def test_spec_5a_names_every_key_the_routes_emit(client, dbpath):
     _keys({k: v for k, v in fh.items() if k != "endpoints"}, keys)
     for body in fh["endpoints"].values():  # the fleet dict is keyed by endpoint name: a value, not a shape key
         _keys(body, keys)
+    oh = client.get("/api/overview/history").json()  # story 3.7p: fleet + the live endpoints
+    _keys({"fleet": {k: v for k, v in oh["fleet"].items() if k != "endpoints"}}, keys)
+    _keys({"endpoints": {k: v for k, v in oh["endpoints"]["ai1"].items()}}, keys)
     inner = ("worktree", "metrics", "tool_counts")
     for j in client.get("/api/jobs").json():
         keys |= set(j)

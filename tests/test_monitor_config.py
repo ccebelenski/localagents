@@ -97,6 +97,20 @@ def test_db_must_be_a_string_or_null(tmp_path):
         config.load_settings(p)
 
 
+def test_refresh_s_loads_and_defaults_to_five_seconds(tmp_path):
+    """Story 3.7m: the refresh clock's period is a monitor: setting; the default is 5 s."""
+    p = _write(tmp_path, "monitor:\n  refresh_s: 0.5\n")
+    assert config.load_settings(p).refresh_s == 0.5
+    assert config.load_settings(_write(tmp_path, "monitor:\n  port: 9000\n")).refresh_s == 5.0
+
+
+def test_refresh_s_must_be_a_positive_number_within_an_hour(tmp_path):
+    for bad in ("0", "-1", "3601", '"5"', "true"):
+        p = _write(tmp_path, f"monitor:\n  refresh_s: {bad}\n")
+        with pytest.raises(ValueError, match=r"refresh_s"):
+            config.load_settings(p)
+
+
 def test_a_valid_section_still_loads(tmp_path):
     """The validation addition must not touch valid values — ints, a float, null, a str."""
     p = _write(tmp_path, "monitor:\n  port: 9000\n  attention_hours: 12.5\n"

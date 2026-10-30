@@ -665,6 +665,13 @@
     return getJSON("/api/fleet/history?range=" + encodeURIComponent(range));
   }
 
+  // story 3.7p: one call for the fleet grid and every live endpoint's own history (the server
+  // classifies live exactly as the snapshot does), replacing the fleet call plus one per
+  // endpoint. fetchFleet/fetchHistory stay for the endpoint page.
+  function fetchOverviewHistory(range) {
+    return getJSON("/api/overview/history?range=" + encodeURIComponent(range));
+  }
+
   // `detail`: a detail page is open (route() sets it), and the hidden overview fetches nothing
   var refresh = { last: 0, timer: null, inflight: false, again: false, detail: false };
 
@@ -697,17 +704,11 @@
     refresh.inflight = true;
     refresh.last = Date.now();
     var range = state.range;
-    var names = liveNames(state.snap);
-    var calls = [fetchFleet(range)].concat(names.map(function (n) {
-      return fetchHistory(n, range).catch(function () { return null; });
-    }));
-    Promise.all(calls).then(function (bodies) {
+    fetchOverviewHistory(range).then(function (body) {
       if (range !== state.range) return; // the range changed meanwhile: this answer is stale
-      state.fleet = bodies[0];
+      state.fleet = body.fleet;
       state.fleetRange = range;
-      var hists = {};
-      names.forEach(function (n, i) { if (bodies[i + 1]) hists[n] = bodies[i + 1]; });
-      state.hists = hists;
+      state.hists = body.endpoints || {};
       state.histRange = range;
       charts.update(state.fleet);
       if (state.snap) render(state.snap);

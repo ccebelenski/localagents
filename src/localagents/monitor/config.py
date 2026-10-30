@@ -17,6 +17,7 @@ class MonitorSettings:
     attention_hours: float = 24.0  # spec §4: the attention window's default
     db: str | None = None  # overrides db.db_path() when set
     retention_days: int = 7  # spec §3 "Storage": seven days of probes
+    refresh_s: float = 5.0  # story 3.7m: the one refresh clock's period (the snapshot push)
 
 
 def load_settings(path: Path | None = None) -> MonitorSettings:
@@ -35,7 +36,7 @@ def load_settings(path: Path | None = None) -> MonitorSettings:
         section = {}
     if not isinstance(section, dict):
         raise ValueError("the monitor: section must be a mapping of key: value")
-    known = ("port", "attention_hours", "db", "retention_days")
+    known = ("port", "attention_hours", "db", "retention_days", "refresh_s")
     unknown = set(section) - set(known)
     if unknown:
         raise ValueError(f"unknown monitor: key(s): {', '.join(sorted(unknown))}")
@@ -43,6 +44,7 @@ def load_settings(path: Path | None = None) -> MonitorSettings:
     attention_hours = section.get("attention_hours", MonitorSettings.attention_hours)
     db = section.get("db")
     retention_days = section.get("retention_days", MonitorSettings.retention_days)
+    refresh_s = section.get("refresh_s", MonitorSettings.refresh_s)
     # bool is an int subclass in Python: True would load as port 1 / window 3600 s, never
     # what ``port: true`` or ``attention_hours: true`` was meant to say.
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
@@ -56,9 +58,16 @@ def load_settings(path: Path | None = None) -> MonitorSettings:
         raise ValueError(f"monitor: db must be a string or null, got {db!r}")
     if isinstance(retention_days, bool) or not isinstance(retention_days, int) or retention_days < 0:
         raise ValueError(f"monitor: retention_days must be an int >= 0, got {retention_days!r}")
+    # story 3.7m: the refresh clock's period. Zero or negative would spin the push loop; an
+    # hour is the story's stated ceiling (a page that hears nothing for longer is not a
+    # refresh clock).
+    if (isinstance(refresh_s, bool) or not isinstance(refresh_s, (int, float))
+            or not 0 < refresh_s <= 3600):
+        raise ValueError(f"monitor: refresh_s must be a number in (0, 3600], got {refresh_s!r}")
     return MonitorSettings(
         port=port,
         attention_hours=attention_hours,
         db=db,
         retention_days=retention_days,
+        refresh_s=refresh_s,
     )

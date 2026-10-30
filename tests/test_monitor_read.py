@@ -42,8 +42,10 @@ def _ep(ov, name):
 def test_overview_top_level_keys(world):
     conn, reg = world
     ov = read.overview(conn, reg, NOW, WINDOW_S)
-    assert set(ov) == {"now", "window_s", "db_path", "hosts", "jobs", "events"}
+    assert set(ov) == {"now", "window_s", "refresh_s", "db_path", "hosts", "jobs", "events"}
     assert ov["now"] == NOW and ov["window_s"] == WINDOW_S
+    assert ov["refresh_s"] == 5.0  # story 3.7m: the fan-out's clock period, carried to the page
+    assert read.overview(conn, reg, NOW, WINDOW_S, refresh_s=0.5)["refresh_s"] == 0.5
     # json-serialisable as is: it is the SSE snapshot's body
     json.dumps(ov)
 
@@ -110,10 +112,40 @@ def test_fallback_resolves_an_all_timeout_host(world):
 
 
 ENDPOINT_KEYS = {
-    "name", "backend", "base_url", "host", "state", "last_seen", "model", "context", "probe_state",
-    "last_model", "last_context", "slots", "requests", "kv_cache_usage", "latency_ms", "since",
-    "error", "dropped_job", "dropped_job_id", "rates", "gen_tps_live", "hardware", "jobs_running",
+    "name", "backend", "base_url", "host", "state", "last_seen", "last_active", "model", "context",
+    "probe_state", "last_model", "last_context", "slots", "requests", "kv_cache_usage", "latency_ms",
+    "since", "error", "dropped_job", "dropped_job_id", "rates", "gen_tps_live", "hardware",
+    "jobs_running",
 }
+
+
+def test_last_active_is_the_newest_advancing_counters_interval(world):
+    """Story 3.7s over the seeded world: ai1's counters advance on every 5 s interval of its
+    plan (both halves climb; the restart at the midpoint is a reset and is excluded), so the
+    newest probe at NOW is the last active one. dgx1-a's counters stop when it went down 20
+    minutes ago. llamacpp's one counters row (a week ago) has no predecessor in the retained
+    history, so it is null: a counter backend with no advancing pair."""
+    conn, reg = world
+    ov = read.overview(conn, reg, NOW, WINDOW_S)
+    assert _ep(ov, "ai1")["last_active"] == NOW
+    assert _ep(ov, "dgx1-a")["last_active"] == NOW - 20 * 60.0
+    assert _ep(ov, "llamacpp")["last_active"] is None
+
+
+def test_last_active_skips_the_reset_interval(world):
+    """Rates pair consecutive counters rows and a reset interval has no rate; last_active uses
+    the same pairing, so the probe whose counters dropped (ai1's restart at NOW-1800) is not
+    active. Trim the world at that probe: the newest remaining advancing interval ends at
+    NOW-1805 (probe 359), not at the restart."""
+    conn, reg = world
+    eid = endpoint_id(conn, "ai1")
+    with db.immediate(conn):
+        for table in ("probe_counters", "probe_hardware"):
+            conn.execute(f"DELETE FROM {table} WHERE probe_id IN"
+                         " (SELECT id FROM probes WHERE endpoint_id = ? AND t >= ?)",
+                         (eid, NOW - 1800.0))
+        conn.execute("DELETE FROM probes WHERE endpoint_id = ? AND t >= ?", (eid, NOW - 1800.0))
+    assert _ep(read.overview(conn, reg, NOW, WINDOW_S), "ai1")["last_active"] == NOW - 1805.0
 
 
 def test_the_live_endpoint_carries_its_gauges_rates_and_hardware(world):

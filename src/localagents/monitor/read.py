@@ -46,6 +46,49 @@ _PROBE_SELECT = (
 
 _NULL_RATES = {"prompt_tps": None, "gen_tps": None, "cached_tps": None, "spec_acceptance": None}
 
+# story 3.7s: the backends whose collectors write probe_counters rows (the ones rates.py's
+# COUNTER_COLUMNS describe); an ollama/other endpoint has no counters to watch, so its
+# "last active" witness is the requests table.
+COUNTER_BACKENDS = ("llamacpp", "vllm", "strata")
+
+# The endpoint's counters rows, newest first: one indexed walk (probes_endpoint_t, the counters
+# row by its primary key). ``_last_active`` pairs consecutive rows with rates.rates — the exact
+# function the history's rate derivation uses — and stops at the first interval that advanced,
+# so an active endpoint reads two rows and no SQL re-states the reset/back-end arithmetic.
+_LAST_ACTIVE_ROWS = (
+    "SELECT p.t AS t, p.since AS since, "
+    + ", ".join(f"c.{k} AS {k}" for k in COUNTER_COLUMNS)
+    + " FROM probes p JOIN probe_counters c ON c.probe_id = p.id"
+    " WHERE p.endpoint_id = ? ORDER BY p.t DESC, p.id DESC"
+)
+
+# the counterless backend's witness: the newest request row that ran on this endpoint's jobs
+_NEWEST_REQUEST_SQL = (
+    "SELECT MAX(r.t) FROM requests r JOIN jobs j ON j.id = r.job_id WHERE j.endpoint_id = ?"
+)
+
+
+def _last_active(conn: sqlite3.Connection, endpoint_id: int | None, kind: str) -> float | None:
+    """``last_active`` (story 3.7s): the ``t`` of the newest probe whose counters advanced
+    generated tokens or processed prompt tokens over the previous counters row, a reset
+    interval never counting (rates.rates says when an interval is a reset); null when no such
+    pair is in the retained history. A backend that writes no counters (``COUNTER_BACKENDS``)
+    is witnessed by its newest request row's ``t`` instead, else null."""
+    if endpoint_id is None:
+        return None
+    if kind not in COUNTER_BACKENDS:
+        row = conn.execute(_NEWEST_REQUEST_SQL, (endpoint_id,)).fetchone()
+        return row[0] if row is not None else None
+    newest = None  # the newer row of the interval being judged
+    for row in conn.execute(_LAST_ACTIVE_ROWS, (endpoint_id,)):
+        if newest is not None:
+            rt = rates.rates(_counters(row), _counters(newest), newest["t"] - row["t"], kind,
+                             row["since"], newest["since"])
+            if not rt.reset and ((rt.gen_tps or 0) > 0 or (rt.prompt_tps or 0) > 0):
+                return newest["t"]
+        newest = row
+    return None
+
 
 # --- shared helpers --------------------------------------------------------------------------
 
@@ -178,6 +221,9 @@ def _endpoint(conn: sqlite3.Connection, ep: Endpoint, eid: int | None, now: floa
         "host": ep.host,  # row 3: which card this endpoint sits under, for a page that re-sorts
         "state": st,
         "last_seen": last_up,
+        # story 3.7s: when the engine itself last did work (its own counters), not when we
+        # last saw it; null when the retained history holds no advancing interval
+        "last_active": _last_active(conn, eid, backend_kind(ep.backend)),
         "model": last["model_served"] if last is not None else None,
         "context": last["context"] if last is not None else None,
         "probe_state": last["state"] if last is not None else None,  # row 3: idle/busy, null on a down probe
@@ -215,14 +261,16 @@ def _fallback(conn: sqlite3.Connection, host: str, now: float) -> tuple[str | No
 
 
 def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
-             db_path: str | None = None) -> dict[str, Any]:
+             db_path: str | None = None, *, refresh_s: float = 5.0) -> dict[str, Any]:
     """The SSE snapshot (spec §5 "Overview"; shape §5a): hosts in models.yaml order (endpoints
     grouped by ``host``, config order within), each with its node state (resolved from the
     newest fresh port-22 fallback row, story 3.1b), its fallback fields and endpoints; the
     running jobs; the newest ``EVENTS_LIMIT`` endpoint events. ``db_path`` (story 3.2a row 3) is
     the database file this server opened, passed in by the route (serve knows it: ``--db``, the
     ``monitor:`` section's db, else ``db.db_path()``); null when the app was built without one.
-    An endpoint in the database but not in the config is ignored (its events too)."""
+    ``refresh_s`` (story 3.7m) is the fan-out's clock period, carried to the page so it can say
+    how often it is told. An endpoint in the database but not in the config is ignored (its
+    events too)."""
     running = _running_jobs(conn, now)
     groups: dict[str, list[Endpoint]] = {}
     for ep in reg.endpoints.values():
@@ -262,8 +310,8 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
                 (*configured_ids, EVENTS_LIMIT),
             )
         ]
-    return {"now": now, "window_s": window_s, "db_path": db_path, "hosts": hosts,
-            "jobs": [j for _, j in running], "events": events}
+    return {"now": now, "window_s": window_s, "refresh_s": refresh_s, "db_path": db_path,
+            "hosts": hosts, "jobs": [j for _, j in running], "events": events}
 
 
 # --- endpoint history --------------------------------------------------------------------------
@@ -372,7 +420,8 @@ def endpoint_history(
 
 
 def fleet_history(conn: sqlite3.Connection, reg: Any, since_t: float, now: float,
-                  max_points: int = 600) -> dict[str, Any]:
+                  max_points: int = 600,
+                  histories: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """The fleet's speed and occupancy on ONE time grid (review of 3.1, ruling C; shape §5a).
 
     Each configured endpoint with at least one probe in the range is downsampled by its own
@@ -384,15 +433,22 @@ def fleet_history(conn: sqlite3.Connection, reg: Any, since_t: float, now: float
     grid's points) reads null, never another endpoint's figure. An endpoint's own absent
     series (null throughout the range) stays absent: it is served as all-null on the shared
     grid. ``occupancy`` is ``slots_busy`` for a backend that reports slots, else
-    ``requests_running`` (vLLM). An endpoint with no probe in the range is left out entirely."""
+    ``requests_running`` (vLLM). An endpoint with no probe in the range is left out entirely.
+    ``histories`` (story 3.7p) lets a caller that has already read an endpoint's history for
+    this range hand it in instead of paying for the same read twice; an empty ``t`` means the
+    endpoint has no probe in the range, so it is left out exactly as the check below would."""
     per: list[tuple[str, list, dict[str, list | None]]] = []
     for ep in reg.endpoints.values():
-        eid = endpoint_row_id(conn, ep)
-        if eid is None or conn.execute(
-                "SELECT 1 FROM probes WHERE endpoint_id = ? AND t >= ? AND t <= ? LIMIT 1",
-                (eid, since_t, now)).fetchone() is None:
+        h = histories.get(ep.name) if histories is not None else None
+        if h is None:
+            eid = endpoint_row_id(conn, ep)
+            if eid is None or conn.execute(
+                    "SELECT 1 FROM probes WHERE endpoint_id = ? AND t >= ? AND t <= ? LIMIT 1",
+                    (eid, since_t, now)).fetchone() is None:
+                continue
+            h = endpoint_history(conn, eid, since_t, now, max_points)
+        elif not h["t"]:
             continue
-        h = endpoint_history(conn, eid, since_t, now, max_points)
         occ = next((k for k in ("slots_busy", "requests_running") if k in h), None)
         per.append((ep.name, h["t"], {
             "gen_tps": h.get("gen_tps"), "prompt_tps": h.get("prompt_tps"),

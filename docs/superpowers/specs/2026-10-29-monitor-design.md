@@ -47,7 +47,9 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
 - **Process:** `localagents monitor [--port 8765]`, its own Starlette app under uvicorn (already
   dependencies). Endpoints and `host` grouping come from `models.yaml` through the existing
   registry code. An optional top-level `monitor:` section (port, attention window hours,
-  database path) is ignored by the MCP server, which ignores unknown top-level keys. The port
+  database path) is ignored by the MCP server, which ignores unknown top-level keys. (True
+  now, 3.7m: the section also takes `refresh_s`, the snapshot push period, default 5 s; the
+  snapshot carries it — §5a.) The port
   is checked before uvicorn starts (`port_free`), binding with `SO_REUSEADDR` like uvicorn does:
   a TIME-WAIT socket from a just-closed session does not refuse a restart, but an occupied port
   still exits 2 with one sentence (story 3.1 ruling F, the 3.2 review).
@@ -207,9 +209,10 @@ illustrative.
 |---|---|
 | `GET /` | the page: `monitor/static/index.html` from the package |
 | `GET /static/{path}` | a file of the package's `monitor/static/` directory (`app.js`, vendored uPlot); 404 otherwise; every answer carries `Cache-Control: no-cache` (story 3.2a: the browser revalidates against the ETag/Last-Modified StaticFiles computes, so an upgrade never runs stale page code) |
-| `GET /api/snapshot` | the snapshot object (below): what `/events` pushes, on demand |
+| `GET /api/snapshot` | the snapshot object (below): what `/events` pushes, on demand (True now, 3.7p: served from the current push's shared cache — the bytes every stream of that push received — and only computed, once, when no snapshot of the current push exists yet) |
 | `GET /api/endpoints/{name}/history?range=<r>` | the history object of the endpoint named `{name}` in models.yaml; `range` defaults to `1h` |
 | `GET /api/fleet/history?range=<r>` | the fleet history object (below): speed and occupancy for the whole fleet on one time grid; `range` defaults to `1h` |
+| `GET /api/overview/history?range=<r>` | story 3.7p: one body combining the fleet history and the histories of the live endpoints (below); `range` defaults to `1h` |
 | `GET /api/endpoints/{name}/requests?range=<r>` | the endpoint's request table object (below): our jobs' requests that ran on it in the range, with totals; `range` defaults to `24h` |
 | `GET /api/jobs?range=<r>` | an array of job summaries, jobs **created** within the range, newest first, at most 500; `range` defaults to `24h` |
 | `GET /api/jobs/{id}` | the job detail object of the job with that `id` |
@@ -240,6 +243,9 @@ covers `[now - r, now]`, both ends included.
 {
   "now": 1793288065.0,              the server's clock when it was built
   "window_s": 86400.0,              the attention window: monitor: attention_hours × 3600
+  "refresh_s": 5.0,                 story 3.7m: the fan-out's one refresh clock — the minimum
+                                    spacing of snapshot pushes; monitor: refresh_s, default 5,
+                                    in (0, 3600] (the page may say how often it is told)
   "db_path": "/home/op/.local/state/localagents/localagents.db",
                                     the database file this server opened (serve's --db, else the
                                     `monitor:` section's `db`, else `db.db_path()`); named by the
@@ -272,6 +278,15 @@ endpoint = {
                                     under (story 3.2a: a page that re-sorts needs it beside it)
   "state": "live" | "down" | "dormant",  state.endpoint_state (§4)
   "last_seen": 1793288065.0,        t of the newest up probe, or null (never seen up)
+  "last_active": 1793287000.0,      story 3.7s: the t of the newest probe whose counters row
+                                    advanced generated_tokens or prompt_tokens_processed over the
+                                    previous counters row of that endpoint (the pairing
+                                    rates.rates uses; an interval that is a reset never counts);
+                                    null when no such pair is in the retained history. A backend
+                                    that writes no counters (llamacpp/vllm/strata do; ollama and
+                                    other do not) is witnessed by the newest requests row's t
+                                    on its jobs instead, else null. Not "last seen": a probe
+                                    that finds the engine idle advances nothing
   "model": "qwen3.8-flash-next-iq3_s",   the last probe's served id, or null
   "context": 131072,                the last probe's per-slot window
   "probe_state": "busy",            the newest probe's own `state` string (idle/busy; the
@@ -449,6 +464,26 @@ A value at a grid time is the endpoint's own value at its kept probe nearest tha
 finer than one endpoint's cadence (or coarser, after the union is downsampled), and an
 endpoint's absent series (null throughout) is served as a column of nulls rather than dropped.
 
+**Overview history** (`GET /api/overview/history`, story 3.7p): the page's one call — it used
+to fetch the fleet grid plus one history per live endpoint every refresh period.
+
+```
+{
+  "fleet": { ... },                 the fleet history object above
+  "endpoints": {                    every endpoint whose snapshot state is "live" at that
+                                    moment (the overview's own classification, §4), each the
+                                    endpoint history object above; not a second rule
+    "<name>": { ... }, ...
+  }
+}
+```
+
+Each of the three history routes is cached server-side per (endpoint name or `"fleet"`,
+range text) and keyed on the newest probe `t` (for `"fleet"`, the newest over the configured
+endpoints): a request between probes is a cache hit, and the first request after a new probe
+recomputes. The cache holds the newest entry per key. `/api/overview/history` shares the same
+cache entries, so the per-endpoint route is a hit after it.
+
 **Job summaries** (`GET /api/jobs`): each is `derive.summary_from_row(include_result=False)`,
 the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoint`,
 `base_url`, `cwd`, `run_cwd`, `isolation`, `status`, `created_at`, `started_at`,
@@ -485,6 +520,12 @@ no-cache`):
 - then one `event: snapshot` each time the collector ticks (`collect.run(on_tick=...)` sets
   the app's tick after each endpoint's tick that wrote its rows). Ticks that arrive while a
   stream is building or sending a snapshot wake it once more: one next snapshot carries them all;
+  (True now, 3.7m: ticks are coalesced by the fan-out's one refresh clock — a tick starts a
+  `refresh_s` settle period, further ticks inside it join the same round without extending it,
+  and every subscriber is woken once at its end; no snapshot is sent between pushes, and a
+  stop still wakes and ends the streams at once). True now, 3.7p: the snapshot is read and
+  serialised ONCE per push (a per-push counter keys the cache); every subscriber of that push
+  yields the same bytes, and a database error is the same `error` event for all of them;
 - `event: error` with data `{"error": "database_error", "message": ...}` in place of a
   snapshot the database could not answer; the stream goes on;
 - a `: keepalive` comment line after 15 s with nothing sent;

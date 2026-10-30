@@ -404,6 +404,17 @@ def test_the_page_never_polls():
     assert 'new EventSource("/events")' in js
 
 
+def test_the_page_fetches_the_overview_history_in_one_batched_call():
+    """Story 3.7p: the overview's history fetch is ONE call (fleet plus every live endpoint's
+    own history), not the fleet call plus one per endpoint; the per-endpoint functions stay
+    for the endpoint page."""
+    js = _app_js()
+    assert "/api/overview/history?range=" in js
+    assert "function fetchOverviewHistory(range)" in js
+    assert "fetchHistory(n, range)" not in js  # the per-endpoint loop is gone from the overview
+    assert "function fetchHistory(name, range)" in js  # but the helper stays
+
+
 # --- item 3: the page over the seeded world, served by the command ------------------------------
 
 _SRC = Path(__file__).resolve().parent.parent / "src"
