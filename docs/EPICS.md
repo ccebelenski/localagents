@@ -846,6 +846,21 @@ recorded" for a box active 8 days ago with pruned probes. 644 passed.
   ellipsis (fold-3's notice: a 70-char model id wraps the head); plus whatever the DeepSeek
   review files.
 
+Coordinator's read of the merged page's screenshot (2026-10-30 01:20, the seeded world at 1400 px),
+for the operator's morning and the next polish fold:
+- The decode tile's label "decode tok/s · last 1h" clips to "decode tok/s · l…" at a quarter-card
+  width; the strip row's "1h" already names the window once per card, so the tile label can go
+  back to "decode tok/s" (3.7q's two places become one).
+- The card's job row is one nowrap line, so at card width it reads "⟳ name 5m05s · 50 calls ·
+  2 files · …" and the ctx bar, speed, errors and activity are all cut, i.e. the figures the row
+  exists for. Two FIXED lines per job keep the no-jump rule: line 1 the figures (name, elapsed,
+  calls, files, ctx bar + %, t/s, errors), line 2 the activity, muted, ellipsised.
+- The timeline's axis labels carry seconds ("12:30:00 AM"): ticks want "12:30 AM" (a tick
+  format without seconds; the bars' titles keep seconds).
+- The timeline's rows and bars read well; the "↑ 1.4" peak label sits on the line's right end.
+
+- ☐ **3.7-fold-5 Page polish (after fold-4 and the DeepSeek review of fold-3/3.7l).** The
+  three items above plus that review's findings.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
