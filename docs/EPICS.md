@@ -192,6 +192,16 @@ the duplicates go), then docs.
   this small). The opt-in debug dumps (`--dump`, `log_events`) stay files. Schema v7, a spec
   edit (schema document "What stays a file"), an Epic 1 story: discussed here first per ruling
   (e), built only on the operator's word.
+  Operator (2026-10-30, on the purge question): "I think database purge is still TBD. It does
+  need to be done, but what shape that takes is not yet determined - also TBD is if we need some
+  kind of analytics path. If all your queries are properly scoped and keyed, the size of the
+  database shouldn't affect performance until it grows unreasonably large." So: the story
+  writes the row with no purge rule; purge (every table, not transcripts alone) and an
+  analytics path are open items of their own, not part of 1.11. Standing expectation from the
+  same sentence: every query is scoped by job/endpoint/time and served by an index; an
+  `EXPLAIN QUERY PLAN` sweep over every statement in `read.py`, `derive.py`, `status.py` and
+  `collect.py` (a table: statement, plan, index used or SCAN) is the cheap audit that pins it,
+  for a lane after the 3.9 pass.
 
 ## Epic 2: monitor core (collector and storage, no page)
 
@@ -1078,6 +1088,10 @@ ruling (e). The lane is also the operator's first live job on the landed page.
   `index.html`, with `tests/test_monitor_page.py` and `tools/smoke/` (~2.9k).
 
 ## Epic 4: operations (V2, not scheduled)
+
+Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
+be done, but what shape that takes is not yet determined"); an analytics path over the database
+("TBD"). Neither is a story yet.
 
 - ☐ **4.1 Guided SSH setup script.** Walks the operator through key placement per host; no
   secrets stored by localagents; verifies with one `ssh host true`.
