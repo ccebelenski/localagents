@@ -658,7 +658,12 @@ N+1), each a downsampling read over the range. Two tabs double all of it.
   card and a low line on another compare by height across the row. A small muted peak label at
   the sparkline's right edge ("↑ 112" in tok/s, the shared max, the same on every card) is the
   scale; the tile's value is the current rate; the aria-label keeps the endpoint's own peak.
-  Fold with 3.7n/3.7o (one lane, the live card).
+  Operator: "but how do I know the other axis scale?" The time axis is the page's range
+  control (every sparkline and strip spans now − range .. now, app.js `rangeSeconds(state.range)`),
+  which nothing on the card says. So: the sparkline's label names the window, "decode tok/s ·
+  last 1h", following the control; the strip row carries the same window once per card at its
+  left ("1h"), since both span it; no tick marks on a 22 px line. Fold with 3.7n/3.7o (one
+  lane, the live card).
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
