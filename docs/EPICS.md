@@ -1105,6 +1105,10 @@ The 3.7 chain's reviews are closed: no open defect.
   js / dom, heap-unclassified, images, network cache). Firefox 158 is on the workstation but no
   geckodriver or Marionette client; a Firefox-side probe is a raw-Marionette memory dump over a
   seeded `--no-collect` monitor, an hour of tooling, the operator's call.
+  Operator's about:memory Measure (main process tree, 1,849 MB explicit): heap-unclassified 816,
+  gfx 426 (heap-textures 312), network/cache2 189 with no 127.0.0.1 partition among the entries
+  of 22 MB and up (the stream body is NOT accumulating in Firefox's HTTP cache), js-non-window
+  126, profiler/lul 73. The monitor tab's own tree is the "Web Content (pid 2951858)" section.
 
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
