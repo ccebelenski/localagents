@@ -596,6 +596,28 @@ recreated, hover state lost — the jerk.
   default 5; the snapshot carries it so the page can show it and a later story can offer a
   control), and nothing between pushes. The first-connect snapshot stays immediate.
 
+The operator's sixth finding (2026-10-29), verbatim: "different text in a card can change the
+cards' size, causing the screen to jump a little bit. On the vllm instance for instance when the
+prompt t/s isn't zero it overflows the size causing it to wrap down a line. I'll check it in the
+new layout."
+
+Coordinator's reading: in the new grid a tile is a quarter of a 360 px card (~75 px); the value
+is `white-space: normal; overflow-wrap: anywhere` (app.css `.figures .fig .num`), so a value
+such as "1,414.8 tok/s" or "47.7 GiB / 48.0 GiB" wraps to a second line (the merged screenshot
+shows VRAM and power wrapping already) and the card grows; the grid row reflows and the page
+jumps. The rule the brief lacked: a card's height never depends on its values.
+
+- ☐ **3.7n Tiles never wrap; units in the label.** Every tile is exactly one label line and one
+  value line: the value is `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` with
+  the full text in its `title`. Units move into the label so the value is short: "decode tok/s"
+  → "1,414.8"; "VRAM GiB" → "47.7 / 48.0"; "power W" → "248 / 260"; "temp °C" → "61"; "probe ms"
+  → "12"; "ctx" → "262k" (a compact form: 262,144 → "262k", 1,500 → "1.5k", under 1,000 as is;
+  the full number in the title). The jobs block rows likewise never change the card's height
+  by content: one line per job, the activity tail ellipsised (already), the ctx bar and its
+  percent kept together (`white-space: nowrap` on that span; today they split across lines).
+  The state strip and the head already hold one line. Evidence: the smoke renders the same
+  card with the longest and the shortest values the snapshot can carry and reads
+  `getBoundingClientRect().height` equal both times.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
