@@ -618,6 +618,19 @@ jumps. The rule the brief lacked: a card's height never depends on its values.
   The state strip and the head already hold one line. Evidence: the smoke renders the same
   card with the longest and the shortest values the snapshot can carry and reads
   `getBoundingClientRect().height` equal both times.
+Seventh (coordinator, from the operator's screenshot of the landed layout over the real fleet,
+2026-10-29 23:07): the decode sparklines are dotted lines on every live card. Measured on the
+running monitor: `/api/fleet/history?range=15m` has a 408-point grid (the union of every
+endpoint's own probe times, read.py:374-386) and dgx1-a fills 111 of them, 297 null; ai1 81 of
+408; its OWN history (`/api/endpoints/dgx1-a/history?range=15m`) has 174 points and 0 nulls.
+The holes are the fleet grid's construction, not missing data, and the page already fetches
+each live endpoint's own history for the strip (`state.hists[name]`).
+
+- ☐ **3.7o The sparkline reads the endpoint's own history.** `sparkline(name, now)` takes its
+  `t` and `gen_tps` from `state.hists[name]` (the same object `stateStrip` reads), not from
+  `state.fleet`; the fleet grid stays the fleet charts' (until 3.7l retires them). Evidence: the
+  smoke over the real-shaped history counts one polyline run per contiguous stretch, no
+  circles on a healthy endpoint. Fold with 3.7n.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
