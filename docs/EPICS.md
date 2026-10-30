@@ -570,7 +570,7 @@ speed likewise (a 1,400 spike). Occupancy is 0/1 steps on one-slot boxes. The le
 "llamacpp: –" with no value until hover. Three small charts side by side, mostly zero, answer no
 question the operator has.
 
-- ☐ **3.7l Fleet section: a timeline, not three rate charts.** Proposed (operator decides):
+- ☑ **3.7l Fleet section: a timeline, not three rate charts.** (075630e: Qwen/ai1 job 20261030-010210-e0334ea4, 108 turns, 15 min, 645 tests; bar positions recomputed by hand equal the styles; axis labels for all five ranges; two-lane stacking; no canvases left; `jobs` in the batched body from a one-statement `read.jobs_overlapping`. Noticed: uPlot now used by no page (the vendor drop is fold-4's); the batch still builds the fleet grid nobody reads. Review: DeepSeek, running.) Proposed (operator decides):
   (a) ONE fleet timeline on the shared time axis: a row per live endpoint, its busy intervals
   as bars (from the occupancy/state series it has today), each JOB drawn as a labelled span on
   its endpoint's row (`started_at`..`finished_at`|now, the name as the label, a link to the job
