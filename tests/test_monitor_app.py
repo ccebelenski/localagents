@@ -965,6 +965,76 @@ def test_a_port_already_in_use_exits_2_with_the_sentence(tmp_path):
     assert "Traceback" not in out.stderr
 
 
+# --- the witness backfill at the monitor's start (3.7-fold-2 D5's follow-up) --------------------
+
+
+def _v5_file(path):
+    """A version-5 file as a 3.1b-era localagents would have left it: steps 1-5 run, user_version
+    5, and counters rows — strata ``ai1`` (advancing 1.0 -> 2.0 -> 3.0, then a reset row: the
+    newest advancing interval is the t 30.0 probe), llama.cpp ``idle`` (counters flat: nothing
+    ever advanced), and ``box`` (ollama: no counters rows; its witness is the requests table)."""
+    raw = sqlite3.connect(path)
+    for step in db.MIGRATIONS[:5]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 5")
+    for name, base_url, backend, host in (("ai1", "http://ai1:8080", "strata", "ai1"),
+                                          ("idle", "http://127.0.0.1:8080", "llama.cpp", "local"),
+                                          ("box", "http://box:11434", "ollama", "box")):
+        raw.execute("INSERT INTO endpoints (name, base_url, backend, host) VALUES (?, ?, ?, ?)",
+                    (name, base_url, backend, host))
+    for eid, series in ((1, ((10.0, 1.0), (20.0, 2.0), (30.0, 3.0), (40.0, 1.0))),
+                        (2, ((10.0, 5.0), (20.0, 5.0), (30.0, 5.0)))):
+        for t, gen in series:
+            cur = raw.execute("INSERT INTO probes (t, endpoint_id, up) VALUES (?, ?, 1)", (t, eid))
+            raw.execute("INSERT INTO probe_counters (probe_id, prompt_tokens, generated_tokens)"
+                        " VALUES (?, 10.0, ?)", (cur.lastrowid, gen))
+    raw.commit()
+    raw.close()
+
+
+def test_a_migrated_v5_file_gets_its_witnesses_backfilled_at_the_start(tmp_path):
+    """3.7-fold-2 D5's follow-up: the version-6 step adds the column only (NULL = never walked),
+    and ``serve.backfill_at_start`` — what serve runs before it gathers any task, with or without
+    a collector — carries an old file over. ai1 gets its newest advancing t (30.0, the reset row
+    never counts); idle, whose counters never advanced, gets the walked-nothing memo 0.0 (which
+    the read path renders as null, and the first advancing tick overwrites); box, a counterless
+    backend, stays NULL. The migration's own NULL-after-ALTER half is asserted in test_db.py."""
+    path = tmp_path / "v5.db"
+    _v5_file(path)
+    conn = db.open_db(path)  # the migration runs here: column added, every witness NULL
+    assert conn.execute("SELECT COUNT(*) FROM endpoints WHERE last_active IS NULL").fetchone()[0] == 3
+    serve_mod.backfill_at_start(conn)
+    witness = {r["name"]: r["last_active"] for r in conn.execute("SELECT name, last_active FROM endpoints")}
+    assert witness == {"ai1": 30.0, "idle": 0.0, "box": None}
+    assert conn.execute("SELECT COUNT(*) FROM probes").fetchone()[0] == 7  # rows untouched
+    conn.close()
+
+
+def test_the_start_backfill_skips_endpoints_that_already_carry_a_witness(tmp_path):
+    """``only_null`` (the start's call): after one backfill every counter backend holds a witness
+    or the memo, so the next start runs one SELECT and no probe walk — the 745 ms walk is paid
+    once per endpoint ever, not at every start. Proven as a sentinel too: a newer advancing row
+    (t 99.0) does NOT move ai1's witness — a held witness is the collector's to move, not the
+    start's to recompute."""
+    path = tmp_path / "v5.db"
+    _v5_file(path)
+    conn = db.open_db(path)
+    serve_mod.backfill_at_start(conn)
+    with db.immediate(conn):  # an interval advancing NOW-ish, un-witnessed by any tick
+        cur = conn.execute("INSERT INTO probes (t, endpoint_id, up) VALUES (99.0, 1, 1)")
+        conn.execute("INSERT INTO probe_counters (probe_id, prompt_tokens, generated_tokens)"
+                     " VALUES (?, 10.0, 9.0)", (cur.lastrowid,))
+    stmts: list[str] = []
+    conn.set_trace_callback(stmts.append)
+    serve_mod.backfill_at_start(conn)
+    conn.set_trace_callback(None)
+    walked = [s for s in stmts if "probes" in s or "probe_counters" in s]
+    assert walked == []  # the walk's statements never appear
+    witness = {r["name"]: r["last_active"] for r in conn.execute("SELECT name, last_active FROM endpoints")}
+    assert witness == {"ai1": 30.0, "idle": 0.0, "box": None}  # box stays NULL: listed, never walked
+    conn.close()
+
+
 def test_a_live_run_serves_the_seeded_file_and_stops_on_sigterm(tmp_path):
     """The command end to end over loopback: a seeded file (now = the wall clock, so the states
     are the seed's), --no-collect, a free port; /api/snapshot answers within 10 s with the

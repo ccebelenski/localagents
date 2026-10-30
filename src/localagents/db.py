@@ -11,8 +11,9 @@ and version 6 — ``endpoints.last_active``, the stored last-active witness — 
 ``docs/superpowers/specs/2026-10-29-monitor-design.md`` §3) are monitor-owned:
 only ``localagents.monitor`` writes or prunes them. Their migration lives here because the file
 is shared and versioned as one, so the MCP server creates them too (an idle table costs nothing),
-and the MCP server never uses the monitor package at steady state; the single exception is the
-version-6 step's one-time witness backfill, which borrows the monitor's rate pairing (see ``_v6``).
+and the MCP server never imports the monitor package (HANDOFF "Decided, do not reopen"; the
+static guard in ``tests/test_server.py``). A migration step may only touch the file with plain
+SQL — the version-6 witness backfill lives in the monitor, which runs it at its start (see ``_v6``).
 
 Write rules every caller keeps:
 
@@ -270,17 +271,17 @@ _V5 = [
 ]
 
 # Version 6 (story 3.7-fold-2, the 3.7 server-batch review's D5): the stored last-active
-# witness. ``endpoints.last_active`` (NULL: no witness) holds the ``t`` of the collector's
-# newest advancing counters interval, written at the tick that advanced it, so ``read._last_active``
-# reads one value instead of walking the endpoint's retained counters rows on every snapshot
-# (the review measured a 7-day idle endpoint's walk at 745 ms per overview). At migration the
-# column is backfilled ONCE per endpoint row by the pairing that walk used — the one place core
-# db borrows the monitor's arithmetic (lazy import, runs only for files older than version 6).
+# witness. ``endpoints.last_active`` holds the ``t`` of the collector's newest advancing counters
+# interval, written at the tick that advanced it, so ``read._last_active`` reads one value
+# instead of walking the endpoint's retained counters rows on every snapshot (the review measured
+# a 7-day idle endpoint's walk at 745 ms per overview). The column's contract: NULL = never
+# walked; 0.0 = walked, no advancing interval within retention (the walk's memo; read maps it to
+# null); ``t`` > 0 = the witness. This step adds the column ONLY: pairing the counters rows to
+# backfill old files is the monitor's arithmetic, and the MCP server never imports the monitor
+# package, so ``read.backfill_last_active`` runs at the monitor's start instead (once per
+# endpoint with no witness), and the seed writes its world's witnesses itself.
 def _v6(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE endpoints ADD COLUMN last_active REAL")
-    from .monitor.read import backfill_last_active  # lazy: see the comment above
-
-    backfill_last_active(conn)
 
 
 # MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 6.

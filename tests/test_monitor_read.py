@@ -122,7 +122,7 @@ ENDPOINT_KEYS = {
 
 def test_last_active_is_the_newest_advancing_counters_interval(world):
     """Story 3.7s over the seeded world, read from the stored witness (3.7-fold-2 D5: the seed
-    backfills each endpoint's last_active at its end, the way the version-6 migration does):
+    backfills each endpoint's last_active at its end, the way the monitor does at its own start):
     ai1's counters advance on every 5 s interval of its plan (both halves climb; the restart at
     the midpoint is a reset and is excluded), so the newest probe at NOW is the last active one.
     dgx1-a's counters stop when it went down 20 minutes ago. llamacpp's one counters row (a week
@@ -140,7 +140,8 @@ def test_last_active_skips_the_reset_interval(world):
     written by that same pairing, so the probe whose counters dropped (ai1's restart at
     NOW-1800) is not active. Trim the world at that probe and re-run the backfill — what the
     migration does once, a hand-edited world must ask for: the newest remaining advancing
-    interval ends at NOW-1805 (probe 359), not at the restart."""
+    interval ends at NOW-1805 (probe 359), not at the restart. (The start's call restricts to NULL
+    witnesses; this hand-edited world asks for the full recompute, the default.)"""
     conn, reg = world
     eid = endpoint_id(conn, "ai1")
     with db.immediate(conn):

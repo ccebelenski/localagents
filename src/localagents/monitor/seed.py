@@ -301,7 +301,8 @@ def seed(conn: sqlite3.Connection, now: float, fixtures_dir: Path | str, force: 
                 conn.execute(f"DELETE FROM {table}")
         _write(conn, now, world)
         # story 3.7-fold-2 (D5): the read path takes last_active from the stored witness, so the
-        # seeded world must carry it too — backfilled from its own rows by the migration's pairing
+        # seeded world must carry it too — backfilled from its own rows by the pairing (the same
+        # call the monitor makes at its own start; the version-6 migration adds the column only)
         read.backfill_last_active(conn)
     return _counts(conn)
 

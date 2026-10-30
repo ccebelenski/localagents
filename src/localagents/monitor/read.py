@@ -53,9 +53,10 @@ COUNTER_BACKENDS = ("llamacpp", "vllm", "strata")
 
 # The endpoint's counters rows, newest first: one indexed walk (probes_endpoint_t, the counters
 # row by its primary key). Story 3.7-fold-2 (D5) moved ``_last_active`` off this walk onto the
-# collector's stored witness, so it now serves ONE purpose: the version-6 backfill (db.py) pairs
+# collector's stored witness, so it now serves ONE purpose: ``backfill_last_active`` pairs
 # consecutive rows with rates.rates — the exact function the history's rate derivation uses —
-# and stops at the first interval that advanced, once per endpoint at migration.
+# and stops at the first interval that advanced; the monitor pays it once per endpoint with no
+# witness at its start (serve.backfill_at_start), and the seed pays it for its own world.
 _WITNESS_BACKFILL_ROWS = (
     "SELECT p.t AS t, p.since AS since, "
     + ", ".join(f"c.{k} AS {k}" for k in COUNTER_COLUMNS)
@@ -76,8 +77,8 @@ _NEWEST_REQUEST_SQL = (
 def _walk_last_active(conn: sqlite3.Connection, endpoint_id: int, kind: str) -> float | None:
     """The 3.7s walk: newest-first over the endpoint's counters rows until an interval advanced.
     Story 3.7-fold-2 (D5) took this off the read path (the idle-endpoint walk cost the WHOLE
-    retained history per snapshot — 745 ms measured over 7 days of 5 s probes); it stays for the
-    version-6 backfill, which pays it once per endpoint at migration."""
+    retained history per snapshot — 745 ms measured over 7 days of 5 s probes); it stays for
+    ``backfill_last_active``, which pays it once per endpoint with no witness (see there)."""
     newest = None  # the newer row of the interval being judged
     for row in conn.execute(_WITNESS_BACKFILL_ROWS, (endpoint_id,)):
         if newest is not None:
@@ -89,19 +90,32 @@ def _walk_last_active(conn: sqlite3.Connection, endpoint_id: int, kind: str) -> 
     return None
 
 
-def backfill_last_active(conn: sqlite3.Connection) -> None:
-    """The one-time backfill of ``endpoints.last_active`` (story 3.7-fold-2 D5, the version-6
-    migration in db.py): for every counter-backend endpoint, the newest advancing interval's ``t``
-    from its retained rows by the 3.7s pairing; null stays null (no witness yet). The counterless
-    backends keep null — their witness is the requests table, read live. Runs inside the
-    migration's (or the seed's) transaction; a 7-day idle endpoint costs one walk, once."""
-    for eid, backend in conn.execute("SELECT id, backend FROM endpoints").fetchall():
+def backfill_last_active(conn: sqlite3.Connection, only_null: bool = False) -> None:
+    """The backfill of ``endpoints.last_active`` (story 3.7-fold-2 D5, moved out of the version-6
+    migration by its follow-up: the MCP server never imports the monitor package, so the monitor
+    runs this at its own start — ``serve.backfill_at_start`` — and the seed runs it on its own
+    world). For every counter-backend endpoint, the newest advancing interval's ``t`` from its
+    retained rows by the 3.7s pairing.
+
+    The walked-and-found-nothing case is MEMOIZED, not left null: the endpoint gets ``0.0``, which
+    ``_last_active`` reads as null — an epoch timestamp can never be 0, and the collector's first
+    advancing tick overwrites it with a real ``t``. Without the memo an idle-for-a-week endpoint
+    would pay its walk (the review measured 745 ms) at EVERY start, because ``last_active IS
+    NULL`` says "never walked" and a walk to null walks again; with it, one walk per endpoint ever.
+
+    ``only_null`` (the start's call) restricts the walk to endpoints with a NULL witness: an
+    endpoint already holding a witness or the memo costs one SELECT row, no walk. The seed leaves
+    it False (its rows are fresh either way). The counterless backends stay NULL — their witness
+    is the requests table, read live — so the start re-lists them every time; the listing costs
+    nothing (the backend check skips them before any walk). Runs inside the caller's transaction."""
+    rows_ = conn.execute("SELECT id, backend FROM endpoints"
+                         + (" WHERE last_active IS NULL" if only_null else "")).fetchall()
+    for eid, backend in rows_:
         kind = backend_kind(backend)
         if kind not in COUNTER_BACKENDS:
             continue
         t = _walk_last_active(conn, eid, kind)
-        if t is not None:
-            conn.execute("UPDATE endpoints SET last_active = ? WHERE id = ?", (t, eid))
+        conn.execute("UPDATE endpoints SET last_active = ? WHERE id = ?", (t if t is not None else 0.0, eid))
 
 
 def _last_active(conn: sqlite3.Connection, endpoint_id: int | None, kind: str) -> float | None:
@@ -117,7 +131,8 @@ def _last_active(conn: sqlite3.Connection, endpoint_id: int | None, kind: str) -
         row = conn.execute(_NEWEST_REQUEST_SQL, (endpoint_id,)).fetchone()
         return row[0] if row is not None else None
     row = conn.execute(_LAST_ACTIVE_READ, (endpoint_id,)).fetchone()
-    return row[0] if row is not None else None
+    t = row[0] if row is not None else None
+    return t if t else None  # 0.0 = the backfill's walked-nothing memo: reads as no witness
 
 
 # --- shared helpers --------------------------------------------------------------------------

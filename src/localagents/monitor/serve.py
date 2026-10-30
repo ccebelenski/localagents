@@ -132,12 +132,35 @@ def db_file(arg: str | None, settings: MonitorSettings) -> Path:
     return db.db_path()
 
 
+def backfill_at_start(conn: sqlite3.Connection) -> None:
+    """Story 3.7-fold-2 D5's follow-up: the version-6 witness backfill moved out of the db
+    migration (the MCP server never imports the monitor package — the static guard in
+    tests/test_server.py) and runs HERE, at the monitor's own start, once, before any route can
+    answer. ``only_null`` restricts the walk to endpoints with a NULL witness: an endpoint that
+    already holds a witness, or the walked-nothing memo, costs one listed row — but an endpoint
+    idle since before its own walk pays it at every start until it advances once (read.py's
+    docstring). One transaction of its own; open and close are the caller's."""
+    from . import read
+
+    with db.immediate(conn):
+        read.backfill_last_active(conn, only_null=True)
+
+
 async def serve(reg: Registry, settings: MonitorSettings, path: Path, host: str, port: int, collect_: bool,
                 open_url: str | None = None) -> None:
     import uvicorn
 
     from . import collect
     from .app import make_app
+
+    # the witness backfill, with or without a collector: every route that reads last_active must
+    # see the post-migration file already carried over (an old file opens at v6 with NULLs; main
+    # migrates before serve, and a bare serve in a test does the same inside open_db below)
+    bf = db.open_db(path)
+    try:
+        backfill_at_start(bf)
+    finally:
+        bf.close()
 
     stop = asyncio.Event()
     tick = asyncio.Event()

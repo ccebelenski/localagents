@@ -280,13 +280,14 @@ def test_a_version_4_file_migrates_to_version_5_with_its_rows_intact(dbfile):
     conn.close()
 
 
-def test_a_version_5_file_migrates_to_version_6_and_backfills_the_witness(dbfile):
-    """Story 3.7-fold-2 (D5): version 6 appends ``endpoints.last_active`` (NULL = no witness)
-    and backfills it ONCE per endpoint from the retained counters rows by the 3.7s pairing —
-    the newest probe whose counters advanced over the previous row, a reset interval not
-    counting. A counter backend with an advancing history gets its newest advancing ``t``; a
-    counter backend whose last interval was a reset gets the one before it; a counterless
-    backend (its witness is the requests table, read live) stays NULL."""
+def test_a_version_5_file_migrates_to_version_6_with_a_null_witness(dbfile):
+    """Story 3.7-fold-2 (D5), after the follow-up ruling: version 6 appends
+    ``endpoints.last_active`` and NOTHING ELSE — the step is one ALTER, no import, no backfill
+    (the MCP server never imports the monitor package, and pairing counters rows is the
+    monitor's arithmetic). Every endpoint comes up with a NULL witness (never walked); the
+    monitor backfills from the retained counters rows at its own start
+    (``read.backfill_last_active`` — carried in tests/test_monitor_app.py), and the seed writes
+    its world's witnesses itself."""
     raw = sqlite3.connect(dbfile)
     for step in db.MIGRATIONS[:5]:
         step(raw)
@@ -307,7 +308,7 @@ def test_a_version_5_file_migrates_to_version_6_and_backfills_the_witness(dbfile
     assert [r["name"] for r in conn.execute("PRAGMA table_info(endpoints)")] == COLUMNS["endpoints"]
     witness = {r["name"]: r["last_active"]
                for r in conn.execute("SELECT name, last_active FROM endpoints")}
-    assert witness == {"ai1": 30.0, "box": None}
+    assert witness == {"ai1": None, "box": None}  # NULL = never walked; the monitor backfills at its start
     assert conn.execute("SELECT COUNT(*) FROM probes").fetchone()[0] == 4  # rows untouched
     conn.close()
 

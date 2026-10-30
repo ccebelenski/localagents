@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import time
+from pathlib import Path
 
 import pytest
 
@@ -632,3 +633,46 @@ def test_a_cancel_during_the_finallys_await_still_awaits_every_task(reg, monkeyp
     got_unwound, left = asyncio.run(run())
     expected = [quick.id, slow.id] if path == "cancelled" else [slow.id]
     assert sorted(got_unwound) == sorted(expected) and left == []
+
+
+def test_the_mcp_server_side_never_imports_the_monitor_package():
+    """The decided rule (HANDOFF "Decided, do not reopen", and db.py's module docstring): the
+    MCP server never imports from ``localagents.monitor``. Story 3.7-fold-2 briefly broke it —
+    the version-6 migration lazily imported ``monitor.read`` for the one-time witness backfill —
+    and the rule moved that backfill to the monitor's start. This guard is the regression net:
+    it parses the AST of every module the MCP server imports at steady state (``__init__.py`` is
+    excluded on purpose: its monitor import is lazy, inside the ``monitor`` command branch, and
+    that laziness is itself load-bearing) and fails on any absolute or relative import of the
+    monitor package, wherever it sits — including inside a function."""
+    import ast
+
+    src = Path(__file__).resolve().parent.parent / "src" / "localagents"
+    core = ["server.py", "jobs.py", "runner.py", "status.py", "derive.py", "registry.py",
+            "shim.py", "db.py"]
+    assert all((src / m).is_file() for m in core), "a core module moved; update this guard"
+
+    def monitor_imports(path):
+        tree = ast.parse(path.read_text())
+        hits = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name == "localagents.monitor" or a.name.startswith("localagents.monitor."):
+                        hits.append(f"import {a.name}")
+            elif isinstance(node, ast.ImportFrom):
+                # absolute: from localagents.monitor import x; relative inside the localagents
+                # package (these files are all one level below its root): from .monitor import x
+                if node.module is None:  # from . import x: the names are the modules
+                    mods = [a.name for a in node.names] if node.level >= 1 else []
+                else:
+                    mods = [node.module]
+                for m in mods:
+                    top = m.split(".", 1)[0]
+                    if top == "monitor" and node.level >= 1:
+                        hits.append(f"from {'.' * node.level}{node.module or ''}")
+                    elif m == "localagents.monitor" or m.startswith("localagents.monitor."):
+                        hits.append(f"from {m}")
+        return hits
+
+    offenders = {m: hits for m in core if (hits := monitor_imports(src / m))}
+    assert not offenders, f"the MCP server side imports the monitor package: {offenders}"
