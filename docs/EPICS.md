@@ -812,6 +812,31 @@ time repeats per day. NOTICED (cleanup): dead CSS `.requests tr.req-err td` (ove
 the shared classes; a trailing blank in the "cache creation " title; sub-10 ms durations read
 "0.0 s"; the two pill families' border conventions differ. 644 passed.
 
+Review of f670097 (3.7g-j) and 6e686bf (3.7-fold-2b) by DeepSeek/dgx1-a job
+20261030-005729-5199eb59, 64 turns, 20 min, four construct-it probes: P1 the log's query over
+12 finished + edge rows: order right, exactly 10 finished, a cancelled-never-started row frozen
+from `created_at`, `jobs_running` live-only; measured +6 statements per finished row per push
+(10 finished: 92 vs 32 statements; ≈720 extra per minute at 5 s); P2 the live turn count
+reads 1, 2, 3 before the result and 5 after, on the same per-message UPDATE as `last_activity`;
+P3 all seven pills as words, the badge a link only when > 0, the dash on running-0, DOM order =
+fed order; P4 the v5 → v6 path, the 0.0 memo written and overwritten by an advancing tick, the
+second start touches no `probes`; the AST guard catches every static spelling but misses
+`importlib.import_module`, `__import__` and `from localagents import monitor`. DEFECTS: none.
+POSSIBLE: the finished rows' per-push derivation cost; a terminal row with NULL `finished_at`
+(no write path produces one) keeps a moving elapsed; the guard's three misses; "no activity
+recorded" for a box active 8 days ago with pruned probes. 644 passed.
+
+- ☐ **3.7-fold-4s Server: frozen rows computed once; the guard complete.** Lane: Qwen (the
+  reviewer of DeepSeek's work reviews this). (a) `_recent_jobs`: a finished row's entry is
+  immutable, so its derived figures are computed once and kept in a module-level cache keyed by
+  job id, evicted when the id leaves the tail; a finished row costs 0 derive statements on the
+  second push. Evidence: the review's P1 world (10 finished): the second push's statement count
+  equals the live-only count plus 1 per finished row at most (the tail SELECT itself); state the
+  numbers. (b) The guard in tests/test_server.py also catches `importlib.import_module(...)`
+  with a string starting "localagents.monitor", `__import__(...)` likewise, and
+  `from localagents import monitor` (an ImportFrom with module `localagents` and a name
+  `monitor`). (c) A terminal row with NULL `finished_at` is frozen at `created_at`'s best
+  witness, never moving (`elapsed_s` null when neither start nor finish is known).
 - ☐ **3.7-fold-4 Page cleanups.** One lane after the DeepSeek review of f670097/6e686bf lands
   its findings too: `context_exceeded` read as truthy (a non-empty string), §5a's sentence
   corrected to the stored type; the endpoint page's request time with the day stamp past 24 h
