@@ -108,12 +108,18 @@ h2 { font-size: 16.5px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 60
 .strip span { position: absolute; top: 0; bottom: 0; }
 .strip-now { font-size: 13px; min-width: 4em; color: var(--ink-2); }
 
-.figures { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 14.5px; }
+/* the live card's field grid (3.7d): four columns, three fixed rows — the same twelve tiles
+   in the same places on every live card. The base .fig below stays for the detail pages'
+   `.totals`/`.fig-row` lines; the tile form (label above value) is scoped to `.figures .fig`. */
+.figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 12px;
+  font-size: 14.5px; margin-top: 4px; }
+.figures .fig { display: flex; flex-direction: column; min-width: 0; white-space: normal; }
+.figures .fig .label { color: var(--muted); font-size: 12px; margin-right: 0; }
+.figures .fig .num { font-weight: 600; overflow-wrap: anywhere; }
 .fig { white-space: nowrap; }
 .fig .label { color: var(--muted); margin-right: 4px; }
 .fig svg { vertical-align: middle; margin-left: 4px; }
-.hw { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 13px; color: var(--ink-2); margin-top: 4px; }
-.ep-jobs { font-size: 14.5px; margin-top: 4px; overflow-wrap: anywhere; }
+.ep-jobs { font-size: 14.5px; margin-top: 6px; overflow-wrap: anywhere; }
 .ep-note { font-size: 13px; margin-top: 2px; }
 
 /* running-jobs table */
@@ -240,3 +246,21 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 /* 3.7a-c host cards */
 /* the one line under the cards counting the endpoints 3.7a hides: a footnote, not a card */
 #hosts-hidden { margin: 8px 2px 0; font-size: 13px; }
+
+/* 3.7d-f live endpoint card */
+/* the state dot on every card head. The live card draws its own span; the down/dormant kinds
+   draw theirs (lane A places, this lane styles — the three variants live together on purpose) */
+.sdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;
+  vertical-align: middle; }
+.sdot-live { background: var(--good); }
+.sdot-down { background: var(--critical); }
+.sdot-dormant { background: var(--muted); }
+/* the KV meter's line: the jobs table's bar with the percent beside it */
+.kv { display: inline-flex; align-items: center; }
+/* the decode tile's sparkline fills the tile (viewBox stretches; the stroke does not) */
+.figures .fig svg { display: block; width: 100%; margin: 3px 0 0; }
+.ep-job { white-space: normal; }
+.ep-job + .ep-job { margin-top: 3px; }
+/* the status line's activity tail: cut at 60 chars in the script, ellipsised here on a narrow card */
+.ep-act { display: inline-block; max-width: 34em; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; vertical-align: bottom; color: var(--muted); }

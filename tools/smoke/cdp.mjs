@@ -46,6 +46,13 @@ const probe = `(() => {
     strips: q('.strip').map(s => s.children.length),
     stripNow: q('.strip-now').map(s => s.textContent),
     sparklines: q('.fig svg path').length,
+    // the live endpoint card (stories 3.7d-f): the twelve tile labels per live card, the jobs
+    // block text, the sparkline runs (the decode tile's SVG is polyline+polygon now, so the
+    // path count above reads 0 by design), and the state dots with their variants
+    tiles: q('.endpoint.state-live').map(e => Array.from(e.querySelectorAll('.fig .label')).map(l => l.textContent)),
+    jobsBlocks: q('.ep-jobs').map(e => e.textContent.replace(/\\s+/g,' ').trim()),
+    sparkPolylines: q('.fig svg polyline').length,
+    sdots: q('.sdot').map(e => e.className),
     detail: document.getElementById('detail').hidden ? null : document.getElementById('detail').textContent.replace(/\\s+/g,' ').trim(),
     overviewHidden: document.getElementById('overview').hidden,
     scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth,

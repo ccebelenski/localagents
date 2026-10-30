@@ -88,7 +88,12 @@ SPEC = Path(__file__).resolve().parent.parent / "docs" / "superpowers" / "specs"
 
 # the classes the browser smoke and the spec name (story 3.2's brief)
 SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant", "node-down", "node-unknown",
-                 "jobs", "fleet", "range"]
+                 "jobs", "fleet", "range",
+                 # the live endpoint card (stories 3.7d-f): the fixed field grid, the jobs block
+                 # that is always the card's last child, its status-line rows and their activity
+                 # tail, and the state dot (this lane styles all three variants; the live card's
+                 # span is the token the list checks, the down/dormant spans are lane A's markup)
+                 "figures", "ep-jobs", "ep-job", "ep-act", "sdot"]
 # the classes the job page's smoke names (story 3.4's brief): the page root and its sections,
 # the status classes the header's mark takes (a queued job takes one more, styled but not
 # smoked)

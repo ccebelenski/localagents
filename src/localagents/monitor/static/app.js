@@ -126,11 +126,15 @@
 
   function byId(id) { return document.getElementById(id); }
 
-  // a labelled figure, or nothing when the value is absent (never a placeholder number)
+  // a labelled tile of the card's fixed field grid (3.7d): ALWAYS drawn, so every live card
+  // holds the same twelve tiles in the same places (operator 2026-10-29: absent figures used to
+  // vanish and every card packed differently — "hard to scan from card to card"). An absent
+  // value is a muted dash, never a placeholder number.
   function fig(label, text, extra) {
-    if (text == null || text === "") return null;
-    return h("span", { class: "fig" }, [h("span", { class: "label", text: label }),
-      h("span", { class: "num", text: text }), extra || null]);
+    var value = text == null || text === ""
+      ? h("span", { class: "num muted", text: "–" })
+      : h("span", { class: "num", text: text });
+    return h("span", { class: "fig" }, [h("span", { class: "label", text: label }), value, extra || null]);
   }
 
   function jobLink(id, name) { return h("a", { href: "#/job/" + encodeURIComponent(id), text: name }); }
@@ -202,7 +206,13 @@
       current ? h("span", { class: "strip-now", text: current }) : null]);
   }
 
-  // a decode-speed sparkline from the fleet history's gen_tps for this endpoint (inline SVG)
+  // a decode-speed sparkline from the fleet history's gen_tps for this endpoint (inline SVG,
+  // 3.7f per ANAS): it fills the tile's width; the area under the line carries 12% of the
+  // line's fleet colour, so the card ties itself to its line in the chart below; a real 0 is
+  // a point on the baseline (truthful idle — the server sends 0.0 for a quiet interval and
+  // null only for no-data), and a null is a hole — the pen lifts and the next point starts a
+  // new run. A lone point between holes shows as a dot; the dots are the page's business,
+  // the server only ever sends numbers.
   function sparkline(name, now) {
     var fleet = state.fleet;
     if (!fleet || !fleet.endpoints || !fleet.t) return null;
@@ -212,98 +222,193 @@
     var max = 0;
     ys.forEach(function (v) { if (v != null && v > max) max = v; });
     if (!ys.some(function (v) { return v != null; })) return null;
-    var W = 90, H = 22;
     var span = rangeSeconds(state.fleetRange || state.range);
     var t0 = now - span;
-    var d = "", pen = false;
+    // the axis floors to 1 tok/s so an all-zero window draws a flat baseline, not a collapse;
+    // the aria peak still reports the real max
+    var scale = max > 1 ? max : 1;
+    var runs = [], run = null;
     for (var i = 0; i < fleet.t.length; i++) {
       var v = ys[i];
-      if (v == null || fleet.t[i] < t0) { pen = false; continue; }
-      var x = ((fleet.t[i] - t0) / span) * W;
-      var y = H - 1 - (max > 0 ? (v / max) * (H - 2) : 0);
-      d += (pen ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
-      pen = true;
+      if (v == null || fleet.t[i] < t0) { run = null; continue; }
+      if (!run) { run = []; runs.push(run); }
+      run.push((((fleet.t[i] - t0) / span) * 100).toFixed(1) + "," + (23 - (v / scale) * 21).toFixed(1));
     }
-    if (!d) return null;
-    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("width", W);
-    svg.setAttribute("height", H);
-    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    if (!runs.length) return null;
+    var NS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("width", "100%");
+    svg.setAttribute("height", "22");
+    svg.setAttribute("viewBox", "0 0 100 24");
+    svg.setAttribute("preserveAspectRatio", "none");
     svg.setAttribute("role", "img");
     svg.setAttribute("aria-label", "decode speed over the last " + state.range + ", peak " + fmt.speed(max) + " tok/s");
-    var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", d);
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", colourOf(name));
-    path.setAttribute("stroke-width", "1.5");
-    svg.appendChild(path);
+    var colour = colourOf(name);
+    runs.forEach(function (pts) {
+      if (pts.length > 1) {
+        // fill under the line, closed to the baseline below the run's own ends
+        var poly = document.createElementNS(NS, "polygon");
+        poly.setAttribute("points", pts.join(" ") + " " +
+          pts[pts.length - 1].split(",")[0] + ",24 " + pts[0].split(",")[0] + ",24");
+        poly.setAttribute("fill", colour);
+        poly.setAttribute("fill-opacity", "0.12");
+        poly.setAttribute("stroke", "none");
+        svg.appendChild(poly);
+        var line = document.createElementNS(NS, "polyline");
+        line.setAttribute("points", pts.join(" "));
+        line.setAttribute("fill", "none");
+        line.setAttribute("stroke", colour);
+        line.setAttribute("stroke-width", "2");
+        line.setAttribute("vector-effect", "non-scaling-stroke");
+        svg.appendChild(line);
+      } else {
+        var dot = document.createElementNS(NS, "circle");
+        dot.setAttribute("cx", pts[0].split(",")[0]);
+        dot.setAttribute("cy", pts[0].split(",")[1]);
+        dot.setAttribute("r", "1.5");
+        dot.setAttribute("fill", colour);
+        svg.appendChild(dot);
+      }
+    });
     return svg;
-  }
-
-  function hardware(hw) {
-    if (!hw) return null;
-    var vram = hw.gpu_mem_used != null
-      ? fmt.gib(hw.gpu_mem_used) + (hw.gpu_mem_total != null ? " / " + fmt.gib(hw.gpu_mem_total) : "")
-      : "";
-    var power = hw.gpu_power != null
-      ? fmt.int(hw.gpu_power) + " W" + (hw.gpu_power_limit != null ? " / " + fmt.int(hw.gpu_power_limit) + " W" : "")
-      : "";
-    var parts = [
-      fig("GPU", fmt.pct(hw.gpu_util)),
-      fig("VRAM", vram),
-      fig("temp", hw.gpu_temp != null ? fmt.int(hw.gpu_temp) + " °C" : ""),
-      fig("power", power),
-    ].filter(Boolean);
-    return parts.length ? h("div", { class: "hw" }, parts) : null;
   }
 
   function jobsOn(snap, name) {
     return (snap.jobs || []).filter(function (job) { return job.endpoint === name; });
   }
 
-  function liveEndpoint(snap, ep) {
-    var rates = ep.rates || {};
-    var occupancy = null;
-    if (ep.slots) occupancy = fig("slots", fmt.int(ep.slots.busy) + "/" + fmt.int(ep.slots.total));
-    else if (ep.requests) {
-      occupancy = fig("requests", fmt.int(ep.requests.running) + " running / " + fmt.int(ep.requests.waiting) + " waiting");
+  // one job as the MCP status line (status.py's `_job_row`): the mark, the name, the elapsed,
+  // then the bits that are actually there joined by ` · `, then the last activity cut short.
+  // The marks are status.py's MARK (running "⟳", queued "…"); queued also keeps jobRow's badge.
+  function epJobRow(job) {
+    var row = [h("span", { text: job.status === "queued" ? "… " : "⟳ " }),
+      jobLink(job.id, job.name),
+      h("span", { class: "num", text: " " + fmt.dur(job.elapsed_s) })];
+    var trail = function (node) {
+      row.push(h("span", { class: "muted", text: " · " }));
+      row.push(node);
+    };
+    if (job.tool_calls) {
+      trail(h("span", { text: fmt.int(job.tool_calls) + (job.tool_calls === 1 ? " call" : " calls") }));
     }
+    if (job.ctx_pct != null) {
+      var w = Math.max(0, Math.min(100, job.ctx_pct));
+      trail(h("span", { title: fmt.int(job.ctx_tokens) + " / " + fmt.int(job.context) + " tokens" }, [
+        h("span", { class: "bar" + (w >= 80 ? " high" : "") }, [h("span", { style: "width:" + w + "%" })]),
+        h("span", { class: "num", text: fmt.pct(job.ctx_pct) }),
+      ]));
+    }
+    if (job.gen_tps != null) trail(h("span", { class: "num", text: fmt.speed(job.gen_tps) + " t/s" }));
+    if (job.compactions > 0) {
+      trail(h("span", { class: "badge", text: fmt.int(job.compactions) + " compaction" + (job.compactions === 1 ? "" : "s") }));
+    }
+    if (job.errors > 0) trail(h("span", { class: "badge err", text: fmt.int(job.errors) }));
+    var act = oneLine(job.last_activity);
+    if (act) {
+      trail(h("span", { class: "ep-act", title: act, text: act.length > 60 ? act.slice(0, 59) + "…" : act }));
+    }
+    return h("div", { class: "ep-job" }, row);
+  }
+
+  // the card's jobs block (3.7e): always present, always the card's last child, so it never
+  // moves between renders. Our jobs get one status line each; the engine being busy with
+  // someone else's work (vLLM's own load, another harness) is not a listable job of ours —
+  // the load tile already says busy, so the block says so too.
+  function jobsBlock(snap, ep) {
+    var mine = jobsOn(snap, ep.name);
+    if (mine.length) return h("div", { class: "ep-jobs" }, mine.map(epJobRow));
+    var busy = (ep.slots && ep.slots.busy > 0) || (ep.requests && ep.requests.running > 0);
+    return h("div", { class: "ep-jobs muted", text: busy ? "busy, no local job" : "no jobs" });
+  }
+
+  // the KV tile is a meter (3.7f): the jobs table's bar (accent fill, warning at >= 80) with
+  // the percent beside it — the second colour on the card is earned by the figure an operator
+  // acts on. Absent usage is the ordinary dash, same as every other tile.
+  function kvTile(ep) {
+    if (ep.kv_cache_usage == null) return fig("KV", "");
+    var w = Math.max(0, Math.min(100, ep.kv_cache_usage * 100));
+    return h("span", { class: "fig" }, [
+      h("span", { class: "label", text: "KV" }),
+      h("span", { class: "kv" }, [
+        h("span", { class: "bar" + (w >= 80 ? " high" : "") }, [h("span", { style: "width:" + w + "%" })]),
+        h("span", { class: "num", text: fmt.frac(ep.kv_cache_usage) }),
+      ]),
+    ]);
+  }
+
+  // the load tile's text follows the MCP status line's load_summary form (status.py): `1/2
+  // slots` plus ` N wait` when Strata reports a queue beside its slots, or `2 run 1 wait` for
+  // a slotless engine (vLLM). The KV percent is not part of it: it is its own tile's figure
+  function loadText(ep) {
+    if (ep.slots) {
+      return fmt.int(ep.slots.busy) + "/" + fmt.int(ep.slots.total) + " slots"
+        + (ep.requests && ep.requests.waiting > 0 ? " " + fmt.int(ep.requests.waiting) + " wait" : "");
+    }
+    if (ep.requests) {
+      return fmt.int(ep.requests.running) + " run"
+        + (ep.requests.waiting > 0 ? " " + fmt.int(ep.requests.waiting) + " wait" : "");
+    }
+    return "";
+  }
+
+  // the card's field grid (3.7d): four columns, three rows, the same twelve tiles on every
+  // live card — load | KV | decode (+sparkline) | stream / prompt | cache hit | ctx | probe /
+  // GPU | VRAM | temp | power. Row 3 is Strata's hardware: llama.cpp and vLLM report none, so
+  // it is four dashes today, and Epic 4.3 fills it. A tile is label above value.
+  function fieldGrid(snap, ep) {
+    var rates = ep.rates || {};
+    var hw = ep.hardware || {};
     var cacheHit = null;
     if (rates.cached_tps != null && rates.prompt_tps != null && rates.prompt_tps + rates.cached_tps > 0) {
       cacheHit = rates.cached_tps / (rates.prompt_tps + rates.cached_tps);
     }
-    var figures = [
-      occupancy,
-      fig("KV", fmt.frac(ep.kv_cache_usage)),
+    var vram = hw.gpu_mem_used != null
+      ? fmt.gib(hw.gpu_mem_used) + (hw.gpu_mem_total != null ? " / " + fmt.gib(hw.gpu_mem_total) : "")
+      : "";
+    var power = hw.gpu_power != null
+      ? fmt.int(hw.gpu_power) + " W" + (hw.gpu_power_limit != null ? " / " + fmt.int(hw.gpu_power_limit) + " W" : "")
+      : "";
+    return h("div", { class: "figures" }, [
+      fig("load", loadText(ep)),
+      kvTile(ep),
       fig("decode", rates.gen_tps != null ? fmt.speed(rates.gen_tps) + " tok/s" : "", sparkline(ep.name, snap.now)),
       fig("stream", ep.gen_tps_live != null ? fmt.speed(ep.gen_tps_live) + " tok/s" : ""),
       fig("prompt", rates.prompt_tps != null ? fmt.speed(rates.prompt_tps) + " tok/s" : ""),
       fig("cache hit", fmt.frac(cacheHit)),
       fig("ctx", fmt.int(ep.context)),
       fig("probe", ep.latency_ms != null ? fmt.int(ep.latency_ms) + " ms" : ""),
-    ].filter(Boolean);
-    var mine = jobsOn(snap, ep.name);
-    var jobsLine;
-    var busy = (ep.slots && ep.slots.busy > 0) || (ep.requests && ep.requests.running > 0);
-    if (ep.jobs_running > 0 || mine.length) {
-      var names = [];
-      mine.forEach(function (job, i) {
-        if (i) names.push(", ");
-        names.push(jobLink(job.id, job.name));
-      });
-      jobsLine = h("div", { class: "ep-jobs" }, [h("span", { class: "label muted", text: "jobs " }),
-        h("span", { class: "num", text: fmt.int(ep.jobs_running) + " " })].concat(names));
-    } else if (busy) {
-      jobsLine = h("div", { class: "ep-jobs muted", text: "busy, no local job" });
-    }
+      fig("GPU", fmt.pct(hw.gpu_util)),
+      fig("VRAM", vram),
+      fig("temp", hw.gpu_temp != null ? fmt.int(hw.gpu_temp) + " °C" : ""),
+      fig("power", power),
+    ]);
+  }
+
+  // the card shows the short model form the MCP status line shows (status.py's short_model):
+  // last path segment, drop from the first colon, drop a trailing quantizer suffix. The full
+  // served id rides in the title, and the endpoint detail page keeps the full id everywhere
+  function shortModel(id) {
+    var name = id.split("/").pop().split(":")[0];
+    ["-GGUF", "-gguf", "-EXL3", "-exl3"].forEach(function (suffix) {
+      if (name.length >= suffix.length && name.slice(-suffix.length) === suffix) {
+        name = name.slice(0, -suffix.length);
+      }
+    });
+    return name || id;
+  }
+
+  function liveEndpoint(snap, ep) {
+    var rates = ep.rates || {};
     return h("div", { class: "endpoint state-live", "data-endpoint": ep.name }, [
-      h("div", { class: "ep-head" }, [endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
-        ep.model ? h("span", { class: "ep-model", text: ep.model }) : null]),
+      // the state dot (3.7f): the first thing on the head; the down/dormant kinds take the
+      // same span with their variant (their CSS lives here too — see the 3.7d-f block)
+      h("div", { class: "ep-head" }, [h("span", { class: "sdot sdot-live", "aria-hidden": "true" }),
+        endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
+        ep.model ? h("span", { class: "ep-model", title: ep.model, text: shortModel(ep.model) }) : null]),
       stateStrip(ep, snap.now),
-      figures.length ? h("div", { class: "figures" }, figures) : null,
+      fieldGrid(snap, ep),
       rates.reason ? h("div", { class: "ep-note muted", text: "speeds: " + rates.reason }) : null,
-      hardware(ep.hardware),
-      jobsLine,
+      jobsBlock(snap, ep),
     ]);
   }
 
