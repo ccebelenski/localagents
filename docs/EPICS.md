@@ -493,6 +493,38 @@ Coordinator's reading of the screenshot against the code (`static/app.js` `hostC
 - ☐ **3.7f Colour.** The page is monochrome; the contrast is right. Colour carries state
   (live/busy/down/dormant) and backend, consistently with the strip and the endpoint page.
 
+The operator's second walk, the running-jobs table (2026-10-29, lanes A and B running), verbatim:
+
+> Running jobs is very transient - and current tool and last activity always seem to be the
+> same. Also I see an error count, but don't know what it is or means.
+
+Coordinator's reading against the code (`monitor/read.py:101-135`, `runner.py:205-241`):
+- The table lists only `status IN ('queued','running')` (read.py:106): a finished job vanishes
+  on the next snapshot, where the status line keeps one for 120 s (`status.KEEP_FINISHED_S`).
+- `last_tool` is the newest `tool_calls` row; `last_activity` is whatever the runner wrote last,
+  the assistant's text (runner.py:208) or the tool call in the same "Tool: input" shape
+  (runner.py:240). A local model mostly emits tool calls, so the two columns are the same
+  text nearly always.
+- `errors` is `SUM(is_error)` over the job's tool calls (derive.py:80-82): tool results that
+  came back as errors (a failing command, a Read of a missing file). The header says only
+  "errors".
+- `num_turns` is written once, from the final result (runner.py:268): the "turns" column reads
+  0 for every running job.
+
+- ☐ **3.7g Finished jobs linger.** A job finished within the last 120 s stays in the table with
+  its mark (✓/✗), elapsed frozen, the status line's rule; then drops. Lands in the snapshot's
+  jobs query (server side, read.py:106) and the page's mark.
+- ☐ **3.7h One activity column.** Drop "current tool"; "last activity" shows the assistant's
+  last sentence when the newest thing was text, else the tool call, as the runner records it;
+  the full text in the title. (Or keep both only when they differ: coordinator's call at the
+  brief.)
+- ☐ **3.7i The error count named.** Header "tool errors" with a title "tool results that came
+  back as errors; the job page lists them by tool"; the badge links to the job page's by-tool
+  table.
+- ☐ **3.7j Turns while running.** Either count assistant turns live (the runner increments on
+  each AssistantMessage, server side) or hide the column for running jobs; a column that reads
+  0 until the end is noise.
+
 ## Epic 4: operations (V2, not scheduled)
 
 - ☐ **4.1 Guided SSH setup script.** Walks the operator through key placement per host; no
