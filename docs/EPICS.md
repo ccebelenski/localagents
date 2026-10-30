@@ -914,6 +914,30 @@ The 3.7 chain's reviews are closed: no open defect.
   dir: start → status → start again ("already running … opening", the fake got the URL twice) →
   stop, port free. Review: rides the next batch's review (coordinator read the whole diff).)
 
+### 3.9 Codebase review pass (operator 2026-10-30)
+
+> Looking it over - much smoother, but I can't see it in action. Please push a full codebase
+> review pass to ai1, which will serve both review purposes and get some activity on the monitor
+> for me.
+
+The pass is cut by door for the Strata lane (one slot; a review brief holds at most four
+probes, hints "Review lane"), the doors run one after another on ai1
+(qwen3.8-flash-next-iq3_s), each read-only with its report in `t/REVIEW.md` on its own
+branch; the oracle is the spec, the schema document and the README, never the suite ("the same
+models wrote the tests"). Findings are dispositioned here; accepted ones become folds under
+ruling (e). The lane is also the operator's first live job on the landed page.
+
+- ☐ **3.9A The MCP server's request path**: `server.py`, `registry.py`, `shim.py`, `status.py`,
+  `__init__.py` (~2.3k lines). Probes: shim bodies and error translation; metrics_delta and
+  the Strata parsers over the captured fixture; wait_jobs/job_log/cancel-twice edges; the
+  status line over NULL ids, a dead server, a 200-char name.
+- ☐ **3.9B Jobs and storage**: `runner.py`, `jobs.py`, `db.py`, `derive.py` (~1.7k).
+- ☐ **3.9C The monitor's server**: `monitor/app.py`, `read.py`, `collect.py`, `serve.py`,
+  `state.py`, `config.py`, `rows.py`, `rates.py`, `ranges.py`, `retention.py`, `jobs.py`,
+  `seed.py` (~2.9k).
+- ☐ **3.9D The monitor's page**: `static/app.js`, `endpoint.js`, `job.js`, `app.css`,
+  `index.html`, with `tests/test_monitor_page.py` and `tools/smoke/` (~2.9k).
+
 ## Epic 4: operations (V2, not scheduled)
 
 - ☐ **4.1 Guided SSH setup script.** Walks the operator through key placement per host; no
