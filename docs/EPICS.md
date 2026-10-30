@@ -1097,6 +1097,14 @@ The 3.7 chain's reviews are closed: no open defect.
   growth is not evidence of a page leak. What settles it: about:memory → "Minimize memory usage"
   on that tab, then about:processes again; a drop back toward 560 MB is garbage, a figure that
   stays and keeps climbing by the morning is retention and the next probe is Firefox-side.
+  Operator (same evening, after "Minimize memory usage"): 661 MB. Six MB came back, so the
+  footprint is not collectable garbage; it is resident. The stream answers with
+  `Cache-Control: no-cache` (app.py `events`), which permits storing while requiring
+  revalidation; whether Firefox keeps the long-lived response body is unverified. The breakdown
+  that names the holder is about:memory → "Measure", the tab's `explicit` subtree (window-objects
+  js / dom, heap-unclassified, images, network cache). Firefox 158 is on the workstation but no
+  geckodriver or Marionette client; a Firefox-side probe is a raw-Marionette memory dump over a
+  seeded `--no-collect` monitor, an hour of tooling, the operator's call.
 
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
