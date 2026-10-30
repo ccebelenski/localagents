@@ -711,8 +711,12 @@
   // endpoint only disappears via a host-state flip, which is in the signature, so the drawn
   // children match whenever the signatures do.
   function hostSignature(host) {
+    // the DRAWN endpoints only (the review of fold-3, P1): a never-seen endpoint on a live host
+    // is hidden by 3.7a, so its arrival must not force a rebuild of a card it never joins
     var parts = [host.name, host.state];
-    host.endpoints.forEach(function (ep) { parts.push(ep.name + "\x00" + ep.state); });
+    host.endpoints.forEach(function (ep) {
+      if (!neverSeenOn(host, ep)) parts.push(ep.name + "\x00" + ep.state);
+    });
     return parts.join("\x01");
   }
 
@@ -821,6 +825,10 @@
       if (el && el.dataset.sig === sig) {
         updateHostInPlace(el, hostCard(snap, host));
       } else {
+        // the review of fold-3 (DeepSeek, D1): a card whose shape changed was rebuilt but the
+        // old element stayed in #hosts (2 → 6 → 12 cards in ten seconds on a state flip); the
+        // old card leaves the DOM here, before the map forgets it
+        if (el) hostsEl.removeChild(el);
         el = hostCard(snap, host);
         if (el) el.dataset.sig = sig;
         if (el || oldCards[host.name]) rebuilt = true; // built, replaced or gone; never-seen-and-still-seen is nothing
