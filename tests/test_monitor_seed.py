@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -97,6 +98,46 @@ def test_force_replaces_rather_than_appends(tmp_path):
     assert counts == first == EXPECTED_COUNTS
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM mcp_servers").fetchone()[0] == 1
+
+
+WALL = 1793381565.0  # a fixed wall clock: the collector refusal reads time.time(), not --now
+
+
+def _a_probe_ago(conn, ago: float) -> None:
+    with db.immediate(conn):
+        eid = db.lookup_id(conn, "endpoints", name="m", base_url="http://10.0.0.1:8080",
+                           backend="strata", host="h")
+        conn.execute("INSERT INTO probes (t, endpoint_id, up) VALUES (?, ?, 1)", (WALL - ago, eid))
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_seed_refuses_a_database_a_collector_wrote_to(tmp_path, monkeypatch, force):
+    """Review 3.9C C2: a running monitor never writes ``mcp_servers``, so the live-server check
+    cannot see it; a fresh ``probes`` row is its trace. A probe 10 s old on the WALL clock is
+    refused with or without ``force`` — reseeding would renumber the endpoints under the
+    collector's cached ids."""
+    monkeypatch.setattr(seed.time, "time", lambda: WALL)
+    conn = db.open_db(tmp_path / "live.db")
+    try:
+        _a_probe_ago(conn, 10.0)
+        with pytest.raises(seed.SeedRefused) as ei:
+            seed.seed(conn, NOW, FX, force=force)
+        assert str(ei.value) == ("a collector wrote this database 10 s ago; stop the monitor "
+                                 "first, or point --db at a throwaway file")
+    finally:
+        conn.close()
+
+
+def test_seed_replaces_a_database_a_collector_left_long_ago(tmp_path, monkeypatch):
+    """The refusal is about a LIVE collector: a probe 600 s old is an ordinary stale database
+    and ``force`` replaces it as before."""
+    monkeypatch.setattr(seed.time, "time", lambda: WALL)
+    conn = db.open_db(tmp_path / "stale.db")
+    try:
+        _a_probe_ago(conn, 600.0)
+        assert seed.seed(conn, NOW, FX, force=True)["probes"] == EXPECTED_COUNTS["probes"]
+    finally:
+        conn.close()
 
 
 def _dump(conn, table, cols, order):
@@ -438,6 +479,21 @@ def test_a_bad_now_exits_2_with_one_line_and_creates_no_file(tmp_path):
     assert out.returncode == 2, (out.stdout, out.stderr)
     assert len((out.stderr or out.stdout).strip().splitlines()) == 1
     assert not dbpath.exists() and not dbpath.parent.exists()
+
+
+def test_parse_now_passes_a_number_through():
+    """Review 3.9C T2: the ISO branch and the wall-clock fallback had no test at all."""
+    assert seed.parse_now("1793288065.5") == 1793288065.5
+
+
+def test_parse_now_reads_a_naive_iso_string_in_local_time():
+    text = "2026-10-30T12:00:00"
+    assert seed.parse_now(text) == datetime.fromisoformat(text).timestamp()
+
+
+def test_parse_now_none_is_the_wall_clock(monkeypatch):
+    monkeypatch.setattr(seed.time, "time", lambda: 1234.5)
+    assert seed.parse_now(None) == 1234.5
 
 
 def test_seed_cli_refuses_without_force_and_force_replaces(tmp_path):

@@ -644,7 +644,10 @@ job history routes, time-range parsing with a bad range rejected.
   (the same export truncated to its first 40 requests and 50 tool calls, started 5 min ago).
   What the browser smoke and route tests run against; shows every display state at once. A
   naive ISO `--now` is read in local time; the file is a snapshot at `--now` whose states decay
-  after the attention window (re-seed to see them).
+  after the attention window (re-seed to see them). True now: with or without `--force`, the
+  seed refuses a database a running collector is writing — a `probes` row within the last 120 s
+  of the wall clock — naming how long ago it wrote, since reseeding renumbers the endpoints under
+  the collector's cached ids; stop the monitor first, or point `--db` at a throwaway file.
 - `localagents smoke`: online, no Claude session. (1) a few short `/v1/messages` requests over
   httpx to a named endpoint; (2) one real job through `run_job` with a fixed brief ("run `date`
   with Bash and report it") on the model given, so the job, request and tool-call tables fill

@@ -221,6 +221,33 @@ def test_a_configured_endpoint_never_probed_is_an_empty_history(dbpath, tmp_path
     assert r.json() == {"t": [], "step": 1, "events": [], "jobs": []}
 
 
+def test_an_endpoint_named_fleet_does_not_collide_with_the_fleet_cache(dbpath, tmp_path):
+    """Review 3.9C C1: the history cache keyed every body by name in one namespace, so an
+    endpoint literally named ``fleet`` (its newest probe t equal to the fleet's, trivially true
+    when it probed at now) shared the key with the fleet route's body. The key is typed now:
+    ``("endpoint", name, span)`` never meets ``("fleet", span)``."""
+    from monitor_seeded import write_config
+    from localagents.registry import Registry
+    cfg = write_config(tmp_path / "collide.yaml",
+                       "  fleet:\n    base_url: http://10.0.0.80:8080\n    backend: strata\n    host: ai1\n")
+    conn = db.open_db(dbpath)
+    try:
+        with db.immediate(conn):
+            eid = db.lookup_id(conn, "endpoints", name="fleet", base_url="http://10.0.0.80:8080",
+                               backend="strata", host="ai1")
+            conn.execute("INSERT INTO probes (t, endpoint_id, up, host) VALUES (?, ?, 1, 'up')",
+                         (NOW, eid))
+    finally:
+        conn.close()
+    app = app_mod.make_app(lambda: db.open_db(dbpath), Registry.load(cfg), MonitorSettings(),
+                           asyncio.Event(), now=lambda: NOW, db_path=dbpath)
+    with TestClient(app) as c:
+        own = c.get("/api/endpoints/fleet/history", params={"range": "15m"}).json()
+        fleet = c.get("/api/fleet/history", params={"range": "15m"}).json()
+    assert {"t", "step", "events", "jobs"} <= set(own) and "endpoints" not in own
+    assert set(fleet) == {"t", "step", "endpoints"}
+
+
 # --- /api/jobs and /api/jobs/{id} --------------------------------------------------------------
 
 
@@ -641,6 +668,26 @@ def test_two_spellings_of_one_window_share_the_history_entry(dbpath, tmp_path):
         assert len(stmts) == 2
 
 
+def test_only_the_page_range_words_are_cached(dbpath, tmp_path):
+    """Review 3.9C R2: the cache never evicts, and the range grammar admits 10,241 windows per
+    key, so a caller looping over them could pin thousands of bodies. Only the five windows the
+    page's range control offers (``ranges.RANGES``) are cached; any other admitted range is
+    computed and answered, never stored."""
+    from localagents.monitor.ranges import RANGES
+    app = app_mod.make_app(lambda: db.open_db(dbpath), registry(tmp_path), MonitorSettings(),
+                           asyncio.Event(), now=lambda: NOW, db_path=dbpath)
+    with TestClient(app) as c:
+        for word in RANGES:
+            assert c.get("/api/endpoints/ai1/history", params={"range": word}).status_code == 200
+        cache = app.state.history_cache
+        assert len(cache) == len(RANGES)  # the five words, one endpoint
+        warm = dict(cache)
+        for minutes in range(16, 66):  # 50 admitted windows the page never asks for
+            assert c.get("/api/endpoints/ai1/history", params={"range": f"{minutes}m"}).status_code == 200
+        assert len(cache) == len(RANGES)
+        assert cache == warm  # the five words' entries are untouched
+
+
 def _statements_during_one_push(dbpath, tmp_path, streams_n):
     """The SQL statements executed across every connection during ONE push with ``streams_n``
     subscribed streams (the connect snapshots' work is cleared away first)."""
@@ -888,6 +935,21 @@ def test_a_bad_monitor_section_exits_2_naming_the_key(tmp_path):
                          env=_env(tmp_path, tmp_path / "x.db", cfg), timeout=60)
     assert out.returncode == 2
     assert "monitor: port must be an int" in out.stderr
+
+
+def test_db_file_prefers_the_flag_over_the_monitor_section(tmp_path):
+    """Review 3.9C T1: the command's two database overrides had no test at all."""
+    settings = MonitorSettings(db=str(tmp_path / "section.db"))
+    assert serve_mod.db_file(str(tmp_path / "flag.db"), settings) == tmp_path / "flag.db"
+
+
+def test_db_file_uses_the_monitor_section_over_the_database_default(tmp_path):
+    settings = MonitorSettings(db=str(tmp_path / "section.db"))
+    assert serve_mod.db_file(None, settings) == tmp_path / "section.db"
+
+
+def test_db_file_falls_back_to_the_database_path():
+    assert serve_mod.db_file(None, MonitorSettings()) == db.db_path()
 
 
 def _free_port():

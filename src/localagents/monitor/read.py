@@ -121,7 +121,8 @@ def backfill_last_active(conn: sqlite3.Connection, only_null: bool = False) -> N
 def _last_active(conn: sqlite3.Connection, endpoint_id: int | None, kind: str) -> float | None:
     """``last_active`` (story 3.7s, stored since 3.7-fold-2 D5): for a counter backend, the
     witness ``collect.tick`` wrote at its newest advancing counters interval — one statement,
-    one row; an old file gets it backfilled at the version-6 migration. Null when no witness was
+    one row; an old file is backfilled at the monitor's start (``serve.backfill_at_start``),
+    not by the version-6 migration, which adds the column only. Null when no witness was
     ever written (fresh endpoint, or nothing advanced within retention — the witness is not
     pruned with the probes). The counterless backends (outside ``COUNTER_BACKENDS``) are
     witnessed live by their newest request row's ``t``, else null."""
@@ -451,10 +452,89 @@ _RATE_SOURCES = {
 
 def _interval_ok(prev: sqlite3.Row, cur: sqlite3.Row) -> bool:
     """A raw interval between consecutive probes has a rate: both carry counters (a probe
-    without, a down one, is a gap) and nothing reset between them."""
+    without, a down one, is a gap) and nothing reset between them. Review 3.9C R1: the bounded
+    read reproduces this rule in SQL (``_history_spans_sql``); it stays for the one interval the
+    SQL window cannot see — the row before the range paired with the first in-range row."""
     if prev["has_counters"] is None or cur["has_counters"] is None:
         return False
     return rates.reset_reason(_counters(prev), _counters(cur), prev["since"], cur["since"]) is None
+
+
+def _source_column(col: str) -> str:
+    """The qualified probe column a history series' presence is read from."""
+    if col in COUNTER_COLUMNS:
+        return "c." + col
+    if col in HARDWARE_COLUMNS:
+        return "h." + col
+    return "p." + col
+
+
+# every column whose presence keeps a series in the body (spec §5: "a tile with no source is
+# absent, not empty"): the rate sources, the gauges, the probe's own figures and the hardware
+_HISTORY_SOURCES = sorted({c for cols in _RATE_SOURCES.values() for c in cols}
+                          | set(_GAUGES) | set(_PROBE_SERIES) | set(_HW_SERIES))
+
+
+def _history_counts_sql() -> str:
+    """The range's row count and each series source's presence, in one row: ``COUNT(*)`` is
+    ``n`` (the downsampling needs it) and each ``COUNT(column)`` is the old "any value in the
+    range" rule the absent-series decision takes (spec §5: "a tile with no source is absent,
+    not empty"). Returns one row whatever the range holds."""
+    counts = ", ".join(f"COUNT({_source_column(col)})" for col in _HISTORY_SOURCES)
+    return ("SELECT COUNT(*), " + counts + " FROM probes p"
+            " LEFT JOIN probe_counters c ON c.probe_id = p.id"
+            " LEFT JOIN probe_hardware h ON h.probe_id = p.id"
+            " WHERE p.endpoint_id = ? AND p.t >= ? AND p.t <= ?")
+
+
+def _history_spans_sql(k: int, n: int) -> str:
+    """The kept points and their gap counts (review 3.9C R1), one narrow statement.
+
+    Rows are numbered oldest first (``rn``), so the kept rows are the newest and every ``k``-th
+    back (``(n - rn) % k == 0``). Each row belongs to the span of the kept point that follows
+    it: ``grp = (rn - rn_min + k - 1) / k`` with ``rn_min = 1 + (n - 1) % k`` the oldest kept
+    row, so span ``j`` holds the raw intervals between kept point ``j - 1`` and kept point
+    ``j``. ``is_bad`` reproduces ``_interval_ok`` in SQL (either side without a counters row, a
+    counter down on both sides, or ``since`` changed), and ``SUM(is_bad)`` per span is what the
+    old prefix comparison
+    (``bad[cur] == bad[previous kept]``) reduces to. ``MAX(rn)`` names the kept row itself, the
+    bare ``id`` taking that row's value (SQLite's single-max aggregate rule). One row per kept
+    point — at most ``max_points`` — however many rows the range holds."""
+    rn_min = 1 + (n - 1) % k
+    counters = ", ".join("c." + col for col in COUNTER_COLUMNS)
+    # the previous row's counters come from one primary-key join on its probe id, not ten LAGs
+    bad = " OR ".join(
+        f"(r.{col} IS NOT NULL AND pc2.{col} IS NOT NULL AND r.{col} < pc2.{col})"
+        for col in COUNTER_COLUMNS)
+    return (
+        "WITH r AS (SELECT p.id AS id, p.t AS t, p.since AS since,"
+        " c.probe_id AS has_counters, " + counters
+        + ", ROW_NUMBER() OVER w AS rn, LAG(c.probe_id) OVER w AS prev_probe_id,"
+        " LAG(p.since) OVER w AS prev_since"
+        " FROM probes p LEFT JOIN probe_counters c ON c.probe_id = p.id"
+        " WHERE p.endpoint_id = ? AND p.t >= ? AND p.t <= ?"
+        " WINDOW w AS (ORDER BY p.t, p.id)),"
+        " b AS (SELECT r.*, CASE WHEN rn = 1 THEN 0"
+        " WHEN has_counters IS NULL OR prev_probe_id IS NULL THEN 1"
+        f" WHEN {bad} OR (since IS NOT NULL AND prev_since IS NOT NULL AND since <> prev_since)"
+        " THEN 1 ELSE 0 END AS is_bad"
+        " FROM r LEFT JOIN probe_counters pc2 ON pc2.probe_id = r.prev_probe_id)"
+        f" SELECT (rn - {rn_min} + {k} - 1) / {k} AS grp, SUM(is_bad) AS bad_count,"
+        " MAX(rn) AS rn, id FROM b GROUP BY grp ORDER BY rn"
+    )
+
+
+def _history_kept_sql(count: int) -> str:
+    """The full rows of ``count`` kept probes, by id: probes, counters, hardware and the model
+    one indexed lookup each, so the wide read is O(points) too."""
+    return ("SELECT p.*, m.served_id AS model_served, c.probe_id AS has_counters,"
+            " h.probe_id AS has_hardware, "
+            + ", ".join("c." + col for col in COUNTER_COLUMNS) + ", "
+            + ", ".join("h." + col for col in HARDWARE_COLUMNS)
+            + " FROM probes p LEFT JOIN probe_counters c ON c.probe_id = p.id"
+            " LEFT JOIN probe_hardware h ON h.probe_id = p.id"
+            " LEFT JOIN models m ON m.id = p.model_id"
+            f" WHERE p.id IN ({', '.join('?' * count)}) ORDER BY p.t, p.id")
 
 
 def endpoint_history(
@@ -468,11 +548,17 @@ def endpoint_history(
 
     One point per probe; when the range holds more than ``max_points`` probes, every k-th
     (``k = ceil(n / max_points)``, counted back from the newest, which is always kept). A
-    point's rates are over the interval from the previous point (the previous kept probe; for
-    the first point the probe ``k`` before it, or the newest probe before the range), through
-    ``rates.rates``; null when any raw interval inside it is a gap or a reset. A series whose
-    source holds no value in the range is ABSENT (spec §5: "a tile with no source is absent,
-    not empty"). ``endpoint_id`` None (configured, never probed) is the empty history."""
+    point's rates are over the interval from the previous kept point (for the earliest kept
+    point: the probe before the range, or the range's oldest row), through ``rates.rates``;
+    null when any raw interval inside it is a gap or a reset. A series whose source holds no
+    value in the range is ABSENT (spec §5: "a tile with no source is absent, not empty").
+    ``endpoint_id`` None (configured, never probed) is the empty history.
+
+    Review 3.9C R1: the rows read are bounded by the points answered. The old path loaded every
+    in-range probe (120,961 rows for 599 points, 861 ms on the route) and downsampled in
+    Python; ``_history_spans_sql`` names the kept points and their gap counts, and
+    ``_history_kept_sql`` fetches those rows by id. The body is byte-identical to the old
+    algorithm's."""
     out: dict[str, Any] = {"t": [], "step": 1}
     if endpoint_id is None:
         out.update(events=[], jobs=[])
@@ -481,27 +567,41 @@ def endpoint_history(
     kind = backend_kind(b[0]) if b is not None else "other"
     pre = conn.execute(_PROBE_SELECT + " WHERE p.endpoint_id = ? AND p.t < ? ORDER BY p.t DESC, p.id DESC LIMIT 1",
                        (endpoint_id, since_t)).fetchone()
-    in_range = conn.execute(_PROBE_SELECT + " WHERE p.endpoint_id = ? AND p.t >= ? AND p.t <= ? ORDER BY p.t, p.id",
-                            (endpoint_id, since_t, now)).fetchall()
-    rows_ = ([pre] if pre is not None else []) + in_range
-    offset = len(rows_) - len(in_range)
-    n = len(in_range)
+    # one row: n and the absent-series presence flags, over the whole range
+    counts = conn.execute(_history_counts_sql(), (endpoint_id, since_t, now)).fetchone()
+    n = counts[0]
+    present = {col: bool(counts[i + 1]) for i, col in enumerate(_HISTORY_SOURCES)}
     k = max(1, math.ceil(n / max_points)) if n else 1
-    # bad[i]: raw intervals (j-1, j) with j <= i that have no rate (prefix count over rows_)
-    bad = [0] * len(rows_)
-    for i in range(1, len(rows_)):
-        bad[i] = bad[i - 1] + (0 if _interval_ok(rows_[i - 1], rows_[i]) else 1)
-    picked = [i + offset for i in range(n) if (n - 1 - i) % k == 0]
     out["step"] = k
-    out["t"] = [rows_[s]["t"] for s in picked]
+    # the kept points' gap counts (one row per point), then the kept rows themselves by id:
+    # O(points) in both statements, however many rows the range holds
+    spans = conn.execute(_history_spans_sql(k, n), (endpoint_id, since_t, now)).fetchall() if n else []
+    kept = (conn.execute(_history_kept_sql(len(spans)), [row["id"] for row in spans]).fetchall()
+            if spans else [])
+    span_by_id = {row["id"]: row for row in spans}
+    first = (conn.execute(_PROBE_SELECT + " WHERE p.endpoint_id = ? AND p.t >= ? AND p.t <= ?"
+                          " ORDER BY p.t, p.id LIMIT 1", (endpoint_id, since_t, now)).fetchone()
+             if n else None)
+    out["t"] = [row["t"] for row in kept]
+    offset = 1 if pre is not None else 0
+    # the earliest kept point's reference is the row the old walk clamped to: index 0 of
+    # [pre] + in-range, i.e. pre, or the range's oldest row when there is no pre. bad[0] is 0,
+    # so its rate also needs no gap or reset anywhere from the range's start to it — including
+    # the pre -> first-in-range interval, which is the one interval the SQL window cannot see.
+    bad_first = 0 if pre is None or n == 0 else (0 if _interval_ok(pre, first) else 1)
     series: dict[str, list] = {key: [] for key in (*_RATE_SOURCES, *_GAUGES, *_PROBE_SERIES, *_HW_SERIES)}
-    for s in picked:
-        cur = rows_[s]
-        ref = max(s - k, 0)
+    for idx, cur in enumerate(kept):
+        span = span_by_id[cur["id"]]
+        if idx == 0:
+            ref = pre if pre is not None else first
+            ok = offset + span["rn"] - 1 > 0 and span["bad_count"] == 0 and bad_first == 0
+        else:
+            ref = kept[idx - 1]  # the previous kept point (k raw rows back)
+            ok = span["bad_count"] == 0  # its span holds no gap or reset
         r = None
-        if ref < s and bad[s] == bad[ref]:
-            r = rates.rates(_counters(rows_[ref]), _counters(cur), cur["t"] - rows_[ref]["t"], kind,
-                            rows_[ref]["since"], cur["since"])
+        if ok:
+            r = rates.rates(_counters(ref), _counters(cur), cur["t"] - ref["t"], kind,
+                            ref["since"], cur["since"])
         series["prompt_tps"].append(r.prompt_tps if r else None)
         series["gen_tps"].append(r.gen_tps if r else None)
         hit = None
@@ -514,7 +614,8 @@ def endpoint_history(
             series[h].append(cur[h])
     for key, values in series.items():
         sources = _RATE_SOURCES.get(key, (key,))
-        if any(row[c] is not None for row in in_range for c in sources):
+        # present is the same "any value in the range" count the old walk took over in_range
+        if kept and any(present[c] for c in sources):
             out[key] = values
     out["events"] = [
         {"t": r["t"], "kind": r["kind"], "detail": r["detail"]}

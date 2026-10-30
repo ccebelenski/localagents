@@ -12,7 +12,7 @@ import pytest
 
 from localagents import db
 from localagents.jobs import state_dir
-from localagents.monitor import read, rows, seed
+from localagents.monitor import rates, read, rows, seed
 from localagents.registry import Registry
 
 from monitor_seeded import FX, NOW, endpoint_id, registry, seed_file, write_config
@@ -770,6 +770,142 @@ def test_downsampled_rates_are_null_when_a_reset_lies_inside_the_interval(world)
     assert h["t"][-1] == NOW and h["step"] == 8
     assert h["prompt_tps"][-1] is None  # NOW-40 .. NOW holds the reset at NOW-5
     assert _all_are(h["prompt_tps"][-2:-1], "prompt_tokens")
+
+
+# --- the bounded read (review 3.9C R1) ---------------------------------------------------------
+
+
+def _endpoint_history_before_r1(conn, endpoint_id, since_t, now, max_points=600):
+    """``read.endpoint_history`` verbatim at HEAD 5499c35: it loads every probe row in the range
+    and downsamples in Python. Kept here as the oracle for the bounded read."""
+    out: dict = {"t": [], "step": 1}
+    if endpoint_id is None:
+        out.update(events=[], jobs=[])
+        return out
+    b = conn.execute("SELECT backend FROM endpoints WHERE id = ?", (endpoint_id,)).fetchone()
+    kind = read.backend_kind(b[0]) if b is not None else "other"
+    pre = conn.execute(read._PROBE_SELECT + " WHERE p.endpoint_id = ? AND p.t < ? ORDER BY p.t DESC, p.id DESC LIMIT 1",
+                       (endpoint_id, since_t)).fetchone()
+    in_range = conn.execute(read._PROBE_SELECT + " WHERE p.endpoint_id = ? AND p.t >= ? AND p.t <= ? ORDER BY p.t, p.id",
+                            (endpoint_id, since_t, now)).fetchall()
+    rows_ = ([pre] if pre is not None else []) + in_range
+    offset = len(rows_) - len(in_range)
+    n = len(in_range)
+    k = max(1, math.ceil(n / max_points)) if n else 1
+    bad = [0] * len(rows_)
+    for i in range(1, len(rows_)):
+        bad[i] = bad[i - 1] + (0 if read._interval_ok(rows_[i - 1], rows_[i]) else 1)
+    picked = [i + offset for i in range(n) if (n - 1 - i) % k == 0]
+    out["step"] = k
+    out["t"] = [rows_[s]["t"] for s in picked]
+    series = {key: [] for key in (*read._RATE_SOURCES, *read._GAUGES, *read._PROBE_SERIES, *read._HW_SERIES)}
+    for s in picked:
+        cur = rows_[s]
+        ref = max(s - k, 0)
+        r = None
+        if ref < s and bad[s] == bad[ref]:
+            r = rates.rates(read._counters(rows_[ref]), read._counters(cur), cur["t"] - rows_[ref]["t"],
+                            kind, rows_[ref]["since"], cur["since"])
+        series["prompt_tps"].append(r.prompt_tps if r else None)
+        series["gen_tps"].append(r.gen_tps if r else None)
+        hit = None
+        if r and r.cached_tps is not None and r.prompt_tps is not None and r.prompt_tps + r.cached_tps > 0:
+            hit = r.cached_tps / (r.prompt_tps + r.cached_tps)
+        series["cache_hit"].append(hit)
+        for g in (*read._GAUGES, *read._PROBE_SERIES):
+            series[g].append(cur[g])
+        for h in read._HW_SERIES:
+            series[h].append(cur[h])
+    for key, values in series.items():
+        sources = read._RATE_SOURCES.get(key, (key,))
+        if any(row[c] is not None for row in in_range for c in sources):
+            out[key] = values
+    out["events"] = [
+        {"t": r["t"], "kind": r["kind"], "detail": r["detail"]}
+        for r in conn.execute(
+            "SELECT t, kind, detail FROM endpoint_events WHERE endpoint_id = ? AND t >= ? AND t <= ?"
+            " ORDER BY t, id", (endpoint_id, since_t, now))
+    ]
+    out["jobs"] = [
+        {"name": r["name"], "id": r["id"], "status": r["status"], "started_at": r["started_at"],
+         "finished_at": r["finished_at"], "model": r["served_id"]}
+        for r in conn.execute(
+            "SELECT j.name, j.id, j.status, j.started_at, j.finished_at, m.served_id FROM jobs j"
+            " LEFT JOIN models m ON m.id = j.model_id"
+            " WHERE j.endpoint_id = ? AND COALESCE(j.started_at, j.created_at) <= ?"
+            " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
+            " ORDER BY COALESCE(j.started_at, j.created_at), j.rowid", (endpoint_id, now, since_t))
+    ]
+    return out
+
+
+def _seven_day_world(tmp_path):
+    """Review 3.9C R1's probe world: a strata endpoint with 7 d of 5 s probes (120,961 in the
+    range, 599 kept at max_points=600) and one probe before it, counters that advance and reset
+    once, a ``since`` change with the counters still advancing, hardware on every row, and one
+    in-range value (``kv_cache_usage``) on a row no kept point carries."""
+    week = 7 * 86400.0
+    since = NOW - week
+    n = int(week / 5) + 1
+    conn = db.open_db(tmp_path / "slow.db")
+    with db.immediate(conn):
+        eid = conn.execute(
+            "INSERT INTO endpoints (name, base_url, backend, host)"
+            " VALUES ('slow', 'http://10.0.0.90:8080', 'strata', 'slow')").lastrowid
+        pre = conn.execute("INSERT INTO probes (t, endpoint_id, up, host, since)"
+                           " VALUES (?, ?, 1, 'up', 0.0)", (since - 5.0, eid)).lastrowid
+        first = pre + 1
+        conn.executemany(
+            "INSERT INTO probes (id, t, endpoint_id, up, host, latency_ms, state, kv_cache_usage, since)"
+            " VALUES (?, ?, ?, 1, 'up', 12, ?, ?, ?)",
+            [(first + i, since + 5.0 * i, eid, "busy" if i % 7 else "idle",
+              0.5 if i == 1 else None, 0.0 if i < 60000 else (300000.0 if i < 100000 else 700000.0))
+             for i in range(n)])
+        counters = [(pre, 50.0, 12.5, 0.0, 75.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+        prompt = 0.0
+        for i in range(n):
+            if i == 60000:  # the counters reset: a backwards interval with since changing too
+                prompt = 50.0
+            prompt += 100.0
+            counters.append((first + i, prompt, prompt * 0.25, 0.0, prompt * 1.5, 0.0,
+                             0.0, 0.0, 0.0, 0.0, 0.0))
+        conn.executemany(
+            "INSERT INTO probe_counters (probe_id, prompt_tokens, prompt_tokens_cached, prompt_seconds,"
+            " generated_tokens, generated_seconds, spec_draft_tokens, spec_accepted_tokens,"
+            " prefix_queries, prefix_hits, preemptions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            counters)
+        conn.executemany("INSERT INTO probe_hardware (probe_id, gpu_util) VALUES (?, 42.0)",
+                         [(first + i,) for i in range(n)])
+    return conn, eid
+
+
+def test_a_seven_day_history_reads_only_the_points_it_answers(tmp_path):
+    """Review 3.9C R1: the in-range SELECT loaded every probe row (120,961 for 599 points,
+    861 ms on the route) and the 600-point downsampling ran in Python. (i) The body is
+    identical to the pre-R1 algorithm's; (ii) the probe read returns fewer than 2 x 600 rows."""
+    conn, eid = _seven_day_world(tmp_path)
+    since = NOW - 7 * 86400.0
+    t0 = time.monotonic()
+    old = _endpoint_history_before_r1(conn, eid, since, NOW)
+    old_ms = (time.monotonic() - t0) * 1000
+    stmts: list[str] = []
+    conn.set_trace_callback(stmts.append)
+    t0 = time.monotonic()
+    new = read.endpoint_history(conn, eid, since, NOW)
+    new_ms = (time.monotonic() - t0) * 1000
+    conn.set_trace_callback(None)
+    print(f"\nR1 seven-day history: old {old_ms:.0f} ms, new {new_ms:.0f} ms,"
+          f" {len(old['t'])} points, step {old['step']}")
+    assert new == old
+    assert len(new["t"]) == 599 and new["step"] == 202
+    assert new["prompt_tps"][0] is not None  # the pre-range probe rates the earliest kept point
+    assert set(new["kv_cache_usage"]) == {None}  # present from a row no kept point carries
+    assert set(new["gpu_util"]) == {42.0} and "gpu_temp" not in new
+    probe_reads = [s for s in stmts if "FROM probes p" in s]
+    assert probe_reads
+    assert max(conn.execute(f"SELECT COUNT(*) FROM ({s})").fetchone()[0]
+               for s in probe_reads) < 2 * 600
+    conn.close()
 
 
 # --- fleet history -------------------------------------------------------------------------

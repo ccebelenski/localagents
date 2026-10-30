@@ -71,11 +71,33 @@ REFUSED_SENTENCE = (
     "the database already holds jobs or probes rows; pass --force to replace them"
 )
 LIVE_SERVER_S = 60.0  # a server's heartbeat is fresh this long (status.collect's rule)
+COLLECTOR_LIVE_S = 120.0  # a collector's newest probe is fresh this long
 
 
 def _live_server_sentence(pid: int) -> str:
     return (f"a live server (pid {pid}) is running against this database; stop it, "
             f"or point --db at a throwaway file")
+
+
+def _collector_sentence(age: int) -> str:
+    return (f"a collector wrote this database {age} s ago; stop the monitor first, "
+            f"or point --db at a throwaway file")
+
+
+def _collector_age(conn: sqlite3.Connection, now_wall: float) -> int | None:
+    """The whole seconds since the newest ``probes`` row, when a collector wrote it within
+    ``COLLECTOR_LIVE_S`` of the wall clock; else None (review 3.9C C2).
+
+    The monitor never writes ``mcp_servers`` (``serve`` starts no status registration), so
+    ``_live_server_pid`` cannot see a running collector: a fresh probe row is the only trace it
+    leaves. Reseeding under it rewrites the ``endpoints`` table, and the collector's per-task
+    cached ``eid`` then names a different endpoint's row. Runs on the WALL clock: a collector
+    writes now, whatever world clock ``--now`` names (ruling E)."""
+    row = conn.execute("SELECT MAX(t) FROM probes").fetchone()
+    if row is None or row[0] is None:
+        return None
+    age = max(0.0, now_wall - row[0])
+    return int(age) if age <= COLLECTOR_LIVE_S else None
 
 
 def _live_server_pid(conn: sqlite3.Connection, now_wall: float) -> int | None:
@@ -277,10 +299,17 @@ def seed(conn: sqlite3.Connection, now: float, fixtures_dir: Path | str, force: 
     a ``jobs`` or ``probes`` row is refused (``SeedRefused``) unless ``force=True``, which
     deletes every row of every table and seeds fresh — the seed never appends to a live
     database. ``force`` itself refuses a database a running localagents server owns (a fresh
-    heartbeat and a live pid, read on the wall clock), naming the pid. Returns the number of
-    rows written per table.
+    heartbeat and a live pid, read on the wall clock), naming the pid. With or without
+    ``force``, a database a collector is writing is refused too (a ``probes`` row within
+    ``COLLECTOR_LIVE_S`` of the wall clock): the monitor writes no ``mcp_servers`` row, so a
+    fresh probe is the only trace of it (review 3.9C C2). Returns the number of rows written
+    per table.
     """
     fx = Path(fixtures_dir)
+    # review 3.9C C2: force or not, never reseed under a running collector (see _collector_age)
+    age = _collector_age(conn, time.time())
+    if age is not None:
+        raise SeedRefused(_collector_sentence(age))
     has_jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
     has_probes = conn.execute("SELECT COUNT(*) FROM probes").fetchone()[0]
     if (has_jobs or has_probes) and not force:
@@ -294,6 +323,11 @@ def seed(conn: sqlite3.Connection, now: float, fixtures_dir: Path | str, force: 
             pid = _live_server_pid(conn, time.time())
             if pid is not None:
                 raise SeedRefused(_live_server_sentence(pid))
+            # the same collector check, again inside the write lock: a collector that committed
+            # between the outer read and this transaction must not be overwritten either
+            age = _collector_age(conn, time.time())
+            if age is not None:
+                raise SeedRefused(_collector_sentence(age))
             # children first (the foreign keys are enforced), then the lookup and job tables
             for table in ("probe_hardware", "probe_counters", "probes", "endpoint_events",
                           "endpoint_load", "requests", "tool_calls", "jobs", "mcp_servers",

@@ -30,11 +30,15 @@ from starlette.staticfiles import StaticFiles
 
 from .. import db
 from . import read
-from .ranges import DEFAULT_RANGE, parse_range
+from .ranges import DEFAULT_RANGE, RANGES, parse_range
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 KEEPALIVE_S = 15.0
 JOBS_DEFAULT_RANGE = "24h"
+# review 3.9C R2: the history cache stores only the windows the page's range control offers.
+# The grammar admits 10,241 windows; caching every one let a caller looping over them pin
+# thousands of bodies in the monitor's memory. Any other admitted range is still answered.
+_CACHED_SPANS = frozenset(parse_range(word) for word in RANGES)
 
 
 class _RevalidatingStatic(StaticFiles):
@@ -289,30 +293,37 @@ def make_app(
     # the range part of the key is the parsed window in SECONDS, not the request's text:
     # ``parse_range`` accepts "1h" and "60m" as one window, and keying on the spelling let the
     # cache grow with every spelling a caller invented; keyed in seconds its size is bounded by
-    # the windows the page can ask for.
-    history_cache: dict[tuple[str, float], tuple[float | None, Any]] = {}
+    # the windows the page can ask for. Review 3.9C C1: the key is TYPED — ("endpoint", name,
+    # span), ("fleet", span), ("jobs", span) — so an endpoint configured under the name "fleet"
+    # or "jobs" can never share a cache entry with the fleet or jobs body.
+    history_cache: dict[tuple[str, ...], tuple[float | None, Any]] = {}
+
+    def cached(key: tuple[str, ...], span: float, newest_t: float | None,
+               compute: Callable[[], Any]) -> Any:
+        """``compute()``'s body under ``key`` when ``span`` is one of the page's five windows;
+        a hit when the newest probe t is unchanged (story 3.7p). Any other admitted window
+        (review 3.9C R2) is computed and answered without being stored, so the cache's key
+        space is the five windows — never the grammar's 10,241."""
+        if span in _CACHED_SPANS:
+            hit = history_cache.get(key)
+            if hit is not None and hit[0] == newest_t:
+                return hit[1]
+        body = compute()
+        if span in _CACHED_SPANS:
+            history_cache[key] = (newest_t, body)
+        return body
 
     def cached_endpoint_history(conn: sqlite3.Connection, name: str, eid: int | None,
                                 newest_t: float | None, span: float,
                                 t: float) -> dict[str, Any]:
-        key = (name, span)
-        hit = history_cache.get(key)
-        if hit is not None and hit[0] == newest_t:
-            return hit[1]
-        body = read.endpoint_history(conn, eid, t - span, t)
-        history_cache[key] = (newest_t, body)
-        return body
+        return cached(("endpoint", name, span), span, newest_t,
+                      lambda: read.endpoint_history(conn, eid, t - span, t))
 
     def cached_fleet_history(conn: sqlite3.Connection, newest_t: float | None,
                              span: float, t: float,
                              histories: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
-        key = ("fleet", span)
-        hit = history_cache.get(key)
-        if hit is not None and hit[0] == newest_t:
-            return hit[1]
-        body = read.fleet_history(conn, reg, t - span, t, histories=histories)
-        history_cache[key] = (newest_t, body)
-        return body
+        return cached(("fleet", span), span, newest_t,
+                      lambda: read.fleet_history(conn, reg, t - span, t, histories=histories))
 
     def cached_jobs(conn: sqlite3.Connection, newest_t: float | None, span: float, t: float) -> list[dict]:
         """Story 3.7l: the timeline's job spans, cached with the rest under its own key. The
@@ -320,13 +331,8 @@ def make_app(
         uses): a job that starts between two probes appears at the next probe, at most
         ``refresh_s`` late — good enough for a bar's left edge, and one more key on the job
         rows would recompute the whole batch on every job-row write."""
-        key = ("jobs", span)
-        hit = history_cache.get(key)
-        if hit is not None and hit[0] == newest_t:
-            return hit[1]
-        out = read.jobs_overlapping(conn, t - span, t)
-        history_cache[key] = (newest_t, out)
-        return out
+        return cached(("jobs", span), span, newest_t,
+                      lambda: read.jobs_overlapping(conn, t - span, t))
 
     async def index(request: Request) -> Response:
         # story 3.2c row 3 (the 3.2 combined review): the shell answers no-cache like the static
@@ -482,4 +488,7 @@ def make_app(
         Mount("/static", app=_RevalidatingStatic(directory=STATIC_DIR), name="static"),
     ])
     app.state.fanout = fan
+    # the history cache's size is its contract (review 3.9C R2: bounded at five windows ×
+    # (endpoints + 2)); exposed so the test can count entries, not statements
+    app.state.history_cache = history_cache
     return app
