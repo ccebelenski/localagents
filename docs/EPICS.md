@@ -631,6 +631,34 @@ each live endpoint's own history for the strip (`state.hists[name]`).
   `state.fleet`; the fleet grid stays the fleet charts' (until 3.7l retires them). Evidence: the
   smoke over the real-shaped history counts one polyline run per contiguous stretch, no
   circles on a healthy endpoint. Fold with 3.7n.
+Operator 2026-10-29, two more, verbatim: "first is we shouldn't be hammering the database hard,
+so be mindful of queries and consider caching if you haven't. Second is a sparkline with no
+scale isn't too useful."
+
+Coordinator's reading of the first: nothing is cached. Every subscriber (each open tab) runs its
+own `read.overview` on every tick (app.py:234-236 `snapshot_event` per stream, 249-254 per
+wake), and a tick fires per endpoint probe (3.7m); `read.overview` runs its per-endpoint reads
+for all 13 configured endpoints and ~6 `derive.*` queries per running job (read.py:112-137:
+ctx_tokens, gen_tps, tool_call_count, error_count, last_tool, files_touched). The page then
+fetches the fleet history plus one history per live endpoint every 5 s (the Epic 3 retro's open
+N+1), each a downsampling read over the range. Two tabs double all of it.
+
+- ☐ **3.7p One read per tick, shared; histories cached and batched.** Server: the fan-out
+  computes the snapshot ONCE per push (3.7m's clock) and every subscriber receives the same
+  bytes; the overview's per-job derivations run once per job per push. History responses are
+  cached per (endpoint, range) and keyed on the endpoint's newest probe `t`, so a request between
+  ticks is a dictionary hit; the fleet route the same. The page's N+1 becomes one call:
+  `/api/overview/history?range=` returns the fleet grid plus each live endpoint's own history in
+  one body (the page keeps `state.fleet` and `state.hists` as they are, filled from that one
+  reply). Evidence: a test counts SQL statements per tick with `sqlite3.Connection.
+  set_trace_callback` over the seeded world, before and after, with two subscribers; the
+  numbers go in the story record. Folds into 3.7m's lane (same door: the fan-out).
+- ☐ **3.7q Sparklines with a scale.** Every live card's sparkline shares ONE y scale: the
+  maximum decode rate over all live endpoints' windows (floored at 1), so a tall line on one
+  card and a low line on another compare by height across the row. A small muted peak label at
+  the sparkline's right edge ("↑ 112" in tok/s, the shared max, the same on every card) is the
+  scale; the tile's value is the current rate; the aria-label keeps the endpoint's own peak.
+  Fold with 3.7n/3.7o (one lane, the live card).
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
