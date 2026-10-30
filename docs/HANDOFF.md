@@ -33,13 +33,10 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (check `list_jobs` and `git worktree list` first).**
-- DeepSeek/dgx1-a: review of the package-side folds (A1, B1–B3, v7, v8; brief in the session's
-  scratchpad as `brief-review-folds-1.md`). Its findings go to a fold by itself (ruling (a)).
-- Opus (Agent worktree under `.claude/worktrees/`): review of the page folds 3.7u-fix + 3.9D-fix
-  over the smoke world (ports 8791/9251). Its findings go to a Qwen fold.
-- A Haiku worktree (`.claude/worktrees/agent-a793f5489d5ed8033`) is landed but locked by the
-  harness; `git worktree remove -f -f` it when the lock is gone.
+**Lanes at the last note.** None running. Every chain opened today is closed: 3.9A/B/C/D/E with
+their folds, the package-side folds review (F1–F3 folded), the page folds review (P-1/P-2 folded
+and reviewed clean), 1.12, 3.7u, 3.7w. One Haiku worktree (`.claude/worktrees/agent-a793f5489d5ed8033`)
+is landed but still harness-locked; `git worktree remove -f -f` it when the lock is gone. Suite 694.
 
 **Awaiting the operator.**
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is

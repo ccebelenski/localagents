@@ -1028,7 +1028,17 @@ The 3.7 chain's reviews are closed: no open defect.
   `overflows` mark masked (`builtHTML`/`builtClass`), so a scrolling endpoint is kept across
   pushes (`tools/smoke/keep.js`: replaced [] where dgx1-a was replaced 7 of 7). Two static gates
   (every flex row holding an `ep-line` is in the measuring rule; the in-place helpers never read
-  raw outerHTML/className), each red on its mutant. Review of the fold: Qwen/ai1.
+  raw outerHTML/className), each red on its mutant. Review of the fold: Qwen/ai1 job
+  20261030-150909-d41e5277, 69 turns, 21 min, its own oracle (a hidden max-content clone per
+  card): delta 0 in 18 rows over five worlds at 900/1400/2200, a long `.ep-active` phrase leaking
+  nothing from the head's auto margin; 2400/1200/2400/800/2400 kept floor 946 = oracle with
+  columns 2/1/2/1/2, a long-error world held 3439 = its text at every window, a 15-host page's
+  vertical scrollbar moved nothing; identity kept for every `.endpoint` and `.host-head` over 7
+  renders in four worlds at two widths with live marks, a changed error sentence swapped and
+  re-marked. NO DEFECT: the 3.7u chain closes (3.7u → Qwen review U1-3 → fold → Opus review
+  P-1/2 → fold → this review). Possible, noted: a `builtHTML` that stopped removing NESTED marks
+  would pass every gate and smoke tool (keep.js witnesses endpoint/head identity, not sub-block);
+  cdp.mjs's `cardFit`/`cardOverflow` fields still name pre-U1 classes.
   Operator: "I don't like the '...' convention because it hides information - either set a
   minimum card width that can accomodate the widest text, or dynamically size the card to not
   truncate (and use that as min size so it can't shrink below that high water mark). We get
