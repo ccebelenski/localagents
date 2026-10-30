@@ -837,7 +837,7 @@ recorded" for a box active 8 days ago with pruned probes. 644 passed.
   `from localagents import monitor` (an ImportFrom with module `localagents` and a name
   `monitor`). (c) A terminal row with NULL `finished_at` is frozen at `created_at`'s best
   witness, never moving (`elapsed_s` null when neither start nor finish is known).
-- ☐ **3.7-fold-4 Page cleanups.** One lane after the DeepSeek review of f670097/6e686bf lands
+- ☑ **3.7-fold-4 Page cleanups.** (a2f9a1c: Qwen/ai1 job 20261030-012138-3eebd3e3, 111 turns, 12 min, 643 tests; uPlot dropped from the package with its tests; the long model id held on one head line by a flex basis rule the brief lacked, measured; the request time dated past 24 h, ms durations, one pill convention, dead CSS gone, inventories complete. Noticed: README's monitor section describes the retired charts and the old header → 3.7-docs.) One lane after the DeepSeek review of f670097/6e686bf lands
   its findings too: `context_exceeded` read as truthy (a non-empty string), §5a's sentence
   corrected to the stored type; the endpoint page's request time with the day stamp past 24 h
   (`fmt.date`) as the jobs table does; the two dead CSS rules removed and the inventories made
