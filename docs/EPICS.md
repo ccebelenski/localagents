@@ -470,15 +470,26 @@ Coordinator's reading of the screenshot against the code (`static/app.js` `hostC
   nothing left to draw and its node not down is not drawn; one muted line under the cards says
   how many are hidden. Dormant-but-seen stays a muted line (spec §4). Spec §4's "never hidden"
   gets its True-now sentence.
-- ☐ **3.7b Card flow.** No full-width rows inside the card grid; live hosts first in config
-  order, then down nodes; the grid packs.
+- ☐ **3.7b Card flow.** No full-width rows inside the card grid; config order, stable (a card
+  never moves when its state changes; a down node keeps its place as a card); hidden hosts
+  drop out and the grid packs. (Operator 2026-10-29: "live first" dropped for stability.)
 - ☐ **3.7c A down node is a card.** Same shape and size as a live host: the host name, the one
   alert sentence, its endpoints greyed (a never-seen endpoint on a down node is one muted line).
 - ☐ **3.7d Fixed field positions.** The figures and hardware rows are a grid with one slot per
   field in the same order on every card; a field the backend does not provide shows a dash in
   its slot.
-- ☐ **3.7e Context used on the card.** Pending the operator's answer: per-job fill on the
-  card's jobs line, or an endpoint-level figure (and if so from where).
+- ☐ **3.7e Jobs block on the card: per-job context fill.** The important number is each
+  job's own context fill against the window the harness enforces (the shim's probed limit),
+  not an endpoint-level derivation: under unified KV the slot window and the pool differ, and
+  vLLM has no slots, so KV percent times ctx is nobody's context used; KV percent stays as the
+  engine's pool figure in its own slot. Every live endpoint has a jobs block in the same place
+  at the card's foot, zero or more rows, one per running job in the status line's row form
+  (`status._job_row`: mark, name, elapsed · calls · files · ctx · t/s · compactions ·
+  activity), the job name as the link in place of the model, ctx as the jobs table's bar with
+  its percent; a muted "no jobs" line when empty and "busy, no local job" when the engine is
+  occupied without one of ours, so the block never moves. All from the snapshot; no server
+  change. (Operator: "we kind of already have the mini job display, it's in the MCP status
+  line.")
 - ☐ **3.7f Colour.** The page is monochrome; the contrast is right. Colour carries state
   (live/busy/down/dormant) and backend, consistently with the strip and the endpoint page.
 
