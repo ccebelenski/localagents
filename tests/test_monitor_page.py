@@ -89,6 +89,9 @@ SPEC = Path(__file__).resolve().parent.parent / "docs" / "superpowers" / "specs"
 # the classes the browser smoke and the spec name (story 3.2's brief)
 SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant", "node-down", "node-unknown",
                  "jobs", "fleet", "range",
+                 # 3.7l: the fleet timeline (the class "timeline" also names the job page's
+                 # tool timeline — one stylesheet, both styled)
+                 "timeline", "tl-row", "tl-label", "tl-track", "tl-band", "tl-job", "tl-axis", "tl-now",
                  # the live endpoint card (stories 3.7d-f): the fixed field grid, the jobs block
                  # that is always the card's last child, its status-line rows and their activity
                  # tail, and the state dot (this lane styles all three variants; the live card's
@@ -110,10 +113,11 @@ JOB_SMOKE_CLASSES = ["job-detail", "gauge", "timeline", "by-tool", "job-requests
                      "status-cancelled", "status-lost", "log-dir"]
 
 # the names app.js reads the route bodies through (its header says so): snapshot, host, endpoint,
-# running job, endpoint hardware, endpoint rates, fleet history, one endpoint's fleet series,
-# endpoint history
+# running job (and, since 3.7l, a timeline job span), endpoint hardware, endpoint rates, endpoint
+# history. 3.7l removed the fleet charts' `fleet` and `fleetEp` — no page file reads the fleet
+# history any more (the route stays; the vendored uPlot stays until the vendor drop)
 # `req` is the shared requests renderer's request row (3.7k), read through the same walk
-APP_JS_VARS = ("snap", "host", "ep", "job", "hw", "rates", "fleet", "fleetEp", "hist", "req")
+APP_JS_VARS = ("snap", "host", "ep", "job", "hw", "rates", "hist", "req")
 # the names job.js (story 3.4) reads the route bodies through (its header says so): the job
 # detail through `detail`, a snapshot through `snap`, a request row through `req`, a tool call
 # through `tc`, a snapshot jobs[] entry through `job`
@@ -195,9 +199,10 @@ def _read_fields(js_text, vars, holders=("state",)):
 # gate until it is listed. Index reads into a §5a array (`hist.t[i]`) are listed the same way.
 VARIABLE_KEY_READS = {
     "app.js": {
-        "fleet.endpoints[n]",  # the fleet body's per-endpoint map, by a live endpoint's name
-        "fleetEp[key]",  # one endpoint's fleet series by CHARTS key: gen_tps, prompt_tps, occupancy
-        "hist.t[i]", "hist.t[j+1]",  # the history time axis, by index (the state strip, and
+        # 3.7l: the charts' "fleet.endpoints[n]" and "fleetEp[key]" are gone — no app.js chain
+        # is rooted at the fleet body any more
+        "hist.t[i]", "hist.t[j+1]",  # the history time axis, by index (the state strip, the
+                                     # sparkline since 3.7o, and the timeline's busy band)
                                      # the sparkline since 3.7o, which reads the endpoint's own history)
         "hist.state[i]", "hist.state[j+1]",  # the state series, by index (the strip's segments;
                                               # its "now" label is the snapshot's probe_state)
@@ -254,7 +259,10 @@ def test_the_field_walk_sees_literal_bracket_keys_and_holder_chains():
     variable-key bracket and a holder; an index is not; a variable key is returned by name."""
     js = '''var a = fleetEp["gen_tpz"]; var b = state.fleet.endpoints[name]['prompt_tpz'].length;
     var c = hist.t[0].zzz; var d = page.hist.state[i]; var e = xfleet.nope; var f = obj.fleet.nope2;'''
-    fields, var_keys = _walk_chains(js, APP_JS_VARS, ("state", "page"))
+    # 3.7l: the constructed lines name the charts' old chain roots (fleet, fleetEp) — kept as
+    # the walker's fixture even though app.js no longer reads those names, so this walk names
+    # them itself
+    fields, var_keys = _walk_chains(js, APP_JS_VARS + ("fleet", "fleetEp"), ("state", "page"))
     assert fields == {"gen_tpz", "endpoints", "prompt_tpz", "t", "zzz", "state"}
     assert var_keys == {"fleet.endpoints[name]", "hist.state[i]"}
 

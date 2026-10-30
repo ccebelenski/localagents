@@ -290,7 +290,7 @@ def make_app(
     # ``parse_range`` accepts "1h" and "60m" as one window, and keying on the spelling let the
     # cache grow with every spelling a caller invented; keyed in seconds its size is bounded by
     # the windows the page can ask for.
-    history_cache: dict[tuple[str, float], tuple[float | None, dict[str, Any]]] = {}
+    history_cache: dict[tuple[str, float], tuple[float | None, Any]] = {}
 
     def cached_endpoint_history(conn: sqlite3.Connection, name: str, eid: int | None,
                                 newest_t: float | None, span: float,
@@ -313,6 +313,20 @@ def make_app(
         body = read.fleet_history(conn, reg, t - span, t, histories=histories)
         history_cache[key] = (newest_t, body)
         return body
+
+    def cached_jobs(conn: sqlite3.Connection, newest_t: float | None, span: float, t: float) -> list[dict]:
+        """Story 3.7l: the timeline's job spans, cached with the rest under its own key. The
+        key is keyed on the FLEET's newest probe t (the same value ``cached_fleet_history``
+        uses): a job that starts between two probes appears at the next probe, at most
+        ``refresh_s`` late — good enough for a bar's left edge, and one more key on the job
+        rows would recompute the whole batch on every job-row write."""
+        key = ("jobs", span)
+        hit = history_cache.get(key)
+        if hit is not None and hit[0] == newest_t:
+            return hit[1]
+        out = read.jobs_overlapping(conn, t - span, t)
+        history_cache[key] = (newest_t, out)
+        return out
 
     async def index(request: Request) -> Response:
         # story 3.2c row 3 (the 3.2 combined review): the shell answers no-cache like the static
@@ -379,7 +393,8 @@ def make_app(
         """Story 3.7p's batched route: the fleet grid plus the history of every endpoint the
         overview lists as live at this moment, in one body. The live set is the snapshot's own
         classification (``state == "live"``), never a second rule; a snapshot of the current
-        push is normally already cached, so this read starts at the histories."""
+        push is normally already cached, so this read starts at the histories. Story 3.7l adds
+        ``jobs``: the spans the fleet timeline draws, overlapping the same window."""
         try:
             span = range_s(request, DEFAULT_RANGE)
         except ValueError as e:
@@ -400,7 +415,8 @@ def make_app(
                 endpoints[name] = h
                 histories[name] = h
             fleet = cached_fleet_history(conn, _fleet_newest(newest), span, t, histories)
-            return {"fleet": fleet, "endpoints": endpoints}
+            jobs = cached_jobs(conn, _fleet_newest(newest), span, t)
+            return {"fleet": fleet, "endpoints": endpoints, "jobs": jobs}
         return JSONResponse(await in_thread(body))
 
     @guarded

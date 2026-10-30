@@ -569,6 +569,27 @@ def jobs_in_range(conn: sqlite3.Connection, since_t: float, now: float, limit: i
     ]
 
 
+def jobs_overlapping(conn: sqlite3.Connection, since_t: float, now: float) -> list[dict]:
+    """Story 3.7l: the job spans the fleet timeline draws — jobs OVERLAPPING ``[since_t, now]``
+    (``started_at`` set and at or before the window's end, unfinished or ``finished_at`` at or
+    after its start; a job that never started has no span to draw), oldest start first, each
+    ``{id, name, endpoint, status, started_at, finished_at}`` — ``endpoint`` is the endpoints
+    row's name (null when the job has no endpoint row). One statement, no derive calls: a 7 d
+    window over the full log would run ``summary_from_row`` once per job for a bar's label."""
+    return [
+        {"id": r["id"], "name": r["name"], "endpoint": r["endpoint"], "status": r["status"],
+         "started_at": r["started_at"], "finished_at": r["finished_at"]}
+        for r in conn.execute(
+            "SELECT j.id, j.name, e.name AS endpoint, j.status, j.started_at, j.finished_at"
+            " FROM jobs j LEFT JOIN endpoints e ON e.id = j.endpoint_id"
+            " WHERE j.started_at IS NOT NULL AND j.started_at <= ?"
+            " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
+            " ORDER BY j.started_at ASC, j.rowid ASC",
+            (now, since_t),
+        )
+    ]
+
+
 def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t: float, now: float,
                       limit: int = 1000) -> dict[str, Any]:
     """The endpoint's per-request table (review of 3.1, ruling D; shape §5a): the ``requests``

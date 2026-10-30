@@ -39,9 +39,27 @@ const probe = `(() => {
     reqRows: q('.requests-table tbody tr').slice(0, 3).map(r => Array.from(r.cells).map(c => c.textContent.trim())),
     reqPills: q('.requests-table .pill').slice(0, 5).map(e => e.className + ':' + e.textContent),
     reqRowClasses: q('.requests-table tbody tr').slice(0, 5).map(r => r.className),
+    // 3.7l: the fleet charts are gone — the canvas fields stay, and their zeros are the proof
     canvases: q('.fleet canvas').length,
     chartTitles: q('.fleet .chart h3').map(e => e.textContent),
     legends: q('.fleet .chart').map(c => Array.from(c.querySelectorAll('.u-legend .u-series th')).map(t => t.textContent.trim())),
+    // the timeline: one row per live endpoint (label, band count, job bars with their inline
+    // geometry), the axis ticks, the heading's window, and the section's rendered height
+    tlTitle: document.getElementById('fleet-title').textContent,
+    tlHeight: (document.getElementById('timeline') || {}).offsetHeight,
+    tlRows: q('.tl-row').map(r => ({
+      label: r.querySelector('.tl-label').textContent,
+      bands: r.querySelectorAll('.tl-band').length,
+      jobs: Array.from(r.querySelectorAll('.tl-job')).map(j => ({
+        text: j.textContent, left: j.style.left, width: j.style.width,
+        href: j.getAttribute('href'), title: j.getAttribute('title'),
+        top: j.style.top || getComputedStyle(j).top, cls: j.className,
+      })),
+    })),
+    tlAxis: q('.tl-axis span').map(e => e.textContent),
+    tlGrid: q('.tl-grid').length, tlNow: q('.tl-now').length,
+    // the clock the drawn percentages rest on: the snapshot the last timeline draw used
+    snapNow: localagentsMonitor.timeline.lastNow,
     rangeButtons: q('.range button').map(b => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')),
     conn: document.getElementById('conn').className + ' / ' + document.getElementById('conn-label').textContent,
     hiddenLine: (document.getElementById('hosts-hidden')||{}).textContent || null,
@@ -108,7 +126,8 @@ if (hashAfter) {
   console.log("AFTER " + hashAfter + ": detail=" + JSON.stringify(o.detail) + " overviewHidden=" + o.overviewHidden + " range=" + o.rangeButtons + " canvases=" + o.canvases + " strips=" + o.strips + " sparklines=" + o.sparklines + " banner=" + o.banner);
   // the hand-rendered states (js: hash-after) are read through the log's fields: the summary
   // line above long predates the Recent jobs log and cannot carry them
-  console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote }));
+  // 3.7l: the timeline fields ride along so a `js:` range switch (range.set('15m')) is read
+  console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote, tlTitle: o.tlTitle, tlAxis: o.tlAxis, tlRows: o.tlRows.map(r => ({ label: r.label, bands: r.bands, jobs: r.jobs.length })), tlHeight: o.tlHeight }));
   console.log("AFTER " + hashAfter + ": detail=" + JSON.stringify(o.detail) + " overviewHidden=" + o.overviewHidden + " range=" + o.rangeButtons + " canvases=" + o.canvases + " strips=" + o.strips + " sparklines=" + o.sparklines + " banner=" + o.banner
     + " reqHeaders=" + JSON.stringify(o.reqHeaders) + " reqRows=" + JSON.stringify(o.reqRows)
     + " reqPills=" + JSON.stringify(o.reqPills) + " reqRowClasses=" + JSON.stringify(o.reqRowClasses));

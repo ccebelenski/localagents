@@ -144,14 +144,6 @@ td.cut { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .badge.err { color: var(--critical); border-color: var(--critical); }
 .empty { padding: 12px; color: var(--muted); }
 
-/* fleet charts */
-.fleet-charts { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
-.chart { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px; min-width: 0; }
-.chart h3 { font-size: 14.5px; font-weight: 500; color: var(--ink-2); margin: 0 0 4px; }
-.uplot { font-family: inherit; }
-.uplot .u-legend { color: var(--ink-2); font-size: 13px; }
-.uplot .u-legend .u-marker { border-radius: 2px; }
-
 /* detail placeholder */
 .detail { margin-top: 24px; padding: 16px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); }
 
@@ -242,7 +234,7 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
   border-radius: 4px; padding: 1px 6px; overflow-wrap: anywhere; }
 
 @media (max-width: 760px) {
-  .hosts, .fleet-charts { grid-template-columns: 1fr; }
+  .hosts { grid-template-columns: 1fr; }
   .tiles { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .top { align-items: flex-start; }
 }
@@ -321,3 +313,50 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
    will not share the head's first line, ellipsise it rather than grow the card (measured at
    the 360 px card in the browser smoke). */
 .endpoint.state-live .ep-active { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 12em; }
+
+/* 3.7l timeline */
+/* one shared time axis, not three rate charts (the operator: "Fleet graphs are basically
+   useless right now in this form"; "the single timeline is better"). Rows are a fixed 36 px,
+   so the section's height depends only on the live count; every bar sits at an inline
+   left/width percentage of the window, so there is no resize logic and no pixel width here.
+   Dark surface only — the page has no light theme. */
+#timeline { min-width: 0; }
+.tl-rows { position: relative; }
+.tl-row { display: flex; height: 36px; }
+/* the label column is exactly 140 px and its 10 px of right padding is INSIDE that 140: the
+   gridline layer (left: 140 px) and the axis spacer line up with the tracks' left edge */
+.tl-label { flex: 0 0 140px; box-sizing: border-box; padding-right: 10px; min-width: 0;
+  display: flex; align-items: center; font-size: 13px; }
+.tl-label a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-track { flex: 1 1 auto; position: relative; min-width: 0; border-bottom: 1px solid var(--grid); }
+.tl-row:last-child .tl-track { border-bottom: 0; }
+/* the busy band: 6 px at the track's bottom, coloured by stateColour; idle is never drawn,
+   so an idle endpoint's track is empty (the whole point), and a null probe is a gap */
+.tl-band { position: absolute; bottom: 0; height: 6px; }
+/* job bars: 20 px in lane 0; a second job overlapping on one endpoint (a two-slot box) stacks
+   into lane 1, the 10 px bar between lane 0 and the band (a third lands in lane 1 too: at
+   most two lanes before they overlap visibly — a row's own slots bound the truth). The fill
+   is the endpoint's categorical colour at 0.25 (inline rgba), the 1 px border the full colour
+   (inline border-color), and the name rides in ink above both — an element opacity would fade
+   the ink too, hence rgba on the fill only. A running bar reaches now and marks its right
+   edge with the accent: still running, still open. */
+.tl-job { position: absolute; top: 0; height: 20px; box-sizing: border-box; border: 1px solid;
+  border-radius: 3px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink); font-size: 12px; line-height: 20px; padding: 0 4px; text-decoration: none;
+  min-width: 2px; }
+.tl-job-2 { top: 20px; height: 10px; line-height: 10px; font-size: 11px; padding: 0 3px; }
+.tl-job-run { border-right: 2px solid var(--accent); }
+/* the gridlines and the now marker ride in one absolute layer behind the rows, offset by the
+   140 px label column; the hairlines are var(--grid) (the charts' old axis colour), the now
+   marker the accent; pointer-events: none keeps the rows' links clickable under it */
+.tl-lines { position: absolute; left: 140px; right: 0; top: 0; bottom: 0; pointer-events: none; }
+.tl-grid { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--grid); }
+.tl-now { position: absolute; right: 0; top: 0; bottom: 0; width: 1px; background: var(--accent); }
+/* the axis row under the rows: a 140 px spacer for the label column, then tick labels at the
+   same percentages as the gridlines, centered on them (the first may hang into the label
+   gutter — the page is measured by the browser smoke's DOM reads, not by pixels) */
+.tl-axis { display: flex; margin-top: 2px; }
+.tl-axis-pad { flex: 0 0 140px; }
+.tl-axis-inner { flex: 1 1 auto; position: relative; min-width: 0; height: 16px; }
+.tl-axis-inner span { position: absolute; top: 0; font-size: 12px; color: var(--muted);
+  white-space: nowrap; transform: translateX(-50%); font-variant-numeric: tabular-nums; }

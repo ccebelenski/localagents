@@ -213,7 +213,7 @@ illustrative.
 | `GET /api/snapshot` | the snapshot object (below): what `/events` pushes, on demand (True now, 3.7p: served from the current push's shared cache — the bytes every stream of that push received — and only computed, once, when no snapshot of the current push exists yet; True now, 3.7-fold-2 D4: the cache entry also expires by age — older than `refresh_s` recomputes — so a `--no-collect` server, whose push counter never moves, is at most `refresh_s` stale rather than frozen at its startup snapshot) |
 | `GET /api/endpoints/{name}/history?range=<r>` | the history object of the endpoint named `{name}` in models.yaml; `range` defaults to `1h` (True now, 3.7p: bodies are cached per endpoint and keyed on the endpoint's newest probe t; True now, 3.7-fold-2: the range half of the key is the parsed window in SECONDS, so `1h` and `60m` are one entry and the cache is bounded by the windows the page can ask for) |
 | `GET /api/fleet/history?range=<r>` | the fleet history object (below): speed and occupancy for the whole fleet on one time grid; `range` defaults to `1h` |
-| `GET /api/overview/history?range=<r>` | story 3.7p: one body combining the fleet history and the histories of the live endpoints (below); `range` defaults to `1h` |
+| `GET /api/overview/history?range=<r>` | story 3.7p: one body combining the fleet history and the histories of the live endpoints, and (story 3.7l) the jobs overlapping the window for the fleet timeline (all below); `range` defaults to `1h` |
 | `GET /api/endpoints/{name}/requests?range=<r>` | the endpoint's request table object (below): our jobs' requests that ran on it in the range, with totals; `range` defaults to `24h` |
 | `GET /api/jobs?range=<r>` | an array of job summaries, jobs **created** within the range, newest first, at most 500; `range` defaults to `24h` |
 | `GET /api/jobs/{id}` | the job detail object of the job with that `id` |
@@ -507,7 +507,19 @@ to fetch the fleet grid plus one history per live endpoint every refresh period.
                                     moment (the overview's own classification, §4), each the
                                     endpoint history object above; not a second rule
     "<name>": { ... }, ...
-  }
+  },
+  "jobs": [                         story 3.7l (`read.jobs_overlapping`): the job spans the
+                                    fleet timeline draws — every job OVERLAPPING the window
+                                    (`started_at` set and at or before its end, unfinished or
+                                    `finished_at` at or after its start), oldest start first,
+                                    no cap and no summary: a timeline row reads the spans, it
+                                    does not enumerate the log
+    { "id": "...", "name": "...",   the six fields, the same names as the job summaries below;
+      "endpoint": "...",             `endpoint` is the endpoints row's name (null when the job
+      "status": "...",               has no endpoint row); a running job's `finished_at` is
+      "started_at": ...,             null and draws to now on the page
+      "finished_at": ... }, ...
+  ]
 }
 ```
 
@@ -515,7 +527,11 @@ Each of the three history routes is cached server-side per (endpoint name or `"f
 range text) and keyed on the newest probe `t` (for `"fleet"`, the newest over the configured
 endpoints): a request between probes is a cache hit, and the first request after a new probe
 recomputes. The cache holds the newest entry per key. `/api/overview/history` shares the same
-cache entries, so the per-endpoint route is a hit after it.
+cache entries, so the per-endpoint route is a hit after it. Story 3.7l: the `jobs` list is
+cached under a `"jobs"` key keyed on the FLEET's newest probe `t` (the same value the fleet
+entry uses): a job that starts between two probes appears at the next probe, at most
+`refresh_s` late — the timeline draws minute-wide spans, so a job's bar appearing one push
+late is inside the drawing's own resolution.
 
 **Job summaries** (`GET /api/jobs`): each is `derive.summary_from_row(include_result=False)`,
 the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoint`,

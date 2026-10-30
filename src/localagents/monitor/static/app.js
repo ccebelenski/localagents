@@ -1,19 +1,21 @@
 /* localagents monitor: the overview page (story 3.2; monitor spec §5 "Overview").
  *
  * The page lives on ONE server-sent events stream (/events): each `snapshot` event redraws the
- * host cards and the running-jobs table in place; the page never polls. The fleet charts, the
- * decode sparklines and the state strips' segments need history: on a snapshot the page
- * re-fetches /api/fleet/history (one call for the whole fleet) and each live endpoint's
- * /api/endpoints/<name>/history (for its `state` series; the strip's current word is the
- * snapshot's own `probe_state`, never a point of the series) at most once per `refresh_s`
- * (3.7-fold-3: the interval follows the snapshot's own clock). While a
+ * host cards and the running-jobs table in place; the page never polls. The decode sparklines,
+ * the state strips' segments and the fleet timeline (story 3.7l: one shared axis — a row per
+ * live endpoint, its busy band and its job spans) need history: on a snapshot the page
+ * re-fetches /api/overview/history (one call: every live endpoint's own history — its `state`
+ * series feeds the strips and the bands; the strip's current word is the snapshot's own
+ * `probe_state`, never a point of the series — plus the jobs overlapping the window) at most
+ * once per `refresh_s` (3.7-fold-3: the interval follows the snapshot's own clock). While a
  * detail page is open the overview is hidden and fetches nothing; it fetches once on return.
  *
  * The JSON is the contract in docs/superpowers/specs/2026-10-29-monitor-design.md §5a; every
  * field read here is named there (tests/test_monitor_page.py checks it). The objects are read
  * through a few fixed names: `snap` (the snapshot), `host`, `ep` (an endpoint), `job` (a
- * running job), `hw` (ep.hardware), `fleet` (the fleet history), `fleetEp` (one endpoint's
- * fleet series) and `hist` (an endpoint history).
+ * running job or a timeline span), `hw` (ep.hardware) and `hist` (an endpoint history).
+ * (3.7l: `fleet`/`fleetEp` were the fleet charts' names; the charts are gone — the vendored
+ * uPlot stays referenced by the shell but no page uses it until the vendor drop.)
  *
  * No framework, no build step: plain DOM built through h(), which sets text with textContent,
  * so a job name or an error sentence from the database is never parsed as HTML.
@@ -34,7 +36,8 @@
   var RECONNECT_MAX_MS = 30000;
 
   // categorical slots, fixed per endpoint by its index in config order (dark-surface steps);
-  // past eight the hues repeat with a dashed line, so identity never rests on colour alone
+  // past eight the hues repeat — the fleet charts used to tell repeats apart with a dashed
+  // line, the timeline never needs it because every row carries its name (3.7l)
   var PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
   // the state strip: idle recedes, busy is the accent; any other state string (Strata's own)
   // takes one of these by a hash of its text, and every segment's title names its state
@@ -163,8 +166,6 @@
   var state = {
     range: DEFAULT_RANGE,
     snap: null, // the last snapshot
-    fleet: null, // the last fleet history, for state.fleetRange
-    fleetRange: null,
     hists: {}, // endpoint name -> its last history (for histRange)
     histRange: null,
     order: {}, // endpoint name -> index in config order (series colours)
@@ -174,11 +175,6 @@
     var i = state.order[name];
     return PALETTE[(i == null ? 0 : i) % PALETTE.length];
   }
-  function dashOf(name) {
-    var i = state.order[name];
-    return i != null && i >= PALETTE.length ? [6, 4] : null;
-  }
-
   function stateColour(s) {
     if (STATE_FIXED[s]) return STATE_FIXED[s];
     var n = 0;
@@ -853,7 +849,7 @@
     byId("jobs-body").replaceChildren(jobsTable(snap));
   }
 
-  // --- history: the fleet route and each live endpoint's history, once per refresh_s ---------
+  // --- history: the one batched call, at most once per refresh_s -----------------------------
 
   function getJSON(url) {
     return fetch(url, { cache: "no-store" }).then(function (r) {
@@ -868,13 +864,10 @@
     return getJSON("/api/endpoints/" + encodeURIComponent(name) + "/history?range=" + encodeURIComponent(range));
   }
 
-  function fetchFleet(range) {
-    return getJSON("/api/fleet/history?range=" + encodeURIComponent(range));
-  }
-
   // story 3.7p: one call for the fleet grid and every live endpoint's own history (the server
   // classifies live exactly as the snapshot does), replacing the fleet call plus one per
-  // endpoint. fetchFleet/fetchHistory stay for the endpoint page.
+  // endpoint. fetchHistory stays for the endpoint page; 3.7l dropped fetchFleet, whose only
+  // caller was the fleet charts (the /api/fleet/history route itself serves other callers).
   function fetchOverviewHistory(range) {
     return getJSON("/api/overview/history?range=" + encodeURIComponent(range));
   }
@@ -914,13 +907,13 @@
     var range = state.range;
     fetchOverviewHistory(range).then(function (body) {
       if (range !== state.range) return; // the range changed meanwhile: this answer is stale
-      state.fleet = body.fleet;
-      state.fleetRange = range;
+      // 3.7l: the batched body's `fleet` is no longer read by the overview (the route stays
+      // for its own callers); the timeline draws from `body.endpoints` and `body.jobs`
       state.hists = body.endpoints || {};
       state.histRange = range;
       historyGen++; // the strips and sparklines draw from these: the snapshot alone may not
                     // have changed, but the picture has — the next render must not skip
-      charts.update(state.fleet);
+      timeline.update(body, state.snap);
       if (state.snap) render(state.snap);
     }).catch(function (e) {
       showBanner("fleet history: " + e.message);
@@ -931,94 +924,120 @@
     });
   }
 
-  // --- the fleet charts (uPlot) ---------------------------------------------------------------
+  // --- the fleet timeline (story 3.7l) --------------------------------------------------------
+  // One shared time axis, not three rate charts (the operator: "Fleet graphs are basically
+  // useless right now in this form"; "the single timeline is better"). A row per live endpoint
+  // in card order: its busy intervals as a 6 px band at the row's bottom (the state strip's
+  // segment walk over its own history — idle NOT drawn, so an idle track is empty, a null a
+  // gap) and its jobs as labelled bars above it, from the batched body's `jobs` rows: a box
+  // idle all day reads as an empty row. Every left/width is a percentage of the window, so the
+  // section needs no resize handling at all and its height depends only on the live count.
 
-  var CHARTS = [
-    { key: "gen_tps", id: "chart-gen", title: "decode speed (tok/s)" },
-    { key: "prompt_tps", id: "chart-prompt", title: "prompt speed (tok/s)" },
-    { key: "occupancy", id: "chart-occ", title: "occupancy (slots busy or requests running)" },
-  ];
+  // DESIGN's named intervals for the five offered ranges; the fallback takes the first nice
+  // step that keeps the labels at seven or fewer (the server's range parsing accepts more
+  // spellings than the control offers, and 4-7 labels is the DESIGN's invariant)
+  var TL_TICKS = { "15m": 300, "1h": 900, "6h": 3600, "24h": 14400, "7d": 86400 };
+  var TL_NICE = [300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
 
-  var charts = {
-    plots: {}, // key -> uPlot instance
-    names: "", // the series (endpoint names) the plots were built for
+  function tickStep(span, rangeWord) {
+    if (TL_TICKS[rangeWord] != null) return TL_TICKS[rangeWord];
+    for (var i = 0; i < TL_NICE.length; i++) if (span / TL_NICE[i] <= 7) return TL_NICE[i];
+    return 86400;
+  }
 
-    width: function () {
-      var box = byId("fleet-charts");
-      var cols = getComputedStyle(box).gridTemplateColumns.split(" ").length || 1;
-      var w = Math.floor((box.clientWidth - 12 * (cols - 1)) / cols) - 18;
-      return Math.max(w, 200);
-    },
+  // "#3987e5" -> "rgba(57,135,229,0.25)": the bar's fill at the DESIGN's quarter opacity with
+  // the ink text unaffected (an element opacity would fade the name too, and a pseudo-element
+  // would hide the link's hit area behind it); the 1 px border keeps the full colour
+  function fillOf(colour) {
+    var n = parseInt(colour.slice(1), 16);
+    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + ",0.25)";
+  }
 
-    options: function (title, names) {
-      var axis = { stroke: "#898781", grid: { stroke: "#2c2c2a", width: 1 }, ticks: { stroke: "#2c2c2a", width: 1 } };
-      return {
-        width: charts.width(),
-        height: 180,
-        scales: { x: { time: true } },
-        axes: [
-          axis,
-          Object.assign({}, axis, { size: 48, values: function (u, splits) { return splits.map(fmt.axis); } }),
-        ],
-        series: [{ label: "time", value: function (u, t) { return fmt.date(t); } }].concat(names.map(function (n) {
-          return {
-            label: n,
-            stroke: colourOf(n),
-            width: 2,
-            dash: dashOf(n) || undefined,
-            spanGaps: false,
-            points: { show: false },
-            value: function (u, v) { return fmt.axis(v); },
-          };
-        })),
-        legend: { live: true },
-      };
-    },
-
-    update: function (fleet) {
-      var box = byId("fleet-charts");
-      var note = byId("fleet-note");
-      // spec §5: the charts draw and legend the LIVE endpoints only, in config order (the
-      // snapshot's); one that drops out of live leaves the legend on the next fleet fetch
-      var names = liveNames(state.snap);
-      if (!fleet.t || !fleet.t.length || !names.length) {
-        charts.destroy();
-        note.textContent = !names.length ? "no live endpoint to chart" : "no probes in the last " + state.range;
-        note.hidden = false;
+  var timeline = {
+    update: function (body, snap) {
+      if (!snap || !snap.hosts) return; // no rows to draw until the first snapshot lands
+      var box = byId("timeline");
+      if (!box) return; // the section belongs to the overview, which a route only hides
+      var names = liveNames(snap);
+      var rangeWord = state.histRange || state.range;
+      byId("fleet-title").textContent = "Timeline · last " + rangeWord;
+      if (!names.length) {
+        box.replaceChildren(h("div", { class: "empty", text: "no live endpoints" }));
         return;
       }
-      note.hidden = true;
-      var key = names.join("\u0000");
-      if (key !== charts.names) {
-        charts.destroy();
-        charts.names = key;
-        CHARTS.forEach(function (c) {
-          var wrap = h("div", { class: "chart", id: c.id }, [h("h3", { text: c.title })]);
-          box.appendChild(wrap);
-          charts.plots[c.key] = new uPlot(charts.options(c.title, names), charts.data(fleet, c.key, names), wrap);
+      var span = rangeSeconds(rangeWord);
+      var now = snap.now;
+      var t0 = now - span;
+      timeline.lastNow = now; // the clock the drawn percentages rest on (the smoke's witness)
+      var pct = function (t) { return Math.max(0, Math.min(100, ((t - t0) / span) * 100)); };
+      var jobs = (body && body.jobs) || [];
+      var hists = (body && body.endpoints) || {};
+
+      // gridlines and the now marker live in one absolute layer behind the rows, offset by the
+      // 140 px label column (the label's padding-right is part of that 140 px, so the layer's
+      // left edge is exactly the tracks' left edge)
+      var lines = h("div", { class: "tl-lines" });
+      var axisInner = h("div", { class: "tl-axis-inner" });
+      var step = tickStep(span, rangeWord);
+      var useDate = span > 86400; // DESIGN: fmt.time, and fmt.date past 24 h (the 7 d range)
+      for (var t = Math.ceil(t0 / step) * step; t <= now; t += step) {
+        var pos = pct(t).toFixed(2) + "%";
+        lines.appendChild(h("span", { class: "tl-grid", style: "left:" + pos }));
+        axisInner.appendChild(h("span", { style: "left:" + pos, text: useDate ? fmt.date(t) : fmt.time(t) }));
+      }
+      lines.appendChild(h("span", { class: "tl-now", title: "now" }));
+
+      var rows = h("div", { class: "tl-rows" }, [lines]);
+      names.forEach(function (name) {
+        var track = h("div", { class: "tl-track" });
+        // the busy band: the segment walk straight out of stateStrip, minus idle
+        var hist = hists[name];
+        if (hist && hist.t && hist.state) {
+          for (var i = 0; i < hist.t.length; i++) {
+            var s = hist.state[i];
+            if (s == null) continue;
+            var j = i;
+            while (j + 1 < hist.t.length && hist.state[j + 1] === s) j++;
+            var segStart = Math.max(hist.t[i], t0);
+            var segEnd = j + 1 < hist.t.length ? hist.t[j + 1] : now;
+            if (s !== "idle" && segEnd > t0) {
+              track.appendChild(h("span", {
+                class: "tl-band",
+                style: "left:" + pct(segStart).toFixed(2) + "%;width:" +
+                  Math.max(((segEnd - segStart) / span) * 100, 0.3).toFixed(2) + "%;background:" + stateColour(s),
+              }));
+            }
+            i = j;
+          }
+        }
+        // the job bars, in two lanes per row: lane 0 is the ordinary 20 px bar; a job that
+        // starts before lane 0's last bar ends takes lane 1, the 10 px bar above the band's
+        // edge. A third job overlapping the same minute lands in lane 1 too (the DESIGN's
+        // "at most two before they overlap visibly": a row's own slots bound the truth, and a
+        // four-slot box is Epic 4 territory)
+        var free = [-Infinity, -Infinity];
+        jobs.filter(function (job) { return job.endpoint === name; }).forEach(function (job) {
+          var running = job.finished_at == null;
+          var end = running ? now : job.finished_at;
+          var lane = job.started_at >= free[0] ? 0 : 1;
+          free[lane] = end;
+          var left = pct(job.started_at), right = pct(end);
+          track.appendChild(h("a", {
+            class: "tl-job" + (lane ? " tl-job-2" : "") + (running ? " tl-job-run" : ""),
+            href: "#/job/" + encodeURIComponent(job.id),
+            style: "left:" + left.toFixed(2) + "%;width:" + Math.max(right - left, 0.4).toFixed(2) +
+              "%;background:" + fillOf(colourOf(name)) + ";border-color:" + colourOf(name),
+            title: (job.name || job.id) + " · started " + fmt.time(job.started_at) +
+              " · " + fmt.dur(end - job.started_at) + " · " + job.status,
+            text: job.name || job.id,
+          }));
         });
-        return;
-      }
-      CHARTS.forEach(function (c) { charts.plots[c.key].setData(charts.data(fleet, c.key, names)); });
-    },
-
-    data: function (fleet, key, names) {
-      return [fleet.t].concat(names.map(function (n) {
-        var fleetEp = fleet.endpoints[n];
-        return (fleetEp && fleetEp[key]) || fleet.t.map(function () { return null; });
-      }));
-    },
-
-    destroy: function () {
-      Object.keys(charts.plots).forEach(function (k) { charts.plots[k].destroy(); });
-      charts.plots = {};
-      charts.names = "";
-      byId("fleet-charts").replaceChildren();
-    },
-
-    resize: function () {
-      var w = charts.width();
-      Object.keys(charts.plots).forEach(function (k) { charts.plots[k].setSize({ width: w, height: 180 }); });
+        rows.appendChild(h("div", { class: "tl-row" }, [
+          h("div", { class: "tl-label" }, [endpointLink(name)]),
+          track,
+        ]));
+      });
+      box.replaceChildren(rows, h("div", { class: "tl-axis" }, [h("div", { class: "tl-axis-pad" }), axisInner]));
     },
   };
 
@@ -1143,7 +1162,6 @@
     if (!m) {
       detail.hidden = true;
       overview.hidden = false;
-      charts.resize();
       // back from a detail page: the overview fetched nothing meanwhile, so fetch once now
       if (wasDetail) scheduleHistory(true);
       return;
@@ -1173,11 +1191,8 @@
     range.draw();
     route();
     window.addEventListener("hashchange", route);
-    var resizeTimer = null;
-    window.addEventListener("resize", function () {
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(charts.resize, 150);
-    });
+    // 3.7l: no resize listener — the fleet charts were the only pixel-sized drawing; the
+    // timeline is all percentages, so a narrower window is narrower CSS, not a redraw
     connect();
   }
 
@@ -1296,8 +1311,7 @@
     render: render,
     connect: connect,
     fetchHistory: fetchHistory,
-    fetchFleet: fetchFleet,
-    charts: charts,
+    timeline: timeline, // 3.7l: the fleet timeline (the smoke hand-renders it with two endpoints)
     range: range,
     state: state,
     requestsTable: requestsTable, // 3.7k: the one renderer both request logs draw through

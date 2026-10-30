@@ -545,13 +545,42 @@ def test_the_self_tick_ends_on_the_commands_stop_sequence(dbpath, tmp_path):
 
 def test_overview_history_batches_the_fleet_and_each_live_endpoint(client):
     """Story 3.7p: one call carries the fleet grid and every live endpoint's own history; the
-    live set is the snapshot's classification (ai1 only in the seeded world)."""
+    live set is the snapshot's classification (ai1 only in the seeded world). Story 3.7l adds
+    the jobs list (see the test below for its shape)."""
     body = client.get("/api/overview/history?range=1h").json()
-    assert set(body) == {"fleet", "endpoints"}
+    assert set(body) == {"fleet", "endpoints", "jobs"}
     assert set(body["endpoints"]) == {"ai1"}
     assert body["fleet"] == client.get("/api/fleet/history?range=1h").json()
     assert body["endpoints"]["ai1"] == client.get("/api/endpoints/ai1/history?range=1h").json()
     assert client.get("/api/overview/history?range=nope").status_code == 400
+
+
+def test_overview_history_jobs_overlap_the_window(dbpath, tmp_path):
+    """Story 3.7l: the batched body carries the timeline's job spans — the seeded running job
+    and the seeded finished job (finished 10 min before NOW, so it overlaps 1 h) each with the
+    six fields, oldest start first; a job finished BEFORE the window is absent. ``endpoint``
+    is the endpoints row's name from the LEFT JOIN."""
+    # a job finished 90 min before NOW: created and started inside a wider window, but finished
+    # before [NOW-1h, NOW] opens — the overlap predicate, not the created_at predicate, decides
+    c = sqlite3.connect(dbpath)
+    ai1 = c.execute("SELECT id FROM endpoints WHERE name = 'ai1'").fetchone()[0]
+    seeded_finished = c.execute("SELECT id FROM jobs WHERE status = 'succeeded'").fetchone()[0]
+    c.execute("INSERT INTO jobs (id, name, endpoint_id, status, created_at, started_at, finished_at)"
+              " VALUES ('gone', 'gone before the window', ?, 'succeeded', ?, ?, ?)",
+              (ai1, NOW - 2 * 3600, NOW - 2 * 3600, NOW - 90 * 60))
+    c.commit()
+    c.close()
+    with TestClient(_app(dbpath, tmp_path)) as cl:
+        jobs = cl.get("/api/overview/history?range=1h").json()["jobs"]
+        assert [j["id"] for j in jobs] == [seeded_finished, _job_id(dbpath, "running")]
+        assert all(set(j) == {"id", "name", "endpoint", "status", "started_at", "finished_at"} for j in jobs)
+        running = jobs[1]
+        assert running["status"] == "running" and running["endpoint"] == "ai1"
+        assert running["started_at"] == NOW - 300.0 and running["finished_at"] is None
+        finished = jobs[0]
+        assert finished["status"] == "succeeded" and finished["endpoint"] == "ai1"
+        assert finished["finished_at"] == NOW - 10 * 60
+        assert "gone" not in [j["id"] for j in jobs]
 
 
 def test_history_is_cached_until_a_new_probe(dbpath, tmp_path):
@@ -1223,6 +1252,7 @@ def test_spec_5a_names_every_key_the_routes_emit(client, dbpath):
     oh = client.get("/api/overview/history").json()  # story 3.7p: fleet + the live endpoints
     _keys({"fleet": {k: v for k, v in oh["fleet"].items() if k != "endpoints"}}, keys)
     _keys({"endpoints": {k: v for k, v in oh["endpoints"]["ai1"].items()}}, keys)
+    _keys({"jobs": oh["jobs"]}, keys)  # story 3.7l: the timeline's job spans ride in the body too
     inner = ("worktree", "metrics", "tool_counts")
     for j in client.get("/api/jobs").json():
         keys |= set(j)
