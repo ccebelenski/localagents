@@ -799,6 +799,30 @@ distinct range texts. 627 passed.
   Evidence: the smoke counts renders per minute and checks a card's DOM node keeps its
   identity across two snapshots.
 
+Review of c37322c (3.7k) by Qwen/ai2 job 20261030-005739-2306fb2e, 58 turns, 12 min: CLEAN.
+Twelve hand-rendered formula cases matched by hand (prefill 914.0 = 85/0.093 s, decode 106.3 =
+543/5.107 s; blanks where inputs are missing; the pills and row classes); the two pages agree
+minus the job column, no client sort, the job page's seven totals equal hand sums and the 3.2c
+rule holds on the seed's own `error: ""` row. POSSIBLE: `context_exceeded` is stored as TEXT (the
+backend's sentence, shim.py:294) so the renderer's `=== true` never fires and §5a's new sentence
+describes a value the model never emits (and `error` is always set alongside, so the cell is
+right anyway); the endpoint page's time column lost `when()`'s day stamp, so at 7d the same clock
+time repeats per day. NOTICED (cleanup): dead CSS `.requests tr.req-err td` (overridden) and
+`.job-requests-table` (no emitter); `req-err` in no inventory and the job inventory not listing
+the shared classes; a trailing blank in the "cache creation " title; sub-10 ms durations read
+"0.0 s"; the two pill families' border conventions differ. 644 passed.
+
+- ☐ **3.7-fold-4 Page cleanups.** One lane after the DeepSeek review of f670097/6e686bf lands
+  its findings too: `context_exceeded` read as truthy (a non-empty string), §5a's sentence
+  corrected to the stored type; the endpoint page's request time with the day stamp past 24 h
+  (`fmt.date`) as the jobs table does; the two dead CSS rules removed and the inventories made
+  complete (`req-err`, the shared classes on the job page's list); the title's trailing blank;
+  durations under 1 s in ms ("8 ms"); one pill border convention; `.ep-model` max-width +
+  ellipsis (fold-3's notice: a 70-char model id wraps the head); plus whatever the DeepSeek
+  review files.
+
+### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
+
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
   `tools/monitor.sh start|stop|status|log`.** (88a7dbe: Haiku Agent worktree-agent-a3d878d89ce563991,
   48 tool uses, 6 min, 614 tests; operator: "a startup script and default browser open would be
