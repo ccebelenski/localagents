@@ -466,7 +466,19 @@ Coordinator's reading of the screenshot against the code (`static/app.js` `hostC
   used-tokens figure exists in the snapshot. Per-job context fill exists (`ctx_pct`, in the
   jobs table). Which the operator means is the open question for 3.7e.
 
-- ☑ **3.7a Hide what has never been seen.** (abc0613 with 3.7b/c: lane A, Qwen/ai1 job 20261029-222739-5b2fe50a, 61 turns, 7 min, 611 tests; smoke over a config with two never-seen endpoints and a hand-edited ai9 node-down snapshot; landed with tools/land.sh's predecessor by hand; DeepSeek/dgx1-a review of the merged batch pending.) A never-seen endpoint is not drawn; a host with
+- ☑ **3.7a Hide what has never been seen.** (abc0613 with 3.7b/c: lane A, Qwen/ai1 job 20261029-222739-5b2fe50a, 61 turns, 7 min, 611 tests; smoke over a config with two never-seen endpoints and a hand-edited ai9 node-down snapshot; landed by hand before tools/land.sh existed. Reviewed with 3.7d-f by DeepSeek/dgx1-a job
+  20261029-230137-0ca63782, 59 turns, 19 min, four construct-it probes over hand-rendered
+  snapshots: P1 eight host-state cases all matching the story text (down node same-shaped, hidden
+  line in config order, hides again); P2 both backends' twelve tiles identical, the >= 80 boundary
+  exact, the 60-char activity cut exact, every field read in §5a; P3 six sparkline cases as
+  specified; P4 two mutations uncaught (coverage fact: the page has no JS tests, the smoke is
+  the gate). DEFECTS: D1 the card row omits the `files` bit the status line emits; D2 the
+  errors badge is a bare number with no title (the operator's 3.7i on the card); D3 the
+  sparkline's peak and scale are computed before the range filter, so an old peak scales the
+  visible line and the aria-label names a peak outside the window. POSSIBLE, judged intended:
+  a never-up endpoint that is failing (`state: "down"`, `last_seen` null) on an up node is drawn
+  red, not hidden; queued jobs get a row. NOTICED: a stale "queued badge" comment; the decode
+  value and its sparkline come from different routes (3.7o fixes that). Folded in 3.7-fold-1.) A never-seen endpoint is not drawn; a host with
   nothing left to draw and its node not down is not drawn; one muted line under the cards says
   how many are hidden. Dormant-but-seen stays a muted line (spec §4). Spec §4's "never hidden"
   gets its True-now sentence.
@@ -694,6 +706,15 @@ Our requests table is the fallback witness when counters are absent (an `other` 
   "active 10/28, 9:14 PM" past 24 h, or "no activity in 7d" when null; nothing on the host
   head (a host runs nothing). A down endpoint keeps "last seen" and gains nothing. Evidence: the
   seeded world pins the value for ai1 (its interpolated counters) and null for llamacpp.
+- ☐ **3.7-fold-1 The live card fold.** One lane, page-only, the live card's functions and CSS:
+  the review's D1 (the `files` bit, "N files", after calls), D2 (the errors badge reads
+  "N tool errors" with the title "tool results that came back as errors; the job page lists
+  them by tool", the same wording the jobs table will take in 3.7i), D3 (peak and scale over
+  the in-range points only), the stale queued-badge comment; 3.7n (no tile wraps, units in the
+  label, compact ctx, the ctx bar glued to its percent); 3.7o (the sparkline reads the
+  endpoint's own history); 3.7q (one shared y scale across live cards, the peak label at the
+  right, the window named in the label and once on the strip row). Review: DeepSeek, three
+  probes (the card height invariant, the sparkline over the real-shaped history, the row form).
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
