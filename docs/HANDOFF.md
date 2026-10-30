@@ -44,8 +44,8 @@ test was fixed and proven red on its mutant (5ab0b1d). No open defect; no lane r
 2. Walk the page again and give findings as before; the capture-verbatim-then-brief loop is
    in `EPICS.md`. The one item the coordinator left for your eye is **3.7-fold-6** (the card's
    job line should lead with the ctx fill, not the long name and the counts).
-3. Nothing is running; every worktree is removed; the stash is empty. 56 commits since
-   feed05c, all local.
+3. Nothing is running; every worktree is removed; the stash is empty. Everything since
+   feed05c (`git log --oneline feed05c..main`) is local.
 
 **Tools.** `tools/accept.sh <branch>` (facts, no git writes) → read the diff → `tools/land.sh
 <branch> -F msg` (squash onto clean main, commit, suite) → remove the worktree. `tools/smoke/`
