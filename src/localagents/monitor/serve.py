@@ -11,10 +11,13 @@ import argparse
 import asyncio
 import contextlib
 import errno
+import http.client
 import signal
 import socket
 import sqlite3
 import sys
+import urllib.request
+import webbrowser
 from pathlib import Path
 from typing import Iterator
 
@@ -47,7 +50,32 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                     help="models.yaml (default: LOCALAGENTS_CONFIG, ./models.yaml, ~/.config/localagents/models.yaml)")
     ap.add_argument("--no-collect", action="store_true",
                     help="serve the database as it is, without probing (a seeded file: localagents seed)")
+    ap.add_argument("--no-open", action="store_true", dest="no_open",
+                    help="do not open the page in a browser (by default it opens in a new tab once it is "
+                         "serving, $BROWSER is honoured; if it is already running on the port, the page "
+                         "is opened and the command exits 0)")
     return ap.parse_args(argv)
+
+
+def browse_url(host: str, port: int) -> str:
+    """The URL a browser visits for a bind address: a bind-all address (0.0.0.0, ::) is not a URL
+    to visit, so the page is opened on loopback."""
+    visit = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    return f"http://{visit}:{port}/"
+
+
+def open_browser(url: str) -> None:
+    """webbrowser.open in a new tab. A failure is one stderr line, never an exit: the server
+    is up either way, and the URL is on stdout for the operator to visit by hand."""
+    try:
+        opened = webbrowser.open(url, new=2)
+    except Exception as e:
+        print(f"localagents monitor: could not open a browser for {url}: {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
+        return
+    if not opened:
+        print(f"localagents monitor: no browser opened for {url} (set BROWSER, or visit it by hand)",
+              file=sys.stderr, flush=True)
 
 
 def port_free(host: str, port: int) -> bool:
@@ -84,6 +112,16 @@ def port_free(host: str, port: int) -> bool:
     return free
 
 
+def already_serving(host: str, port: int) -> bool:
+    """Step 2: the port is taken, but is it OUR monitor? A 200 from its own JSON route within
+    2 s says so; anything else on the port (no answer, another server, an error page) is not."""
+    try:
+        with urllib.request.urlopen(browse_url(host, port) + "api/snapshot", timeout=2) as r:
+            return r.status == 200
+    except (OSError, ValueError, http.client.HTTPException):
+        return False
+
+
 def db_file(arg: str | None, settings: MonitorSettings) -> Path:
     """``--db``, else the ``monitor:`` section's ``db`` (config.py: it overrides ``db_path()``),
     else ``db.db_path()`` (``LOCALAGENTS_DB``, else the state dir)."""
@@ -94,7 +132,8 @@ def db_file(arg: str | None, settings: MonitorSettings) -> Path:
     return db.db_path()
 
 
-async def serve(reg: Registry, settings: MonitorSettings, path: Path, host: str, port: int, collect_: bool) -> None:
+async def serve(reg: Registry, settings: MonitorSettings, path: Path, host: str, port: int, collect_: bool,
+                open_url: str | None = None) -> None:
     import uvicorn
 
     from . import collect
@@ -131,7 +170,18 @@ async def serve(reg: Registry, settings: MonitorSettings, path: Path, host: str,
         await asyncio.sleep(0)
         await app.state.fanout.close()
 
+    async def opener() -> None:
+        # --open: one call, after uvicorn has bound (its `started` flag). The browser launch runs
+        # in a thread: a slow launcher never holds up the loop that serves the page.
+        while not server.started:
+            if stop.is_set():
+                return
+            await asyncio.sleep(0.05)
+        await asyncio.to_thread(open_browser, open_url)
+
     tasks = [stopper(), server.serve()]
+    if open_url is not None:
+        tasks.append(opener())
     conn = None
     if collect_:
         conn = db.open_db(path)  # the collector's own connection, used on this loop only
@@ -168,10 +218,16 @@ def main(argv: list[str]) -> None:
         print(f"localagents monitor: cannot bind {a.host}:{port}: {type(e).__name__}: {e}", file=sys.stderr)
         sys.exit(2)
     if not free:
+        if not a.no_open and already_serving(a.host, port):
+            url = browse_url(a.host, port)
+            print(f"localagents monitor: already running at {url} · opening", flush=True)
+            open_browser(url)
+            return  # the running monitor serves the page; this command has nothing to start
         print(f"localagents monitor: port {port} is already in use", file=sys.stderr)
         sys.exit(2)
     n = len(reg.endpoints)
     mode = "" if not a.no_collect else " · not collecting"
     print(f"localagents monitor: http://{a.host}:{port}/ · database {path} · "
           f"{n} endpoint{'' if n == 1 else 's'}{mode}", flush=True)
-    asyncio.run(serve(reg, settings, path, a.host, port, not a.no_collect))
+    asyncio.run(serve(reg, settings, path, a.host, port, not a.no_collect,
+                      open_url=None if a.no_open else browse_url(a.host, port)))

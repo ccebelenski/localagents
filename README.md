@@ -371,6 +371,18 @@ directory's `localagents.db`), `--config PATH`, and `--no-collect` (serve the da
 is, without probing or pruning). It prints one line at start — the URL, the database path and
 the endpoint count — and stops on Ctrl-C or SIGTERM.
 
+By default the page also opens in the default browser, in a new tab, once the server is up
+(`$BROWSER` is honoured); `--no-open` keeps the browser shut, as the headless smokes do. If the
+monitor is already running on that port, the command opens the page and exits 0 instead of
+failing with "port N is already in use" (with `--no-open` that failure stands).
+
+`tools/monitor.sh` runs it in the background from a checkout: `start` detaches it with `setsid`
+so closing the terminal does not stop it, and writes its pid to
+`${XDG_STATE_HOME:-~/.local/state}/localagents/monitor.pid` and its output to `monitor.log`;
+`stop` sends SIGTERM and waits up to 10 s; `status` prints running or stopped with the last start
+line; `log` tails the log. It needs `localagents` on PATH (`uv tool install -e .`); any other
+arguments after `start` go to `localagents monitor`.
+
 The overview shows one card per host, in `models.yaml` order. A live endpoint shows its
 served model, a state strip (Strata's own state, `idle`/`busy` for the others, over the chosen
 range), slots or running/waiting requests, KV-cache fill (vLLM), decode speed with a sparkline,

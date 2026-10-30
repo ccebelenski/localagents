@@ -645,7 +645,7 @@ def test_a_port_already_in_use_exits_2_with_the_sentence(tmp_path):
     port = holder.getsockname()[1]
     try:
         cfg = write_config(tmp_path / "models.yaml")
-        out = subprocess.run([sys.executable, "-c", _cli(["--no-collect", "--port", str(port)])],
+        out = subprocess.run([sys.executable, "-c", _cli(["--no-collect", "--no-open", "--port", str(port)])],
                              capture_output=True, text=True, cwd=_SRC,
                              env=_env(tmp_path, tmp_path / "x.db", cfg), timeout=60)
     finally:
@@ -664,7 +664,7 @@ def test_a_live_run_serves_the_seeded_file_and_stops_on_sigterm(tmp_path):
     seed_file(dbpath, now=time.time())
     cfg = write_config(tmp_path / "models.yaml")
     port = _free_port()
-    proc = subprocess.Popen([sys.executable, "-c", _cli(["--no-collect", "--port", str(port)])], cwd=_SRC,
+    proc = subprocess.Popen([sys.executable, "-c", _cli(["--no-collect", "--no-open", "--port", str(port)])], cwd=_SRC,
                             env=_env(tmp_path, dbpath, cfg), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True)
     try:
@@ -699,6 +699,109 @@ def test_a_live_run_serves_the_seeded_file_and_stops_on_sigterm(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+# --- the browser open (--no-open, the already-running short-circuit) ---------------------------
+
+
+def test_no_open_is_a_flag_and_the_browser_opens_by_default():
+    assert serve_mod.parse_args([]).no_open is False
+    assert serve_mod.parse_args(["--no-open"]).no_open is True
+
+
+def _fake_browser(tmp_path):
+    """A BROWSER script that appends the URL webbrowser passes it to tmp_path/opened.
+
+    Platform note: POSIX only. webbrowser runs a BROWSER value that has no %s as `<value> <url>`,
+    so the script is a /bin/sh file that must be executable (chmod 0o755); a Windows run would need
+    a different launcher and webbrowser's %s form."""
+    script = tmp_path / "fake-browser"
+    opened = tmp_path / "opened"
+    script.write_text(f'#!/bin/sh\necho "$1" >> {opened}\n')
+    script.chmod(0o755)
+    return script, opened
+
+
+def _wait_for_lines(path, n, seconds=10):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if path.exists() and len(path.read_text().splitlines()) >= n:
+            break
+        time.sleep(0.1)
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def _wait_snapshot(base, proc, seconds=10):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(base + "/api/snapshot", timeout=1).status_code == 200:
+                return True
+        except httpx.HTTPError:
+            pass
+        assert proc.poll() is None, proc.stderr.read()
+        time.sleep(0.1)
+    return False
+
+
+def test_the_default_run_opens_the_browser_once_and_still_stops_on_sigterm(tmp_path):
+    """No flag: once /api/snapshot answers, BROWSER receives the URL exactly once (within 10 s),
+    and SIGTERM still ends the process with exit 0. Platform: POSIX only, see _fake_browser."""
+    dbpath = tmp_path / "seeded.db"
+    seed_file(dbpath, now=time.time())
+    cfg = write_config(tmp_path / "models.yaml")
+    script, opened = _fake_browser(tmp_path)
+    port = _free_port()
+    env = {**_env(tmp_path, dbpath, cfg), "BROWSER": str(script)}
+    proc = subprocess.Popen([sys.executable, "-c", _cli(["--no-collect", "--port", str(port)])], cwd=_SRC,
+                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert _wait_snapshot(base, proc), "the monitor did not answer within 10 s"
+        assert _wait_for_lines(opened, 1) == [f"{base}/"]
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=5) == 0
+        assert "Traceback" not in proc.stderr.read()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_a_second_run_on_a_running_port_opens_it_and_exits_0(tmp_path):
+    """With the first run still up: a second default run on the same port prints the
+    already-running line, opens the page (the file now has two lines) and exits 0 within 10 s.
+    The same second run with --no-open is the refusal: exit 2 with the port-in-use sentence, and
+    the browser is not touched."""
+    dbpath = tmp_path / "seeded.db"
+    seed_file(dbpath, now=time.time())
+    cfg = write_config(tmp_path / "models.yaml")
+    script, opened = _fake_browser(tmp_path)
+    port = _free_port()
+    env = {**_env(tmp_path, dbpath, cfg), "BROWSER": str(script)}
+    first = subprocess.Popen([sys.executable, "-c", _cli(["--no-collect", "--port", str(port)])], cwd=_SRC,
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert _wait_snapshot(base, first), "the monitor did not answer within 10 s"
+        assert _wait_for_lines(opened, 1) == [f"{base}/"]
+        second = subprocess.run([sys.executable, "-c", _cli(["--no-collect", "--port", str(port)])],
+                                capture_output=True, text=True, cwd=_SRC, env=env, timeout=10)
+        assert second.returncode == 0, second.stderr
+        assert f"localagents monitor: already running at {base}/ · opening" in second.stdout
+        assert "Traceback" not in second.stderr
+        assert _wait_for_lines(opened, 2) == [f"{base}/", f"{base}/"]
+        refused = subprocess.run([sys.executable, "-c", _cli(["--no-collect", "--no-open", "--port", str(port)])],
+                                 capture_output=True, text=True, cwd=_SRC, env=env, timeout=10)
+        assert refused.returncode == 2, refused.stderr
+        assert f"localagents monitor: port {port} is already in use" in refused.stderr
+        assert len(opened.read_text().splitlines()) == 2  # --no-open opened nothing
+        first.send_signal(signal.SIGTERM)
+        assert first.wait(timeout=5) == 0
+    finally:
+        if first.poll() is None:
+            first.kill()
+            first.wait()
 
 
 # --- item 5: the spec's §5a names every key the routes emit -------------------------------------

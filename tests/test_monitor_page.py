@@ -422,7 +422,7 @@ def _seeded_monitor(tmp_path):
     seed_file(dbpath, now=time.time())
     cfg = write_config(tmp_path / "models.yaml")
     port = _free_port()
-    code = ("import sys; sys.argv=['localagents', 'monitor', '--no-collect', '--port', " + repr(str(port))
+    code = ("import sys; sys.argv=['localagents', 'monitor', '--no-collect', '--no-open', '--port', " + repr(str(port))
             + "]; import localagents; localagents.main()")
     env = {**os.environ, "LOCALAGENTS_DB": str(dbpath), "LOCALAGENTS_CONFIG": str(cfg),
            "XDG_STATE_HOME": str(tmp_path / "state")}

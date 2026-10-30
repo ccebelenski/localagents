@@ -10,7 +10,7 @@ Node: `/home/linuxbrew/.linuxbrew/bin/node` (v26).
 ```bash
 # 1. a seeded world and a monitor serving it without collecting (ports are yours to pick)
 LOCALAGENTS_DB="$PWD/t/seed.db" uv run localagents seed
-LOCALAGENTS_DB="$PWD/t/seed.db" uv run localagents monitor --no-collect --port 8771 &
+LOCALAGENTS_DB="$PWD/t/seed.db" uv run localagents monitor --no-collect --no-open --port 8771 &
 # 2. a browser with a DevTools port
 "$CH" --headless --no-sandbox --remote-debugging-port=9231 --user-data-dir="$PWD/t/profile" about:blank &
 # 3. the probe: JSON of what the DOM holds, then the console/exception log; the PNG is for the operator
