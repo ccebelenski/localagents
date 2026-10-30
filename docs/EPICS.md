@@ -1133,6 +1133,14 @@ The 3.7 chain's reviews are closed: no open defect.
   15 listeners, Array elements 5.9 MB (the history arrays). Open question: whether that reading
   followed a minimize (pending cycle-collector garbage looks the same until it does) and how long
   the window had been open; the post-minimize orphan figure decides.
+  After minimize (operator): explicit 15.2 MB, resident-unique 46.5 MB, `dom/orphan-nodes`
+  **0.02 MB** (from 13.43: pending cycle-collector garbage, freed), the window's dom 0.34 MB,
+  15 listeners. The normal tab's 278 MB survived the same minimize. **Closed:** the page owns
+  no leak in Chromium (mem.mjs) or Firefox (ffmem.py, the private tab); the normal tab's
+  orphan nodes are held by a content script of the operator's profile (LastPass, uBlock
+  Origin or Download Manager (S3) run in that process and not in the private one). Not a
+  product defect; the operator's remedy is per extension (disable one on this site at a
+  time, minimize, re-measure). The "3GB" was vsize, both times.
 
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
