@@ -913,6 +913,18 @@ The 3.7 chain's reviews are closed: no open defect.
   with a red pill that means nothing. Proposed: a row whose path is `/api/hello` gets a muted
   "handshake" label instead of the error pill (the status still shown), the error count on the
   job row excludes it, and the test pins both. Operator decides.
+  Operator: "Should the shim do something with that handshake other than trying to forward
+  it?" Read from the Claude Code 2.1.312 binary (three call sites): at startup a `HEAD
+  <base url>/api/hello` fired only for the first-party provider with no proxy set, 10 s timeout,
+  the result discarded (`.catch(()=>{})`): a connection warm-up to the server it is about to
+  talk to; a telemetry probe that accepts any status (`validateStatus: () => true`, reported
+  as `http_501`); and a preflight command that requires 200 and exits 1 otherwise (not the
+  normal start, since every job runs on). So the handshake's purpose is a warm connection to
+  the shim itself; forwarding it sends the warm-up to the wrong server and records a false
+  error. Coordinator's recommendation: the shim answers `/api/hello` itself with 200 and an
+  empty JSON body and writes no row (the spec's row is "one row per backend request the shim
+  forwarded", schema spec line 69); the page labels the hello rows already in history as the
+  handshake. One story; operator decides.
 
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
