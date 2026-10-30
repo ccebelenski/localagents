@@ -325,7 +325,11 @@
   }
 
   function jobsOn(snap, name) {
-    return (snap.jobs || []).filter(function (job) { return job.endpoint === name; });
+    // 3.7g: the snapshot's jobs is the whole recent log now — the card's block stays the live
+    // jobs (the 3.7e contract), so filter the finished tail out again here
+    return (snap.jobs || []).filter(function (job) {
+      return job.endpoint === name && (job.status === "queued" || job.status === "running");
+    });
   }
 
   // one job as the MCP status line (status.py's `_job_row`): the mark, the name, the elapsed,
@@ -552,11 +556,24 @@
     ].concat(body));
   }
 
-  // --- the running-jobs table -----------------------------------------------------------------
+  // --- the Recent jobs log (story 3.7g) ---------------------------------------------------------
 
-  var JOB_COLUMNS = ["job", "model", "endpoint", "elapsed", "turns", "tool calls", "current tool", "errors",
+  var JOB_COLUMNS = ["job", "status", "model", "endpoint", "elapsed", "turns", "tool calls", "tool errors",
     "context", "speed", "last activity"];
-  var NUMERIC = { elapsed: 1, turns: 1, "tool calls": 1, errors: 1, speed: 1 };
+  var NUMERIC = { elapsed: 1, turns: 1, "tool calls": 1, "tool errors": 1, speed: 1 };
+  // 3.7i: the count is tool RESULTS that came back as errors, not a failing job — the header
+  // says so, in the card badge's own words (the sentence epJobRow already carries), and a
+  // non-zero count is a link: the job page lists them by tool
+  var COLUMN_TITLES = { "tool errors": "tool results that came back as errors; the job page lists them by tool" };
+
+  // 3.7g: the pill is a WORD, so the state never rests on colour alone; succeeded reads "done"
+  // (a finished job in a log is done, not a report label), failed and cancelled keep their own
+  // words, and the class is mechanical — pill-<status>, the seven names db.py's status check
+  // allows, every one styled
+  function statusPill(status) {
+    var cls = "pill pill-" + status;
+    return h("span", { class: cls, text: status === "succeeded" ? "done" : status });
+  }
 
   function jobRow(job) {
     var ctx = null;
@@ -567,8 +584,9 @@
         h("span", { class: "num", text: fmt.pct(job.ctx_pct) }),
       ]);
     }
+    // 3.7g: no queued badge here — the status pill says it. Compaction and server-gone badges
+    // stay: they carry something the pill cannot.
     var nameCell = [jobLink(job.id, job.name)];
-    if (job.status === "queued") nameCell.push(h("span", { class: "badge", text: "queued" }));
     if (job.compactions > 0) {
       nameCell.push(h("span", { class: "badge", text: fmt.int(job.compactions) + " compaction" + (job.compactions === 1 ? "" : "s") }));
     }
@@ -577,16 +595,27 @@
     }
     return h("tr", { "data-job": job.id }, [
       h("td", null, nameCell),
+      h("td", null, [statusPill(job.status)]),
       h("td", { class: "cut", title: job.model || "", text: job.model || "" }),
       h("td", null, [job.endpoint ? endpointLink(job.endpoint) : null]),
       h("td", { class: "n", text: fmt.dur(job.elapsed_s) }),
-      h("td", { class: "n", text: fmt.int(job.num_turns) }),
+      // 3.7h: a live job's turn count is 0 until the first assistant turn lands, and a plain 0
+      // reads like a counter that never ran — a muted dash until the number is a figure
+      h("td", { class: "n" }, [job.status === "running" && !job.num_turns
+        ? h("span", { class: "muted", text: "–" })
+        : h("span", { text: fmt.int(job.num_turns) })]),
       h("td", { class: "n", text: fmt.int(job.tool_calls) }),
-      h("td", { class: "cut", title: job.last_tool || "", text: job.last_tool || "" }),
-      h("td", { class: "n" }, [job.errors > 0 ? h("span", { class: "badge err", text: fmt.int(job.errors) })
+      // 3.7i: the badge is a link — the count is tool results that came back as errors, and
+      // the job page is where they are listed by tool
+      h("td", { class: "n" }, [job.errors > 0
+        ? h("a", { class: "badge err", href: "#/job/" + encodeURIComponent(job.id),
+          title: COLUMN_TITLES["tool errors"], text: fmt.int(job.errors) })
         : h("span", { text: fmt.int(job.errors) })]),
       h("td", null, [ctx]),
       h("td", { class: "n", text: job.gen_tps != null ? fmt.speed(job.gen_tps) + " tok/s" : "" }),
+      // 3.7g: no "current tool" column — on a running row it was always the same line as the
+      // last activity, and on a finished row it is history; the activity cell below holds the
+      // full text in its title
       h("td", { class: "cut", title: job.last_activity || "", text: oneLine(job.last_activity) }),
     ]);
   }
@@ -597,13 +626,23 @@
   }
 
   function jobsTable(snap) {
-    var jobs = (snap.jobs || []).slice().sort(function (a, b) {
-      return (a.started_at || 0) - (b.started_at || 0);
-    });
-    if (!jobs.length) return h("div", { class: "table-wrap" }, [h("div", { class: "empty", text: "no jobs running" })]);
-    var head = h("tr", null, JOB_COLUMNS.map(function (c) { return h("th", { class: NUMERIC[c] ? "n" : null, text: c }); }));
-    return h("div", { class: "table-wrap" }, [h("table", null, [h("thead", null, [head]),
-      h("tbody", null, jobs.map(jobRow))])]);
+    // 3.7g: the snapshot's order is the log's contract (live jobs by start, then the newest
+    // finished first) — no client-side re-sort, which used to scramble the finished tail
+    var jobs = snap.jobs || [];
+    if (!jobs.length) {
+      return h("div", { class: "table-wrap" }, [h("div", { class: "empty", text: "no jobs yet" })]);
+    }
+    var head = h("tr", null, JOB_COLUMNS.map(function (c) {
+      return h("th", { class: NUMERIC[c] ? "n" : null, title: COLUMN_TITLES[c] || null, text: c });
+    }));
+    // the note spells out the row order (3.7g: the table now holds finished rows too, and the
+    // order carries meaning). A "show all" link like Strata's log has waits for an all-jobs
+    // page — the server keeps the full history, but no route lists it yet, so the note is plain
+    return h("div", null, [
+      h("div", { class: "table-wrap" }, [h("table", null, [h("thead", null, [head]),
+        h("tbody", null, jobs.map(jobRow))])]),
+      h("div", { class: "jobs-note muted", text: "running and queued first, then the last 10 finished" }),
+    ]);
   }
 
   // --- render: the snapshot into the DOM, in place -------------------------------------------

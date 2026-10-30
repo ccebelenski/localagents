@@ -96,7 +96,10 @@ SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant"
                  "figures", "ep-jobs", "ep-job", "ep-act", "sdot",
                  # 3.7-fold-1 (3.7n/3.7q): the job row's glued ctx bar+percent span; the
                  # shared-scale peak label, its wrap, and the strip row's range word
-                 "ep-ctx", "spark-peak", "spark-wrap", "strip-range"]
+                 "ep-ctx", "spark-peak", "spark-wrap", "strip-range",
+                 # 3.7g: the status pill in the Recent jobs log (the pill-<status> colour
+                 # variants are styled too, but the smoke reads the pill by its word)
+                 "pill"]
 # the classes the job page's smoke names (story 3.4's brief): the page root and its sections,
 # the status classes the header's mark takes (a queued job takes one more, styled but not
 # smoked)

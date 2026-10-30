@@ -208,7 +208,8 @@ def test_progress_tail_shows_the_bash_command_the_runner_recorded(reg):
     assert row["input"] == "uv run pytest -q"
     ctx = _Ctx()
     asyncio.run(server._progress_reporter(ctx)(job))
-    assert re.fullmatch(r"running: \d+s, 0 turns, 1 tool calls, 1 errors; Bash: uv run pytest -q", ctx.reports[-1][2])
+    # "1 turns": 3.7h — the runner counts a turn per AssistantMessage, so the line is live
+    assert re.fullmatch(r"running: \d+s, 1 turns, 1 tool calls, 1 errors; Bash: uv run pytest -q", ctx.reports[-1][2])
 
 
 def test_wait_job_times_out_and_still_reports(reg, monkeypatch):

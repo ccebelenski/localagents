@@ -171,8 +171,9 @@ every chart on the page.
 **Overview.** One card per host in config order, listing its endpoints. Live: served model,
 state strip (Strata's six states where known; up/busy otherwise), slots or queue, decode speed
 with a sparkline, jobs running on it. Down-and-recent and dormant as in §4. Below the cards a
-running-jobs table: model, endpoint, elapsed, turns, tool calls, current tool, error count,
-context fill as a bar, speed, last activity. Below that the fleet charts: decode and prefill
+Recent jobs log (story 3.7g): job, status pill, model, endpoint, elapsed, turns, tool calls,
+tool errors, context fill as a bar, speed, last activity — running and queued first, then the
+last 10 finished with elapsed frozen. Below that the fleet charts: decode and prefill
 speed per live endpoint on a shared time axis, and occupancy.
 
 **Endpoint detail.** Stat tiles with sparklines for the tiers the endpoint provides (table
@@ -252,7 +253,11 @@ covers `[now - r, now]`, both ends included.
                                     snapshot so the page can say what it is showing (story 3.2a);
                                     null only when the app was built without one
   "hosts": [ host, ... ],           models.yaml order: endpoints grouped by `host`, first-seen order
-  "jobs": [ running_job, ... ],     every queued or running job, oldest first
+  "jobs": [ running_job, ... ],     the page's Recent jobs log (story 3.7g): every queued or
+                                    running job oldest first, then the last 10 finished jobs
+                                    (any terminal status) newest-finished first; a finished
+                                    row's live figures are frozen at its finish, not re-read
+                                    against now
   "events": [ event, ... ]          the newest 20 endpoint_events, newest first
 }
 
@@ -334,10 +339,14 @@ endpoint = {
 }
 
 running_job = {
-  "id", "name", "model", "endpoint", "status" ("queued" | "running"),
+  "id", "name", "model", "endpoint",
+  "status",                         live: "queued" | "running"; on a finished log row
+                                    (story 3.7g) a terminal value: "succeeded" | "failed" |
+                                    "cancelled" | "timeout" | "lost" (jobs.py's done check)
   "started_at",                     started_at, or created_at when it has not started
-  "finished_at",                    null while running
-  "elapsed_s",                      now - started_at, 1 decimal
+  "finished_at",                    null while running; the finish time on a terminal row
+  "elapsed_s",                      now - started_at on a live row, finished_at - started_at
+                                    (the run's length, frozen) on a finished row, 1 decimal
   "num_turns", "tool_calls" (count), "errors" (tool calls with is_error),
   "last_tool",                      the DISPLAY form of derive.last_tool — "<tool>: <input>" or
                                     the tool name, ONE line with whitespace collapsed, paths
@@ -365,7 +374,7 @@ event = {"t", "endpoint" (its name), "kind" ("up" | "down" | "restarted"), "deta
 An endpoint in the database but not in models.yaml is ignored: it has no host card and its
 events are left out of `events`. A configured endpoint with no `endpoints` row yet (never
 probed, never ran a job) is listed, dormant, every figure null; the read creates no row (the
-collector's first tick does). Running jobs are listed whatever endpoint they ran on.
+collector's first tick does). Jobs are listed whatever endpoint they ran on.
 
 **Endpoint history** (`GET /api/endpoints/{name}/history`):
 

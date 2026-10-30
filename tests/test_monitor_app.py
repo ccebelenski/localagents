@@ -114,7 +114,8 @@ def test_snapshot_is_the_overview(client, dbpath):
     assert ov["db_path"] == str(dbpath)  # story 3.2a row 3: the file this server reads
     assert [h["name"] for h in ov["hosts"]] == ["ai1", "dgx1", "local"]
     assert [e["state"] for h in ov["hosts"] for e in h["endpoints"]] == ["live", "down", "dormant"]
-    assert [j["tool_calls"] for j in ov["jobs"]] == [50]
+    # story 3.7g: the log carries the live row first, then the seeded finished one (142 calls)
+    assert [j["tool_calls"] for j in ov["jobs"]] == [50, 142]
     assert len(ov["events"]) == 3
 
 

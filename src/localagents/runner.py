@@ -202,6 +202,11 @@ def _handle_message(job: Job, m: Any) -> None:
 def _apply_message(job: Job, m: Any) -> None:
     job.log_event(_msg_to_dict(m))
     if isinstance(m, AssistantMessage):
+        # 3.7h: the live turn count. One AssistantMessage is one turn, so a running job's
+        # num_turns moves while it runs and the Recent jobs log can show it (the column used
+        # to read 0 until the job's end). The ResultMessage below still overwrites this with
+        # the harness's own count: that one is the record, this is only ever the live view.
+        job.num_turns += 1
         for b in m.content:
             if isinstance(b, TextBlock) and b.text.strip():
                 job.log_text(f"[assistant] {b.text}")
@@ -265,6 +270,8 @@ def _apply_message(job: Job, m: Any) -> None:
     elif isinstance(m, ResultMessage):
         # usage is not stored: it is the sum of the request rows (story 1.5b)
         job.session_id = m.session_id or job.session_id
+        # reconciliation (3.7h): the harness's count wins over the per-message increment —
+        # they count the same turns from two sides and may disagree on the boundaries
         job.num_turns = m.num_turns
         job.result = m.result
         job.log_text(f"[done] subtype={m.subtype} turns={m.num_turns} duration={m.duration_ms}ms")

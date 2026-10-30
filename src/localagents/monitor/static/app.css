@@ -283,3 +283,19 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .spark-peak { position: absolute; right: 0; top: 2px; font-size: 10.5px; white-space: nowrap; }
 /* the window the strip and the sparkline span, from the range control, once per card */
 .strip-range { font-size: 12px; white-space: nowrap; }
+
+/* 3.7g-j recent jobs */
+/* the status pill: the word is the state, the colour only speeds the read (3.7g). The hues
+   follow the cards' and the job page's status-* colours, so one status means one colour
+   page-wide; every status db.py's check can produce has its own rule */
+.pill { display: inline-block; font-size: 12px; font-weight: 600; line-height: 1.5;
+  padding: 0 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
+.pill-running { color: var(--accent); border-color: var(--accent); }
+.pill-queued { color: var(--muted); border-color: var(--border); }
+.pill-succeeded { color: var(--good); border-color: var(--good); }
+.pill-failed, .pill-cancelled { color: var(--critical); border-color: var(--critical); }
+.pill-timeout, .pill-lost { color: var(--warning); border-color: var(--warning); }
+/* the tool-errors badge is a link (3.7i): it reads as the badge, never as underlined text */
+.jobs a.badge { text-decoration: none; }
+/* the line under the log's table spelling out the row order */
+.jobs-note { padding: 6px 2px 0; font-size: 13px; }

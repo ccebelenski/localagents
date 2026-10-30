@@ -69,6 +69,11 @@ const probe = `(() => {
     // (not "jobRows": the table's row field above already owns that key — a duplicate in an
     // object literal silently shadows it)
     epJobRows: q('.ep-job').map(e => e.textContent.replace(/\\s+/g, ' ').trim()),
+    // 3.7g-j (3.7g/3.7i): the Recent jobs log's status pills (class + word) and the
+    // tool-errors badge links (href, so a broken route shows in the data, not the pixels)
+    pills: q('.jobs .pill').map(e => e.className + ':' + e.textContent),
+    errorLinks: q('.jobs a.badge, .jobs .badge a').map(a => a.getAttribute('href')),
+    jobsNote: (document.querySelector('.jobs-note')||{}).textContent || null,
     detail: document.getElementById('detail').hidden ? null : document.getElementById('detail').textContent.replace(/\\s+/g,' ').trim(),
     overviewHidden: document.getElementById('overview').hidden,
     scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth,
@@ -85,6 +90,9 @@ if (hashAfter) {
   r = await send("Runtime.evaluate", { expression: probe, returnByValue: true });
   const o = JSON.parse(r.result.result.value);
   console.log("AFTER " + hashAfter + ": detail=" + JSON.stringify(o.detail) + " overviewHidden=" + o.overviewHidden + " range=" + o.rangeButtons + " canvases=" + o.canvases + " strips=" + o.strips + " sparklines=" + o.sparklines + " banner=" + o.banner);
+  // the hand-rendered states (js: hash-after) are read through the log's fields: the summary
+  // line above long predates the Recent jobs log and cannot carry them
+  console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote }));
   if (process.argv[8]) writeFileSync(process.argv[8], Buffer.from((await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true })).result.data, "base64"));
 }
 console.log("LOGS " + JSON.stringify(logs, null, 1));

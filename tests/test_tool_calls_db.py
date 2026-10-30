@@ -207,6 +207,22 @@ def test_orphan_result_is_ignored(monkeypatch, tmp_path):
     assert "[db-error]" not in job.transcript_tail()
 
 
+def test_turns_count_live_and_the_result_reconciles(monkeypatch, tmp_path):
+    """Story 3.7h: each AssistantMessage is one live turn (the Recent jobs log's turns column
+    moves while the job runs, it no longer reads 0 until the end), and the ResultMessage's own
+    count still overwrites the running figure — the harness's number is the record."""
+    store = _store(monkeypatch, tmp_path)
+    job = _new(store)
+    for i in range(3):
+        runner._apply_message(job, AssistantMessage(content=[TextBlock(text=f"turn {i}")], model="m"))
+    assert job.num_turns == 3  # live, before any result
+    runner._apply_message(job, ResultMessage(
+        subtype="success", duration_ms=5, duration_api_ms=4, is_error=False, num_turns=7,
+        session_id="sess-1", usage=None, result="done",
+    ))
+    assert job.num_turns == 7  # the result's count wins
+
+
 def test_result_message_usage_stays_off_the_job(monkeypatch, tmp_path):
     """Story 1.5b: usage is the sum of the request rows; the SDK ResultMessage usage is no
     longer parked on the Job (it counts the same traffic from the other side and differs)."""

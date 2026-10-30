@@ -164,53 +164,78 @@ def _server_live(row: sqlite3.Row, now: float) -> bool:
     return row["server_updated"] >= now - SERVER_LIVE_S and db.pid_alive(row["server_pid"])
 
 
-def _running_jobs(conn: sqlite3.Connection, now: float) -> list[tuple[int | None, dict[str, Any]]]:
-    """Every queued or running job on the machine, oldest first, as the running-jobs table needs
-    it: the status line's entry (status.collect) plus id, name, elapsed, errors and the last
-    tool. Not limited to live servers: ``server_live`` says whether its server still beats.
-    Each entry is paired with the job's ``endpoint_id`` (the row, not the name: two configs may
-    share an endpoint name)."""
+# story 3.7g: the snapshot's jobs list is the page's Recent jobs log — live jobs first, then a
+# capped tail of finished ones. Terminal is jobs.py's ``done`` check: every status that is not
+# queued or running (succeeded, failed, cancelled, timeout, lost).
+LIVE_STATUSES = ("queued", "running")
+KEEP_FINISHED = 10  # the log's finished tail (the page's "then the last 10 finished" note)
+
+# the live and finished SELECTs share everything but the WHERE/ORDER: two queries rather than
+# one UNION because each side wants its own ordering and only the finished side carries a LIMIT
+_JOB_SELECT = (
+    "SELECT j.*, m.served_id AS model_served, e.name AS endpoint_name,"
+    " s.pid AS server_pid, s.owner AS server_owner, s.updated AS server_updated, s.stopped AS server_stopped"
+    " FROM jobs j LEFT JOIN models m ON m.id = j.model_id"
+    " LEFT JOIN endpoints e ON e.id = j.endpoint_id"
+    " LEFT JOIN mcp_servers s ON s.id = j.mcp_server_id"
+)
+_LIVE_TAIL = (" WHERE j.status IN ('queued', 'running')"
+              " ORDER BY COALESCE(j.started_at, j.created_at), j.rowid")
+_FINISHED_TAIL = (" WHERE j.status NOT IN ('queued', 'running')"
+                  " ORDER BY j.finished_at DESC, j.rowid DESC LIMIT ?")
+
+
+def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: bool) -> dict[str, Any]:
+    """One snapshot job row (spec §5a ``running_job``): the status line's entry
+    (status.collect) plus id, name, elapsed, errors and the last tool. ``frozen`` marks a
+    finished row: its ``elapsed_s`` reads finished_at - started_at, the run's length, so the
+    figure stops moving; every derived figure reads the job's rows as-is (static once the job
+    is done). Not limited to live servers: ``server_live`` says whether its server still beats."""
+    jid = j["id"]
+    start = j["started_at"] or j["created_at"]
+    clock = j["finished_at"] if frozen and j["finished_at"] is not None else now
+    ctx = derive.ctx_tokens(conn, jid)
+    tps = derive.gen_tps(conn, jid)
+    # row 5 (3.2 review): the row carries the DISPLAY form the status bar shows — one line,
+    # relative to the job's root (1.11b's rule; status.py is stdlib-only, so the monitor may
+    # import it). The raw text stays on the job detail and the /api/jobs summaries.
+    root = status._job_root(j)
+    return {
+        "id": jid,
+        "name": j["name"],
+        "model": j["model_served"],
+        "endpoint": j["endpoint_name"],
+        "status": j["status"],
+        "started_at": start,
+        "finished_at": j["finished_at"],
+        "elapsed_s": round(clock - start, 1) if start is not None else None,
+        "num_turns": j["num_turns"],
+        "tool_calls": derive.tool_call_count(conn, jid),
+        "errors": derive.error_count(conn, jid),
+        "last_tool": status.display_activity(derive.last_tool(conn, jid), root, limit=SNAPSHOT_ACTIVITY_LIMIT),
+        "last_activity": status.display_activity(j["last_activity"], root, limit=SNAPSHOT_ACTIVITY_LIMIT),
+        "ctx_tokens": ctx,
+        "context": j["context"],
+        "ctx_pct": round(100 * ctx / j["context"]) if ctx and j["context"] else None,
+        "gen_tps": round(tps, 1) if tps else None,
+        "compactions": j["compactions"],
+        "files": len(derive.files_touched(conn, jid)),
+        "owner": j["server_owner"],
+        "server_live": _server_live(j, now),
+    }
+
+
+def _recent_jobs(conn: sqlite3.Connection, now: float,
+                 keep_finished: int = KEEP_FINISHED) -> list[tuple[int | None, dict[str, Any]]]:
+    """The snapshot's jobs list (story 3.7g): every queued or running job oldest first, then the
+    last ``keep_finished`` finished jobs (any terminal status) newest-finished first — the page's
+    Recent jobs log. Each entry is paired with the job's ``endpoint_id`` (the row, not the name:
+    two configs may share an endpoint name)."""
     out = []
-    for j in conn.execute(
-        "SELECT j.*, m.served_id AS model_served, e.name AS endpoint_name,"
-        " s.pid AS server_pid, s.owner AS server_owner, s.updated AS server_updated, s.stopped AS server_stopped"
-        " FROM jobs j LEFT JOIN models m ON m.id = j.model_id"
-        " LEFT JOIN endpoints e ON e.id = j.endpoint_id"
-        " LEFT JOIN mcp_servers s ON s.id = j.mcp_server_id"
-        " WHERE j.status IN ('queued', 'running')"
-        " ORDER BY COALESCE(j.started_at, j.created_at), j.rowid"
-    ).fetchall():
-        jid = j["id"]
-        start = j["started_at"] or j["created_at"]
-        ctx = derive.ctx_tokens(conn, jid)
-        tps = derive.gen_tps(conn, jid)
-        # row 5 (3.2 review): the row carries the DISPLAY form the status bar shows — one line,
-        # relative to the job's root (1.11b's rule; status.py is stdlib-only, so the monitor may
-        # import it). The raw text stays on the job detail and the /api/jobs summaries.
-        root = status._job_root(j)
-        out.append((j["endpoint_id"], {
-            "id": jid,
-            "name": j["name"],
-            "model": j["model_served"],
-            "endpoint": j["endpoint_name"],
-            "status": j["status"],
-            "started_at": start,
-            "finished_at": j["finished_at"],
-            "elapsed_s": round(now - start, 1) if start is not None else None,
-            "num_turns": j["num_turns"],
-            "tool_calls": derive.tool_call_count(conn, jid),
-            "errors": derive.error_count(conn, jid),
-            "last_tool": status.display_activity(derive.last_tool(conn, jid), root, limit=SNAPSHOT_ACTIVITY_LIMIT),
-            "last_activity": status.display_activity(j["last_activity"], root, limit=SNAPSHOT_ACTIVITY_LIMIT),
-            "ctx_tokens": ctx,
-            "context": j["context"],
-            "ctx_pct": round(100 * ctx / j["context"]) if ctx and j["context"] else None,
-            "gen_tps": round(tps, 1) if tps else None,
-            "compactions": j["compactions"],
-            "files": len(derive.files_touched(conn, jid)),
-            "owner": j["server_owner"],
-            "server_live": _server_live(j, now),
-        }))
+    for j in conn.execute(_JOB_SELECT + _LIVE_TAIL):
+        out.append((j["endpoint_id"], _job_entry(conn, j, now, frozen=False)))
+    for j in conn.execute(_JOB_SELECT + _FINISHED_TAIL, (keep_finished,)):
+        out.append((j["endpoint_id"], _job_entry(conn, j, now, frozen=True)))
     return out
 
 
@@ -295,13 +320,17 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
     """The SSE snapshot (spec §5 "Overview"; shape §5a): hosts in models.yaml order (endpoints
     grouped by ``host``, config order within), each with its node state (resolved from the
     newest fresh port-22 fallback row, story 3.1b), its fallback fields and endpoints; the
-    running jobs; the newest ``EVENTS_LIMIT`` endpoint events. ``db_path`` (story 3.2a row 3) is
+    recent jobs (story 3.7g: queued and running first, then the last ``KEEP_FINISHED``
+    finished); the newest ``EVENTS_LIMIT`` endpoint events. ``db_path`` (story 3.2a row 3) is
     the database file this server opened, passed in by the route (serve knows it: ``--db``, the
     ``monitor:`` section's db, else ``db.db_path()``); null when the app was built without one.
     ``refresh_s`` (story 3.7m) is the fan-out's clock period, carried to the page so it can say
     how often it is told. An endpoint in the database but not in the config is ignored (its
     events too)."""
-    running = _running_jobs(conn, now)
+    recent = _recent_jobs(conn, now)
+    # the cards' ``jobs_running`` stays a live count (story 3.7e's contract: the card's jobs
+    # block is running rows); the log tail is only for the snapshot's ``jobs`` list (3.7g)
+    live = [(eid, j) for eid, j in recent if j["status"] in LIVE_STATUSES]
     groups: dict[str, list[Endpoint]] = {}
     for ep in reg.endpoints.values():
         groups.setdefault(ep.host, []).append(ep)
@@ -313,7 +342,7 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
             eid = endpoint_row_id(conn, ep)
             if eid is not None:
                 configured_ids.append(eid)
-            entry, node_input = _endpoint(conn, ep, eid, now, window_s, running)
+            entry, node_input = _endpoint(conn, ep, eid, now, window_s, live)
             entries.append(entry)
             if node_input is not None:
                 nodes.append(node_input)
@@ -341,7 +370,7 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
             )
         ]
     return {"now": now, "window_s": window_s, "refresh_s": refresh_s, "db_path": db_path,
-            "hosts": hosts, "jobs": [j for _, j in running], "events": events}
+            "hosts": hosts, "jobs": [j for _, j in recent], "events": events}
 
 
 # --- endpoint history --------------------------------------------------------------------------

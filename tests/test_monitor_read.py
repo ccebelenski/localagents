@@ -341,7 +341,8 @@ def test_snapshot_running_job_tool_text_falls_back_to_the_cwd(world):
 def test_overview_running_jobs_carry_the_status_line_entry(world):
     conn, reg = world
     ov = read.overview(conn, reg, NOW, WINDOW_S)
-    assert len(ov["jobs"]) == 1
+    # story 3.7g: the log is the live rows first, then the seeded finished one
+    assert len(ov["jobs"]) == 2 and ov["jobs"][1]["status"] == "succeeded"
     j = ov["jobs"][0]
     row = conn.execute("SELECT * FROM jobs WHERE status = 'running'").fetchone()
     assert j["id"] == row["id"] and j["name"] == row["name"]
@@ -362,6 +363,50 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
         "num_turns", "tool_calls", "errors", "last_tool", "last_activity", "ctx_pct", "ctx_tokens",
         "context", "gen_tps", "compactions", "files", "owner", "server_live",
     }
+
+
+def test_finished_jobs_follow_the_running_ones_in_the_log(world):
+    """Story 3.7g: the snapshot's jobs list is the page's Recent jobs log — the seeded
+    finished job follows the running one, with the same columns, and its ``elapsed_s`` is
+    the run's length (finished_at - started_at), not now - started_at."""
+    conn, reg = world
+    jobs_ = read.overview(conn, reg, NOW, WINDOW_S)["jobs"]
+    assert [j["status"] for j in jobs_] == ["running", "succeeded"]
+    row = conn.execute("SELECT * FROM jobs WHERE status = 'succeeded'").fetchone()
+    f = jobs_[1]
+    assert f["id"] == row["id"] and set(f) == set(jobs_[0])
+    assert f["finished_at"] == pytest.approx(NOW - 600.0)
+    assert f["elapsed_s"] == pytest.approx(row["finished_at"] - row["started_at"], abs=0.05)
+    # the live form would be exactly the 600 s since the finish larger
+    assert f["elapsed_s"] == pytest.approx(NOW - row["started_at"] - 600.0, abs=0.1)
+
+
+def test_only_the_ten_newest_finished_jobs_join_the_log(world):
+    """Story 3.7g: the finished tail is capped at 10 and newest-finished first; every
+    terminal status joins it (jobs.py's done check, not just 'succeeded')."""
+    conn, reg = world
+    running_id = conn.execute("SELECT id FROM jobs WHERE status = 'running'").fetchone()["id"]
+    with db.immediate(conn):
+        for k in range(12):  # 'failed': a terminal status of its own, finished k s apart
+            conn.execute(
+                "INSERT INTO jobs (id, name, status, created_at, started_at, finished_at, updated,"
+                " num_turns) VALUES (?, ?, 'failed', ?, ?, ?, ?, ?)",
+                (f"seedfin{k}", f"fin-{k}", NOW - 200.0 + k, NOW - 200.0 + k,
+                 NOW - 100.0 + k, NOW - 100.0 + k, k))
+    ids = [j["id"] for j in read.overview(conn, reg, NOW, WINDOW_S)["jobs"]]
+    assert ids[0] == running_id  # the live row stays first
+    assert ids[1:] == [f"seedfin{k}" for k in range(11, 1, -1)]  # 12 in, 10 out, newest first
+
+
+def test_finished_elapsed_is_frozen_across_clock_reads(world):
+    """Story 3.7g: two reads a clock-tick apart — the finished row's elapsed says the same
+    thing (the run is over), the running row's has grown by exactly the tick."""
+    conn, reg = world
+    a = read.overview(conn, reg, NOW, WINDOW_S)["jobs"]
+    b = read.overview(conn, reg, NOW + 120.0, WINDOW_S)["jobs"]
+    by = lambda jobs_, s: next(j for j in jobs_ if j["status"] == s)
+    assert by(b, "succeeded")["elapsed_s"] == by(a, "succeeded")["elapsed_s"]
+    assert by(b, "running")["elapsed_s"] == pytest.approx(by(a, "running")["elapsed_s"] + 120.0)
 
 
 def test_overview_events_are_the_newest_twenty_with_endpoint_names(world):
