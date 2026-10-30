@@ -531,6 +531,14 @@ Coordinator's reading against the code (`monitor/read.py:101-135`, `runner.py:20
   decode t/s (output / gen_ms); the HTTP status as a pill with the word. VRAM hit rate is
   Strata's own and has no counterpart (not invented). Unverified until built: whether `ms` and
   `gen_ms` are both recorded for every request shape (a non-stream request may have no gen_ms).
+  Operator (2026-10-29): "under our model we have more than one log list potentially - one for
+  each job?" Yes, three nested logs: the overview's recent jobs (3.7g); per endpoint, its
+  requests across jobs (endpoint.js:296-322, `table()` at 291; Strata's one list is this
+  level, a Strata server being an endpoint); per job, its own requests (job.js:381-430, a
+  second table renderer of its own, `job-requests-table`). The log look lands on both request
+  tables through ONE renderer (the endpoint page's `table()` lifted to app.js's exported
+  helpers, or a copy by contract if the lanes run in parallel), the same columns and pills on
+  both, the job page's table without the job column.
 
 ## Epic 4: operations (V2, not scheduled)
 
