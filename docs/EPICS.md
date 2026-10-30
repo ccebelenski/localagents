@@ -903,6 +903,17 @@ The 3.7 chain's reviews are closed: no open defect.
   name shortened to its id tail ("…4b27af51", the full name in the link's title; the table and
   the timeline keep the full name), then elapsed, the ctx bar + %, t/s, the errors badge; calls
   and files last, so the ellipsis cuts counts, never the fill. Same two-line, fixed-height row.
+- ☐ **3.7t The handshake row is not an error.** Operator (2026-10-30, watching the first live job on
+  the landed page): "I see a few calls to /api/hello that return an error - what's those?" They
+  are Claude Code's own startup handshake: every headless session opens with `GET /api/hello`
+  to its base URL (the shim), the shim forwards it and records the backend's own status (501 on
+  Strata and vLLM, 404 on llama.cpp; `shim.py:264` comment; the database holds 46 rows of 501
+  and 25 of 404, one per job, none a failure). The request tables (`static/app.js`
+  `requestsTable`) paint every status of 400 or more as `pill-error`, so each job's log opens
+  with a red pill that means nothing. Proposed: a row whose path is `/api/hello` gets a muted
+  "handshake" label instead of the error pill (the status still shown), the error count on the
+  job row excludes it, and the test pins both. Operator decides.
+
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
 
 - ☑ **3.8a Browser open by default, `--no-open`, already-running opens and exits 0;
