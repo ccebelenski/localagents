@@ -31,6 +31,18 @@ fetch("/api/snapshot").then(r => r.json()).then(seed => {
       // a line scrolling past the cap: its box's height minus its client height is the bar
       scrollbars: q(".host .ep-head, .host .ep-job-figs, .host .ep-act").filter(e => e.offsetHeight > e.clientHeight)
         .map(e => e.className + " bar " + (e.offsetHeight - e.clientHeight) + "px, box " + e.getBoundingClientRect().height),
+      // 3.7u-fix U3: no bar anywhere — offsetHeight minus clientHeight is a scrollbar unless
+      // it is exactly the element's own borders (a dormant line carries a 1 px top border) —
+      // and the overflows class exactly on the lines that scroll
+      barless: q(".host .ep-head, .host .ep-job-figs, .host .ep-act, .host .ep-line")
+        .filter(e => {
+          const s = getComputedStyle(e);
+          return e.offsetHeight - e.clientHeight
+            > parseFloat(s.borderTopWidth) + parseFloat(s.borderBottomWidth) + 0.01;
+        }).map(e => e.className),
+      overflowsClass: q(".host .overflows").map(e => e.className + " " + e.scrollWidth + ">" + e.clientWidth),
+      overflowers: q(".host .ep-head, .host .ep-job-figs, .host .ep-act, .host .ep-line")
+        .filter(e => e.scrollWidth > e.clientWidth).map(e => e.className),
       raised: M.cardLayout ? M.cardLayout.raised : null,
       pageEllipsis: q(sel).filter(e => /…\s*$/.test(e.textContent)).map(e => e.className),
       fullModel: q(".ep-model").some(e => e.textContent === MODEL),

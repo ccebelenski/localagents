@@ -529,7 +529,7 @@
         h("span", { class: "ep-active muted", title: act.title || null, text: act.text })]),
       stateStrip(ep, snap.now),
       fieldGrid(snap, ep),
-      rates.reason ? h("div", { class: "ep-note muted", text: "speeds: " + rates.reason }) : null,
+      rates.reason ? h("div", { class: "ep-note ep-line muted", text: "speeds: " + rates.reason }) : null,
       jobsBlock(snap, ep),
     ]);
   }
@@ -541,10 +541,10 @@
       // the state dot (3.7c lane contract): first child of the head; lane B styles .sdot
       h("div", { class: "ep-head" }, [h("span", { class: "sdot sdot-" + ep.state, "aria-hidden": "true" }),
         endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
-        h("span", { class: "ep-seen", text: ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "" })]),
-      ep.error && !quiet ? h("div", { class: "ep-error", text: ep.error }) : null,
+        h("span", { class: "ep-seen ep-line", text: ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "" })]),
+      ep.error && !quiet ? h("div", { class: "ep-error ep-line", text: ep.error }) : null,
       // the id beside the name makes the sentence clickable; the name alone stays plain text
-      ep.dropped_job ? h("div", { class: "ep-jobs" }, ["running when it dropped: ",
+      ep.dropped_job ? h("div", { class: "ep-jobs ep-line" }, ["running when it dropped: ",
         ep.dropped_job_id ? jobLink(ep.dropped_job_id, ep.dropped_job) : ep.dropped_job]) : null,
     ]);
   }
@@ -553,7 +553,7 @@
     var seen = ep.last_seen != null ? "last seen " + fmt.date(ep.last_seen) : "never seen";
     // the state dot (3.7c lane contract) is the first child of this one-line element; it has no
     // ep-head of its own; lane B styles .sdot
-    return h("div", { class: "endpoint state-dormant", "data-endpoint": ep.name },
+    return h("div", { class: "endpoint state-dormant ep-line", "data-endpoint": ep.name },
       [h("span", { class: "sdot sdot-" + ep.state, "aria-hidden": "true" }),
        endpointLink(ep.name), " ", h("span", { text: ep.backend + ", " + seen })]);
   }
@@ -589,7 +589,7 @@
     if (!body.length && !nodeDown) return null; // 3.7a: a host with nothing drawn
     return h("div", { class: cls, "data-host": host.name }, [
       h("div", { class: "host-head" }, [h("span", { class: "host-name", text: host.name }),
-        note ? h("span", { class: "host-note", text: note }) : null]),
+        note ? h("span", { class: "host-note ep-line", text: note }) : null]),
     ].concat(body));
   }
 
@@ -802,8 +802,10 @@
   // card to not truncate (and use that as min size so it can't shrink below that high water
   // mark). We get fewer cards horizontally, but more complete information."
   // After every render the page measures every card's one-line rows at their whole width — the
-  // endpoint head, the job row's figures and activity lines, and the field grid (its column
-  // count times the widest tile text, plus the gaps) — each plus the card's own chrome around
+  // endpoint head, the job row's figures and activity lines, every other one-line text on the
+  // card (the .ep-line class: the speeds note, the last-seen span, a down card's error and its
+  // dropped-job line, the host note, a dormant line) and the field grid (its column count times
+  // the widest tile text, plus the gaps) — each plus the card's own chrome around
   // it, and raises the #hosts grid's --card-floor to the widest need. The floor is never lowered
   // during the page's life, so a card never narrows (and the grid never re-flows) when a long
   // job ends. The stylesheet caps the floor at the grid's own width (min(--card-floor, 100%));
@@ -818,11 +820,13 @@
     if (!hostsEl || !hostsEl.clientWidth) return; // behind a detail page: nothing laid out to read
     var each = function (list, fn) { Array.prototype.forEach.call(list, fn); };
     // pass 1, at the cards' own widths: the chrome around each line (the card's padding and
-    // border; a down endpoint's own box) and each field grid's column count and gap
+    // border; a down endpoint's own box) and each field grid's column count and gap. The line
+    // selector here and the CSS rules that scroll those lines name one set — a test pins the
+    // two lists against each other (U1: an unmeasured line wraps, an unstyled one hides).
     var items = [];
     each(hostsEl.children, function (card) {
       var cardW = card.getBoundingClientRect().width;
-      each(card.querySelectorAll(".ep-head, .ep-job-figs, .ep-act"), function (line) {
+      each(card.querySelectorAll(".ep-head, .ep-job-figs, .ep-act, .ep-line"), function (line) {
         items.push({ line: line, chrome: cardW - line.getBoundingClientRect().width });
       });
       each(card.querySelectorAll(".figures"), function (grid) {
@@ -852,6 +856,14 @@
       cardLayout.raised++;
       hostsEl.style.setProperty("--card-floor", cardLayout.floor + "px");
     }
+    // 3.7u-fix U3: the overflow affordance is a class, not a scrollbar — a bar steals height
+    // from a pinned line box (measured: 10 px off a 21.75 px line). Set on each measured line
+    // after the floor is applied, reading the layout the new floor produced: the band and the
+    // ew-resize cursor mark exactly the lines that scroll in their own box (app.css
+    // .overflows; lines that fit never wear it).
+    items.forEach(function (it) {
+      if (it.line) it.line.classList.toggle("overflows", it.line.scrollWidth > it.line.clientWidth);
+    });
   }
 
   function render(snap) {

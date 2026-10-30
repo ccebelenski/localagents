@@ -94,7 +94,11 @@ SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant"
                  # variants are styled too, but the smoke reads the pill by its word)
                  "pill",
                  # 3.7-fold-3 (3.7s page half): the last-active phrase on the live head line
-                 "ep-active"]
+                 "ep-active",
+                 # 3.7u-fix (U1/U3): the one shared class for every one-line text element on a
+                 # card, and the class the floor's pass marks on the lines that scroll in their
+                 # own box (worn through classList.toggle, which the scan below reads)
+                 "ep-line", "overflows"]
 # the classes the job page's smoke names (story 3.4's brief): the page root and its sections,
 # the status classes the header's mark takes (a queued job takes one more, styled but not
 # smoked)
@@ -132,7 +136,10 @@ def test_the_page_carries_every_class_the_smoke_and_spec_name():
     script, and the stylesheet styles it."""
     text = (STATIC / "index.html").read_text() + (STATIC / "app.js").read_text() + (STATIC / "job.js").read_text()
     # the overview's `cls += "node-down"` style and the job page's status class map values
-    strings = re.findall(r'class="([^"]*)"|class: "([^"]*)"|cls \+?= "([^"]*)"|"(node-[a-z]+)"|"(status-[a-z]+)"', text)
+    # (3.7u-fix: classList.toggle too — the overflows class is never in a class string, it is
+    # toggled on measured lines by raiseCardFloor)
+    strings = re.findall(r'class="([^"]*)"|class: "([^"]*)"|cls \+?= "([^"]*)"|"(node-[a-z]+)"|"(status-[a-z]+)"'
+                         r'|classList\.toggle\("([^"]+)"', text)
     classes = {c for groups in strings for s in groups for c in s.split()}
     css = (STATIC / "app.css").read_text()
     for cls in SMOKE_CLASSES + JOB_SMOKE_CLASSES:
@@ -327,6 +334,47 @@ def test_the_card_floor_starts_where_the_stylesheet_does_and_only_rises():
     body = _js_function(js, "raiseCardFloor")
     assert re.findall(r"cardLayout\.floor = [^;]+;", body) == ["cardLayout.floor = cardLayout.need;"]
     assert "if (cardLayout.need > cardLayout.floor) {" in body
+
+
+def test_every_card_line_the_css_makes_scrollable_is_measured_by_the_floor():
+    """3.7u-fix (U1/U3): the card's one-line texts live by one device — the stylesheet scrolls
+    them (an ``overflow-x: auto`` rule under ``.host``) and raiseCardFloor measures them (its
+    line selector). The lists are each other's oracle: a class the CSS scrolls but the floor
+    does not measure can wrap or spill the page; one the floor measures but the CSS does not
+    scroll grows a bar or a second line. Every scrolling class must also suppress its bar
+    (U3: a scrollbar steals height from a pinned line box)."""
+    rules = _css_rules((STATIC / "app.css").read_text())
+    scrollable = set()
+    for sel, body in rules:
+        if not re.search(r"overflow-x\s*:\s*auto", body):
+            continue
+        for s in sel.split(","):
+            if not s.strip().startswith(".host"):
+                continue
+            scrollable.update(m.group(1) for m in re.finditer(r"\.([A-Za-z][\w-]*)", s)
+                              if m.group(1) != "host")
+    assert scrollable  # the scan sees the 3.7u block it is about
+    js = _app_js()
+    measured_sel = re.search(r'querySelectorAll\("(\.ep-head[^"]*)"\)', _js_function(js, "raiseCardFloor"))
+    assert measured_sel is not None
+    measured = {m.group(1) for m in re.finditer(r"\.([A-Za-z][\w-]*)", measured_sel.group(1))}
+    assert scrollable == measured, (sorted(scrollable - measured), sorted(measured - scrollable))
+    suppressed = set()
+    for sel, body in rules:
+        if re.search(r"scrollbar-width\s*:\s*none", body):
+            for s in sel.split(","):
+                suppressed.update(m.group(1) for m in re.finditer(r"\.([A-Za-z][\w-]*)", s))
+    assert scrollable <= suppressed, sorted(scrollable - suppressed)
+
+
+def test_no_webkit_scrollbar_rule_remains_in_the_stylesheet():
+    """3.7u-fix U3 (app.css:419-422 at 3.7u): once ``scrollbar-width`` is set, Chromium follows
+    the standard property and ignores the 3 px ``::-webkit-scrollbar`` rules — the thin bar it
+    took stole 10 px from the pinned line box (clientHeight 12 of 21.75). The webkit pair was
+    dead weight and its bar a height thief; none may come back."""
+    rules = _css_rules((STATIC / "app.css").read_text())
+    offenders = [sel for sel, _ in rules if "::-webkit-scrollbar" in sel]
+    assert offenders == [], offenders
 
 
 # --- story 3.4: the job detail page (job.js) ----------------------------------------------------

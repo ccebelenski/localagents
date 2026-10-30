@@ -403,27 +403,46 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
    and its activity line — never wrap and never ellipsise: app.js measures each one's whole
    width after every render and raises the grid's --card-floor (the .hosts rule) until the
    widest fits, never lowering it. Past the cap (a floor wider than #hosts: one full-width
-   column) the line still wider than its card scrolls sideways in its own box, behind a 3 px
-   bar drawn over the line box's bottom leading. Decided over the alternatives (3.7u, acceptance
-   3): a wrap moves the card's height (3.7n); an ellipsis or a clip hides; text spilling past
-   the card's border pushes the whole page sideways; a stock scrollbar (~15 px) would grow the
-   line. The head's height is pinned to the one line it always was (the name's 1.4 line box plus
-   its 1 px dotted underline: 22.6875 px measured), so the bar never adds height either; the two
-   job lines were already pinned at 1.5em. */
+   column) the line still wider than its card scrolls sideways in its own barless box: no
+   scrollbar anywhere (U3, 3.7u-fix — scrollbar-width: thin made Chromium ignore the 3 px
+   ::-webkit-scrollbar rules and take a classic bar: 10 px stolen from a 21.75 px line box,
+   and the rules are dead once scrollbar-width is set, so they are gone), and the overflow
+   affordance is a class app.js toggles on each measured line: a 2 px muted band at the
+   bottom edge, a background that adds no height, plus the ew-resize cursor. Decided over the
+   alternatives (3.7u, acceptance 3): a wrap moves the card's height (3.7n); an ellipsis or a
+   clip hides; text spilling past the card's border pushes the whole page sideways; a stock
+   scrollbar (~15 px) would grow the line. The head's height is pinned to the one line it
+   always was (the name's 1.4 line box plus its 1 px dotted underline: 22.6875 px measured);
+   the two job lines were already pinned at 1.5em. */
 .host .ep-head { flex-wrap: nowrap; white-space: nowrap; overflow-x: auto; overflow-y: hidden; }
 .host .endpoint.state-live .ep-head { height: calc(1.4em + 1px); }
 .host .ep-job-figs, .host .ep-act { overflow-x: auto; overflow-y: hidden; }
-/* Firefox ignores ::-webkit-scrollbar: the standard properties give it the same thin muted bar
-   (and Chromium 121+ honours them too); the operator reads the page in Firefox */
-.host .ep-head, .host .ep-job-figs, .host .ep-act { scrollbar-width: thin; scrollbar-color: var(--muted) transparent; }
-.host .ep-head::-webkit-scrollbar, .host .ep-job-figs::-webkit-scrollbar, .host .ep-act::-webkit-scrollbar {
-  height: 3px; }
-.host .ep-head::-webkit-scrollbar-thumb, .host .ep-job-figs::-webkit-scrollbar-thumb,
-.host .ep-act::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+/* U1 (3.7u-fix): every one-line text element on a card shares this one device — the speeds
+   note, the last-seen span, a down card's error, its "running when it dropped" line, the
+   host card's note and a dormant endpoint's whole line: nowrap, scrolling in its own box past
+   the cap, pinned to one line box so no text can raise the card's height (the floor counts
+   them; the same measuring pass as the head). The pinned height is the element's natural one:
+   1.4em of its own font — a link's dotted underline does not grow a block line box (measured:
+   the dormant line stood at 1.4em + its own box), and a dormant line, being a whole .endpoint,
+   counts its 8 px vertical padding and 1 px top border inside that height (border-box).
+   The detail page's .ep-error keeps its own rule (overflow-wrap: anywhere): the detail is
+   not a card and its lines may wrap. */
+.host .ep-line { white-space: nowrap; overflow-x: auto; overflow-y: hidden; height: 1.4em; }
+.host .endpoint.state-dormant { height: calc(1.4em + 9px); }
+/* U3: no scrollbar steals height in any browser — the barless box; see the block above.
+   A test pins the set of scrolling classes to raiseCardFloor's measuring selector. */
+.host .ep-head, .host .ep-job-figs, .host .ep-act, .host .ep-line { scrollbar-width: none; }
+/* the overflow affordance (app.js toggles the class on the measured lines): a 2 px muted band
+   at the line's bottom edge — a background adds no height — and the cursor says the line
+   scrolls; no title (the text itself is visible and scrolling, unlike an ellipsis) */
+.host .overflows { background: linear-gradient(to top, var(--muted) 2px, transparent 2px);
+  cursor: ew-resize; }
 /* the measuring pass (app.js cardNeed): for the span of one synchronous read, every measured
    line and tile text takes its max-content width, so the read is the text's own width, never
    the width the card happens to stretch it to (a 1fr column wider than the floor would
-   otherwise ratchet the floor up to whatever the window gave it) */
+   otherwise ratchet the floor up to whatever the window gave it); flex items also keep it
+   (flex-shrink: 0) so a shrinking parent cannot hide a line's true width from the read */
 .hosts.measuring .ep-head, .hosts.measuring .ep-job-figs, .hosts.measuring .ep-act,
 .hosts.measuring .figures .fig > .label, .hosts.measuring .figures .fig > .num,
 .hosts.measuring .figures .fig > .kv { width: max-content; }
+.hosts.measuring .ep-line { width: max-content; flex-shrink: 0; }

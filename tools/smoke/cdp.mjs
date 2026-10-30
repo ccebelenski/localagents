@@ -136,6 +136,9 @@ const probe = `(() => {
     hostBoxes: q('.host').map(e => ({ host: e.dataset.host, w: e.getBoundingClientRect().width, h: e.getBoundingClientRect().height })),
     // 3.7u: the measurements a hand-rendering js: script (wide.js) takes as it goes
     u: (typeof window !== "undefined" && window.__u) || null,
+    // 3.7u-fix (U1/U2): the long-line measurements from lines.js (seeded vs the hand-edited
+    // snapshot with a 200-char dormant name, a 300-char down error and a 200-char dropped job)
+    lines: (typeof window !== "undefined" && window.__lines) || null,
   });
 })()`;
 let r = await send("Runtime.evaluate", { expression: probe, returnByValue: true });
@@ -155,7 +158,7 @@ if (hashAfter) {
   // 3.7-fold-5: the two-line job row's fields and the hand-measured heights ride along too
   // (the first probe long predates the js: script that captures them)
   console.log("AFTER_JSON " + JSON.stringify({ jobRows: o.jobRows, jobHeaders: o.jobHeaders, pills: o.pills, errorLinks: o.errorLinks, jobsEmpty: o.jobsEmpty, jobsNote: o.jobsNote, tlTitle: o.tlTitle, tlAxis: o.tlAxis, tlRows: o.tlRows.map(r => ({ label: r.label, bands: r.bands, jobs: r.jobs.length })), tlHeight: o.tlHeight, epJobLines: o.epJobLines, cardHeights: o.cardHeights, tileLabels: o.tileLabels, t5: o.t5,
-    cardOverflow: o.cardOverflow, cardFloor: o.cardFloor, hostsWidth: o.hostsWidth, gridCols: o.gridCols, columns: o.columns, hostBoxes: o.hostBoxes, u: o.u }));
+    cardOverflow: o.cardOverflow, cardFloor: o.cardFloor, hostsWidth: o.hostsWidth, gridCols: o.gridCols, columns: o.columns, hostBoxes: o.hostBoxes, u: o.u, lines: o.lines }));
   console.log("AFTER " + hashAfter + ": detail=" + JSON.stringify(o.detail) + " overviewHidden=" + o.overviewHidden + " range=" + o.rangeButtons + " canvases=" + o.canvases + " strips=" + o.strips + " sparklines=" + o.sparklines + " banner=" + o.banner
     + " reqHeaders=" + JSON.stringify(o.reqHeaders) + " reqRows=" + JSON.stringify(o.reqRows)
     + " reqPills=" + JSON.stringify(o.reqPills) + " reqRowClasses=" + JSON.stringify(o.reqRowClasses));
