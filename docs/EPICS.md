@@ -1222,7 +1222,17 @@ ruling (e). The lane is also the operator's first live job on the landed page.
     monitors on one database are not refused (each probe written twice); `_Fanout.start`
     re-homing; the history and finished caches are unlocked dicts across worker threads (wasted
     work, not corruption).
-  Fold 3.9C-fix to DeepSeek/dgx1-a (ruling (a)), five rows small-first.
+  Fold 3.9C-fix LANDED (DeepSeek/dgx1-a job 20261030-132735-94015337, 124 turns, 48 min, 12 new
+  tests): typed cache keys through one `cached()` helper, the cache gated to the five page ranges
+  (54 → 5 entries over 50 windows; `app.state.history_cache` exposed for the test), the witness
+  docstring, `db_file` and `parse_now` tests, seed refusing a probes row younger than 120 s on the
+  wall clock (twice: before and inside the write lock), and `endpoint_history` as three bounded
+  statements (counts; ROW_NUMBER/LAG spans, one row per kept point; the kept rows by id) with a
+  verbatim copy of the old function as the oracle over the 120,961-row world: byte-identical,
+  1201 → 490 ms at the function, 861 → 390 ms cold on the route. DeepSeek's notes: fleet_history
+  is still serial per endpoint (~2 s cold for five dense 7 d endpoints); the cache is bounded but
+  up to 5 × (endpoints + 2) bodies; a seed with `--now` near the wall clock now trips both
+  liveness checks. Review of the fold: Qwen (the R1 SQL is the deep door).
 - ☑ **3.9D The monitor's page**: `static/app.js`, `endpoint.js`, `job.js`, `app.css`,
   `index.html`, with `tests/test_monitor_page.py` and `tools/smoke/` (~2.9k). Qwen/ai2 job
   20261030-125256-9ee02e1b, 175 turns, 71 min, SIX compactions (the 131k window; it finished),
