@@ -619,7 +619,7 @@ such as "1,414.8 tok/s" or "47.7 GiB / 48.0 GiB" wraps to a second line (the mer
 shows VRAM and power wrapping already) and the card grows; the grid row reflows and the page
 jumps. The rule the brief lacked: a card's height never depends on its values.
 
-- ☐ **3.7n Tiles never wrap; units in the label.** Every tile is exactly one label line and one
+- ☑ **3.7n Tiles never wrap; units in the label.** Every tile is exactly one label line and one
   value line: the value is `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` with
   the full text in its `title`. Units move into the label so the value is short: "decode tok/s"
   → "1,414.8"; "VRAM GiB" → "47.7 / 48.0"; "power W" → "248 / 260"; "temp °C" → "61"; "probe ms"
@@ -638,7 +638,7 @@ endpoint's own probe times, read.py:374-386) and dgx1-a fills 111 of them, 297 n
 The holes are the fleet grid's construction, not missing data, and the page already fetches
 each live endpoint's own history for the strip (`state.hists[name]`).
 
-- ☐ **3.7o The sparkline reads the endpoint's own history.** `sparkline(name, now)` takes its
+- ☑ **3.7o The sparkline reads the endpoint's own history.** `sparkline(name, now)` takes its
   `t` and `gen_tps` from `state.hists[name]` (the same object `stateStrip` reads), not from
   `state.fleet`; the fleet grid stays the fleet charts' (until 3.7l retires them). Evidence: the
   smoke over the real-shaped history counts one polyline run per contiguous stretch, no
@@ -665,7 +665,7 @@ N+1), each a downsampling read over the range. Two tabs double all of it.
   reply). Evidence: a test counts SQL statements per tick with `sqlite3.Connection.
   set_trace_callback` over the seeded world, before and after, with two subscribers; the
   numbers go in the story record. Folds into 3.7m's lane (same door: the fan-out).
-- ☐ **3.7q Sparklines with a scale.** Every live card's sparkline shares ONE y scale: the
+- ☑ **3.7q Sparklines with a scale.** Every live card's sparkline shares ONE y scale: the
   maximum decode rate over all live endpoints' windows (floored at 1), so a tall line on one
   card and a low line on another compare by height across the row. A small muted peak label at
   the sparkline's right edge ("↑ 112" in tok/s, the shared max, the same on every card) is the
@@ -706,7 +706,14 @@ Our requests table is the fallback witness when counters are absent (an `other` 
   "active 10/28, 9:14 PM" past 24 h, or "no activity in 7d" when null; nothing on the host
   head (a host runs nothing). A down endpoint keeps "last seen" and gains nothing. Evidence: the
   seeded world pins the value for ai1 (its interpolated counters) and null for llamacpp.
-- ☐ **3.7-fold-1 The live card fold.** One lane, page-only, the live card's functions and CSS:
+- ☑ **3.7-fold-1 The live card fold.** (fb47aac: Qwen/ai1 job 20261029-232230-a545b6ff, 112
+  turns, 14 min, 614 tests; the height invariant measured, 243.906 px both ways after a 1 px
+  line-box fix; the shared scale pinned over two hand cards; the brief corrected: the seed's
+  own history has one null in 357 points. Noticed: a cdp.mjs template-literal trap (`\s` in a
+  probe field needs a double backslash) and a duplicate probe key that shadows silently; the
+  shared scale rides on the page's history fetch (a server-side window max would be robust:
+  3.7p's lane told). Review: the coordinator read the whole diff; rides the next live-card
+  review (ruling (g)). Also ticks 3.7n, 3.7o, 3.7q.) One lane, page-only, the live card's functions and CSS:
   the review's D1 (the `files` bit, "N files", after calls), D2 (the errors badge reads
   "N tool errors" with the title "tool results that came back as errors; the job page lists
   them by tool", the same wording the jobs table will take in 3.7i), D3 (peak and scale over
