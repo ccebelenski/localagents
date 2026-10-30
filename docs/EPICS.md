@@ -565,7 +565,30 @@ question the operator has.
   derivation), which shows ai1 at ~110 and dgx1-a at ~60 and any drift, with no straddle
   spikes; prompt speed the same on the endpoint page only; (c) the occupancy chart folds into
   (a). Open: whether (b) lives on the overview at all or only on the endpoint page, leaving the
-  overview one timeline.
+  overview one timeline. Operator 2026-10-29: "I think you're right - the single timeline is
+  better." Settled: the overview's fleet section is the one timeline; speeds (per-request marks)
+  go to the endpoint page.
+
+The operator's fifth finding (2026-10-29), verbatim: "What's our refresh trigger on this page?
+it seems jerky."
+
+Coordinator's reading: the collector runs one task per endpoint, each on its own 5 s cadence
+(60 s dormant), and calls `on_tick` after EACH endpoint's tick (collect.py:207-215); the app's
+fan-out pushes a snapshot on every tick (app.py:9-10). With four live endpoints that is ~four
+unsynchronised snapshots per 5 s plus the dormant ticks; each snapshot `render()`s the whole
+overview (app.js:417-460: `replaceChildren` of every host card and the jobs table), then
+`scheduleHistory` fetches at a 5 s floor and renders the same snapshot AGAIN after the charts
+update (app.js:526). About five full DOM rebuilds per 5 s: text reflows, sparklines and strips
+recreated, hover state lost — the jerk.
+
+- ☐ **3.7m One redraw per tick, in place.** Server: the fan-out coalesces ticks, one snapshot
+  push per ≤1 s of quiet and at most one per 5 s (a tick during the quiet period extends it
+  within that cap), so the page sees one snapshot per probe round. Page: `render` skips a
+  snapshot whose content is unchanged (serialise minus `now`, compare), and updates a card's
+  figures in place by `data-endpoint` key (text nodes and bar widths, not `replaceChildren`),
+  rebuilding a card only when its endpoint list or state changes; the post-history render only
+  refreshes strips and sparklines. Evidence: the smoke counts renders per minute before/after
+  (a counter on `localagentsMonitor`), and a DOM node identity check across two snapshots.
 
 ## Epic 4: operations (V2, not scheduled)
 
