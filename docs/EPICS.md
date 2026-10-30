@@ -589,6 +589,12 @@ recreated, hover state lost — the jerk.
   rebuilding a card only when its endpoint list or state changes; the post-history render only
   refreshes strips and sparklines. Evidence: the smoke counts renders per minute before/after
   (a counter on `localagentsMonitor`), and a DOM node identity check across two snapshots.
+  Operator 2026-10-29: "I think the pattern of having one 'refresh master' is correct - that
+  way we can adjust the refresh too if we want." Settled: the fan-out is the one refresh clock,
+  separate from the probe cadence (probes keep their per-endpoint 5 s / 60 s; the clock decides
+  when the page hears about them): a snapshot push every `refresh_s` (the `monitor:` section,
+  default 5; the snapshot carries it so the page can show it and a later story can offer a
+  control), and nothing between pushes. The first-connect snapshot stays immediate.
 
 ## Epic 4: operations (V2, not scheduled)
 
