@@ -540,6 +540,33 @@ Coordinator's reading against the code (`monitor/read.py:101-135`, `runner.py:20
   helpers, or a copy by contract if the lanes run in parallel), the same columns and pills on
   both, the job page's table without the job column.
 
+The operator's fourth finding, the fleet charts (2026-10-29, screenshot over the real fleet with
+two lanes running), verbatim:
+
+> Fleet graphs are basically useless right now in this form - At least I can't think how I
+> would use them.
+
+Coordinator's reading: three uPlot line charts (decode tok/s, prompt tok/s, occupancy) with four
+series on 5 s counter bins (`read.fleet_history`, read.py:374). Over an hour with two jobs the
+decode chart is flat zero with two spikes at 600 and 1000 tok/s on engines that decode at
+40–110: the live gate's known engine fact (gates/2026-10-29-epic3-live-gate.md:137-139, 317-322:
+a 5 s bin straddling a completion plus an in-flight request spikes above the ceiling). Prompt
+speed likewise (a 1,400 spike). Occupancy is 0/1 steps on one-slot boxes. The legends read
+"llamacpp: –" with no value until hover. Three small charts side by side, mostly zero, answer no
+question the operator has.
+
+- ☐ **3.7l Fleet section: a timeline, not three rate charts.** Proposed (operator decides):
+  (a) ONE fleet timeline on the shared time axis: a row per live endpoint, its busy intervals
+  as bars (from the occupancy/state series it has today), each JOB drawn as a labelled span on
+  its endpoint's row (`started_at`..`finished_at`|now, the name as the label, a link to the job
+  page), so "who ran what, where, when, for how long" is read at a glance and a box idle all
+  day is an empty row; (b) speeds from per-REQUEST rates, not counter bins: decode t/s per
+  request as a mark per endpoint (the requests rows already hold output and gen_ms, 3.7k's
+  derivation), which shows ai1 at ~110 and dgx1-a at ~60 and any drift, with no straddle
+  spikes; prompt speed the same on the endpoint page only; (c) the occupancy chart folds into
+  (a). Open: whether (b) lives on the overview at all or only on the endpoint page, leaving the
+  overview one timeline.
+
 ## Epic 4: operations (V2, not scheduled)
 
 - ☐ **4.1 Guided SSH setup script.** Walks the operator through key placement per host; no
