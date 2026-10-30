@@ -979,6 +979,24 @@ The 3.7 chain's reviews are closed: no open defect.
   convention, the operator's call; the Recent jobs table shows a 200-char name whole and gets a
   horizontal scrollbar; `.ep-seen`'s margin leaks onto down cards' heads; `oneLine()` in app.js is
   dead in practice (the server already collapses whitespace).
+  Review (Qwen/ai1 job 20261030-134418-66ab71e5, 51 turns, 9 min, construct-it over the smoke
+  world at 900/1400/2400 px; src/tests/tools untouched; branch
+  `local-agent/20261030-134418-66ab71e5`): the floor's arithmetic, the high-water mark across
+  seeded→wide→seeded and server pushes, the skip and route paths, config order, the measuring
+  class never escaping: all clean. Findings, all ACCEPTED:
+  - U3 `app.css:413-422`: the coordinator's `scrollbar-width: thin` (9880fc6) makes Chromium
+    ignore the 3 px `::-webkit-scrollbar` rule, so an overflowing line's pinned 21.75 px box
+    loses 10 px to a classic bar (clientHeight 12), clipping the descenders. The coordinator's
+    own defect. Fix: `scrollbar-width: none`, the affordance an `overflows` class set by the
+    measuring pass.
+  - U1/U2: lines the floor does not measure (`.ep-error`, `.ep-note`, the dormant line, the
+    dropped-job line, `.host-note`) spill past the card and scroll the whole page (scrollWidth
+    1692 > 885 at 900 px) or wrap and change the card's height (30.7 → 74.1 px). Fix: every
+    one-line card text is measured and scrolls alike.
+  - The three static gates are red on the regression each names and blind to neighbours (a
+    `::after` ellipsis, `Array.prototype.slice.call`, an `else` lowering the floor): copy-drift
+    tripwires, not proofs; the browser smoke is the gate. Noted, kept.
+  Fold 3.7u-fix to Qwen/ai1 (ruling (a)).
   Operator: "I don't like the '...' convention because it hides information - either set a
   minimum card width that can accomodate the widest text, or dynamically size the card to not
   truncate (and use that as min size so it can't shrink below that high water mark). We get
