@@ -859,6 +859,7 @@ for the operator's morning and the next polish fold:
   format without seconds; the bars' titles keep seconds).
 - The timeline's rows and bars read well; the "↑ 1.4" peak label sits on the line's right end.
 
+- ☑ **3.7-docs README's Monitor section to the 3.7 page.** (Qwen/ai1 job 20261030-013510-ee7c67cb, 41 turns, 6 min; True-now clauses on kept sentences, replaced paragraphs for the retired table, charts and collapse; a "Refresh and load" paragraph; one word pending fold-5: the decode label no longer names the window.)
 - ☐ **3.7-fold-5 Page polish (after fold-4 and the DeepSeek review of fold-3/3.7l).** The
   three items above plus that review's findings.
 ### 3.8 Running it (operator 2026-10-29, while the 3.7 lanes ran)
