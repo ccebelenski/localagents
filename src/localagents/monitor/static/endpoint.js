@@ -293,14 +293,15 @@
     return h("table", null, [h("thead", null, [head]), h("tbody", null, rows)]);
   }
 
-  function requestsSection(reqs, range) {
+  function requestsSection(reqs, range, now) {
     var body;
     if (!reqs) {
       body = h("div", { class: "empty", text: "loading" });
     } else {
       // the log look (3.7k): the one shared renderer, with the job column (this page's log
-      // spans jobs) and this page's empty sentence
-      body = M.requestsTable(reqs.requests, { empty: "no requests in this range" });
+      // spans jobs), this page's empty sentence, and the page's clock for the day-stamped
+      // time column (3.7-fold-4: the snapshot's now, via nowOf())
+      body = M.requestsTable(reqs.requests, { empty: "no requests in this range", now: now });
     }
     var totalsLine = null;
     if (reqs && reqs.totals) {
@@ -488,7 +489,7 @@
         // the short lists first: the request table can run to 1000 rows
         jobsSection(page.hist, range, now),
         eventsSection(page.hist, range, now),
-        requestsSection(page.reqs, range)
+        requestsSection(page.reqs, range, now)
       );
     }
 

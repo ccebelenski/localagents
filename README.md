@@ -405,6 +405,9 @@ default; the `attention_hours` setting below) and the database the server opened
 elided from the left when long, the full path in the title). The charting
 library, uPlot 1.6.31, is vendored into the package
 (`src/localagents/monitor/static/VENDOR.md` has its checksums), so the page needs no internet.
+(True-now, 3.7-fold-4: story 3.7l replaced the fleet charts with the timeline, and once no page
+used uPlot the vendored files and `VENDOR.md` were dropped — the sentences above record the state
+when written; the page loads nothing but its own files.)
 
 An endpoint's name on the overview opens its detail page (`#/endpoint/<name>`), drawn from the
 monitor's own database for every backend, with no link to the endpoint's own UI. Its header

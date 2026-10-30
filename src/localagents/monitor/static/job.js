@@ -405,7 +405,9 @@
         h("span", { class: "fig" + (tot.errors > 0 ? " err" : "") }, [h("span", { class: "label", text: "errors" }), h("span", { class: "num", text: fmt.int(tot.errors) })]),
       ]);
       return h("div", { class: "job-requests" }, [h("h3", { text: "Requests" }), totals,
-        M.requestsTable(reqs, { job: false })]);
+        // the detail's clock (nowClock: the snapshot's now, the browser's as fallback) feeds
+        // the shared renderer's day-stamped time column (3.7-fold-4)
+        M.requestsTable(reqs, { job: false, now: nowClock() })]);
     }
 
     // the transcript tail in a <pre> (the user text, textContent only) with the log directory

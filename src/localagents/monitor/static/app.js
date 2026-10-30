@@ -14,8 +14,9 @@
  * field read here is named there (tests/test_monitor_page.py checks it). The objects are read
  * through a few fixed names: `snap` (the snapshot), `host`, `ep` (an endpoint), `job` (a
  * running job or a timeline span), `hw` (ep.hardware) and `hist` (an endpoint history).
- * (3.7l: `fleet`/`fleetEp` were the fleet charts' names; the charts are gone — the vendored
- * uPlot stays referenced by the shell but no page uses it until the vendor drop.)
+ * (3.7l: `fleet`/`fleetEp` were the fleet charts' names; the charts are gone, and so is the
+ * charting library they needed — uPlot was dropped from the shell and the package in 3.7-fold-4
+ * once no page used it.)
  *
  * No framework, no build step: plain DOM built through h(), which sets text with textContent,
  * so a job name or an error sentence from the database is never parsed as HTML.
@@ -754,13 +755,15 @@
     return changed;
   }
 
-  // 3.7s page half: the endpoint's last-active phrase (3.7-fold-3). Null reads "no activity
-  // recorded": 3.7s's record wrote "no activity in 7d", but fold-2 noticed the witness is not
-  // pruned with the probes, so a retention figure in the words can be a lie — the brief's
-  // wording stands. Past 24 h the date form; the absolute time rides in the title either way.
-  // The text is split from the span so a skipped render can refresh just the text (below).
+  // 3.7s page half: the endpoint's last-active phrase (3.7-fold-3). Null reads "no recent
+  // activity": 3.7s's record wrote "no activity in 7d", but fold-2 noticed the witness is not
+  // pruned with the probes, so a retention figure in the words can be a lie; and fold-4's two
+  // reviews found "no activity recorded" ambiguous for a box active 8 days ago whose probes
+  // were pruned — it IS recorded, just not recent. Past 24 h the date form; the absolute time
+  // rides in the title either way. The text is split from the span so a skipped render can
+  // refresh just the text (below).
   function activeInfo(ep, snap) {
-    if (ep.last_active == null) return { text: "no activity recorded", title: "" };
+    if (ep.last_active == null) return { text: "no recent activity", title: "" };
     if (snap.now - ep.last_active > 86400) {
       return { text: "active " + fmt.date(ep.last_active), title: fmt.date(ep.last_active) };
     }
@@ -1242,13 +1245,21 @@
   }
 
   // the error cell's sentence: the error, else "context exceeded" when the request overran
-  // the window; "" when clean (the empty string a clean export writes is clean too)
+  // the window; "" when clean (the empty string a clean export writes is clean too).
+  // context_exceeded is stored TEXT — the backend's own sentence (db.py's column, the note
+  // shim.py writes) — never a boolean, so "set" is a non-empty string or true; the truthy
+  // read is the whole test (3.7k review, POSSIBLE; 3.7-fold-4)
   function requestError(req) {
     if (req.error != null && req.error !== "") return String(req.error);
-    if (req.context_exceeded === true) return "context exceeded";
+    if (req.context_exceeded) return "context exceeded";
     return "";
   }
 
+  // opts: {job: show the job column (default true), empty: the empty sentence,
+  // now: the server's clock the day-stamp rule runs against (3.7-fold-4: the endpoint page
+  // passes the snapshot's now, the job page the detail's clock — same rule as the endpoint
+  // page's when() and the jobs table: time of day inside 24 h, date and time past it, so at
+  // 7d the same clock time never repeats per day; the title holds the full date always)}
   function requestsTable(rows, opts) {
     opts = opts || {};
     rows = rows || [];
@@ -1271,10 +1282,15 @@
       if (req.error != null && req.error !== "") bad = true;
       var cls = [];
       if (bad) cls.push("req-err");
-      if (req.context_exceeded === true) cls.push("req-ctx");
+      if (req.context_exceeded) cls.push("req-ctx"); // the same truthy read: a non-empty string or true
       var prefill = prefillRate(req);
       var decode = decodeRate(req);
-      var cells = [h("td", { text: fmt.time(req.t) })];
+      // the time cell (3.7-fold-4): inside 24 h of the caller's clock, the clock time; past
+      // it, date and time (fmt.date) — the day stamp the old when() column carried
+      var timeTitle = req.t == null ? null : fmt.date(req.t);
+      var timeText = req.t != null && opts.now != null && opts.now - req.t < 86400
+        ? fmt.time(req.t) : fmt.date(req.t);
+      var cells = [h("td", { text: timeText, title: timeTitle })];
       if (req.http_status == null) {
         cells.push(h("td", null, [h("span", { class: "pill", title: "no status", text: "–" })]));
       } else {
@@ -1289,12 +1305,18 @@
       cells.push(
         h("td", { class: "cut", title: req.path || "", text: req.path || "" }),
         h("td", { class: "n", text: fmt.int(tokens.input) }),
-        h("td", { class: "n", title: "cache read " + fmt.int(cacheRead) + ", cache creation "
-          + fmt.int(cacheCreation), text: fmt.int(cacheRead) }),
+        // the reused cell's title names both cache figures; a missing one drops its half of
+        // the sentence rather than trailing a blank (fold-3 review NOTICED)
+        h("td", { class: "n", title: "cache read " + fmt.int(cacheRead)
+          + (fmt.int(cacheCreation) !== "" ? ", cache creation " + fmt.int(cacheCreation) : ""),
+          text: fmt.int(cacheRead) }),
         h("td", { class: "n", text: fmt.int(tokens.output) }),
         h("td", { class: "n", text: prefill == null ? "" : fmt.speed(prefill) }),
         h("td", { class: "n", text: decode == null ? "" : fmt.speed(decode) }),
-        h("td", { class: "n", text: typeof req.ms === "number" ? fmt.speed(req.ms / 1000) + " s" : "" }),
+        // duration (3.7-fold-4): under a second in whole ms ("8 ms" — the old rule read every
+        // sub-10 ms request "0.0 s"), else tenths of a second
+        h("td", { class: "n", text: typeof req.ms === "number"
+          ? (req.ms < 1000 ? fmt.int(req.ms) + " ms" : fmt.speed(req.ms / 1000) + " s") : "" }),
         h("td", { class: "cut", title: error || null,
           text: error.length > ERROR_CUT ? error.slice(0, ERROR_CUT) : error })
       );

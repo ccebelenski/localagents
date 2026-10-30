@@ -457,7 +457,10 @@ span jobs), the job page's without (every row is that job). The columns are time
 pill with the word (`ok` for a 2xx, `error` otherwise; the HTTP code in its title; a null status
 reads "–"); prompt is `tokens.input`, reused is `tokens.cache_read`, output is
 `tokens.output`; error is the row's error, cut to 60 characters with the full sentence in its
-title, or "context exceeded" when `context_exceeded` is true and the error is null. The derived
+title, or "context exceeded" when `context_exceeded` is true and the error is null (True-now,
+3.7-fold-4: the stored type is TEXT — the backend's own sentence, shim.py — never a boolean; the
+cell reads the row's error first, then falls back to "context exceeded" when the column holds a
+non-empty string or true). The derived
 columns are: **prefill t/s** = (input + cache_creation) / ((ms − gen_ms) / 1000), when `ms`
 and `gen_ms` are numbers, `ms > gen_ms` and `input + cache_creation > 0`; **decode t/s** =
 output / (gen_ms / 1000), when `gen_ms > 0` and `output > 0`; **duration** = `ms / 1000`. Each

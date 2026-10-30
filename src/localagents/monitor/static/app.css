@@ -92,7 +92,17 @@ h2 { font-size: 16.5px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 60
 .tag {
   font-size: 12px; color: var(--ink-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px;
 }
-.ep-model { color: var(--ink-2); font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+/* the model id never wraps the head to a second line (3.7-fold-3 noticed; fold-4 fixes): one
+   line, ellipsised, the full served id already rides in the span's title. The head is a
+   flex-wrap row, so a mere max-width cannot hold it: the smoke measured a 24em-capped span
+   (312 px) still pushing the head to two lines at the card's own width — a wrapped flex line
+   is chosen on the item's base size, before any shrinking. The model therefore takes the
+   head's remaining slot (flex basis 0, grows up to the brief's 24em, min-width 0 to shrink
+   below its text): one head line at every card width, the ellipsis carrying the id */
+.ep-model { color: var(--ink-2); font-family: var(--mono); font-size: 13px;
+  max-width: 24em; min-width: 0; flex: 1 1 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: inline-block; vertical-align: bottom; }
 .endpoint.state-down {
   border: 1px solid var(--critical); border-radius: 6px; background: var(--critical-wash);
   padding: 8px 10px; margin: 4px 0;
@@ -183,7 +193,11 @@ td.cut { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .strip-legend .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 .totals { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 14.5px; margin: 0 0 6px; }
 .totals .fig.err .num { color: var(--critical); }
-.requests tr.req-err td { color: var(--critical); }
+/* the 3.7k block's row rules replaced this section's old colour-on-error-row rule (it was
+   overridden to inherit, never drawn — 3.7k review NOTICED, cut in 3.7-fold-4); the section
+   keeps only the overflow discipline every wide-table section on the page carries, like
+   .job-requests on the job page's mirror of this table */
+.requests { min-width: 0; }
 .events td.wrap { white-space: normal; overflow-wrap: anywhere; min-width: 240px; }
 .events tr.ev-down td:nth-child(2) { color: var(--critical); }
 .events tr.ev-up td:nth-child(2) { color: var(--good); }
@@ -219,7 +233,6 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .by-tool table { width: auto; }
 .by-tool .legend-swatch { margin-right: 6px; }
 .job-requests { min-width: 0; }
-.job-requests-table { width: 100%; }
 .job-requests .totals { color: var(--ink-2); font-weight: 600; }
 .transcript { min-width: 0; }
 .transcript-tail { background: var(--surface-2); border-radius: 6px; padding: 8px 10px; font-family: var(--mono);
@@ -295,10 +308,12 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 /* the endpoint page's and the job page's request logs share one renderer (app.js's
    requestsTable): the same columns, the same status pill, numbers right-aligned (.n as every
    table). The base .pill rule and the job-status variants belong to the jobs lane's block; this
-   block adds ONLY the two request outcomes, so the word still reads before that merge. */
+   block adds ONLY the two request outcomes, so the word still reads before that merge.
+   3.7-fold-4: one pill convention — the request outcomes take the job pills' border form
+   (colour AND matching border), not colour on a neutral border. */
 .requests-table { width: 100%; }
-.pill-ok { color: var(--good); }
-.pill-error { color: var(--critical); }
+.pill-ok { color: var(--good); border-color: var(--good); }
+.pill-error { color: var(--critical); border-color: var(--critical); }
 /* a request that overran its context window: a mark on the row's edge, never colour on the
    text (the error cell names it "context exceeded"); a non-2xx or errored row wears the same
    mark — the pill's word is the state, the old colour-on-text rule is retired here (3.7k) */

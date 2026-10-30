@@ -1,14 +1,13 @@
-"""Story 3.2: the overview page (monitor spec §5 "Overview"). The page is one HTML file, one
-JavaScript file and one stylesheet beside a vendored uPlot, served from the package's
-``monitor/static/`` directory with no CDN at runtime.
+"""Story 3.2: the overview page (monitor spec §5 "Overview"). The page is one HTML file and
+its page scripts plus one stylesheet, served from the package's ``monitor/static/`` directory
+with no CDN at runtime. (Story 3.2 shipped them beside a vendored uPlot; 3.7l retired the
+charts that used it and 3.7-fold-4 dropped the library — the vendored-file tests went with it.)
 
 There is no JavaScript runtime in the suite: these tests pin what Python can see (the shell's
-static references, the vendored files' checksums, the class inventory the browser smoke looks
-for, and that ``app.js`` reads only §5a field names). The DOM itself is the browser smoke's
-(spec §7)."""
+static references, the class inventory the browser smoke looks for, and that ``app.js`` reads
+only §5a field names). The DOM itself is the browser smoke's (spec §7)."""
 import asyncio
 import contextlib
-import hashlib
 import os
 import re
 import signal
@@ -30,11 +29,10 @@ from monitor_seeded import NOW, registry, seed_file, write_config
 
 STATIC = Path(app_mod.__file__).resolve().parent / "static"
 
-# the shell loads exactly these, in this order (stylesheets first, uPlot before the page
-# scripts; the detail pages register themselves after app.js, stories 3.3 and 3.4 in their own
-# files)
-SHELL_ASSETS = ["/static/uPlot.min.css", "/static/app.css", "/static/uPlot.iife.min.js", "/static/app.js",
-                "/static/endpoint.js", "/static/job.js"]
+# the shell loads exactly these, in this order (stylesheet first, then the page scripts; the
+# detail pages register themselves after app.js, stories 3.3 and 3.4 in their own files; the
+# vendored uPlot sat between the stylesheet and app.js until 3.7-fold-4 dropped it)
+SHELL_ASSETS = ["/static/app.css", "/static/app.js", "/static/endpoint.js", "/static/job.js"]
 
 
 @pytest.fixture
@@ -47,7 +45,7 @@ def client(tmp_path):
         yield c
 
 
-# --- item 1: the shell and the vendored uPlot ---------------------------------------------------
+# --- item 1: the shell and its static files ------------------------------------------------------
 
 
 def test_the_shell_references_exactly_the_page_static_files(client):
@@ -58,9 +56,7 @@ def test_the_shell_references_exactly_the_page_static_files(client):
 
 
 @pytest.mark.parametrize("path, kind", [
-    ("/static/uPlot.min.css", "text/css"),
     ("/static/app.css", "text/css"),
-    ("/static/uPlot.iife.min.js", "javascript"),
     ("/static/app.js", "javascript"),
     ("/static/endpoint.js", "javascript"),
     ("/static/job.js", "javascript"),
@@ -71,15 +67,9 @@ def test_each_static_file_is_served_with_its_content_type(client, path, kind):
     assert kind in r.headers["content-type"]
     assert r.content == (STATIC / path.removeprefix("/static/")).read_bytes()
 
-
-def test_vendor_md_sha256_lines_match_the_vendored_files():
-    text = (STATIC / "VENDOR.md").read_text()
-    lines = re.findall(r"^sha256 ([0-9a-f]{64})  (\S+)$", text, re.M)
-    assert sorted(name for _, name in lines) == ["uPlot.iife.min.js", "uPlot.min.css"]
-    for digest, name in lines:
-        assert hashlib.sha256((STATIC / name).read_bytes()).hexdigest() == digest, name
-    assert "uPlot 1.6.31" in text
-    assert "(v1.6.31)" in (STATIC / "uPlot.iife.min.js").read_text()[:200]
+# (3.7-fold-4: test_vendor_md_sha256_lines_match_the_vendored_files retired with its files —
+# VENDOR.md documented only the uPlot pair, and the uPlot pair went when 3.7l left no page
+# using it; there is no other vendored file, so VENDOR.md went with them.)
 
 
 # --- item 2: the page's class inventory and its reads of the §5a JSON ----------------------------
@@ -115,7 +105,7 @@ JOB_SMOKE_CLASSES = ["job-detail", "gauge", "timeline", "by-tool", "job-requests
 # the names app.js reads the route bodies through (its header says so): snapshot, host, endpoint,
 # running job (and, since 3.7l, a timeline job span), endpoint hardware, endpoint rates, endpoint
 # history. 3.7l removed the fleet charts' `fleet` and `fleetEp` — no page file reads the fleet
-# history any more (the route stays; the vendored uPlot stays until the vendor drop)
+# history any more (the route stays; 3.7-fold-4 dropped the vendored uPlot the charts needed)
 # `req` is the shared requests renderer's request row (3.7k), read through the same walk
 APP_JS_VARS = ("snap", "host", "ep", "job", "hw", "rates", "hist", "req")
 # the names job.js (story 3.4) reads the route bodies through (its header says so): the job
@@ -304,9 +294,10 @@ def test_job_js_totals_count_only_real_errors():
 
 # the classes the endpoint page's browser smoke names (story 3.3's brief; 3.7k adds the shared
 # requests-table renderer's classes — the table, the two status pills and the context-exceeded
-# row — defined in app.js, which the page loads first)
+# and errored rows — defined in app.js, which the page loads first; fold-4's review added the
+# missing req-err)
 ENDPOINT_CLASSES = ["endpoint-detail", "tiles", "tile", "tier-0", "tier-1", "tier-2", "tier-3", "requests", "totals",
-                    "events", "requests-table", "pill-ok", "pill-error", "req-ctx"]
+                    "events", "requests-table", "pill-ok", "pill-error", "req-ctx", "req-err"]
 
 # the names endpoint.js reads the route bodies through (its header says so): snapshot, host,
 # snapshot endpoint, endpoint hardware, endpoint rates, endpoint history, one history job, one
@@ -331,6 +322,22 @@ def test_endpoint_js_carries_every_class_the_smoke_names():
         assert re.search(r"\." + re.escape(cls) + r"(?![\w-])", css), cls
 
 
+# the shared renderer's classes the job page's request log also wears (3.7k): the renderer lives
+# in app.js, so the overview/job inventory's class-string scan cannot see them (they are built
+# with cls.push and a ternary) — they belong to a scan that reads app.js too, the way the
+# endpoint inventory's does (3.7k review NOTICED: the job list named none of them; fold-4)
+JOB_SHARED_CLASSES = ["requests-table", "pill-ok", "pill-error", "req-err", "req-ctx"]
+
+
+def test_the_job_page_carries_the_shared_renderer_classes():
+    js = (STATIC / "job.js").read_text() + _app_js()
+    tokens = {c for lit in re.findall(r'"([^"\n]*)"', js) for c in lit.split()}
+    css = (STATIC / "app.css").read_text()
+    for cls in JOB_SHARED_CLASSES:
+        assert cls in tokens, cls
+        assert re.search(r"\." + re.escape(cls) + r"(?![\w-])", css), cls
+
+
 def test_requests_tables_share_one_renderer():
     """Story 3.7k: the endpoint page and the job page draw their request logs through app.js's
     one exported renderer. Its column order is the operator's (Strata's log look plus our
@@ -349,9 +356,11 @@ def test_requests_tables_share_one_renderer():
     # so the processed count is input + cache_creation (Strata's processed = prompt − cached)
     assert "req.tokens.input + req.tokens.cache_creation" in app_js
     assert "req.tokens.output / (req.gen_ms / 1000)" in app_js  # decode t/s
-    # each page calls it, with the job column dropped on the job page
-    assert "M.requestsTable(reqs.requests, { empty: \"no requests in this range\" })" in _endpoint_js()
-    assert "M.requestsTable(reqs, { job: false })" in (STATIC / "job.js").read_text()
+    # each page calls it, with the job column dropped on the job page; 3.7-fold-4 adds each
+    # page's clock as `now` for the day-stamped time column (the snapshot's now via nowOf on
+    # the endpoint page, the detail clock via nowClock on the job page)
+    assert "M.requestsTable(reqs.requests, { empty: \"no requests in this range\", now: now })" in _endpoint_js()
+    assert "M.requestsTable(reqs, { job: false, now: nowClock() })" in (STATIC / "job.js").read_text()
     # the endpoint page's old column list and local numeric map are gone; the generic table()
     # stays for its jobs and events sections
     js = _endpoint_js()
@@ -512,7 +521,7 @@ def _seeded_monitor(tmp_path):
 
 def test_the_command_serves_the_page_and_its_files_over_the_seeded_world(tmp_path):
     """``localagents monitor --no-collect`` over a seeded file (now = the wall clock): the page
-    and its five static files answer 200 over loopback with their content types, and the
+    and its static files answer 200 over loopback with their content types, and the
     routes the page calls on load (the snapshot, the fleet history, a live endpoint's history)
     answer 200; SIGTERM then exits 0."""
     with _seeded_monitor(tmp_path) as (base, page, proc):
