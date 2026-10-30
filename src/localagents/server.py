@@ -271,6 +271,18 @@ FOREIGN_SWEEP_S = 30.0
 # the row statuses that mean the job is over — Job.done's list, as list_jobs' unfinished filter
 _TERMINAL_STATUSES = ("succeeded", "failed", "timeout", "cancelled", "lost")
 
+# list_jobs(all=True), keyed by include_finished; module-level so tests/test_query_plans.py
+# pins their EXPLAIN QUERY PLAN (3.9E audit). The live-only filter is the status IN form —
+# the same set as NOT IN ``_TERMINAL_STATUSES`` under db.py's status CHECK, but the IN form is
+# the one whose plan seeks jobs(status, finished_at) instead of walking jobs(created_at).
+_LIST_JOBS_SQL = {
+    True: "SELECT * FROM (SELECT *, rowid AS _rowid FROM jobs"
+          " ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, _rowid",
+    False: "SELECT * FROM (SELECT *, rowid AS _rowid FROM jobs"
+           " WHERE status IN ('queued', 'running')"
+           " ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, _rowid",
+}
+
 
 async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> dict[str, Any]:
     """Wait on another server's job by polling its row in the shared database: there is no
@@ -748,14 +760,16 @@ async def list_jobs(
     # the newest `limit` rows, returned oldest first (newest last, as the in-process list).
     # A NULL created_at means oldest: SQLite sorts NULLs last in DESC (so the inner LIMIT cuts
     # it first) and first in ASC (so the outer re-sort puts it at the oldest end) — no
-    # `created_at IS NULL` term needed, and none wanted: it would break the jobs(created_at)
-    # index scan the inner query relies on (review of 1.8).
+    # `created_at IS NULL` term needed, and none wanted: it would break the index scan the
+    # inner query relies on (review of 1.8). The live-only branch's predicate (3.9E finding
+    # E3) is `status IN ('queued', 'running')`, not the same-set `NOT IN` over
+    # ``_TERMINAL_STATUSES``: under ``_V1``'s status CHECK both select the live jobs, but only
+    # the IN form's plan is a seek of jobs(status, finished_at) — the NOT IN form walks the
+    # whole jobs_created_at index over every job ever run (tests/test_query_plans.py pins both
+    # plans).
     try:
         rows = store.conn.execute(
-            "SELECT * FROM (SELECT *, rowid AS _rowid FROM jobs"
-            + ("" if include_finished
-               else " WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'timeout', 'lost')")
-            + " ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at, _rowid",
+            _LIST_JOBS_SQL[include_finished],
             (limit if limit > 0 else -1,),  # SQLite: a negative LIMIT is no limit
         ).fetchall()
         return [_row_summary(r, include_result=False) for r in rows]

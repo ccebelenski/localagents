@@ -179,6 +179,18 @@ user's process), so a stale heartbeat with a live pid of this user is spared as 
 - `job_log(tools=N)`: last N rows by `tool_calls(job_id, t)`.
 - Monitor (Epic 2): jobs by `endpoint_id` / `model_id` over a time range; requests by job.
 - `jobs(name)` is for ordering listings by name; nothing looks a job up by name.
+- Monitor snapshot (3.9E audit, schema version 7 appended 2026-10-30): the Recent-jobs log's
+  finished tail (terminal statuses, `ORDER BY finished_at DESC, rowid DESC LIMIT 10`) walks
+  `jobs(finished_at)` (`jobs_finished_at`) backwards, no sort — at version 6 it was a full
+  `SCAN j` plus a temp-tree sort of the whole job history on every snapshot. The fleet
+  timeline's `jobs_overlapping` OR terms (`finished_at IS NULL OR finished_at >= ?`) take
+  seeks of the same index (`MULTI-INDEX OR`); its `started_at` sort stays, over the window's
+  rows only.
+- `list_jobs(all=True, include_finished=False)` (3.9E audit): the live-only filter is
+  `status IN ('queued','running')` and seeks `jobs(status, finished_at)` on the two live
+  statuses. The semantically identical `NOT IN` over the five terminal statuses is *not*
+  equivalent to the planner: its plan walks `jobs(created_at)` over every job ever run. Keep
+  the IN form; `tests/test_query_plans.py` pins both plans and the row-set equality.
 
 ## Tool contract decisions
 

@@ -19,6 +19,8 @@ MONITOR_TABLES = {"probes", "probe_counters", "probe_hardware", "endpoint_events
 INDEXES = {
     "jobs_name", "jobs_mcp_server_id", "jobs_endpoint_id", "jobs_model_id", "jobs_status_finished_at",
     "jobs_created_at",
+    # version 7 (3.9E audit finding E1): the snapshot's finished-jobs tail reads this backwards
+    "jobs_finished_at",
     "mcp_servers_updated", "requests_job_id_t", "tool_calls_job_id_t",
 }
 MONITOR_INDEXES = {"probes_endpoint_t", "endpoint_events_endpoint_t", "host_probes_host_t"}
@@ -75,12 +77,13 @@ def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     """A fresh file runs the version-1 DDL, the version-2 step (story 1.11: jobs.compactions),
     the version-3 step (story 2.2: the monitor's tables), the version-4 step (story 3.1a
     ruling A: probes.state, probe_hardware's disk columns), the version-5 step (story 3.1b:
-    host_probes) and the version-6 step (story 3.7-fold-2: endpoints.last_active), so it comes
-    up at version 6 with the table."""
+    host_probes), the version-6 step (story 3.7-fold-2: endpoints.last_active) and the
+    version-7 step (3.9E audit finding E1: jobs_finished_at), so it comes up at version 7
+    with the table."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
-    assert db.SCHEMA_VERSION == 6 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert db.SCHEMA_VERSION == 7 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -310,6 +313,35 @@ def test_a_version_5_file_migrates_to_version_6_with_a_null_witness(dbfile):
                for r in conn.execute("SELECT name, last_active FROM endpoints")}
     assert witness == {"ai1": None, "box": None}  # NULL = never walked; the monitor backfills at its start
     assert conn.execute("SELECT COUNT(*) FROM probes").fetchone()[0] == 4  # rows untouched
+    conn.close()
+
+
+def test_a_version_6_file_migrates_to_version_7_with_its_job_rows_intact(dbfile):
+    """The 3.9E audit's finding E1: the snapshot's finished-jobs tail (read.py's
+    ``_FINISHED_TAIL``) plans as a bare ``SCAN j`` plus ``USE TEMP B-TREE FOR ORDER BY``.
+    Version 7 appends one index, ``jobs_finished_at``, and nothing else. A version-6 file
+    (all six steps, user_version 6, job rows with ``finished_at`` set) opens at version 7
+    with its rows unchanged and the new index on (finished_at)."""
+    raw = sqlite3.connect(dbfile)
+    for step in db.MIGRATIONS[:6]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 6")
+    raw.execute(
+        "INSERT INTO jobs (id, name, status, created_at, started_at, finished_at, updated)"
+        " VALUES ('j1', '20261030-000000-00000001', 'succeeded', 1.0, 2.0, 3.0, 3.0)")
+    raw.execute(
+        "INSERT INTO jobs (id, name, status, created_at, started_at, finished_at, updated)"
+        " VALUES ('j2', '20261030-000000-00000002', 'running', 4.0, 5.0, NULL, 5.0)")
+    raw.commit()
+    assert "jobs_finished_at" not in (r[0] for r in raw.execute("SELECT name FROM sqlite_master"))
+    raw.close()
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
+    assert [r["name"] for r in conn.execute("PRAGMA index_info(jobs_finished_at)")] == ["finished_at"]
+    row = conn.execute("SELECT status, finished_at FROM jobs WHERE id = 'j1'").fetchone()
+    assert row["status"] == "succeeded" and row["finished_at"] == 3.0
+    assert conn.execute("SELECT finished_at FROM jobs WHERE id = 'j2'").fetchone()["finished_at"] is None
     conn.close()
 
 

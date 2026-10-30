@@ -284,9 +284,26 @@ def _v6(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE endpoints ADD COLUMN last_active REAL")
 
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 6.
+# Version 7 (3.9E query-plan audit, finding E1): the monitor snapshot's finished-jobs tail
+# (read.py's ``_FINISHED_TAIL``: ``ORDER BY finished_at DESC, rowid DESC LIMIT 10`` over every
+# terminal job) planned as a bare ``SCAN j`` plus ``USE TEMP B-TREE FOR ORDER BY`` — the sort
+# walks the whole job history on every snapshot. One index fixes it: the plan becomes
+# ``SCAN j USING INDEX jobs_finished_at`` (walked backwards) with no sort, and
+# ``jobs_overlapping``'s OR terms gain index seeks too (finding E2). ``IF NOT EXISTS``, unlike
+# the version-1 DDL: the audit verified the fix by creating this index by hand on files, so the
+# step must tolerate one already present. The audit's E3 (``list_jobs``' live-only branch) gets
+# no index here: with a provably-implying predicate SQLite still prefers
+# ``jobs_status_finished_at``, so E3 is a predicate rewrite in server.py, not a schema change
+# (tests/test_query_plans.py pins all three plans).
+_V7 = [
+    "CREATE INDEX IF NOT EXISTS jobs_finished_at ON jobs(finished_at)",
+]
+
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 7.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5), _v6,
+    _statements(_V7),
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
