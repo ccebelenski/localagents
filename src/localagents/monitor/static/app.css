@@ -413,6 +413,9 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .host .ep-head { flex-wrap: nowrap; white-space: nowrap; overflow-x: auto; overflow-y: hidden; }
 .host .endpoint.state-live .ep-head { height: calc(1.4em + 1px); }
 .host .ep-job-figs, .host .ep-act { overflow-x: auto; overflow-y: hidden; }
+/* Firefox ignores ::-webkit-scrollbar: the standard properties give it the same thin muted bar
+   (and Chromium 121+ honours them too); the operator reads the page in Firefox */
+.host .ep-head, .host .ep-job-figs, .host .ep-act { scrollbar-width: thin; scrollbar-color: var(--muted) transparent; }
 .host .ep-head::-webkit-scrollbar, .host .ep-job-figs::-webkit-scrollbar, .host .ep-act::-webkit-scrollbar {
   height: 3px; }
 .host .ep-head::-webkit-scrollbar-thumb, .host .ep-job-figs::-webkit-scrollbar-thumb,

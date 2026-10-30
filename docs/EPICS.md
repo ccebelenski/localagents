@@ -957,7 +957,22 @@ The 3.7 chain's reviews are closed: no open defect.
 - **Operator, 2026-10-30, after the first live jobs on the landed page (for the retro):** "Much
   improved UI experience, I like the timeline now." "The cards sizing is better, but could still
   be improved."
-- ☐ **3.7u No ellipsis on the cards: the card grows to its widest text and keeps that width.**
+- ☑ **3.7u No ellipsis on the cards: the card grows to its widest text and keeps that width.**
+  (2b6412f: Opus worktree agent, 87 tool uses, 15 min, 656 tests; measured in the Chromium smoke:
+  30/30 lines fit with a 200-char name, a 120-char model id and a 300-char activity; the floor
+  812 → 2068 → 2068 over seeded/wide/seeded renders; the live card 265.656 px at every step; past
+  the cap a line scrolls in its fixed-height box behind a 3 px bar. CONSEQUENCE FOR THE OPERATOR'S
+  EYE: the seeded world at 1400 px goes from three columns to ONE, because the activity line is
+  ~120 chars (the server's `SNAPSHOT_ACTIVITY_LIMIT`), and two columns from ~1660 px. If that is
+  too few, the one-line follow-up is to leave the activity line out of the floor measurement so
+  it scrolls while the head and figures lines set the width. Coordinator added
+  `scrollbar-width: thin` for Firefox, where `::-webkit-scrollbar` is ignored; whether Firefox's
+  bar adds height is unmeasured (the smoke is Chromium). Review: rides the cross-model review of
+  the 3.9 folds.) Opus's notes beyond the story: the server itself cuts the activity at 120
+  chars without a mark (`read.py:29`, `runner.py:224` keeps 200) — the server-side form of the
+  convention, the operator's call; the Recent jobs table shows a 200-char name whole and gets a
+  horizontal scrollbar; `.ep-seen`'s margin leaks onto down cards' heads; `oneLine()` in app.js is
+  dead in practice (the server already collapses whitespace).
   Operator: "I don't like the '...' convention because it hides information - either set a
   minimum card width that can accomodate the widest text, or dynamically size the card to not
   truncate (and use that as min size so it can't shrink below that high water mark). We get
