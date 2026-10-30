@@ -1128,6 +1128,16 @@ The 3.7 chain's reviews are closed: no open defect.
   "down", its title the sentence, class `host-note ep-line`, no exception; the card's need 812
   against the seeded floor of 946 (that floor is the seeded world's down ENDPOINT on an up
   node, whose `.ep-error` line is still drawn in full — a different case, unchanged). Suite 695.
+- ☐ **3.7y A down node nobody has ever seen gets no card.** Operator (2026-10-30 evening, going
+  AFK: "work on those open items"): "One thing that is striking me again - ai9 is 'down' yes,
+  but it's also 'never seen'. Perhaps it shouldn't have a card in that state?" Today
+  (app.js:564 `neverSeenOn`, 3.7a) a never-seen endpoint is hidden EXCEPT on a down node, and
+  app.js:590 keeps a card for every down node even with nothing drawn, so ai9 — down, its one
+  endpoint never seen — is a red card with one grey "never seen" line. Decision: the exception
+  goes. A never-seen endpoint is hidden on a down node too; a down node with nothing left to
+  draw has no card; the hidden line names the node's state so the alert is not lost ("… ai9
+  (node down)"). A down node with a SEEN endpoint keeps its card and its "down" note (3.7x).
+  Lane: Qwen/ai2, page story; DOM smoke; cross-model review with the batch.
 - ☑ **3.7w The monitor tab's memory.** (Probe landed: `tools/smoke/mem.mjs`, Haiku worktree
   agent, 31 tool uses, 11 min. Measured at ~3 render passes a second over the seeded world:
   overview 908 passes, DOM nodes 200 → a plateau of 1443–1568 → 200 after a forced GC, heap
