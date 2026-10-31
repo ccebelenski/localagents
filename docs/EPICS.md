@@ -1625,7 +1625,9 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   case-insensitive; numeric columns accept `>n` / `<n`); the page keeps a table's sort, filter
   and page across pushes (keyed by table id), so a refresh never drops the operator's view.
   Operator asked "Pagination with local column filters and sorting?" — recommended as above;
-  the operator decides before the lane is cut.
+  operator (2026-10-30): "3.10c - yes, client side filter." Decided: client-side over the
+  fetched rows, as written. Sequence: after 3.10a (columns) and 3.10b (one renderer each), so
+  the helper is built once under both tables.
 - ☐ **3.10d Endpoint page labels.** The tier headings and classes go; "endpoint"/"node" tiles
   go (the header carries both and the fallback note); tiles grouped under "speeds",
   "occupancy", "hardware" with no numbering; "served model" and every tile value follow the
