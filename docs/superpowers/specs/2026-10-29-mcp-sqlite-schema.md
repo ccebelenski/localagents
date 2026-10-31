@@ -80,6 +80,9 @@ requests                            -- one row per backend request the shim forw
   t           REAL
   http_status INTEGER
   ms, gen_ms  INTEGER               -- whole request; first streamed byte to end
+  -- True now (3.10h, 2026-10-30): gen_ms runs from the first chunk carrying generated content
+  --   (content_block_start/delta), not the first byte — message_start precedes prompt processing —
+  --   so ms − gen_ms is time-to-first-token and the prefill rate derived from it is honest.
   stream      INTEGER (0/1)
   input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens   INTEGER
   messages, tools, bytes   INTEGER  -- request body: message count, tool count, size

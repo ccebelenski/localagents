@@ -504,7 +504,10 @@ columns are: **prefill t/s** = (input + cache_creation) / ((ms − gen_ms) / 100
 and `gen_ms` are numbers, `ms > gen_ms` and `input + cache_creation > 0`; **decode t/s** =
 output / (gen_ms / 1000), when `gen_ms > 0` and `output > 0`; **duration** = `ms / 1000`. Each
 is blank when its inputs are missing (a non-stream request may have no `gen_ms`; the hello
-handshake rows have no tokens). Strata's prefill is "input − reused" because its input is the
+handshake rows have no tokens). True now (3.10h, 2026-10-30): gen_ms runs from the first chunk
+carrying generated content (content_block_start/delta), not the first byte — message_start
+precedes prompt processing — so ms − gen_ms is time-to-first-token and the prefill rate derived
+from it is honest. Strata's prefill is "input − reused" because its input is the
 whole prompt; our `tokens.input` excludes cache reads (§5a's prompt is input + cache_read +
 cache_creation, `derive._PROMPT_SUM`), so the tokens a request actually prefilled are input +
 cache_creation — the analogue of Strata's processed count (`prompt_tokens − cached`,

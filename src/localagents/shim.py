@@ -311,10 +311,17 @@ class Shim:
         async def gen():
             head = b""  # message_start carries input/cache token counts
             last = b""  # message_delta carries output_tokens
-            t_first: float | None = None
+            t_first: float | None = None  # first chunk carrying generated content, not first byte
             try:
                 async for chunk in resp.aiter_bytes():
-                    if t_first is None:
+                    # message_start precedes prompt processing on llama.cpp, Strata and vLLM, so
+                    # starting the clock at the first byte made ms − gen_ms network and queue
+                    # latency, not prefill (a page showing 3,000 tokens "in 19 ms", story
+                    # 3.10h(a)). The clock starts at the first content event instead: then
+                    # ms − gen_ms is time-to-first-token (queue + prefill), and the prefill rate
+                    # derived from it is honest.
+                    if t_first is None and (b"content_block_start" in chunk
+                                            or b"content_block_delta" in chunk):
                         t_first = time.monotonic()
                     if len(head) < 65536:
                         head += chunk
@@ -324,8 +331,16 @@ class Shim:
                 await resp.aclose()
                 t_end = time.monotonic()
                 usage = _merge_usage(_usage_from_sse_head(head), _usage_from_sse_tail(last))
+                # a stream that sent events but no content decoded nothing: gen_ms 0 makes
+                # ms − gen_ms the whole queue+prefill span (the 0-output row in the screenshot
+                # is the case that matters). No chunk at all is no evidence the backend ever
+                # started the request, so it keeps the old null.
+                if t_first is not None:
+                    gen_ms: int | None = int((t_end - t_first) * 1000)
+                else:
+                    gen_ms = 0 if head else None
                 self._log(job, path, body, note, status=resp.status_code, ms=int((t_end - t0) * 1000),
-                          gen_ms=int((t_end - t_first) * 1000) if t_first else None, usage=usage)
+                          gen_ms=gen_ms, usage=usage)
 
         return StreamingResponse(gen(), status_code=resp.status_code, headers=resp_headers)
 
