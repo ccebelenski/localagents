@@ -162,3 +162,24 @@ do not).
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/j.png '' "js:$(cat tools/smoke/jobsrows.js)"
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/t.png '#/endpoint/ai1' "js:$(cat tools/smoke/tiles.js)"
 ```
+
+## tables.js: 3.10c — the pager, the sort, the filters, and the view across a push
+
+The seeded overview holds two jobs, so tables.js hand-renders a snapshot COPY with 120 jobs
+(varied status/started/elapsed/turns) and reads the one table's full contract into `__d1`,
+synchronously (a real push would otherwise overwrite the hand-edited DOM mid-sequence):
+(a) the pager reads "1–50 of 120" with 50 body rows; (b) clicking the "turns" header sorts
+ascending (first cell 0, last 49; the header carries the arrow class and `aria-sort:
+ascending`), the second click reverses (119…70); (c) typing "done" into the status filter
+leaves only done pills and "1–40 of 40", then ">100" in turns leaves only 119…101 ("1–7 of
+7", page 1); (d) after clearing the filters, "next" reads "51–100 of 120", and a PUSH (a new
+rows array through `render`) keeps the sort, the (empty) filters and page 2 — the state is
+`TABLE_STATE.jobs`, not the DOM; (e) the job page's requests table (11 filter boxes, no job
+column) and the endpoint page's (12, 152 rows paged 50) both sort by "duration" numerically.
+Read `d1` in AFTER_JSON.
+
+```bash
+# both variables, your own ports (8795/9255 at the story's run)
+export XDG_STATE_HOME="$PWD/t/state" LOCALAGENTS_DB="$PWD/t/seed.db"
+node tools/smoke/cdp.mjs 9255 http://127.0.0.1:8795/ 1400 900 t/tables.png "js:$(cat tools/smoke/tables.js)"
+```

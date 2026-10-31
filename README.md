@@ -430,7 +430,13 @@ badge is gone — a live job whose server stopped beating wears the pill "lost";
 columns, prefill tok/s and decode tok/s.) (True now, 3.10f-2, 2026-10-30: the job's one key is
 its UUID — the job column, a card's job row, a timeline bar's label and the request table's job
 column show its first eight characters with the full id in the title, and the job page's header
-shows the id itself.)
+shows the id itself.) (True now, 3.10c, 2026-10-31: every table — this log, the endpoint page's
+jobs table and both request tables — pages at 50 with a pager line, sorts by clicking any
+header (numeric columns numerically, a second click reverses) and filters per column
+(substring; `>n`/`<n` on numeric columns), all client-side over the rows already fetched; sort,
+filters and page survive every push, the view living in a per-table state map rather than in
+the DOM. The endpoint requests route still caps at 1000 rows and its totals line still counts
+the whole range.)
 Beneath the log the fleet section is one **timeline** on a shared time axis. One 36 px row
 per live endpoint, in card order: the endpoint's busy intervals from its own history as a
 6 px band along the row's bottom (idle is not drawn, so a box idle all day reads as an empty

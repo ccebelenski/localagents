@@ -643,10 +643,11 @@
     });
   }
 
-  // one job row (3.10b): the cells are keyed by their JOB_COLUMNS name and drawn in column
-  // order minus `omit` — the header row and this row filter the same list, so a column left
-  // out leaves no empty cell behind.
-  function jobRow(job, now, omit) {
+  // one job row (3.10b): the cells are keyed by their JOB_COLUMNS name; the table helper draws
+  // them in column order minus `omit` (the column list it is given is already filtered), so a
+  // column left out leaves no empty cell behind. 3.10c: the row element itself (and its
+  // data-job attribute) is the helper's — this returns the cell map.
+  function jobRow(job, now) {
     var ctx = null;
     if (job.ctx_pct != null) {
       var w = Math.max(0, Math.min(100, job.ctx_pct));
@@ -696,9 +697,7 @@
       // full text in its title
       "last activity": h("td", { class: "cut", title: job.last_activity || "", text: oneLine(job.last_activity) }),
     };
-    return h("tr", { "data-job": job.id }, JOB_COLUMNS.filter(function (c) {
-      return !omit || omit.indexOf(c) < 0;
-    }).map(function (c) { return cells[c]; }));
+    return cells;
   }
 
   function oneLine(text) {
@@ -706,33 +705,230 @@
     return String(text).split("\n")[0];
   }
 
+  // --- 3.10c: the one table helper — paging, sorting, per-column filters, all client-side -----
+  //
+  // (the operator, EPICS 3.10: "it shows me we need pagination on our tables - this one I'm
+  // looking at as 889 lines, which is not useful. Pagination with local column filters and
+  // sorting?" — "3.10c - yes, client side filter.") The helper works over the rows already
+  // fetched: the endpoint requests route's 1000-row cap and its whole-range totals
+  // (read.py's endpoint_requests) are unchanged — the table pages what is on the page.
+  //
+  // `columns`: [{name, numeric, title, cell(row) -> td, sortKey(row)}] — the renderers hand
+  // over their existing header names and cell builders unchanged, plus a sortKey that matches
+  // what the cell shows: a number where the cell is a figure, the timestamp for the time
+  // cells, the pill's word for a status, the id for the id cell. `rows` the whole list in the
+  // caller's order (with no sort set the table keeps it — 3.7g's log order stays the
+  // contract). `opts`: `empty` the sentence an empty list draws, `note` the line under the
+  // pager, `page` the page size (default 50), `class` the table element's class,
+  // `rowAttrs(row)` extra attrs for each <tr> (the jobs table's data-job; the requests
+  // table's req-err / req-ctx marks).
+  //
+  // The view lives in TABLE_STATE, a module-level map keyed by the table id — never in the
+  // DOM: the overview replaces #jobs-body on every snapshot (render()) and the detail pages
+  // redraw on theirs, so a push must find the sort, the filters and the page waiting. A
+  // re-render from a NEW rows array applies the same state; a page now past the end clamps
+  // to the last page. An input event updates the state and redraws THIS table only, through
+  // the container the helper owns, and puts the caret back in the box that took it.
+  var TABLE_PAGE_SIZE = 50;
+  var TABLE_STATE = {}; // table id -> {sort: null | {col, dir}, filters: {col: text}, page: n}
+
+  function dataTable(id, columns, rows, opts) {
+    opts = opts || {};
+    rows = rows || [];
+    var pageSize = opts.page || TABLE_PAGE_SIZE;
+    var st = TABLE_STATE[id] || (TABLE_STATE[id] = { sort: null, filters: {}, page: 1 });
+    if (!rows.length) return h("div", { class: "empty", text: opts.empty || "" });
+    var container = h("div", { class: "table-block", "data-table": id });
+
+    // the filter matches what the operator sees: the cell's own text, plus its title where
+    // the title holds more than the text does (the id cell's full uuid; the status pill's
+    // numeric http status behind "ok")
+    function cellText(col, row) {
+      var td = col.cell(row);
+      var own = td.textContent;
+      var t = td.getAttribute("title");
+      return t && t.indexOf(own) < 0 ? own + " " + t : own;
+    }
+
+    function filterRows() {
+      var out = rows;
+      columns.forEach(function (col) {
+        var f = st.filters[col.name];
+        if (!f) return;
+        f = String(f);
+        if (col.numeric && (f.charAt(0) === ">" || f.charAt(0) === "<")) {
+          var want = parseFloat(f.slice(1));
+          if (!isNaN(want)) {
+            var gt = f.charAt(0) === ">";
+            out = out.filter(function (row) {
+              var v = col.sortKey(row);
+              return typeof v === "number" && isFinite(v) && (gt ? v > want : v < want);
+            });
+            return;
+          }
+        }
+        var needle = f.toLowerCase();
+        out = out.filter(function (row) {
+          return cellText(col, row).toLowerCase().indexOf(needle) >= 0;
+        });
+      });
+      return out;
+    }
+
+    function sortRows(list) {
+      if (!st.sort) return list; // the caller's order is the contract (3.7g)
+      var col = null;
+      columns.forEach(function (c) { if (c.name === st.sort.col) col = c; });
+      if (!col) return list;
+      var dir = st.sort.dir;
+      // two finite numbers compare numerically wherever the column map calls them numeric
+      // (the jobs table's "context" holds a percent the map does not mark .n); everything
+      // else compares as text, and a missing figure sorts past every figure
+      return list.slice().sort(function (a, b) {
+        var x = col.sortKey(a), y = col.sortKey(b);
+        var xn = typeof x === "number" && isFinite(x), yn = typeof y === "number" && isFinite(y);
+        if (xn && yn) return (x - y) * dir;
+        if (xn !== yn) return (xn ? -1 : 1) * dir;
+        return String(x == null ? "" : x).localeCompare(String(y == null ? "" : y)) * dir;
+      });
+    }
+
+    function draw() {
+      // remember the caret: a filter keystroke rebuilds the header row too
+      var focused = document.activeElement;
+      var caret = null;
+      var caretCol = focused && focused.getAttribute ? focused.getAttribute("data-filter") : null;
+
+      var head = h("tr", null, columns.map(function (col) {
+        var sorted = st.sort && st.sort.col === col.name;
+        var th = h("th", {
+          class: (col.numeric ? "n " : "") + "sortable" + (sorted ? (st.sort.dir === 1 ? " sort-asc" : " sort-desc") : ""),
+          title: col.title || null,
+          "aria-sort": sorted ? (st.sort.dir === 1 ? "ascending" : "descending") : null,
+          text: col.name,
+        });
+        // 3.10c: click to sort; the same header clicked again reverses
+        th.addEventListener("click", function () {
+          if (st.sort && st.sort.col === col.name) st.sort.dir = -st.sort.dir;
+          else st.sort = { col: col.name, dir: 1 };
+          draw();
+        });
+        return th;
+      }));
+      var filterRow = h("tr", { class: "table-filters" }, columns.map(function (col) {
+        var input = h("input", { type: "text", placeholder: col.name, "data-filter": col.name,
+          title: col.numeric ? col.name + " — text, or >n / <n" : col.name,
+          value: st.filters[col.name] || "" });
+        input.addEventListener("input", function () {
+          st.filters[col.name] = input.value;
+          st.page = 1; // a filter changes the count; the page starts over
+          draw();
+        });
+        return h("th", null, [input]);
+      }));
+
+      var filtered = sortRows(filterRows());
+      var pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+      if (st.page > pages) st.page = pages; // a push shrank the table; clamp to the last page
+      if (st.page < 1) st.page = 1;
+      var from = (st.page - 1) * pageSize;
+      var pageRows = filtered.slice(from, from + pageSize);
+
+      var tbody = h("tbody", null, pageRows.map(function (row) {
+        var attrs = opts.rowAttrs ? opts.rowAttrs(row) : null;
+        return h("tr", attrs, columns.map(function (col) { return col.cell(row); }));
+      }));
+      var table = h("div", { class: "table-wrap" }, [h("table", opts.class ? { class: opts.class } : null,
+        [h("thead", null, [head, filterRow]), tbody])]);
+
+      // the pager line: "1–50 of 889 · previous · next"; "N rows" alone when a filter-free
+      // table fits one page; a filter always shows how many match out of how many fetched
+      var pager = h("div", { class: "table-pager muted" });
+      var anyFilter = false;
+      columns.forEach(function (col) { if (st.filters[col.name]) anyFilter = true; });
+      if (filtered.length === 0) {
+        pager.appendChild(h("span", { text: "no rows match the filters" }));
+      } else if (filtered.length <= pageSize && !anyFilter) {
+        pager.appendChild(h("span", { text: filtered.length + (filtered.length === 1 ? " row" : " rows") }));
+      } else {
+        pager.appendChild(h("span", { text: (from + 1) + "–" + Math.min(from + pageSize, filtered.length) + " of " + filtered.length }));
+        pager.appendChild(h("span", { class: "pager-sep", text: " · " }));
+        pager.appendChild(pagerButton("previous", st.page <= 1, function () { st.page -= 1; draw(); }));
+        pager.appendChild(h("span", { class: "pager-sep", text: " · " }));
+        pager.appendChild(pagerButton("next", st.page >= pages, function () { st.page += 1; draw(); }));
+      }
+
+      container.replaceChildren(table, pager, opts.note ? h("div", { class: "jobs-note muted", text: opts.note }) : null);
+      if (caretCol) {
+        var again = container.querySelector('[data-filter="' + caretCol.replace(/["\\]/g, "\\$&") + '"]');
+        if (again) {
+          again.focus();
+          try { again.setSelectionRange(caret == null ? again.value.length : caret, caret == null ? again.value.length : caret); } catch (e) {}
+        }
+      }
+    }
+
+    function pagerButton(label, disabled, onClick) {
+      var b = h("button", { type: "button", class: "pager-btn", text: label });
+      if (disabled) b.setAttribute("disabled", "");
+      b.addEventListener("click", onClick);
+      return b;
+    }
+
+    draw();
+    return container;
+  }
+
   // story 3.10b: the one jobs-table renderer, called by both pages (the operator, 3.10: "that
   // table should be the same table from the primary page, just filtered to this endpoint - no
   // need to have two different tables - and the code should be re-used"). `rows` are §5a job
   // rows in the server's order (3.7g: that order is the log's contract — live jobs by start,
-  // then the newest finished first — never re-sorted here). `opts`: `now` the clock the started
-  // cell day-stamps against (3.10a), `empty` the sentence an empty list draws (each page keeps
-  // its own), `note` the line under the table spelling out the row order (3.7g: the order
-  // carries meaning; a "show all" link waits for an all-jobs page, so the notes stay plain),
-  // `omit` the column names to leave out (the endpoint page drops "endpoint": every row is
-  // that endpoint).
+  // then the newest finished first — no re-sort unless the operator clicks a header, 3.10c).
+  // `opts`: `now` the clock the started cell day-stamps against (3.10a), `empty` the sentence
+  // an empty list draws (each page keeps its own), `note` the line under the table spelling
+  // out the row order (3.7g: the order carries meaning; a "show all" link waits for an
+  // all-jobs page, so the notes stay plain), `omit` the column names to leave out (the
+  // endpoint page drops "endpoint": every row is that endpoint).
   function jobsTable(rows, opts) {
     opts = opts || {};
     rows = rows || [];
     var omit = opts.omit || [];
     var columns = JOB_COLUMNS.filter(function (c) { return omit.indexOf(c) < 0; });
-    if (!rows.length) {
-      return h("div", { class: "table-wrap" }, [h("div", { class: "empty", text: opts.empty || "no jobs yet" })]);
+    // the sort keys match what the cells show (3.10c): the started cell by its timestamp, the
+    // pill by the word it prints ("done" for a succeeded job, "lost" for a dead server's live
+    // row), the id cell by the full id (the page shows the short one, the title holds this)
+    var specs = columns.map(function (c) {
+      return {
+        name: c, numeric: !!NUMERIC[c], title: COLUMN_TITLES[c] || null,
+        cell: function (job) { return jobRow(job, opts.now)[c]; },
+        sortKey: function (job) { return jobSortKey(c, job); },
+      };
+    });
+    return dataTable("jobs", specs, rows, {
+      empty: opts.empty || "no jobs yet",
+      note: opts.note,
+      rowAttrs: function (job) { return { "data-job": job.id }; },
+    });
+  }
+
+  function jobSortKey(col, job) {
+    if (col === "job") return job.id == null ? "" : job.id;
+    if (col === "status") {
+      var lost = job.server_live === false && (job.status === "running" || job.status === "queued");
+      var word = lost ? "lost" : job.status;
+      return word === "succeeded" ? "done" : word;
     }
-    var head = h("tr", null, columns.map(function (c) {
-      return h("th", { class: NUMERIC[c] ? "n" : null, title: COLUMN_TITLES[c] || null, text: c });
-    }));
-    return h("div", null, [
-      h("div", { class: "table-wrap" }, [h("table", null, [h("thead", null, [head]),
-        // the started cell day-stamps against the caller's clock (3.10a)
-        h("tbody", null, rows.map(function (job) { return jobRow(job, opts.now, omit); }))])]),
-      opts.note ? h("div", { class: "jobs-note muted", text: opts.note }) : null,
-    ]);
+    if (col === "started") return job.started_at;
+    if (col === "model") return job.model || "";
+    if (col === "endpoint") return job.endpoint || "";
+    if (col === "elapsed") return job.elapsed_s;
+    if (col === "turns") return job.num_turns;
+    if (col === "tool calls") return job.tool_calls;
+    if (col === "tool errors") return job.errors;
+    if (col === "context") return job.ctx_pct;
+    if (col === "prefill tok/s") return job.prefill_tps;
+    if (col === "decode tok/s") return job.gen_tps;
+    return oneLine(job.last_activity); // "last activity"
   }
 
   // --- render: the snapshot into the DOM, in place -------------------------------------------
@@ -1524,18 +1720,22 @@
   // passes the snapshot's now, the job page the detail's clock — same rule as the endpoint
   // page's when() and the jobs table: time of day inside 24 h, date and time past it, so at
   // 7d the same clock time never repeats per day; the title holds the full date always)}
+  // 3.10c: the table's head, filter row, body slice, pager and note belong to the helper; this
+  // hands over the same header names (REQ_NUMERIC, REQ_TITLES) and the same cell builders.
+  // The id separates the two pages (the brief's `opts.job ? "job" : "endpoint"` reads inverted
+  // against the code — the endpoint page passes no opts.job (undefined, defaulting to true) and
+  // the job page passes false — so the test is `opts.job === false`).
   function requestsTable(rows, opts) {
     opts = opts || {};
     rows = rows || [];
-    if (!rows.length) return h("div", { class: "empty", text: opts.empty || "no requests" });
     var withJob = opts.job !== false;
     var columns = ["time", "status"];
     if (withJob) columns.push("job");
     columns = columns.concat(["path", "prompt", "new", "reused", "output", "prefill t/s", "decode t/s", "duration", "error"]);
-    var head = h("tr", null, columns.map(function (c) {
-      return h("th", { class: REQ_NUMERIC[c] ? "n" : null, title: REQ_TITLES[c] || null, text: c });
-    }));
-    var body = rows.map(function (req) {
+    // one request row keyed by column name (3.10c: the row assembly moved to the helper; the
+    // cells, the row marks and the titles are unchanged); `word` is the status pill's text —
+    // that column's sort key and filter text, exactly what the pill prints
+    function reqRow(req) {
       var tokens = req.tokens || {};
       // the cache cells read through req.tokens directly (the §5a walk sees a field only on a
       // chain rooted at `req`; the display alias above would hide these two)
@@ -1577,42 +1777,75 @@
       if (fmt.int(cacheRead) !== "") promptParts.push("cache read " + fmt.int(cacheRead));
       if (fmt.int(cacheCreation) !== "") promptParts.push("cache creation " + fmt.int(cacheCreation));
       var promptTitle = promptParts.join(", ");
-      var cells = [timeTd(req.t, opts.now)];
+      var statusCell;
       if (handshake) {
-        cells.push(h("td", null, [h("span", { class: "pill pill-muted",
-          title: req.http_status == null ? "no status" : String(req.http_status), text: "handshake" })]));
+        statusCell = h("td", null, [h("span", { class: "pill pill-muted",
+          title: req.http_status == null ? "no status" : String(req.http_status), text: "handshake" })]);
       } else if (req.http_status == null) {
-        cells.push(h("td", null, [h("span", { class: "pill", title: "no status", text: "–" })]));
+        statusCell = h("td", null, [h("span", { class: "pill", title: "no status", text: "–" })]);
       } else {
         var ok = req.http_status >= 200 && req.http_status < 300;
-        cells.push(h("td", null, [h("span", { class: "pill " + (ok ? "pill-ok" : "pill-error"),
-          title: String(req.http_status), text: ok ? "ok" : "error" })]));
+        statusCell = h("td", null, [h("span", { class: "pill " + (ok ? "pill-ok" : "pill-error"),
+          title: String(req.http_status), text: ok ? "ok" : "error" })]);
       }
-      if (withJob) {
-        // 3.10f-2: the job column is the shared short-id link (the row carries job_id only)
-        cells.push(h("td", null, [req.job_id ? jobLink(req.job_id) : null]));
-      }
-      cells.push(
-        h("td", { class: "cut", title: req.path || "", text: req.path || "" }),
-        h("td", { class: "n", title: promptTitle || null, text: fmt.int(prompt) }),
-        h("td", { class: "n", text: fmt.int(newTok) }),
+      var cells = {
+        time: timeTd(req.t, opts.now),
+        status: statusCell,
+        path: h("td", { class: "cut", title: req.path || "", text: req.path || "" }),
+        prompt: h("td", { class: "n", title: promptTitle || null, text: fmt.int(prompt) }),
+        new: h("td", { class: "n", text: fmt.int(newTok) }),
         // the reused cell's title names both cache figures; a missing one drops its half of
         // the sentence rather than trailing a blank (fold-3 review NOTICED)
-        h("td", { class: "n", title: reusedTitle, text: fmt.int(cacheRead) }),
-        h("td", { class: "n", text: fmt.int(tokens.output) }),
-        h("td", { class: "n", text: prefill == null ? "" : fmt.speed(prefill) }),
-        h("td", { class: "n", text: decode == null ? "" : fmt.speed(decode) }),
+        reused: h("td", { class: "n", title: reusedTitle, text: fmt.int(cacheRead) }),
+        output: h("td", { class: "n", text: fmt.int(tokens.output) }),
+        "prefill t/s": h("td", { class: "n", text: prefill == null ? "" : fmt.speed(prefill) }),
+        "decode t/s": h("td", { class: "n", text: decode == null ? "" : fmt.speed(decode) }),
         // duration (3.7-fold-4): under a second in whole ms ("8 ms" — the old rule read every
         // sub-10 ms request "0.0 s"), else tenths of a second
-        h("td", { class: "n", text: typeof req.ms === "number"
+        duration: h("td", { class: "n", text: typeof req.ms === "number"
           ? (req.ms < 1000 ? fmt.int(req.ms) + " ms" : fmt.speed(req.ms / 1000) + " s") : "" }),
-        h("td", { class: "cut", title: error || null,
-          text: error.length > ERROR_CUT ? error.slice(0, ERROR_CUT) : error })
-      );
-      return h("tr", { class: cls.length ? cls.join(" ") : null }, cells);
+        error: h("td", { class: "cut", title: error || null,
+          text: error.length > ERROR_CUT ? error.slice(0, ERROR_CUT) : error }),
+      };
+      if (withJob) {
+        // 3.10f-2: the job column is the shared short-id link (the row carries job_id only)
+        cells.job = h("td", null, [req.job_id ? jobLink(req.job_id) : null]);
+      }
+      var word = handshake ? "handshake" : req.http_status == null ? "–"
+        : (req.http_status >= 200 && req.http_status < 300 ? "ok" : "error");
+      return { cells: cells, cls: cls, word: word };
+    }
+    // the sort keys read what the cells show (3.10c): the time cell by its timestamp, the
+    // pill by its word, the id cell by the full id; the derived figures reuse the cells'
+    // own helpers, so the number that sorts is the number that prints
+    var specs = columns.map(function (c) {
+      return {
+        name: c, numeric: !!REQ_NUMERIC[c], title: REQ_TITLES[c] || null,
+        cell: function (req) { return reqRow(req).cells[c]; },
+        sortKey: function (req) {
+          if (c === "time") return req.t;
+          if (c === "status") return reqRow(req).word;
+          if (c === "job") return req.job_id == null ? "" : req.job_id;
+          if (c === "path") return req.path || "";
+          if (c === "prompt") return promptTotal(req);
+          if (c === "new") return newTokens(req);
+          if (c === "reused") return req.tokens ? req.tokens.cache_read : null;
+          if (c === "output") return req.tokens ? req.tokens.output : null;
+          if (c === "prefill t/s") return prefillRate(req);
+          if (c === "decode t/s") return decodeRate(req);
+          if (c === "duration") return req.ms;
+          return requestError(req); // the error column sorts by its text (blank first)
+        },
+      };
     });
-    return h("div", { class: "table-wrap" }, [h("table", { class: "requests-table" },
-      [h("thead", null, [head]), h("tbody", null, body)])]);
+    return dataTable("requests-" + (opts.job === false ? "job" : "endpoint"), specs, rows, {
+      empty: opts.empty || "no requests",
+      class: "requests-table",
+      rowAttrs: function (req) {
+        var cls = reqRow(req).cls;
+        return { class: cls.length ? cls.join(" ") : null };
+      },
+    });
   }
 
   window.localagentsMonitor = {
@@ -1632,6 +1865,8 @@
     cardLayout: cardLayout, // 3.7u smoke: {floor, need, raised} — the column floor's high-water mark
     shortId: shortId, // 3.10f-2: the one short-id rule, exported for the detail pages and the smoke
     jobLink: jobLink, // 3.10f-2: the short id as a link, full id in the title
+    dataTable: dataTable, // 3.10c: the one table helper (page, sort, filter)
+    TABLE_STATE: TABLE_STATE, // 3.10c: the per-table view, keyed by id — exported for the smoke
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

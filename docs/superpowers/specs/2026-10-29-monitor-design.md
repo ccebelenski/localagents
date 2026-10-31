@@ -187,6 +187,8 @@ last 10 finished with elapsed frozen. True now (3.10a, 2026-10-30): a "started" 
 stopped beating wears the pill "lost"; "speed" is two columns, prefill tok/s and decode tok/s. Below that the fleet charts: decode and prefill
 speed per live endpoint on a shared time axis, and occupancy.
 
+True now (3.10c, 2026-10-31): every table pages at 50 with a pager line, sorts by any header (numeric columns numerically, a second click reverses) and filters per column (substring; `>n`/`<n` on numeric columns), client-side over the fetched rows; sort, filters and page survive the pushes (state keyed by table, not in the DOM); the endpoint requests route's 1000-row cap and whole-range totals are unchanged.
+
 **Endpoint detail.** Stat tiles with sparklines for the tiers the endpoint provides (table
 below), the context window, the request table with a totals line, and the jobs that ran on it
 in the range. A tile with no source is absent, not empty. Our own page for every backend; no
@@ -530,6 +532,7 @@ reused share as three columns; the API's bare `input_tokens`, 1 on a hot cache, 
 shown as "prompt". True now (3.7v, 2026-10-30): the job page's header says "N tool errors" (tool
 results flagged is_error) and "N request errors" (requests outside 2xx or with an error text)
 side by side; a `/api/hello` handshake row is labelled "handshake" and counted as neither.
+True now (3.10c, 2026-10-31): every table pages at 50 with a pager line, sorts by any header (numeric columns numerically, a second click reverses) and filters per column (substring; `>n`/`<n` on numeric columns), client-side over the fetched rows; sort, filters and page survive the pushes (state keyed by table, not in the DOM); the endpoint requests route's 1000-row cap and whole-range totals are unchanged.
 
 **Fleet history** (`GET /api/fleet/history`; review of 3.1, ruling C):
 

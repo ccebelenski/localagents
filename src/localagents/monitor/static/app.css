@@ -334,6 +334,27 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .jobs a.badge { text-decoration: none; }
 /* the line under the log's table spelling out the row order */
 .jobs-note { padding: 6px 2px 0; font-size: 13px; }
+/* 3.10c: the one table helper's chrome (app.js's dataTable). The filter row sits under the
+   header — small, muted boxes sized to their column: the input's min-width is a thumb, so a
+   filter row never pushes the table wider than its cells (the operator sees the same width
+   as before the story). The sort arrow is ::after content on the sorted header, so the
+   header's own text stays clean and the screen reader gets the sort through aria-sort.
+   The pager is a muted line (the .muted class carries the colour); its buttons read as the
+   accent links and go muted when disabled at the ends of the range. */
+.table-block { min-width: 0; }
+th.sortable { cursor: pointer; }
+th.sort-asc::after { content: "▲"; margin-left: 4px; font-size: 11px; color: var(--muted); }
+th.sort-desc::after { content: "▼"; margin-left: 4px; font-size: 11px; color: var(--muted); }
+.table-filters th { padding: 4px 8px; }
+.table-filters input { font: inherit; font-size: 13px; color: var(--muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; width: 100%; min-width: 3.5em;
+  box-sizing: border-box; }
+.table-filters input:focus { outline: 1px solid var(--accent); color: var(--ink); }
+.table-pager { padding: 6px 2px 0; font-size: 13px; }
+.pager-sep { color: var(--border); }
+.pager-btn { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
+.pager-btn:disabled { color: var(--muted); cursor: default; }
+
 /* 3.7k requests tables */
 /* the endpoint page's and the job page's request logs share one renderer (app.js's
    requestsTable): the same columns, the same status pill, numbers right-aligned (.n as every
