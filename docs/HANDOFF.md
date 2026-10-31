@@ -63,8 +63,11 @@ is landed but still harness-locked; `git worktree remove -f -f` it when the lock
   the measured facts and three candidate shapes (P1 one job-retention rule through the v7 index
   with cascades; P2 transcripts first; P3 a hand-run `prune --rows`); fleet history serial per
   endpoint (~2 s cold for five dense 7 d endpoints).
-- 3.8b: the MCP server process predates every package-side landing of today (editable install;
-  the transcripts table has 0 rows); it picks them up when the Claude Code session restarts.
+- 3.8b: the operator reconnected the MCP server (`/mcp`, 2026-10-30 ~21:00), so today's package
+  landings (A1, B1-B3, E2, 1.12 transcripts, 3.7t handshake) are live from the next job: expect a
+  `transcripts` row per finished job and no `/api/hello` row.
+- On the proposed pytest DOM smoke the operator: "The risk of the smoke test is that it runs
+  against renders, not truth" — inputs must be real/captured snapshots, not hand edits (EPICS).
 - The retrospective for the 3.7 + 3.9 arc (ANAS shape, `docs/retros/`) when the operator closes
   it: finds by finder, the operator's verdicts verbatim, lettered rulings only from repeated
   results (candidates: the reviewer fixes its own findings held all day; probes outside tests/

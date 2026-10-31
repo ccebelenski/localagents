@@ -1192,6 +1192,13 @@ The 3.7 chain's reviews are closed: no open defect.
   `tools/smoke/cdp.mjs` and asserts the `d1` cases of `neverseen.js`, `unknown.js`, `handshake.js`
   and `nodes.js` — the hand-renders become the suite's gate instead of regex pins over source.
   Cost: ~10-15 s per run, two external binaries the suite tolerates being absent. Not built.
+  Operator (2026-10-30, after `/mcp` reconnect): "The risk of the smoke test is that it runs
+  against renders, not truth." Read: a hand-edited snapshot proves the renderer agrees with a
+  snapshot we wrote — the fake shaped by the builder's assumption (hints: "where does the fake's
+  output come from?"). If this is ever built, its inputs are the seeded world's REAL
+  `/api/snapshot` and CAPTURED snapshots from the live database (ai9 down-and-never-seen as the
+  collector actually recorded it), with hand edits only for states the seed cannot produce and
+  labelled as such; and the seed itself should grow the states the operator has seen live. Open.
 - ☑ **3.7w The monitor tab's memory.** (Probe landed: `tools/smoke/mem.mjs`, Haiku worktree
   agent, 31 tool uses, 11 min. Measured at ~3 render passes a second over the seeded world:
   overview 908 passes, DOM nodes 200 → a plateau of 1443–1568 → 200 after a forced GC, heap
