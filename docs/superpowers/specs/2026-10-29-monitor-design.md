@@ -160,7 +160,9 @@ nodes too: a node dormant past the window collapses to one line. (True now, 3.7b
 a live host's; a down node keeps the `node-down` border and its one alert sentence in the card
 head.) (True now, 3.7x, operator 2026-10-30: the card head's alert is the one word "down" (or
 "unknown"); the probe's sentence rides in that note's title and on the endpoint page, so it no
-longer sets the card column's floor.) (True now (3.7y, 2026-10-30): a never-seen endpoint is
+longer sets the card column's floor.) (True now, fold of the batch review F1, 2026-10-30: an
+unknown node is quiet the same way — the head note "unknown", the sentence in its title, no
+`.ep-error` line.) (True now (3.7y, 2026-10-30): a never-seen endpoint is
 hidden on a down node too, a down node with nothing left to draw has no card, and the
 hidden-count line names it "<endpoint> (node down)".)
 

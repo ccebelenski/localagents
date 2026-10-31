@@ -584,11 +584,15 @@
     // ~120-character "timed out (host off, or a firewall dropping packets)" no longer sets the
     // column floor (3.7u) — the sentence stays in the snapshot and on the endpoint page
     var note = nodeDown ? "down" : host.state === "unknown" ? "unknown" : "";
-    var said = nodeDown ? host.endpoints.filter(function (ep) { return ep.error; })[0] : null;
+    // F1 (fold of the batch review, 2026-10-30): an unknown node is an alert like a down one —
+    // the same one-word note, the probe's sentence in its title, and the endpoint's error line
+    // quiet (spec §4 True-now: "down" (or "unknown"); no `.ep-error` line either way)
+    var alert = host.state === "down" || host.state === "unknown";
+    var said = alert ? host.endpoints.filter(function (ep) { return ep.error; })[0] : null;
     var noteTitle = said ? said.error : null;
     var body = host.endpoints.map(function (ep) {
       if (ep.state === "live") return liveEndpoint(snap, ep);
-      if (ep.state === "down") return downEndpoint(snap, ep, nodeDown);
+      if (ep.state === "down") return downEndpoint(snap, ep, alert);
       return neverSeenOn(host, ep) ? null : dormantEndpoint(ep);
     }).filter(Boolean);
     if (!body.length) return null; // 3.7a: a host with nothing drawn; 3.7y: a down node included

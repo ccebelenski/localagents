@@ -850,13 +850,19 @@ def test_requests_table_labels_a_handshake_row_as_no_error():
     shows 1 error returned (often the /api/hello…)"): the shim's recorded startup handshake
     rows (path /api/hello, the backend's 404/501) drew as the table's one red error pill.
     The shared renderer draws them as a muted pill reading "handshake" — the numeric status
-    stays in the title — and pins the new class styled in the stylesheet. (The row class and
-    the counting exclusions are the DOM smoke's, t/REPORT.md.)"""
+    stays in the title — and pins the new class styled in the stylesheet. The row class and the
+    counting exclusions are the committed DOM smoke's (tools/smoke/handshake.js; F3)."""
     body = _js_function(_app_js(), "requestsTable")
     assert '"handshake"' in body
     assert "pill-muted" in body
     assert '"/api/hello"' in body
     assert re.search(r"\.pill-muted(?![\w-])", (STATIC / "app.css").read_text())
+    # F3 (fold of the page-batch review, 2026-10-30): the handshake row takes no req-err mark
+    # (the wrong implementation kept the muted pill but pushed req-err anyway), and the
+    # handshake branch is chosen before the null-status branch (a handshake with no status is
+    # a handshake, not the "–" dash)
+    assert 'if (bad && !handshake) cls.push("req-err");' in body, body
+    assert body.index("if (handshake)") < body.index("else if (req.http_status == null)"), body
 
 
 def test_job_header_names_both_error_figures():
@@ -867,6 +873,16 @@ def test_job_header_names_both_error_figures():
     assert 'fig("tool errors"' in js
     assert 'fig("request errors"' in js
     assert 'fig("errors"' not in js
+    # F4 (fold of the page-batch review, 2026-10-30): the figure is computed from the rows —
+    # both of the shared renderer's reads, with /api/hello skipped — not a constant that merely
+    # keeps the label (tools/smoke/handshake.js exercises the row rule the count must follow)
+    body = js[js.index("function requestErrors("):]
+    body = body[:body.index("\n    function ")]
+    assert 'req.path === "/api/hello"' in body, body
+    assert "req.http_status" in body, body
+    assert "req.error" in body, body
+    assert "n++" in body and "return n;" in body, body
+    assert "return 0;" not in body, body
 
 
 def test_a_never_seen_endpoint_is_hidden_on_a_down_node_which_then_gets_no_card():
@@ -879,6 +895,12 @@ def test_a_never_seen_endpoint_is_hidden_on_a_down_node_which_then_gets_no_card(
     # endpoint (a never-seen endpoint is never drawn, whatever the node says)
     never = js[js.index("function neverSeenOn("):js.index("function hostCard(")]
     assert "host.state" not in never, never
+    # F5 (fold of the page-batch review, 2026-10-30): BOTH reads stay — the dormant state and
+    # the null last_seen. `return ep.last_seen == null;` (drop the state test) would hide a
+    # `down` endpoint that never probed up but is seen by its error, whose card the oracle says
+    # must stay (tools/smoke/neverseen.js case (d) renders it)
+    assert 'ep.state === "dormant"' in never, never
+    assert "ep.last_seen == null" in never, never
     # hostCard: an empty body returns null for ANY host — no `&& !nodeDown` rescue
     head = js[js.index("function hostCard("):js.index("// --- the Recent jobs log")]
     assert re.search(r"if \(!body\.length\) return null;", head), head
@@ -887,3 +909,18 @@ def test_a_never_seen_endpoint_is_hidden_on_a_down_node_which_then_gets_no_card(
     # "<name> (node down)", on an unknown node "<name> (node unknown)"
     assert re.search(r'hidden\.push\(ep\.name \+ \(host\.state === "down" \? " \(node down\)"', js), js
     assert "(node unknown)" in js
+
+
+def test_an_unknown_node_is_an_alert_like_a_down_node():
+    """F1 (fold of the page-batch review, 2026-10-30): spec §4's True-now sentence says the
+    head's alert is "down" (or "unknown") and the probe's sentence rides in that note's title,
+    so an unknown node is quiet the same way. The code gated both the title source and the
+    endpoint's quiet flag on `nodeDown` alone: an unknown node drew the sentence as the
+    endpoint's `.ep-error` text and lifted the column floor."""
+    js = _app_js()
+    head = js[js.index("function hostCard("):js.index("// --- the Recent jobs log")]
+    assert re.search(r'var alert = host\.state === "down" \|\| host\.state === "unknown"', head), head
+    assert re.search(r"var said = alert \?", head), head
+    assert re.search(r"downEndpoint\(snap, ep, alert\)", head), head
+    assert "var said = nodeDown" not in head, head
+    assert "downEndpoint(snap, ep, nodeDown)" not in head, head

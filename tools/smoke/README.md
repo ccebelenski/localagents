@@ -30,12 +30,32 @@ node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/a.png "js:$(cat 
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/nodes.png "js:$(cat tools/smoke/nodes.js)"
 # 3.7y: neverseen.js renders a fourth host ai9 — node down, its one endpoint never seen (the
 # state the operator looked at: "ai9 is 'down' yes, but it's also 'never seen'. Perhaps it
-# shouldn't have a card in that state?"). Three renders, the DOM read after each into
+# shouldn't have a card in that state?"). Four renders, the DOM read after each into
 # __d1.cases[]: (a) no ai9 card, the hidden line names it "ai9 (node down)"; (b) last_seen 3
 # days before snap.now — the card returns, .node-down border, head note "down" (3.7x), one
 # seen-dormant "last seen" line; (c) render (a) again — the card disappears (the 3.9D D1 path:
-# renders.full advances, threw stays null) and the hidden line returns. Read d1 in AFTER_JSON.
+# renders.full advances, threw stays null) and the hidden line returns; (d) F5 (fold of the
+# page-batch review 2026-10-30) — the down node's one endpoint is state "down", last_seen null
+# (never probed up) but seen by its error: the card stays, one `.endpoint.state-down` and no
+# `.ep-error` child (`d1.downEndpoint.ok`), which a neverSeenOn hiding every never-seen endpoint
+# regardless of state would drop. Read d1 in AFTER_JSON.
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/neverseen.png "js:$(cat tools/smoke/neverseen.js)"
+# F1 (fold of the page-batch review 2026-10-30; spec §4 True-now): unknown.js renders a fourth
+# host ai9, node state "unknown", whose one endpoint is state "down" with last_seen 2 h before
+# snap.now and a 300-char error. Two reads into __d1.cases[]: cardLayout.need/floor before and
+# after the render, and after it the head note "unknown" with the sentence in its title, no
+# `.ep-error` child and the sentence absent from the card's text. The need must not move
+# between the two reads — the regression F1 found (946 -> 2634 when the sentence was drawn).
+node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/unknown.png "js:$(cat tools/smoke/unknown.js)"
+# 3.7v/F3+F4 (commit 39fdb3a; fold of the page-batch review 2026-10-30): handshake.js hand-renders
+# the shared requests table with the eight row shapes — three /api/hello handshakes (501, no
+# status, 200), a 500, a status-0 backend failure, a clean 200, a context-exceeded 200, and a
+# /api/hello with a recorded error. Each row's class, its pill's class/text/title and its error
+# cell go into `d1`; d1.ok is true only when all eight match the oracle: the handshake rows are
+# muted, read "handshake", keep the numeric status in the title and take NO `req-err` even with
+# an error body; the two failures take `req-err`; the context row takes `req-ctx`. That row rule
+# is exactly the job header's "request errors" count (F4's computed figure).
+node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/handshake.png "js:$(cat tools/smoke/handshake.js)"
 # 3.9D D3: range.js clicks a real range button (not the internal setter — the handler, the
 # aria-pressed rebuild and the scheduled fetch are what is being tested), waits for each click's
 # fetch to land, and records the timeline axis labels and pressed button before, after 15m and
