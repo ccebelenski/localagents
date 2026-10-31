@@ -2045,12 +2045,23 @@ Sequence: after 3.10c and the review of the page batch land, before the retro.
 > design on that before any build since there are multiple aspects to this request and a bad
 > choice can ruin the page.
 
+On the first draft (operator, same morning): "I think the drop-down is sufficient." / "Agree."
+(no time presets) / "Depends on frequency of the push - if too often the picker is impossible to
+use. I would hold to be safe." / "We can try it and see." (the `>n` shortcut) / "Not sure what
+you're considering here." (blank-only); then: "Actually I think you've overdesigned for the
+tables - I don't think we need a multi-pick for example. For absolute values like numbers, text
+search first and then allow x-y range and simple < and > - no need for a pop-out". The first
+draft's pop-out, hold and multi-pick are withdrawn (history: 660e3aa, ff2d819); a build lane
+dispatched on the first draft (Qwen/ai1 job 00e14ee2-baf2-4f9a-9254-16cbaa9502e6) was cancelled
+at 16 turns, nothing landed.
+
 - ☐ **3.12 Design: filters by column type.** Design first, no build: the design is
-  docs/superpowers/specs/2026-10-31-table-filters-design.md (the filter kinds per column, the
-  pop-out, the state, the semantics, the risks, what moves in the tests and the smoke, the build
-  plan, and the questions the operator decides). Build stories are cut when the operator
-  approves the design. Sequence: after 3.11a's review (the design builds on its `cellText`
-  cache and `rowMemo`).
+  docs/superpowers/specs/2026-10-31-table-filters-design.md, second draft: everything in the
+  filter row — a native select for status/model/endpoint/path ("any" + values with counts);
+  number boxes read text first, then `x-y` (inclusive), then `<n`/`>n` (strict); time boxes the
+  same three readings over `HH:MM` / `YYYY-MM-DD` / `YYYY-MM-DD HH:MM`; the state shape unchanged;
+  "clear filters" on the pager line. Build story 3.12a is cut when the operator nods. Sequence:
+  after 3.11a's review (landed clean).
 
 ## Epic 4: operations (V2, not scheduled)
 
