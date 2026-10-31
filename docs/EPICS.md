@@ -58,6 +58,13 @@ briefs passed by path (c).
   `tests/test_3_10b.py`) unless they amend an existing test; a lane's artefacts under `t/` never
   land (tools/land.sh drops added `t/` paths from the squash; t/conftest.py stays). Both are in
   the brief template and the land script, not left to memory.
+- **(p)** Operator, 2026-10-31: "New rule: 'go' is explicit, not inferred. You're too eager to
+  jump to coding. I never said 'go' - But I'll allow it this time." A build — any lane, any Agent
+  dispatch — starts only on the operator's explicit word. Approval of a design or a plan, a nod,
+  "we can see how that works", or the operator being present is not it: the coordinator says the
+  build is ready and waits. (Same morning: a lane dispatched on the first draft's answers was
+  cancelled when the design was overdone; 3.12a was dispatched on "go with your new
+  understanding" — allowed this once.)
 
 Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before any parser;
 2.4 before any page story; 3.5 last.
