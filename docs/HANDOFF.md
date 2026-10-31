@@ -33,7 +33,18 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-31 ~06:30, the operator asleep).** 3.11a LANDED (1f1bfe9: 17 folds,
+**Lanes at the last note (2026-10-31 morning, the operator present).** Landed since 06:30: the 3.11a
+review (clean; EPICS 3.11a), the 3.10c F3 fold (a3207a5, the "null" under tables), 3.12a the typed
+filters (1938d98 + the coordinator fold 318c39c) and its DeepSeek review (EPICS 3.12, one latent
+defect, six possibles, four noticed). The operator's dispositions are in EPICS 3.12 verbatim. Running:
+the 3.12a-fold on DeepSeek/dgx1-a (four fixes; brief at the session scratchpad `brief-3.12a-fold.md`);
+when it reports: `tools/accept.sh`, read the diff, land, a Qwen review of the fold. Designed and
+APPROVED, each build waiting for its own explicit "go" (ruling (p)): 3.12b the two-level table
+refresh (docs/superpowers/specs/2026-10-31-table-refresh-design.md) then 3.12c the started picker
+(docs/superpowers/specs/2026-10-31-started-picker-design.md). 3.12a stays unticked until the operator
+reads the live page. Earlier note follows.
+
+**Lanes at the earlier note (2026-10-31 ~06:30, the operator asleep).** 3.11a LANDED (1f1bfe9: 17 folds,
 834 tests; the audit at docs/audits/2026-10-31-codebase-audit.md; EPICS 3.11a holds the listed-not-folded
 rows and row 37, which wants a ruling). Running: the cross-model review of 3.11a's folds, Qwen/ai1
 (five construct-it probes: the shim's usage readers and head cap, finish_worktree's git failures,

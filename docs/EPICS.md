@@ -2184,6 +2184,34 @@ Operator, on the hour-or-day bucket pick: "I think if you make it too fine grain
 too long - maybe a two-level picker, the first being a date (today, yesterday, list of dates) + a
 clock filter (graphical or digital clock bounding hours? Digital would be two hours choices, analog
 would be two hands on a clock face representing the bounds)."
+Operator, closing the design (2026-10-31): "That seems worth doing - you agree?" then "Agreed on all
+- let it fly." Read as: the design is done and the fold flies; each build below goes on its own word,
+the plan the operator agreed to.
+
+- ☐ **3.12a-fold: four fixes from the 3.12a review** (DeepSeek/dgx1-a, the reviewer fixing its own
+  verified findings, ruling (a); the brief at the session scratchpad `brief-3.12a-fold.md`). F1 the
+  blank pick value gets a sentinel (`PICK_BLANK`, labelled "(blank)") so it no longer collides with
+  "any"; F2 commas stripped before the number box's range and comparator readings (the substring
+  reading keeps the text as typed); F3 the endpoint page's tables keyed per endpoint
+  (`jobs-endpoint-<name>`, `requests-endpoint-<name>`); F4 the smoke's full-id witness reads the id
+  link's title and asserts it. Dropped from the fold on the operator's dispositions: the lone-literal
+  time reading (the time box is retired by 3.12c) and the redraw hold (3.12b makes it unnecessary).
+- ☐ **3.12b Two-level table refresh.** Design APPROVED:
+  docs/superpowers/specs/2026-10-31-table-refresh-design.md. Level 1: a table whose rows hash the
+  same as its last draw is not touched (no stored hash, or a container no longer in the document,
+  forces a full build). Level 2: on a change, or an operator action, the wrapper, header and filter
+  row are patched in place and the body reconciled row by row (jobs keyed by id, requests
+  positional, by row signature); a focused filter control is never touched; the three callers mount
+  the table once instead of re-inserting it. Retires the dead caret restore; `sortRows` reads the key
+  cache. Qwen/ai1, then a DeepSeek construct-it review, the fold, the operator's eyes on Firefox.
+  Waits for "go".
+- ☐ **3.12c The started picker.** Design APPROVED:
+  docs/superpowers/specs/2026-10-31-started-picker-design.md. The `time` kind's text box and its
+  typed grammar are retired for a two-level picker: a control in the filter cell opening a panel with
+  a date select (any, today, yesterday, the dates present, with counts) and two hour-bound selects
+  (from, to, inclusive; the hours present on that date); digital, not analog; absolute, not relative;
+  the state string `YYYY-MM-DD` or `YYYY-MM-DD HH-HH`. The requests table's time column takes the
+  same control. Builds after 3.12b (the panel lives in the filter row). Waits for "go".
 
 ## Epic 4: operations (V2, not scheduled)
 
