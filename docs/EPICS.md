@@ -2173,6 +2173,13 @@ Operator, on started: "my 'not intuitive' remark on the started column for examp
 really couldn't figure out how to make it work at all - so functionality is undetermined by me."
 (The likeliest path: a date typed alone matches 0 rows — the review's possible (1); the grammar is
 named only in the box's hover title.)
+Operator, on the proposed relative-window pick: "No I think a pick would be good - but it's
+relative right? 'Last 15 minutes' on a endpoint jobs list is not literally last 15 minutes from NOW.
+On the 7d filter we literally have dates too - so it's not a simple pick value." Facts at the note:
+the endpoint page's jobs list is already bounded by the page's range selector (endpoint.js:335
+"jobs that ran on <name> in the last <range>"; 15m … 7d, app.js:28); the overview's is running and
+queued, then the last 10 finished; the started cell prints a clock inside 24 h and a date beyond
+(app.js:650).
 
 ## Epic 4: operations (V2, not scheduled)
 
