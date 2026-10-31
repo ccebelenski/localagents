@@ -2026,6 +2026,17 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   shows it). Possible: NaN and whitespace-only values sort as present (unreachable from JSON);
   the 1712-px card passes the cap by 1.5 px — one font-metrics tick flips floor.mjs red (a
   tolerance to widen in 3.11a); blank cells inconsistently carry `title=""`. Chain closed.
+  **The vLLM half, 2026-10-31 afternoon:** the operator restarted dgx1-a with
+  `--enable-prompt-tokens-details` (their first restart of the model on the platform; "It might not
+  work however as I found evidence that there might be bug for that repsonse setting") and asked for
+  a short job as the check. DeepSeek-V4.1-Flash-1017 job 9b34e9ac (4 turns, 58 s, read-only, no
+  changes, worktree removed) succeeded; its two request rows (read-only over the real database):
+  `input 382 / cache_read 0 / cache_creation 20992 / output 330`, then `input 315 / cache_read 20992 /
+  cache_creation 6656 / output 506` — the cache fields are populated, so the page's prefill t/s and
+  the job's cache-hit ratio now compute for the vLLM lane (the record: cache_hit_ratio 0.425,
+  prefill 668 t/s, decode 58 t/s). The page-side fix above (a missing cache_creation counts as 0)
+  is no longer needed for vLLM with the flag; it stays open only as a kindness to a backend that
+  reports nothing, undecided.
 ### 3.11 Pre-close passes (operator 2026-10-31 00:15)
 
 > Two passes to schedule pre-close for this sequence - one pass by opus over the codebase, code
