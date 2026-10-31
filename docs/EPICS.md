@@ -1960,6 +1960,31 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   the coordinator added a `node --check` parse gate over every static script
   (tests/test_monitor_es5.py, proved to catch a planted brace; 808 tests).
 
+- **Review of the page batch** (3.10f-2 e86190b, 3.10b f0d423d, 3.10h(b) 66be3d3, 3.10g bc7b46e,
+  3.10c f817d6e + 18efad4) by DeepSeek/dgx1-a job 7d15981a-1a69-461c-844a-3296a22af411, 83 turns,
+  27 min, four probes (1,000 hand jobs through the helper; the endpoint page at 1h/7d; the three
+  request rows plus handshake and error; the resize sequence). Findings verbatim: F1 (3.10c,
+  correctness) `cellText` (app.js:750) appends a cell's title to its filter text only when the
+  title does NOT contain the cell text — so exactly the id cell (short id ⊂ full UUID) and the
+  started cell (clock ⊂ date-time) lose their titles: a `started` filter "10/31/2026" and a `job`
+  filter on a full UUID return no rows, against the recorded decision (3.10c) and the function's
+  own comment — VERIFIED (the guard `t.indexOf(own) < 0` read at landing). F2 (3.10c,
+  correctness) the missing-value sentinel is multiplied by `dir` (app.js:791-792) and a text blank
+  goes through `localeCompare`, so blanks sort last only ascending — descending puts 50 blank
+  cells on page 1 — against "missing figures sort last" — VERIFIED. F3 (tests) nothing pins
+  the job page header's full id (`job.js` `text: detail.id`): `shortId(detail.id)` passes every
+  test and smoke. F4 (tests) tests/test_3_10g.py pins the FIRST `.host` rule, so a later `.host {
+  max-width: none }` override passes, and `floor.mjs` reads no card width — the story's one
+  decision has no runtime pin (the review's `t/p4.mjs` is the first). Possible: 131 ms per filter
+  keystroke at 1,000 rows (`cellText` builds 13 cells per row per filtered column — the 3.11a
+  candidate). Clean: paging, numeric sort incl. the context percent, the comparators, state across
+  pushes, the page clamp, the 0-row shape, the per-page ids (three state entries); the endpoint
+  page's headers/ids/headings/events; the three-column arithmetic and classes; the cap at every
+  width, floorIsText, no horizontal scroll. Noticed: `wide.js`/`keep.js` still set `job.name` and
+  `lines.js` sets `ep.dropped_job` — fields the page no longer reads (stale smokes); the seeded
+  running job reads "lost" in every `--no-collect` smoke. Disposition: F1-F4 folded by the
+  reviewer (ruling (a)); P1-a to 3.11a; the stale smokes to 3.11b.
+
 ### 3.11 Pre-close passes (operator 2026-10-31 00:15)
 
 > Two passes to schedule pre-close for this sequence - one pass by opus over the codebase, code
