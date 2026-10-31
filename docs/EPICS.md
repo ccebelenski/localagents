@@ -1885,6 +1885,15 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   breakdown stays (it is a different thing); the helper of 3.10c applies to its requests table
   with the job as the fixed filter; the "errors" header word pair from 3.7v stays.
 
+- ☐ **3.10i The vLLM lane shows no speeds and no cache.** Operator (2026-10-31 00:45): "I notice
+  the vllm lane never reports token speeds, always shows the prompt as new not cached." The rows
+  (read-only, dgx1-a's last six `/v1/messages`): `input_tokens` 56-63k (the whole prompt),
+  `output_tokens` 0, `cache_read`/`cache_creation` NULL, `gen_ms` ≈ ms − 1 s (the running server
+  predates the clock fix). So decode t/s is blank because output is 0 and prefill t/s is blank
+  because `prefillRate` demands a numeric `cache_creation` (app.js); "new" = input because the
+  cache fields are absent — honest about the API's silence, wrong about the engine. Coordinator's
+  live probe of the backend's stream shape below.
+
 ### 3.11 Pre-close passes (operator 2026-10-31 00:15)
 
 > Two passes to schedule pre-close for this sequence - one pass by opus over the codebase, code
