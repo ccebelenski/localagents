@@ -48,10 +48,29 @@ Object.defineProperty(El.prototype, "value", {
   get() { return this._value != null ? this._value : (this.getAttribute("value") || ""); },
   set(v) { this._value = String(v); },
 });
+// 3.12b: the browser's isConnected — a walk up parentNode to document.body or documentElement.
+// The table helper's level-1 skip reads it: a container discarded by a page change must force a
+// full build rather than be patched in no page.
+Object.defineProperty(El.prototype, "isConnected", {
+  get() {
+    let p = this;
+    while (p.parentNode) p = p.parentNode;
+    return p === global.document.body || p === global.document.documentElement;
+  },
+});
 El.prototype.appendChild = function (n) {
   if (n.parentNode) n.parentNode.childNodes = n.parentNode.childNodes.filter((c) => c !== n);
   n.parentNode = this;
   this.childNodes.push(n);
+  return n;
+};
+// 3.12b: insertBefore (the body reconcile moves kept trs) — same shape as appendChild,
+// inserting before the reference child (null ref appends)
+El.prototype.insertBefore = function (n, ref) {
+  if (n.parentNode) n.parentNode.childNodes = n.parentNode.childNodes.filter((c) => c !== n);
+  n.parentNode = this;
+  const at = ref == null ? this.childNodes.length : this.childNodes.indexOf(ref);
+  if (at < 0) this.childNodes.push(n); else this.childNodes.splice(at, 0, n);
   return n;
 };
 El.prototype.replaceChildren = function () {
@@ -66,7 +85,10 @@ El.prototype.replaceChildren = function () {
 El.prototype.remove = function () { if (this.parentNode) this.parentNode.childNodes = this.parentNode.childNodes.filter((c) => c !== this); this.parentNode = null; };
 El.prototype.addEventListener = function (type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); };
 El.prototype.removeEventListener = function (type, fn) { this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn); };
-El.prototype.dispatchEvent = function (ev) { ev.target = this; (this.listeners[ev.type] || []).slice().forEach((fn) => fn.call(this, ev)); return true; };
+// 3.12b: a caller may preset ev.target (the focusout deferral test dispatches the row's
+// focusout with the select as its target, as the browser bubbles it); an unset target is the
+// dispatching element, as before
+El.prototype.dispatchEvent = function (ev) { if (ev.target == null) ev.target = this; (this.listeners[ev.type] || []).slice().forEach((fn) => fn.call(this, ev)); return true; };
 El.prototype.click = function () { this.dispatchEvent(new Event("click")); };
 El.prototype.focus = function () { global.document.activeElement = this; };
 El.prototype.setSelectionRange = function () {};

@@ -218,7 +218,9 @@
   // swapped, `skipped` = a snapshot whose content equalled the last one's
   var snapSig = null;
   var historyGen = 0;
-  var renders = { full: 0, inPlace: 0, skipped: 0 };
+  // 3.12b level 1: `tableSkipped` counts dataTable calls whose rows hash matched the last draw
+  // of that id (the table touched nothing)
+  var renders = { full: 0, inPlace: 0, skipped: 0, tableSkipped: 0 };
 
   function computeSparkScale(snap) {
     var span = rangeSeconds(state.histRange || state.range);
@@ -805,9 +807,15 @@
   // redraw on theirs, so a push must find the sort, the filters and the page waiting. A
   // re-render from a NEW rows array applies the same state; a page now past the end clamps
   // to the last page. An input event updates the state and redraws THIS table only, through
-  // the container the helper owns, and puts the caret back in the box that took it.
+  // the container the helper owns. 3.12b: that redraw is a patch — the box itself is never
+  // replaced, so the caret and half-typed bounds stay put (the old caret save/restore, whose
+  // saved value was never assigned, is gone with the rebuild).
   var TABLE_PAGE_SIZE = 50;
   var TABLE_STATE = {}; // table id -> {sort: null | {col, dir}, filters: {col: text}, page: n}
+  // 3.12b (spec §3): the last draw per id — {container, hash, draw}. A container discarded by a
+  // page change fails its isConnected check, so the next call is a full build; entries are
+  // overwritten, never more than one per id.
+  var TABLE_DOM = {};
   // 3.12a fold F1: the pick's value for a row whose sort key is "" — "any" already owns ""
   // (and setFilter deletes on it), so the blank key needs a value of its own (the empty-set
   // sign, like the page's "⌀ cancelled" pill; a non-ASCII glyph in a value is no new thing)
@@ -818,8 +826,27 @@
     rows = rows || [];
     var pageSize = opts.page || TABLE_PAGE_SIZE;
     var st = TABLE_STATE[id] || (TABLE_STATE[id] = { sort: null, filters: {}, page: 1 });
-    if (!rows.length) return h("div", { class: "empty", text: opts.empty || "" });
-    var container = h("div", { class: "table-block", "data-table": id });
+    // 3.12b level 1 (spec §3): a push whose rows hash the same as the last draw of this id
+    // touches nothing — the hash is the whole rows array serialized plus the column names in
+    // order (a different column set is a different table). The page already pays this string
+    // for the whole snapshot (render's snapSig) and 120 rows is under a millisecond. The design
+    // accepts that a running job's row changes every push (its elapsed, turns and last activity
+    // arrive in the row); the started cell's clock-to-date day switch waits for the next real
+    // change in the table, hashed-in-hour notwithstanding.
+    var hash = JSON.stringify(rows) + "\n" + columns.map(function (c) { return c.name; }).join(",");
+    var prev = TABLE_DOM[id];
+    if (prev && prev.container.isConnected && prev.hash === hash) {
+      renders.tableSkipped++;
+      return prev.container;
+    }
+    // level 2 (and the first build): the container persists — an entry with a connected
+    // container keeps it; a page that discarded the DOM gets a new one
+    var container = prev && prev.container.isConnected
+      ? prev.container
+      : h("div", { class: "table-block", "data-table": id });
+    // the record this call updates: the last draw's entry when its container is still in the
+    // document (the container above is then its container), else a fresh one
+    var rec = prev && prev.container.isConnected ? prev : { container: container };
 
     // the filter matches what the operator sees: the cell's own text, plus every title the
     // cell carries — its own (the started cell's full date-time behind the clock; the model
@@ -996,7 +1023,12 @@
       st.page = 1;
     }
 
-    function sortRows(list) {
+    // 3.12b: the sort works over INDICES (filterIdx's output) and reads the sort key through
+    // keyOf, the per-call cache the pick already used — the 3.12a review noticed the old
+    // version sorted ROW objects through col.sortKey directly, bypassing the cache. The
+    // comparator and its absent-value rule are untouched (tests/test_3_10c_fold.py F2 pins
+    // the source shape).
+    function sortRows(list) { // list: row INDICES
       if (!st.sort) return list; // the caller's order is the contract (3.7g)
       var col = null;
       columns.forEach(function (c) { if (c.name === st.sort.col) col = c; });
@@ -1010,7 +1042,7 @@
       // the arrow points (F2 fold: the old sentinel multiplied by dir and put text blanks
       // through localeCompare, so a descending sort led with them)
       return list.slice().sort(function (a, b) {
-        var x = col.sortKey(a), y = col.sortKey(b);
+        var x = keyOf(col, a), y = keyOf(col, b);
         var xnum = typeof x === "number" && isFinite(x), ynum = typeof y === "number" && isFinite(y);
         // present: a finite figure or a non-empty text (the xn/yn names, not numericness)
         var xn = xnum || (x != null && x !== ""), yn = ynum || (y != null && y !== "");
@@ -1020,29 +1052,68 @@
       });
     }
 
-    function draw() {
-      // remember the caret: a filter keystroke rebuilds the header row too
-      var focused = document.activeElement;
-      var caret = null;
-      var caretCol = focused && focused.getAttribute ? focused.getAttribute("data-filter") : null;
+    // ---- 3.12b level 2: the patch (spec §4) --------------------------------------------------
+    //
+    // The parts persist per id inside the container: wrap > table > thead[head, filterRow] +
+    // tbody, then the pager, then the note when there is one. Every listener on a persistent
+    // element (the th click, the input's input, the select's change, the filter row's focusout)
+    // reads TABLE_DOM[id].draw — the slot each call overwrites below with its own draw — so the
+    // OLD controls run THIS call's draw over THIS call's rows and caches; a captured draw would
+    // pin a dead closure (stale rows, stale caches). The pager's buttons and the empty
+    // sentence's clear link are rebuilt every draw, so they bind draw directly. No scroll
+    // wrapper is ever recreated on a push: that is the operator's Firefox flash, the lost open
+    // select, the lost caret and the sideways snap-back, all one mechanism. The caret
+    // save/restore that used to follow replaceChildren goes: the input is never replaced, and
+    // the restore never had a value to restore anyway (`caret` was never assigned).
 
-      var head = h("tr", null, columns.map(function (col) {
-        var sorted = st.sort && st.sort.col === col.name;
-        var th = h("th", {
-          class: (col.numeric ? "n " : "") + "sortable" + (sorted ? (st.sort.dir === 1 ? " sort-asc" : " sort-desc") : ""),
-          title: col.title || null,
-          "aria-sort": sorted ? (st.sort.dir === 1 ? "ascending" : "descending") : null,
-          text: col.name,
-        });
+    // the column shape as one key: names AND filter kinds. The one case the header and filter
+    // CELLS are replaced is a later call whose columns differ (B2 (d)) — the thead and the two
+    // rows themselves persist, only their cells swap inside them.
+    var colsKey = columns.map(function (c) { return c.name + ":" + (c.filter || "text"); }).join(",");
+
+    // the first table build (and the rebuild after the list emptied: the container then held
+    // only the sentence): the whole skeleton, once
+    function buildTable() {
+      rec.wrap = h("div", { class: "table-wrap" });
+      var tableEl = h("table", opts.class ? { class: opts.class } : null);
+      rec.thead = h("thead");
+      rec.head = h("tr");
+      rec.filterRow = h("tr", { class: "table-filters" });
+      rec.tbody = h("tbody");
+      rec.pager = h("div", { class: "table-pager muted" });
+      rec.note = opts.note ? h("div", { class: "jobs-note muted", text: opts.note }) : null;
+      rec.thead.appendChild(rec.head);
+      rec.thead.appendChild(rec.filterRow);
+      tableEl.appendChild(rec.thead);
+      tableEl.appendChild(rec.tbody);
+      rec.wrap.appendChild(tableEl);
+      var parts = [rec.wrap, rec.pager];
+      if (rec.note) parts.push(rec.note);
+      rec.container.replaceChildren.apply(rec.container, parts);
+      rec.colsKey = null; // the fresh head/filterRow need their cells: draw's colsKey check fires
+      // the filter row's ONE focusout listener (added at the first build): a select the
+      // operator is holding open is never rebuilt by a draw (the open dropdown would vanish);
+      // the draw marks it stale and the rebuild lands when it loses focus
+      rec.filterRow.addEventListener("focusout", function (e) {
+        rec.onFocusOut(e.target); // slot, set by every patch below (THIS call's counts)
+      });
+    }
+
+    // the header cells and the filter cells: built on the first table build, and again only
+    // when the columns' key changed — the one case the controls are replaced inside the
+    // persistent thead rows (B2 (d))
+    function buildHeadAndFilterRow() {
+      rec.head.replaceChildren.apply(rec.head, columns.map(function (col) {
+        var th = h("th", { title: col.title || null, text: col.name });
         // 3.10c: click to sort; the same header clicked again reverses
         th.addEventListener("click", function () {
           if (st.sort && st.sort.col === col.name) st.sort.dir = -st.sort.dir;
           else st.sort = { col: col.name, dir: 1 };
-          draw();
+          TABLE_DOM[id].draw(); // the slot, not a captured draw (B2 (a))
         });
         return th;
       }));
-      var filterRow = h("tr", { class: "table-filters" }, columns.map(function (col) {
+      rec.filterRow.replaceChildren.apply(rec.filterRow, columns.map(function (col) {
         // 3.12a: the column's filter KIND (pick / number / time / text, spec §3); the steps fill
         // in the controls, and the cell carries the kind (data-filter-kind) so the drawn row
         // pins it. A spec without the field is text — every old caller keeps its filters.
@@ -1054,23 +1125,9 @@
           // "done (7)" as another filter narrows and a value at 0 stays listed. No free-text
           // search (the operator: "the bounded choices aren't a big list").
           var sel = h("select", { "data-filter": col.name, title: col.name });
-          sel.appendChild(h("option", { value: "", text: "any" }));
-          var counts = Object.create(null); // option values as keys: no __proto__ trap
-          filterIdx(col).forEach(function (i) {
-            var cv = String(keyOf(col, i));
-            // 3.12a fold F1: the count is keyed by the OPTION value, so the blank key ("")
-            // counts under PICK_BLANK and its option's figure is right
-            cv = cv === "" ? PICK_BLANK : cv;
-            counts[cv] = (counts[cv] || 0) + 1;
-          });
-          pickValues(col).forEach(function (v) {
-            sel.appendChild(h("option", { value: v, text: (v === PICK_BLANK ? "(blank)" : v)
-              + " (" + (counts[v] || 0) + ")" }));
-          });
-          sel.value = st.filters[col.name] || "";
           sel.addEventListener("change", function () { // "any" (empty) deletes the key
             setFilter(col, sel.value);
-            draw();
+            TABLE_DOM[id].draw();
           });
           return h("th", { "data-filter-kind": kind }, [sel]);
         }
@@ -1087,68 +1144,207 @@
           ? col.name + (col.unit ? ", " + col.unit : "") + " — text, x-y, <n, >n" + unitHint
           : kind === "time" ? col.name + " — text, HH:MM, YYYY-MM-DD, a - b, <a, >a"
           : col.name;
+        // the box's text IS the state (3.12a §2): written at build, never by a draw, so the
+        // caret and any half-typed bound survive every push
         var input = h("input", { type: "text", placeholder: col.name, "data-filter": col.name,
           title: boxTitle, value: st.filters[col.name] || "" });
         input.addEventListener("input", function () {
           setFilter(col, input.value); // a blank box deletes the key (3.12a §7)
-          draw();
+          TABLE_DOM[id].draw();
         });
         return h("th", { "data-filter-kind": kind }, [input]);
       }));
+      rec.colsKey = colsKey;
+    }
 
-      var filtered = sortRows(filterIdx().map(function (i) { return rows[i]; }));
-      var pages = Math.max(1, Math.ceil(filtered.length / pageSize));
-      if (st.page > pages) st.page = pages; // a push shrank the table; clamp to the last page
-      if (st.page < 1) st.page = 1;
-      var from = (st.page - 1) * pageSize;
-      var pageRows = filtered.slice(from, from + pageSize);
+    // the sort marks are SET on the existing ths every draw: the class string rebuilt as today
+    // from col.numeric, "sortable" and the sort, plus aria-sort
+    function patchHead() {
+      columns.forEach(function (col, i) {
+        var th = rec.head.childNodes[i];
+        var sorted = st.sort && st.sort.col === col.name;
+        th.className = (col.numeric ? "n " : "") + "sortable"
+          + (sorted ? (st.sort.dir === 1 ? " sort-asc" : " sort-desc") : "");
+        if (sorted) th.setAttribute("aria-sort", st.sort.dir === 1 ? "ascending" : "descending");
+        else th.removeAttribute("aria-sort");
+      });
+    }
 
-      var tbody = h("tbody", null, pageRows.map(function (row) {
-        var attrs = opts.rowAttrs ? opts.rowAttrs(row) : null;
-        return h("tr", attrs, columns.map(function (col) { return col.cell(row); }));
-      }));
-      var table = h("div", { class: "table-wrap" }, [h("table", opts.class ? { class: opts.class } : null,
-        [h("thead", null, [head, filterRow]), tbody])]);
+    // a pick's options rebuilt in place — "any", then the values with their faceted counts, then
+    // the state's value (a value the rows no longer have still stands listed "(0)": pickValues
+    // appends it)
+    function selectOptions(sel, col) {
+      sel.replaceChildren();
+      sel.appendChild(h("option", { value: "", text: "any" }));
+      var counts = Object.create(null); // option values as keys: no __proto__ trap
+      filterIdx(col).forEach(function (i) {
+        var cv = String(keyOf(col, i));
+        // 3.12a fold F1: the count is keyed by the OPTION value, so the blank key ("")
+        // counts under PICK_BLANK and its option's figure is right
+        cv = cv === "" ? PICK_BLANK : cv;
+        counts[cv] = (counts[cv] || 0) + 1;
+      });
+      pickValues(col).forEach(function (v) {
+        sel.appendChild(h("option", { value: v, text: (v === PICK_BLANK ? "(blank)" : v)
+          + " (" + (counts[v] || 0) + ")" }));
+      });
+      sel.value = st.filters[col.name] || "";
+    }
 
-      // the pager line: "1–50 of 889 · previous · next"; "N rows" alone when a filter-free
-      // table fits one page; a filter always shows how many match out of how many fetched
-      var pager = h("div", { class: "table-pager muted" });
-      // 3.12a §7: empty values are deleted from the state, so a key IS a set filter
-      var anyFilter = Object.keys(st.filters).length > 0;
-      if (filtered.length === 0) {
-        pager.appendChild(h("span", { text: "no rows match the filters" }));
-      } else if (filtered.length <= pageSize && !anyFilter) {
-        pager.appendChild(h("span", { text: filtered.length + (filtered.length === 1 ? " row" : " rows") }));
+    function patchFilterRow() {
+      rec.filterRow.childNodes.forEach(function (cell, i) {
+        var col = columns[i];
+        if (!col) return;
+        if ((col.filter || "text") === "pick") {
+          var sel = cell.querySelector("select");
+          // B2 (c): a focused select is not touched — its counts are the only staleness and
+          // the operator is holding the list open; marked for the row's focusout listener
+          if (document.activeElement === sel) { sel.__stale = true; return; }
+          selectOptions(sel, col);
+        }
+        // the input box: its value was written at build and never again by a draw
+      });
+      // the slot the persistent focusout listener reads: THIS call's counts and pickValues
+      rec.onFocusOut = function (t) {
+        if (!t || !t.__stale) return;
+        t.__stale = false;
+        var name = t.getAttribute("data-filter");
+        var col = null;
+        columns.forEach(function (c) { if (c.name === name) col = c; });
+        if (col) selectOptions(t, col);
+      };
+    }
+
+    // the tr's row signature: the whole row serialized (spec §7: a cell is a function of its
+    // row and opts.now — §3's accepted exception). An EXPANDO on the element, not an
+    // attribute: the row JSON is long
+    function buildTr(row) {
+      var attrs = opts.rowAttrs ? opts.rowAttrs(row) : null;
+      var tr = h("tr", attrs, columns.map(function (col) { return col.cell(row); }));
+      if (opts.key) tr.setAttribute("data-key", String(opts.key(row)));
+      tr.__sig = JSON.stringify(row);
+      return tr;
+    }
+
+    // the body reconciles row by row. With opts.key (jobsTable: job.id) a page row whose key
+    // sits on an existing tr with the same signature KEEPS that element wherever it sits,
+    // moved into position; without a key (requestsTable: request rows carry no id) the tr at
+    // position i is kept when its signature matches, else replaced — today's wholesale
+    // rebuild's work, no worse. Surplus trs are removed. An element is moved, never cloned
+    // (spec §7: rowMemo's one-placement rule is untouched).
+    function patchBody(pageRows) {
+      var have = Array.prototype.slice.call(rec.tbody.childNodes);
+      var wanted = [];
+      if (opts.key) {
+        var byKey = {};
+        have.forEach(function (tr) {
+          var k = tr.getAttribute("data-key");
+          if (k != null && byKey[k] === undefined) byKey[k] = tr;
+        });
+        pageRows.forEach(function (row) {
+          var key = String(opts.key(row));
+          var old = byKey[key];
+          if (old !== undefined) {
+            delete byKey[key]; // one placement per key: a kept tr is never used twice
+            wanted.push(old.__sig === JSON.stringify(row) ? old : buildTr(row));
+          } else {
+            wanted.push(buildTr(row));
+          }
+        });
       } else {
-        pager.appendChild(h("span", { text: (from + 1) + "–" + Math.min(from + pageSize, filtered.length) + " of " + filtered.length }));
-        pager.appendChild(h("span", { class: "pager-sep", text: " · " }));
-        pager.appendChild(pagerButton("previous", st.page <= 1, function () { st.page -= 1; draw(); }));
-        pager.appendChild(h("span", { class: "pager-sep", text: " · " }));
-        pager.appendChild(pagerButton("next", st.page >= pages, function () { st.page += 1; draw(); }));
+        pageRows.forEach(function (row, i) {
+          var old = have[i];
+          wanted.push(old && old.__sig === JSON.stringify(row) ? old : buildTr(row));
+        });
+      }
+      // place wanted in order, then drop the leftovers (trs past the page rows on a shrink,
+      // the tr whose row changed, and any element the state's page moved away from)
+      for (var i = 0; i < wanted.length; i++) {
+        var cur = rec.tbody.childNodes[i];
+        if (cur !== wanted[i]) rec.tbody.insertBefore(wanted[i], cur || null);
+      }
+      Array.prototype.slice.call(rec.tbody.childNodes).forEach(function (tr) {
+        if (wanted.indexOf(tr) < 0) tr.remove();
+      });
+    }
+
+    // the pager line patched inside the same .table-pager element: the same children as today
+    // ("1–50 of 889 · previous · next"; "N rows" alone when a filter-free table fits one page;
+    // a filter always shows how many match out of how many fetched). Buttons are cheap and
+    // carry no focus the operator loses, so they are rebuilt and bind this draw.
+    function patchPager(filtered, from, pages, anyFilter) {
+      var kids = [];
+      if (filtered.length === 0) {
+        kids.push(h("span", { text: "no rows match the filters" }));
+      } else if (filtered.length <= pageSize && !anyFilter) {
+        kids.push(h("span", { text: filtered.length + (filtered.length === 1 ? " row" : " rows") }));
+      } else {
+        kids.push(h("span", { text: (from + 1) + "–" + Math.min(from + pageSize, filtered.length) + " of " + filtered.length }));
+        kids.push(h("span", { class: "pager-sep", text: " · " }));
+        kids.push(pagerButton("previous", st.page <= 1, function () { st.page -= 1; draw(); }));
+        kids.push(h("span", { class: "pager-sep", text: " · " }));
+        kids.push(pagerButton("next", st.page >= pages, function () { st.page += 1; draw(); }));
       }
       // 3.12a §7: one link wipes every filter — at the end of the line whenever a filter is
       // set, also after the "no rows match" sentence (it is the way out of that state)
       if (anyFilter) {
-        pager.appendChild(h("span", { class: "pager-sep", text: " · " }));
-        pager.appendChild(pagerButton("clear filters", false, function () {
+        kids.push(h("span", { class: "pager-sep", text: " · " }));
+        kids.push(pagerButton("clear filters", false, function () {
           Object.keys(st.filters).forEach(function (k) { delete st.filters[k]; });
           st.page = 1; // a filter changes the count; the page starts over
           draw();
         }));
       }
+      rec.pager.replaceChildren.apply(rec.pager, kids);
+    }
 
-      // the note only when there is one: replaceChildren prints a null argument as the text
-      // "null" (endpoint.js filters its lists for the same reason; the operator saw the word
-      // under every requests table, whose callers pass no note)
-      var parts = [table, pager];
-      if (opts.note) parts.push(h("div", { class: "jobs-note muted", text: opts.note }));
-      container.replaceChildren.apply(container, parts);
-      if (caretCol) {
-        var again = container.querySelector('[data-filter="' + caretCol.replace(/["\\]/g, "\\$&") + '"]');
-        if (again) {
-          again.focus();
-          try { again.setSelectionRange(caret == null ? again.value.length : caret, caret == null ? again.value.length : caret); } catch (e) {}
+    function draw() {
+      // 3.12a §7: empty values are deleted from the state, so a key IS a set filter
+      var anyFilter = Object.keys(st.filters).length > 0;
+
+      // 3.12b (spec §4, last bullet): the empty list lives INSIDE the persistent container —
+      // the .empty sentence, plus the "clear filters" button after it when a filter is set, so
+      // a filter can be cleared while no rows are fetched (the review: empty rows removed the
+      // clear link). The button is rebuilt every draw and binds this draw directly. The table
+      // parts leave with the replaceChildren: a list that empties and refills rebuilds them
+      // once, one flash on a real change.
+      if (!rows.length) {
+        var emptyParts = [h("div", { class: "empty", text: opts.empty || "" })];
+        if (anyFilter) {
+          emptyParts.push(pagerButton("clear filters", false, function () {
+            Object.keys(st.filters).forEach(function (k) { delete st.filters[k]; });
+            st.page = 1; // a filter changes the count; the page starts over
+            draw();
+          }));
         }
+        rec.container.replaceChildren.apply(rec.container, emptyParts);
+        rec.wrap = null;
+        return;
+      }
+
+      if (!rec.wrap) buildTable();
+      if (rec.colsKey !== colsKey) buildHeadAndFilterRow();
+      patchHead();
+      patchFilterRow();
+
+      var filtered = sortRows(filterIdx()).map(function (i) { return rows[i]; });
+      var pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+      if (st.page > pages) st.page = pages; // a push shrank the table; clamp to the last page
+      if (st.page < 1) st.page = 1;
+      var from = (st.page - 1) * pageSize;
+      patchBody(filtered.slice(from, from + pageSize));
+      patchPager(filtered, from, pages, anyFilter);
+
+      // the note's TEXT is set every draw (the element persists with the table parts); a note
+      // appearing or going between calls rides with the table build (the note only when there
+      // is one — replaceChildren prints a null argument as the text "null", the word the
+      // operator saw under every requests table whose callers pass no note)
+      if (opts.note && !rec.note) {
+        rec.note = h("div", { class: "jobs-note muted", text: opts.note });
+        rec.container.appendChild(rec.note);
+      } else if (rec.note) {
+        if (opts.note) rec.note.textContent = opts.note;
+        else { rec.note.remove(); rec.note = null; }
       }
     }
 
@@ -1159,8 +1355,12 @@
       return b;
     }
 
+    rec.hash = hash;
+    rec.draw = draw; // the slot every persistent listener reads (B2 (a))
+    if (typeof rec.onFocusOut !== "function") rec.onFocusOut = function () {};
+    TABLE_DOM[id] = rec;
     draw();
-    return container;
+    return rec.container;
   }
 
   // 3.11a: a renderer that builds a WHOLE row to answer one column (requestsTable's reqRow,
@@ -1218,6 +1418,9 @@
       note: opts.note,
       now: opts.now, // 3.12a §6: the started box's HH:MM literals need the day
       rowAttrs: function (job) { return { "data-job": job.id }; },
+      // 3.12b: the body reconciles by job id (request rows carry none, so the requests table
+      // stays positional) — an unchanged job's tr survives every push
+      key: function (job) { return job.id; },
     });
   }
 
@@ -1484,6 +1687,21 @@
     };
   }
 
+  // 3.12b (spec §5): mount = insert only on a difference. Re-inserting the same element
+  // recreates its scroll frame (the Firefox overlay-scrollbar flash the operator sees on every
+  // push, the sideways snap-back), so a page mounting a persistent child checks first: if the
+  // parent's child nodes are exactly `els`, in order, touch nothing; else replaceChildren.
+  function mount(parent, els) {
+    var kids = parent.childNodes;
+    var same = kids.length === els.length;
+    if (same) {
+      for (var i = 0; i < els.length; i++) {
+        if (kids[i] !== els[i]) { same = false; break; }
+      }
+    }
+    if (!same) parent.replaceChildren.apply(parent, els);
+  }
+
   function render(snap) {
     state.snap = snap;
     // 3.7-fold-3: the refresh interval comes from the snapshot (the one refresh master, decided
@@ -1520,8 +1738,9 @@
     // whose signature (host state, endpoint names and states in order) is unchanged keeps its
     // element and its endpoint elements; only the sub-blocks whose rendering changed swap. A
     // changed list/state, or a new host, rebuilds as before; a gone host is removed; an order
-    // change moves elements without rebuilding. The jobs table keeps replaceChildren (a table,
-    // cheap, no hover state the operator loses mid-row the way cards have).
+    // change moves elements without rebuilding. The jobs table used to keep replaceChildren
+    // ("a table, cheap, no hover state the operator loses mid-row the way cards have") —
+    // 3.12b patches it in place too, and mount() inserts its container only on a difference.
     var hidden = [];
     var hostsEl = byId("hosts");
     var oldCards = {};
@@ -1578,9 +1797,14 @@
     raiseCardFloor(); // 3.7u: the cards are in place; the floor follows their widest line
     renders[rebuilt ? "full" : "inPlace"]++;
     // 3.10b: the overview passes the snapshot's rows and its own note; the endpoint page calls
-    // the same renderer from endpoint.js
-    byId("jobs-body").replaceChildren(jobsTable(snap.jobs, {
-      now: snap.now, note: "running and queued first, then the last 10 finished" }));
+    // the same renderer from endpoint.js. 3.12b: the renderer returns the PERSISTENT container
+    // (level 1 skips unchanged rows wholesale, level 2 patches the changed ones), and mount
+    // inserts it only when #jobs-body is not already exactly it — re-inserting the same element
+    // recreates its scroll frame, which the host-card comment above used to accept as the
+    // table's cost ("a table, cheap, no hover state the operator loses mid-row"): the table now
+    // patches like the cards.
+    mount(byId("jobs-body"), [jobsTable(snap.jobs, {
+      now: snap.now, note: "running and queued first, then the last 10 finished" })]);
     snapshotListeners.slice().forEach(function (fn) { fn(); }); // 3.9D D4: the snapshot redraw is done
   }
 
@@ -2221,6 +2445,8 @@
     jobLink: jobLink, // 3.10f-2: the short id as a link, full id in the title
     dataTable: dataTable, // 3.10c: the one table helper (page, sort, filter)
     TABLE_STATE: TABLE_STATE, // 3.10c: the per-table view, keyed by id — exported for the smoke
+    TABLE_DOM: TABLE_DOM, // 3.12b: the last draw per id {container, hash, draw} — tests and smoke
+    mount: mount, // 3.12b: replaceChildren only when the children actually differ — the detail pages
     PICK_BLANK: PICK_BLANK, // 3.12a fold F1: the pick's blank value — exported for the tests
   };
 

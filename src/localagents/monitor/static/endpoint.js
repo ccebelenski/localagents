@@ -298,7 +298,34 @@
   // spans jobs), this page's empty sentence, and the page's clock for the day-stamped
   // time column (3.7-fold-4: the snapshot's now, via nowOf()). 3.10b: the heading is a noun
   // phrase with the filter — no parentheses of explanation; the totals line is unchanged.
-  function requestsSection(reqs, range, name, now) {
+  // 3.12b (spec §5): one <section> per page instance, patched each call — the cache object
+  // lives in the page's scope, so the section, its heading element and the two slots persist.
+  // The totals line has no scroll frame, so a fresh line each call is fine (mounted, not
+  // re-inserted by hand); the table body is MOUNTED — the table container's scroll frame
+  // survives every draw, which is the whole operator complaint.
+  function requestsSection(cache, reqs, range, name, now) {
+    if (!cache.section) {
+      cache.h2 = h("h2");
+      cache.totalsSlot = h("div");
+      cache.bodySlot = h("div");
+      cache.section = h("section", { class: "requests" }, [cache.h2, cache.totalsSlot, cache.bodySlot]);
+    }
+    cache.h2.textContent = "Requests · " + name + " · last " + range;
+    if (reqs && reqs.totals) {
+      var totals = reqs.totals;
+      var shown = reqs.requests.length < totals.count ? " (newest " + fmt.int(reqs.requests.length) + " listed)" : "";
+      M.mount(cache.totalsSlot, [h("div", { class: "totals" }, [
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "requests" }), h("span", { class: "num", text: fmt.int(totals.count) + shown })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "tokens in" }), h("span", { class: "num", text: fmt.int(totals.input_tokens) })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "out" }), h("span", { class: "num", text: fmt.int(totals.output_tokens) })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "cache read" }), h("span", { class: "num", text: fmt.int(totals.cache_read_tokens) })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "cache creation" }), h("span", { class: "num", text: fmt.int(totals.cache_creation_tokens) })]),
+        h("span", { class: "fig" }, [h("span", { class: "label", text: "time" }), h("span", { class: "num", text: fmt.dur(totals.ms / 1000) })]),
+        h("span", { class: "fig" + (totals.errors > 0 ? " err" : "") }, [h("span", { class: "label", text: "errors" }), h("span", { class: "num", text: fmt.int(totals.errors) })]),
+      ])]);
+    } else {
+      M.mount(cache.totalsSlot, []);
+    }
     var body;
     if (!reqs) {
       body = h("div", { class: "empty", text: "loading" });
@@ -308,21 +335,8 @@
       body = M.requestsTable(reqs.requests, { id: "requests-endpoint-" + name,
         empty: "no requests in this range", now: now });
     }
-    var totalsLine = null;
-    if (reqs && reqs.totals) {
-      var totals = reqs.totals;
-      var shown = reqs.requests.length < totals.count ? " (newest " + fmt.int(reqs.requests.length) + " listed)" : "";
-      totalsLine = h("div", { class: "totals" }, [
-        h("span", { class: "fig" }, [h("span", { class: "label", text: "requests" }), h("span", { class: "num", text: fmt.int(totals.count) + shown })]),
-        h("span", { class: "fig" }, [h("span", { class: "label", text: "tokens in" }), h("span", { class: "num", text: fmt.int(totals.input_tokens) })]),
-        h("span", { class: "fig" }, [h("span", { class: "label", text: "out" }), h("span", { class: "num", text: fmt.int(totals.output_tokens) })]),
-        h("span", { class: "fig" }, [h("span", { class: "label", text: "cache read" }), h("span", { class: "num", text: fmt.int(totals.cache_read_tokens) })]),
-        h("span", { class: "fig" }, [h("span", { class: "label", text: "cache creation" }), h("span", { class: "num", text: fmt.int(totals.cache_creation_tokens) })]),
-        h("span", { class: "fig" }, [h("span", { class: "label", text: "time" }), h("span", { class: "num", text: fmt.dur(totals.ms / 1000) })]),
-        h("span", { class: "fig" + (totals.errors > 0 ? " err" : "") }, [h("span", { class: "label", text: "errors" }), h("span", { class: "num", text: fmt.int(totals.errors) })]),
-      ]);
-    }
-    return h("section", { class: "requests" }, [h("h2", { text: "Requests · " + name + " · last " + range }), totalsLine, body]);
+    M.mount(cache.bodySlot, [body]);
+    return cache.section;
   }
 
   // 3.10b (the operator: "that table should be the same table from the primary page, just
@@ -331,14 +345,23 @@
   // so this section draws through app.js's one jobs-table renderer with the endpoint column
   // omitted (every row is this endpoint) and the filter spelled in the heading and the note.
   // No slice/reverse: the server's order is the log's contract (3.7g).
-  function jobsSection(hist, range, name, now) {
+  function jobsSection(cache, hist, range, name, now) {
+    // 3.12b: the section persists (see requestsSection for the shape); the heading text and
+    // the loading/table body are patched, the table is mounted
+    if (!cache.section) {
+      cache.h2 = h("h2");
+      cache.bodySlot = h("div");
+      cache.section = h("section", { class: "ep-jobs-list" }, [cache.h2, cache.bodySlot]);
+    }
+    cache.h2.textContent = "Jobs · " + name + " · last " + range;
     var body = hist && Array.isArray(hist.jobs)
       // 3.12a fold F3: the same table on every endpoint's page — the id carries the name
       ? M.jobsTable(hist.jobs, { id: "jobs-endpoint-" + name, omit: ["endpoint"], now: now,
         empty: "no jobs ran on it in this range",
         note: "jobs that ran on " + name + " in the last " + range })
       : h("div", { class: "empty", text: "loading" });
-    return h("section", { class: "ep-jobs-list" }, [h("h2", { text: "Jobs · " + name + " · last " + range }), body]);
+    M.mount(cache.bodySlot, [body]);
+    return cache.section;
   }
 
   // 3.10b (the operator: "What is 'events'? I have none."): the collector writes an event only
@@ -441,6 +464,9 @@
       lastFetch: 0, inflight: false, again: false,
       observers: [],
       off: null, // 3.9D D4: the snapshot hook's remover, called in teardown
+      // 3.12b (spec §5): the two table sections persist across draws; these cache objects hold
+      // their elements (built on the first calls of jobsSection/requestsSection below)
+      secJobs: {}, secReqs: {},
     };
     var root = h("div", { class: "endpoint-detail" });
     var headBox = h("div");
@@ -494,11 +520,15 @@
       // 3.10b: the events section is null when the range holds no event (and until the
       // history arrives); replaceChildren would print a null as the text "null", so the list
       // is filtered first, as drawCurrent does for its parts.
-      tablesBox.replaceChildren.apply(tablesBox, [
+      // 3.12b: the jobs and requests sections are PERSISTENT elements (their caches live on
+      // `page`), and the draw ends in mount() — tablesBox's children are the same elements
+      // every time, so the box is untouched unless the events section appears or goes; the
+      // events section itself stays rebuilt (small, no filters, usually absent).
+      M.mount(tablesBox, [
         // the short lists first: the request table can run to 1000 rows
-        jobsSection(page.hist, range, name, now),
+        jobsSection(page.secJobs, page.hist, range, name, now),
         eventsSection(page.hist, range, name, now),
-        requestsSection(page.reqs, range, name, now),
+        requestsSection(page.secReqs, page.reqs, range, name, now),
       ].filter(Boolean));
     }
 

@@ -1,10 +1,10 @@
 // 3.10c: every table pages, sorts and filters, client-side, and keeps the operator's view
 // across pushes. 3.12a extended the filters by column kind (the status pick is a select, turns
 // and started read ranges and comparators, and a "clear filters" link ends the pager line) —
-// step (c) exercises those, (d) the link and the push, (f) keeps the F1 title-needle witnesses. Runs over the seeded world on the overview (empty hash): the seeded snapshot
+// step (c) exercises those, (d) the link and the push, (f) keeps the F1 title-needle witnesses. 3.12b adds (h): one field changed across a push — the wrap, the sideways scroll and the unchanged rows' elements all survive the patch — and (i): the identical rows again — level 1 skips the table without render skipping the snapshot. Runs over the seeded world on the overview (empty hash): the seeded snapshot
 // holds two jobs, so a snapshot COPY with 120 jobs (varied status/started/elapsed/turns) is
-// hand-rendered into #jobs-body — the same table the push draws. Reads (a)-(e) into
-// window.__d1; nothing awaits between the renders and the reads, so a real SSE push cannot
+// hand-rendered into #jobs-body — the same table the push draws. Reads (a)-(e), (h) and (i)
+// into window.__d1; nothing awaits between the renders and the reads, so a real SSE push cannot
 // land mid-sequence (the next push overwrites the hand-edited DOM — capture as you go).
 // (e) then navigates to the job page and the endpoint page and reads their requests tables'
 // filter row and duration sort.
@@ -135,6 +135,61 @@
     first: afterPush[0], last: afterPush[afterPush.length - 1],
     state: stateOf().jobs, renders: Object.assign({}, L.renders) };
 
+  // (h) 3.12b level 2: the patch keeps the DOM. Mark the current wrap, scroll it sideways, and
+  //     push again with ONE job's num_turns changed (a mid-page row, so a neighbour swap cannot
+  //     move anything across the page edge): the marked wrap is still the box's wrap and still
+  //     scrolled (headless Chromium may clamp scrollLeft to 0 if the table is not wider than
+  //     the box — scrollWidth/clientWidth are read with it and what was seen is reported), the
+  //     changed row's tr is a new element reading the new figure, and an unchanged row keeps
+  //     its exact tr element.
+  const wrapEl = box().querySelector(".table-wrap");
+  wrapEl.__mark = 1;
+  wrapEl.scrollLeft = 40;
+  const rowsH = bodyRows();
+  const turnsIdxH = colIdx("turns");
+  const changedId = rowsH[20].getAttribute("data-job");
+  const oldChangedTr = rowsH[20];
+  const keptTr = rowsH[0];
+  keptTr.__trmark = 1;
+  const copyH = JSON.parse(JSON.stringify(real));
+  copyH.jobs = copy2.jobs.map((j) => {
+    const c = Object.assign({}, j);
+    if (c.id === changedId) c.num_turns += 1;
+    return c;
+  });
+  L.render(copyH);
+  const hRows = bodyRows();
+  const changedTr = hRows.find((r) => r.getAttribute("data-job") === changedId);
+  const wantTurns = String(copyH.jobs.find((j) => j.id === changedId).num_turns);
+  const h = {
+    mark: wrapEl.__mark, sameWrap: box().querySelector(".table-wrap") === wrapEl,
+    scrollLeft: wrapEl.scrollLeft, scrollWidth: wrapEl.scrollWidth, clientWidth: wrapEl.clientWidth,
+    changedTrNew: !!changedTr && changedTr !== oldChangedTr,
+    newTurns: changedTr ? changedTr.cells[turnsIdxH].textContent.trim() : null,
+    wantTurns: wantTurns,
+    keptTrStillThere: hRows.indexOf(keptTr) >= 0,
+    keptMark: keptTr.__trmark === 1,
+    pager: pagerText(),
+  };
+  h.ok = h.mark === 1 && h.sameWrap && h.changedTrNew && h.newTurns === h.wantTurns &&
+    h.keptTrStillThere && h.keptMark;
+
+  // (i) 3.12b level 1: the SAME rows again. A deep copy whose only change is OUTSIDE the table
+  //     (window_s, which render's own snapSig reads but the jobs table never shows): render
+  //     proceeds past its snapshot skip, the table's row hash matches, and
+  //     renders.tableSkipped advances by exactly one with the marked wrap untouched.
+  const skipBefore = L.renders.tableSkipped;
+  const copyI = JSON.parse(JSON.stringify(copyH));
+  copyI.window_s = copyH.window_s + 1;
+  L.render(copyI);
+  const i = {
+    tableSkipped: L.renders.tableSkipped - skipBefore,
+    mark: wrapEl.__mark,
+    sameWrap: box().querySelector(".table-wrap") === wrapEl,
+    pager: pagerText(),
+  };
+  i.ok = i.tableSkipped === 1 && i.mark === 1 && i.sameWrap;
+
   // (f) F1 (fold of the page-batch review 2026-10-30): the filter matches the cell's TITLE as
   //     well as its text whenever the title adds characters. Two needles the old guard dropped
   //     (the title was a superset of the cell): the date string behind the started cell's
@@ -217,8 +272,8 @@
     if (/ s$/.test(t)) return parseFloat(t) * 1000;
     return null;
   };
-  // a sort or filter click REBUILDS the table element (the helper redraws its own container),
-  // so every read re-queries the block — a held element reference detaches mid-sequence
+  // 3.12b: a sort or filter click PATCHES the table in place, but every read re-queries the
+  // block anyway — re-querying always works
   const probeBlock = (blockSel) => {
     const block = document.querySelector(blockSel);
     const tableEl = block.querySelector("table");
@@ -272,9 +327,12 @@
     e.epAfterDurationSort = probeBlock("#detail .requests .table-block");
   } else e.epTable = null;
 
-  window.__d1 = { now: NOW, a, b1, b2, c0, c1, c2, c2b, c2c, c3, d0, d1, d2, f, g, e };
+  window.__d1 = { now: NOW, a, b1, b2, c0, c1, c2, c2b, c2c, c3, d0, d1, d2, h, i, f, g, e };
   // F4: the witness is asserted. d1 lands before the throw, so a failed run still hands back
-  // the JSON (dom.js prints SCRIPT_THREW; cdp.mjs's d1 carries f.ok false).
+  // the JSON (dom.js prints SCRIPT_THREW; cdp.mjs's d1 carries f.ok false). 3.12b: h and i
+  // assert the patch identity and the level-1 skip the same way.
   if (!f.ok) throw new Error("f.jobFullId.title " + JSON.stringify(f.jobFullId.title) + " is not the full id");
+  if (!h.ok) throw new Error("3.12b h witness failed: " + JSON.stringify(h));
+  if (!i.ok) throw new Error("3.12b i witness failed: " + JSON.stringify(i));
   return "ok";
 })();
