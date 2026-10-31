@@ -1551,6 +1551,91 @@ ruling (e). The lane is also the operator's first live job on the landed page.
   (one defect found by the first review of these folds, each fixed test-first; the three notes
   are the next small story, not a defect).
 
+### 3.10 Usability pass (operator 2026-10-30 evening, reviewing the live page)
+
+> Thinking usability now while reviewing. Recent jobs doesn't have a timestamp - so answering
+> "when" is not possible from the screen. The server gone tag on the job id field - what is the
+> purpose and use of that? If it has no real use, then drop it to make room for a timestamp
+> field. Also it shows "speed" but really that's decode - where's prefill speed? Endpoint
+> overview - "endpoint": Up, "node": Up. Yeah, we can see that from the header on the page.
+> Redundant. It also says "every endpoint" on tier 0 - why? We're looking at THIS endpoint. Did
+> you mean "lane" or "slot"? Confusing. I think also drop the "tier x" - nobody cares - go with
+> better groupings and labels. Don't be chatty. Also same rule about ellipses on the cards here -
+> "served model" for qwen3.8.flash-next is truncated when the card could just be wider. The
+> "Jobs on it" - Should just be Jobs + filter reminder. Also that table should be the same table
+> from the primary page, just filtered to this endpoint - no need to have two different tables -
+> and the code should be re-used. What is "events"? I have none. Requests table should re-use
+> the one from the job page with an appropriate filter for this page. Re-use code. Summary line
+> for that table is fine. But it shows me we need pagination on our tables - this one I'm
+> looking at as 889 lines, which is not useful. Pagination with local column filters and
+> sorting? Jobs page: Same rule to re-use tables with approriate filters for the screen.
+
+Coordinator's answers from the code (2026-10-30):
+- **"server gone"** (app.js:639): `server_live` is false when the job's MCP server has stopped,
+  has not beaten for 60 s, or its pid is dead (read.py:175). On a FINISHED job that is the normal
+  state once the Claude Code session that ran it ends — no information. On a running/queued job
+  it means the job is lost (the job page says "lost: its server stopped beating", §6); in the
+  Recent-jobs table the only sign of that is this badge, because `statusPill` (app.js:619)
+  prints the stored status, "running". So: the badge goes; a live job whose server is gone
+  gets the pill "lost" instead. Confirmed droppable.
+- **"speed"** (app.js column, read.py:258 `gen_tps`) is decode: `derive.gen_tps` replays the EMA
+  of output tokens / generation span over the job's `/v1/messages` rows. Prefill exists per
+  request (`prefillRate`, app.js:1419: (input + cache_creation) / (ms − gen_ms)) but there is no
+  job-level figure; one is derived the same way (sum of processed prompt tokens over the summed
+  prefill span, rows without both skipped) and the two columns read "prefill tok/s" and
+  "decode tok/s".
+- **"tier 0: every endpoint"** (endpoint.js:240 `TIER_NAME`): the spec's tiers (§5 line 185)
+  group the tiles by which BACKENDS provide them — tier 0 "every backend provides these", tier 1
+  counters, tier 2 occupancy, tier 3 hardware. A taxonomy of data sources leaked onto the page as
+  headings. Nobody looking at one endpoint needs it; the groupings become plain labels
+  ("speeds", "occupancy", "hardware") or nothing, and the "endpoint: up" / "node: up" tiles go
+  (the header already says it; the port-22 fallback note moves to the header's node phrase).
+- **"events"** (endpoint.js `eventsSection`; collect.py:88): the collector writes an
+  `endpoint_events` row on an up/down transition ("up", "down" with the probe's error) — a
+  restart log. The real database holds 2 rows in 32 h. Useful once something flaps; empty tables
+  are noise, so the section is drawn only when the range holds an event, under a plainer title.
+- **Tables**: the overview's `jobsTable` (app.js:608) and the endpoint page's own 5-column jobs
+  list (endpoint.js:329 `JOB_COLUMNS`, from the history body's `jobs`) are two renderers of the
+  same thing; the requests tables already share one renderer (`M.requestsTable`, 3.7k) and the
+  endpoint route caps at 1000 rows (read.py:740) while its totals sum the whole range. The
+  endpoint page's jobs come from `/api/endpoints/<name>/history` (name, id, status, started,
+  finished, model only — not the overview's figures), so reuse needs the overview row shape for
+  those jobs: a `jobs` list filtered by endpoint from the same reader the snapshot uses
+  (read.py:~199, `_JOB_SELECT`), range-bounded, keyed by `jobs(endpoint_id)`.
+
+Stories (lanes; every one a DOM smoke over the seeded world, cross-model review per batch):
+- ☐ **3.10a Recent jobs: when, lost, prefill.** A "started" column (the row's `started_at`,
+  day-stamped as the request tables do it) first after the name; the "server gone" badge
+  dropped, a live job with `server_live === false` drawn with the pill "lost"; "speed" becomes
+  two columns "prefill tok/s" and "decode tok/s", the first from a new `derive.prefill_tps`
+  (read.py adds `prefill_tps` to the snapshot row and the job detail; spec §5a). The compaction
+  badge stays (it carries what the pill cannot).
+- ☐ **3.10b One jobs table, one requests table.** `jobsTable(rows, opts)` becomes the renderer
+  for every jobs list: the overview (as now), the endpoint page (`opts.filter` = the endpoint;
+  the title "Jobs" with the filter and range stated once: "Jobs · ai1 · last 24h"), and later
+  any page; the endpoint history body's `jobs` gains the overview row's figures (the shared
+  reader, filtered by `endpoint_id`), so the rows are the same shape. `requestsTable` stays the
+  one renderer; the endpoint page's title loses "our jobs only" chatter for "Requests · ai1 ·
+  last 24h". Events: drawn only when non-empty, titled "Restarts and outages".
+- ☐ **3.10c Table paging, sorting, column filters.** One ES5 table helper used by both
+  renderers: client-side over the rows already fetched (the endpoint route's 1000-row cap stays;
+  the summary line keeps counting the whole range), page size 50 with a pager line ("1–50 of
+  889"), click-to-sort on every column header (numeric columns numeric, the current sort shown
+  with an arrow), and a filter row under the header with one text box per column (substring,
+  case-insensitive; numeric columns accept `>n` / `<n`); the page keeps a table's sort, filter
+  and page across pushes (keyed by table id), so a refresh never drops the operator's view.
+  Operator asked "Pagination with local column filters and sorting?" — recommended as above;
+  the operator decides before the lane is cut.
+- ☐ **3.10d Endpoint page labels.** The tier headings and classes go; "endpoint"/"node" tiles
+  go (the header carries both and the fallback note); tiles grouped under "speeds",
+  "occupancy", "hardware" with no numbering; "served model" and every tile value follow the
+  3.7u rule (no ellipsis: the tile grows, the grid floors on it) — app.css:193 `.tile-value`
+  loses `text-overflow: ellipsis`; "Jobs on it" → 3.10b's title; "Don't be chatty": every
+  heading on the page is a noun phrase with the filter, no parentheses of explanation.
+- ☐ **3.10e Job page tables.** Its requests table is already the shared renderer; its per-tool
+  breakdown stays (it is a different thing); the helper of 3.10c applies to its requests table
+  with the job as the fixed filter; the "errors" header word pair from 3.7v stays.
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
