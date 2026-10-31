@@ -53,6 +53,11 @@ briefs passed by path (c).
   to consider, not blockers." A proposal is judged on correctness, data integrity and clarity;
   effort is a cost to schedule around, never the verdict; the coordinator argues openly with
   evidence and concedes plainly.
+- **(o)** 2026-10-30 (two both-sides-appended conflicts in tests/test_monitor_page.py in one
+  evening): a story's new tests go in a file of their own (`tests/test_<story>.py`, e.g.
+  `tests/test_3_10b.py`) unless they amend an existing test; a lane's artefacts under `t/` never
+  land (tools/land.sh drops added `t/` paths from the squash; t/conftest.py stays). Both are in
+  the brief template and the land script, not left to memory.
 
 Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before any parser;
 2.4 before any page story; 3.5 last.
@@ -218,7 +223,26 @@ the duplicates go), then docs.
   (2026-10-30): "Doesn't seem worth it - if the error 'stuck' and was terminal, the whole job
   would have failed." A tool error the model recovered from is routine; a terminal one ends the
   job with its error on the job row. The examination below stays as the record of what is and
-  is not stored, for the next time the question comes up. Operator (2026-10-30
+  is not stored, for the next time the question comes up.
+- ☐ **1.14 A build stamp on every server and job: stale code becomes visible.** Operator
+  (2026-10-30, on the coordinator's assessment: "The stale server process ran sixteen jobs on
+  yesterday's code and nothing said so. A package version or git sha stamped into each job
+  record at server start would make that visible"): "Your four calls sound useful - schedule
+  them per your judgement. Opus is free if you need an agent that isn't 'in the fold' right
+  now." Facts: `mcp_servers.version` exists (db.py:69) and is written at server start from
+  `importlib.metadata.version("localagents")` (jobs.py:381) — which reads the installed
+  dist-info, `localagents-0.1.0` for this editable install while pyproject says 0.2.0: the
+  stamp is stale metadata, not the code that runs. Design: the stamp is the package version
+  plus the checkout's short git sha when the install is editable (`direct_url.json` says so;
+  `git -C <checkout> rev-parse --short HEAD`, best effort, never a failure), written once at
+  server start; the job record (`job_status`, `list_jobs`) carries `server_version`; the
+  snapshot's job row and the job page header show it ("server 0.2.0+8ce7d91"); the monitor
+  stamps itself the same way and a job whose server's stamp differs from the monitor's reads
+  "server code differs" (muted) on the job page — the fact that was invisible all day. No
+  schema change. Lane: Opus (outside the fold), in parallel with 3.10f-1 (no migration).
+  The other three calls from the same assessment: land.sh drops lane artefacts (done, with
+  ruling (o)); per-story test files (ruling (o)); the record size — a correction: the brief is
+  already truncated in the record; what bills is `files_touched` and the note, left alone. Operator (2026-10-30
   evening, job page of 20261030-132735-94015337): "shows 8 errors, all 'Bash' on the details.
   But then I can't go deeper into that - do we only record the error count? There's no link to
   the actual request. And actually there's no link from the request to the response or request

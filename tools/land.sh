@@ -26,6 +26,13 @@ behind=$(git rev-list --count "$branch"..main 2>/dev/null) || { echo "no such br
 if ! git merge --squash "$branch" >/dev/null 2>&1; then
   echo "squash CONFLICTS; merge aborted, main untouched:"; git diff --name-only --diff-filter=U; git merge --abort 2>/dev/null || git reset -q --hard HEAD; exit 1
 fi
+# a lane's own files under t/ (its report, probes, smoke outputs — committed with `git add -f`) never
+# land: t/ is gitignored on main except t/conftest.py (the probes' state-dir net). Added paths are
+# unstaged and removed (the squash refuses to overwrite an untracked file, so these are the lane's,
+# never the reader's); a modified t/conftest.py stays staged for the reader to judge.
+while IFS=$'\t' read -r st path; do
+  case "$path" in t/conftest.py) ;; t/*) [ "$st" = A ] && { git reset -q HEAD -- "$path"; rm -f "$path"; echo "dropped (lane artefact): $path"; } ;; esac
+done < <(git diff --cached --name-status)
 [ "$(git diff --cached --name-only | wc -l)" -gt 0 ] || { echo "refusing: the squash applied nothing"; exit 1; }
 git commit -q -F "$msg" || { echo "commit FAILED; staged changes left in place"; exit 1; }
 echo "landed $(git log --oneline -1)"
