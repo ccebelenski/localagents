@@ -33,18 +33,12 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-30 ~20:00).** The three evening stories are landed: 3.7t
-(6c65906, DeepSeek; Qwen review clean), 3.7v (39fdb3a, Qwen/ai1), 3.7y (63df4de, Qwen/ai2); plus the
-coordinator's 3.7x (56364bb) and the ES5 gate (ab4ddb6). DeepSeek's review of the page batch found F1 (an
-unknown node printed the probe sentence as text) and four test-strength findings; its fold is
-landed (1bfe4f3, 714 tests). The Qwen review of that fold found no product defect and four
-test-strength notes (R1-R4, EPICS under the batch review); R2 folded by the coordinator (0a04720),
-R1 documented, R3/R4 are the ceiling of regex pins — a pytest-driven DOM smoke is proposed in
-EPICS for the operator. **No lane running. Every chain of 2026-10-30 is closed. Suite 716.**
- Every chain opened today is closed: 3.9A/B/C/D/E with
-their folds, the package-side folds review (F1–F3 folded), the page folds review (P-1/P-2 folded
-and reviewed clean), 1.12, 3.7u, 3.7w. One Haiku worktree (`.claude/worktrees/agent-a793f5489d5ed8033`)
-is landed but still harness-locked; `git worktree remove -f -f` it when the lock is gone. Suite 694.
+**Lanes at the last note (2026-10-30 ~22:50).** 3.10 usability pass in flight: 3.10a (39936f1) and
+3.10d (9c41b21) landed; their batch review runs on the local dense Qwen (llamacpp); 3.10f-1 (the
+job name dropped, package side) runs on DeepSeek/dgx1-a, 90-min cap. Queue, in order: 3.10f-2
+(monitor side: JSON keys and pages show the short id), 3.10b (one jobs table, one requests
+table), 3.10c (client-side paging, sorting, column filters — decided). EPICS 3.10 has the
+operator's words, answers and the split; ruling (n) is inked.
 
 **Awaiting the operator.**
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is

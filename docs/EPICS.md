@@ -1654,7 +1654,7 @@ Coordinator's answers from the code (2026-10-30):
   (read.py:~199, `_JOB_SELECT`), range-bounded, keyed by `jobs(endpoint_id)`.
 
 Stories (lanes; every one a DOM smoke over the seeded world, cross-model review per batch):
-- ☐ **3.10a Recent jobs: when, lost, prefill.** A "started" column (the row's `started_at`,
+- ☑ **3.10a Recent jobs: when, lost, prefill.** (Landed 39936f1: Qwen/ai1 job 20261030-215324-2dc084a5, 103 turns, 10 min; 720 tests. `derive.prefill_tps` a plain ratio (the docstring says why not an EMA); `timeTd` factored out of `requestsTable` for both tables; `Job.summary()` mirrors the key (test_summary_db pins the two summaries equal — a file the brief's list missed, the lane caught); the old " tok/s" suffix dropped since the headers carry the unit. Smoke: headers job, status, started, model, endpoint, elapsed, turns, tool calls, tool errors, context, prefill tok/s, decode tok/s, last activity; the seeded running job reads "lost" because the seed stores the seed process's own pid as its server (seed.py:366 — worth knowing). Lane's notes: `test_finished_rows_derive_once_across_pushes` pins the derive count per row (6 → 7), every new per-row figure must update it; prefill figures are dominated by the small `ms − gen_ms` residual — the seeded running job reads 53,414 tok/s — the same exposure the request table has; a NULL `cache_creation` (older writes) blanks the cell.) A "started" column (the row's `started_at`,
   day-stamped as the request tables do it) first after the name; the "server gone" badge
   dropped, a live job with `server_live === false` drawn with the pill "lost"; "speed" becomes
   two columns "prefill tok/s" and "decode tok/s", the first from a new `derive.prefill_tps`
@@ -1678,7 +1678,7 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   operator (2026-10-30): "3.10c - yes, client side filter." Decided: client-side over the
   fetched rows, as written. Sequence: after 3.10a (columns) and 3.10b (one renderer each), so
   the helper is built once under both tables.
-- ☐ **3.10d Endpoint page labels.** The tier headings and classes go; "endpoint"/"node" tiles
+- ☑ **3.10d Endpoint page labels.** (Landed 9c41b21: Qwen/ai2 job 20261030-215334-3293e876, 93 turns, 20 min, one compaction; 723 tests. Tiers kept as order and border colours, headings plain nouns with none over the first group; the state/node tiles gone, the port-22 answer in the header's host clause; tiles a flex-wrap row with `flex: 1 0 auto; min-width: 170px`, `.tile-value` nowrap without ellipsis — a 120-char served model widened its tile to 1118 px, overflow 0, 17 sparklines drawn. Lane's corrections: cdp.mjs's `tiles`/`tileLabels` read the OVERVIEW's hidden cards, not the endpoint page (the brief was wrong; its own `t/fit.js` read the tiles); the page-test literal scan reads quoted prose in comments too, so a quoted phrase in a comment is de facto pinned.) The tier headings and classes go; "endpoint"/"node" tiles
   go (the header carries both and the fallback note); tiles grouped under "speeds",
   "occupancy", "hardware" with no numbering; "served model" and every tile value follow the
   3.7u rule (no ellipsis: the tile grows, the grid floors on it) — app.css:193 `.tile-value`
