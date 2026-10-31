@@ -9,8 +9,9 @@ into the colum size can be pop-out elements, activated on a click on the filter 
 design on that before any build since there are multiple aspects to this request and a bad choice
 can ruin the page."
 
-Status: DESIGN. Nothing here is built. The operator approves, amends or declines each decision;
-the build stories are cut from the approved text.
+Status: APPROVED with amendments (operator 2026-10-31 morning, §14 holds the words): the pick is a
+native dropdown, no presets, the live redraw is HELD while a pop-out is open, the typed `>n` grammar
+stays as a shortcut inside the range pop-out, no "blank only" option. The build story is 3.12a.
 
 ## 1. What exists (3.10c, folded by 3.11a)
 
@@ -30,14 +31,15 @@ Measured: a keystroke redraws in 7–9 ms at 1,000 rows (3.11a). The rows are at
 
 ## 2. The decision in one paragraph
 
-Each column declares a filter KIND. Four kinds: `text` (what exists), `pick` (a set of values
-chosen from a list with counts), `range` (two inclusive numeric bounds), `time` (two inclusive
-instants). The filter row keeps one cell per column: a `text` column keeps its inline box; the
-other three show a small button that reads the current filter in a few characters (or the column
-name, muted, when none) and opens ONE pop-out under the cell. The pop-out is the only place a
-pick, a range or a time is edited; it applies live, closes on Escape, on a click outside, or on
-its own close control, and survives a push because it is rebuilt from `TABLE_STATE`, not kept in
-the DOM. Filters AND across columns and OR within a pick. The pager line gains "clear filters".
+Each column declares a filter KIND. Four kinds: `text` (what exists), `pick` (one value chosen
+from a dropdown of the values present, with counts), `range` (two inclusive numeric bounds),
+`time` (two inclusive instants). The filter row keeps one cell per column: a `text` column keeps
+its inline box; a `pick` column holds a native `<select>` inline; `range` and `time` show a small
+button that reads the current filter in a few characters (or the column name, muted, when none)
+and opens ONE pop-out under the cell. The pop-out applies live and closes on Escape, on a click
+outside, or on its own close control. While a pop-out is open the table's live redraw is HELD:
+a push keeps the newest rows aside and the table redraws from them when the pop-out closes.
+Filters AND across columns. The pager line gains "clear filters".
 
 ## 3. The kinds, column by column
 
@@ -72,22 +74,20 @@ Requests table (both pages):
 The kind is a field on the column spec (`filter: "pick"`), set beside `numeric` in the two
 column maps; `dataTable` reads it and defaults to `text`. No column changes its cell or its sort.
 
-## 4. The pick
+## 4. The pick (operator: "I think the drop-down is sufficient")
 
-- The list holds every distinct value of the column across ALL fetched rows (the sort key's
-  value, which is the word the pill prints or the cell's text), sorted as the column sorts, each
-  with a count. The count is the number of rows that match the OTHER columns' filters (faceted:
-  "done 40, failed 12, running 3" under a turns range), so a value whose count is 0 stays listed
-  and selectable rather than vanishing when another filter drops its rows.
-- Each value is a checkbox. None checked = no filter. Several checked = any of them.
-- A value that disappears from a later push (a model no longer in the rows) stays in the state and
-  is listed with count 0 until unchecked, so the operator's choice never silently evaporates.
-- The button reads the one value when one is checked ("done"), "N of M" when several
-  ("2 of 7"), the column name muted when none. The full list rides in the button's title.
-
-Alternative considered and not recommended: a native `<select>` inline. It is a true dropdown
-with zero custom code, but single-valued ("failed or timeout" needs two), has no counts, and would
-be a second mechanism beside the pop-out the range and time kinds need anyway. One mechanism.
+- A native `<select>` in the filter cell, styled as the text box is (muted, 13 px, the column's
+  width, `min-width: 3.5em`). Its first option is "any" (no filter); then every distinct value of
+  the column across ALL fetched rows (the sort key's value: the word the pill prints, the cell's
+  text), sorted as the column sorts, each option labelled "value (count)". The count is the number
+  of rows that match the OTHER columns' filters (faceted: "done (40)" under a turns range), so a
+  value whose count is 0 stays listed rather than vanishing when another filter drops its rows.
+- One value at a time. (A pick of two — "failed or timeout" — is two looks; the operator weighed
+  this against the pop-out's checkbox list and chose the dropdown.)
+- A value that disappears from a later push (a model no longer in the rows) stays selected and
+  listed with "(0)" until the operator picks "any", so the choice never silently evaporates.
+- A `change` on the select updates the state and redraws, as a keystroke in a text box does; the
+  select keeps focus through the redraw by the same `data-filter` re-focus.
 
 ## 5. The range
 
@@ -101,9 +101,12 @@ be a second mechanism beside the pop-out the range and time kinds need anyway. O
   swapping the operator's numbers.
 - The button reads "≥ 100", "≤ 5", "10–50" (`fmt.int` on both ends), the column name muted
   when none.
-- The 3.10c `>n` / `<n` typed grammar goes. It was an exclusive comparator in a text box, half of
-  what the operator asked for and invisible to anyone who did not read the title. (Decline if the
-  typing shortcut is wanted; it can stay as a parser behind the "from" box: "≥100" typed there.)
+- The 3.10c `>n` / `<n` typed grammar moves INSIDE the pop-out as a shortcut (operator: "We can try
+  it and see"): a third box under the two, placeholder "or type >n, <n, n-m", whose `input` fills
+  the from/to boxes. `n-m` sets both (inclusive); `>=n` / `<=n` set one side inclusive; `>n` / `<n`
+  set one side OPEN (exclusive) — the only way an endpoint is exclusive, since the boxes are always
+  inclusive. The state records the open side (`fromOpen`, `toOpen`, §8) and the button reads
+  "> 100" against "≥ 100". Editing a from/to box clears that side's open flag.
 
 ## 6. The time
 
@@ -117,8 +120,7 @@ be a second mechanism beside the pop-out the range and time kinds need anyway. O
   m-1, d, h, mi)`), never through `Date.parse`.
 - The button reads the way the time cells read (the `timeTd` rule, app.js:639: clock time inside
   24 h, date past it): "from 12:30", "to Oct 30", "12:30–14:00".
-- No presets ("last hour", "today") in this story. They are three links that fill the boxes and
-  are cheap; the operator decides whether they earn the space (question Q2).
+- No presets ("last hour", "today") in this story (operator: "Agree").
 - On the endpoint page the fetched range already bounds the rows (`#range`); the filter narrows
   inside it. The overview's jobs table holds live jobs plus the last ten finished, so the time
   filter is weakest there; one rule for every table is simpler than an exception.
@@ -143,13 +145,16 @@ be a second mechanism beside the pop-out the range and time kinds need anyway. O
   in DOM order (no focus trap code: the pop-out is the last child of the block, so Tab past its end
   leaves the table, which is acceptable).
 - A push (the overview rebuilds `#jobs-body` every snapshot; the detail pages on their fetch)
-  replaces the whole table block. `TABLE_STATE[id].open = <column name>` records the open pop-out;
-  the new `dataTable` call rebuilds it from the state and re-focuses the control that had the
-  caret (the 3.10c caret trick, by a `data-filter-field` attribute). Known cost: a NATIVE date
-  picker popup is closed by the rebuild. The overview's render skips when nothing but `now`
-  changed (3.7m), so this bites only when a job actually moves while the picker is open; typing the
-  value is unaffected. (Q3 asks whether this is acceptable or whether the overview should hold
-  its redraw while a pop-out is open.)
+  calls `jobsTable`/`requestsTable` again, which call `dataTable` again. The HOLD (operator: "if
+  too often the picker is impossible to use. I would hold to be safe"): `TABLE_STATE[id].open`
+  names the open pop-out's column; while it is set, a `dataTable` call for that id does NOT build
+  a new table — it keeps the newest `rows` in `st.held`, returns the container it already owns
+  (a module-level `TABLE_DOM[id]`, the one element the callers re-append), and the DOM, the
+  pop-out and any native picker stay exactly as they are. Closing the pop-out clears `open`,
+  takes `st.held` as the rows and draws. The pager line reads "updates held while the filter is
+  open" in muted text while the hold is on, so a stale table is never a surprise (a running job's
+  elapsed stops moving for as long as the pop-out is open). The hold is the helper's, so the
+  detail pages get it without a change; the cards above the overview's table keep updating.
 - Narrow screens (the 760 px query): the pop-out keeps its placement; the filter row already
   scrolls with the table. Nothing special in this story.
 
@@ -164,9 +169,14 @@ TABLE_STATE[id] = {
                                    //   range: {from: 10, to: 50}        (either side null)
                                    //   time:  {from: 1761900000, to: null}   (epoch seconds, inclusive)
   page: n,
-  open: null | "<col>"             // the pop-out, if one is open
+  open: null | "<col>",            // the pop-out, if one is open (the hold is on)
+  held: null | rows                // the newest rows a push brought while the hold was on
 }
 ```
+
+A range value may carry `fromOpen: true` / `toOpen: true` when the typed shortcut set an
+exclusive end (§5); absent means inclusive. `TABLE_DOM[id]` holds the container a held table
+returns; it is not state and the smoke does not read it.
 
 A filter whose value is "empty" (blank text, empty array, both sides null) is deleted from
 `filters`, so "any filter active?" stays `Object.keys(st.filters).length > 0` and the smoke's
@@ -185,7 +195,8 @@ smoke.
 |---|---|
 | the filter row grows taller or wider | the button is styled to the input's exact height and font; the row's cells keep `min-width: 3.5em`; a button's text is short by construction (§4, §5, §6) |
 | the pop-out is clipped or pushes the layout | positioned, outside `.table-wrap`, clamped to the block's right edge; it overlays, never reflows |
-| the pop-out dies on a push mid-edit | rebuilt from `TABLE_STATE.open` with focus restored; the native date picker is the one loss (Q3) |
+| the pop-out dies on a push mid-edit | the hold (§7): no redraw while a pop-out is open; the held rows draw on close; the pager says so |
+| the hold leaves a stale table unnoticed | the pager line names it; closing the pop-out (Escape, click outside) ends it; nothing else on the page is held |
 | a picked value vanishes from the list on a push | the state keeps it; listed with count 0 until unchecked |
 | two kinds disagree about "blank" | one rule: a blank never matches a bounded range or time; a pick lists only values that exist; text matches "" trivially (filter off) |
 | ES5 | no `Set`/`Map`/arrow; the pick's distinct values through an object keyed by the string; datetime-local parsed by hand; the ES5 gate and `node --check` run in the suite |
@@ -211,10 +222,13 @@ The cells, the sort, the paging, the ids, the caller contracts (`jobsTable(rows,
   distinct values and faceted counts; inclusive range both ends; blanks under a bounded range;
   the time bounds at :00 and :59; the state shape; a push rebuilding the open pop-out; the
   "clear" paths. fakedom has no layout, so placement is the smoke's.
-- `tools/smoke/tables.js` step (c) becomes: open the status pop-out, check "done" → 40 rows;
-  open turns, from 101 → the same 7 rows `>100` gave; a started range inside the hand-made day;
-  a push with a pop-out open keeps it open on the same column with the same values. A new read:
-  the pop-out's bounding box lies inside the table block's at 1200 px and at 700 px widths.
+- `tools/smoke/tables.js` step (c) becomes: the status select set to "done" → 40 rows (the option
+  label "done (40)"); open turns, from 101 → the same 7 rows `>100` gave, then the shortcut box
+  ">100" → the same 7 with the button reading "> 100"; a started range inside the hand-made day;
+  a push (a new `render(copy2)`) with the turns pop-out open leaves the tbody's first cell text
+  and the pop-out's box values unchanged and the pager reading "updates held…"; closing it draws
+  copy2's rows. A new read: the pop-out's bounding box lies inside the table block's at 1200 px
+  and at 700 px widths.
 
 ## 13. Build plan
 
@@ -227,15 +241,16 @@ above, and carries the two judgement sentences. Then a construct-it review by De
 pop-out, the clamp at 700 px), the fold by the reviewer, a third-model review of the fold. The
 operator reads the live page before the story is ticked (the renders-not-truth caution).
 
-## 14. Questions the operator decides
+## 14. The questions and the operator's answers (2026-10-31 morning, verbatim)
 
-- Q1. Pick is multi-valued with counts in a pop-out (§4), not a native single `<select>`. Agree?
-- Q2. Time presets ("last hour", "today", "last 24 h") as three links in the time pop-out: in or
-  out? (Recommendation: out for now; the boxes come first.)
-- Q3. A push while a pop-out is open: rebuild it from the state and accept that the native date
-  picker closes (recommended, simplest), or hold the overview's table redraw while a pop-out is
-  open and redraw on close (the live table goes stale while the operator edits a filter)?
-- Q4. The `>n` / `<n` typed grammar goes (§5). Keep it as a typing shortcut inside the range
-  pop-out instead?
-- Q5. A "blank only" / "has a value" choice for range and time columns (a request with no
-  prefill figure; a job with no last activity): not in this story unless wanted.
+- Q1 (multi-valued pick in a pop-out vs a native single `<select>`): "I think the drop-down is
+  sufficient." → §4 is the native select.
+- Q2 (time presets): "Agree." → out.
+- Q3 (a push while a pop-out is open): "Depends on frequency of the push - if too often the picker
+  is impossible to use. I would hold to be safe." → the hold, §7. (The overview pushes every
+  snapshot and a running job changes the table on each, so the picker would have closed every few
+  seconds.)
+- Q4 (the `>n` grammar): "We can try it and see." → the shortcut box inside the range pop-out, §5.
+- Q5 ("blank only"): "Not sure what you're considering here." → explained (a request with no
+  prefill figure or a job with no last activity cannot be found by any filter: a bounded range
+  hides blanks, text cannot match an empty cell); recommended out of this story and left out.
