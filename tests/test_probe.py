@@ -49,7 +49,10 @@ def test_read_timeout_proves_the_box_up():
     assert "10.0.0.60:8000" in out["error"]
     assert "connected, no reply in time" in out["error"]
     assert "stalled or overloaded" in out["hint"]  # 3.12e: the explanation is the hint now
-    assert "firewall" not in out["error"]
+    # the read timeout is never confused with the connect timeout: its hint names a stall, not
+    # a firewall (3.12e review: the old `not in out["error"]` was vacuous once no error sentence
+    # mentioned a firewall)
+    assert "firewall" not in out["hint"]
 
 
 def test_write_timeout_proves_the_box_up():

@@ -97,12 +97,15 @@ def test_the_filter_grammar_substring_and_the_numeric_comparators():
     assert re.search(r"\.indexOf\(", body) and ".toLowerCase()" in body
     # a leading > or < on a numeric column compares the sort key as a number (3.12d: the
     # operand goes through readNum, the cell's own unit; the shape is the comparator regex)
-    assert r"([<>])\s*(\S+)" in body
+    assert r"([<>])\s*(.+?)" in body  # 3.12d fold: the operand may hold the cell's own space
     assert "readNum(col.unit," in body
+    # the compare itself is on the SORT KEY as a number, strict either way (the 3.12d review:
+    # the regex pins above do not say so; this one does)
+    assert "(gt ? v > want : v < want)" in body
     # 3.12a: the number box reads x-y first — two tokens around a hyphen, spaces allowed
     # (3.12d: the tokens carry the unit — "5m-10m" — and each end goes through readNum),
     # inclusive on both ends (>= and <= in the filter)
-    assert r"(-?[^\s-]+)\s*-\s*(-?[^\s-]+)" in body
+    assert r"(-?[^-]+?)\s*-\s*(-?[^-]+?)" in body  # 3.12d fold: tokens may hold a space
     assert re.search(r"v >= \w+ && v <= \w+", body)
 
 

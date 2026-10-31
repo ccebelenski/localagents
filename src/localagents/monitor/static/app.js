@@ -706,7 +706,9 @@
     var t = String(s).replace(/,/g, "");
     var m;
     if (unit === "seconds") {
-      m = /^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(t);
+      // 3.12d fold: a decimal in any part ("1.5m", "0.5d") — fmt.dur never prints one, but a
+      // typed shorthand that read nothing was the silent failure the review found
+      m = /^(?:(\d+(?:\.\d+)?)d)?(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(t);
       if (m && (m[1] !== undefined || m[2] !== undefined || m[3] !== undefined || m[4] !== undefined)) {
         return (+(m[1] || 0)) * 86400 + (+(m[2] || 0)) * 3600 + (+(m[3] || 0)) * 60 + (+(m[4] || 0));
       }
@@ -919,7 +921,10 @@
           // hyphen, each end read by the unit ("5m-10m", "800ms-1.2s", "50%-80%"); an end
           // that reads NaN falls through, as an unparseable range always did, to the
           // comparator and then the typed substring
-          var numRange = /^\s*(-?[^\s-]+)\s*-\s*(-?[^\s-]+)\s*$/.exec(f);
+          // 3.12d fold (the review): a token may hold an inner space — the duration cells print
+          // "1.2 s" and "800 ms", and the bound typed as the cell prints it must read; the
+          // whitespace around each token is trimmed by the \s* on either side of the hyphen
+          var numRange = /^\s*(-?[^-]+?)\s*-\s*(-?[^-]+?)\s*$/.exec(f);
           if (numRange) {
             var lo = readNum(col.unit, numRange[1]), hi = readNum(col.unit, numRange[2]);
             if (!isNaN(lo) && !isNaN(hi)) {
@@ -930,7 +935,7 @@
               return;
             }
           }
-          var numCmp = /^\s*([<>])\s*(\S+)\s*$/.exec(f);
+          var numCmp = /^\s*([<>])\s*(.+?)\s*$/.exec(f); // the operand may hold a space ("1.2 s")
           if (numCmp) {
             var want = readNum(col.unit, numCmp[2]);
             if (!isNaN(want)) {
