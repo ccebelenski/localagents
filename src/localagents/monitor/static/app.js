@@ -829,8 +829,11 @@
     // 3.12c fold F2 (the review): the table's CLOCK is drawn from opts too — the picker's
     // summary says "today"/"yesterday" by opts.now's local day, and the started cells day-stamp
     // against it. The hash carries that local DAY, so the first push of a new local day is a
-    // real change and redraws once (the started cell's clock-to-date switch rides the same
-    // redraw); a push inside the same day is still skipped.
+    // real change and redraws once; a push inside the same day is still skipped. The redraw
+    // patches the summary and the panel; it does NOT switch an unchanged row's started cell
+    // from clock to date — that row's tr is kept by its signature (patchBody), so the cell
+    // waits for the row's next real change (the spec's accepted exception; the Qwen review
+    // of the fold proved the sentence that said otherwise false).
     var hash = JSON.stringify(rows) + "\n" + columns.map(function (c) { return c.name; }).join(",")
       + "\n" + (opts.note || "") + "\n" + (opts.empty || "")
       + "\n" + (opts.now != null && isFinite(opts.now) ? localDay(opts.now) : "");
