@@ -1662,7 +1662,16 @@ Coordinator's answers from the code (2026-10-30):
   directories alike by the newest mtime of the directory and its children; `state_dir` lives in
   db (derive and read import it there; jobs re-exports). read.py keeps the JSON keys `name`,
   `dropped_job`, `job_name` carrying the id and `job_detail`'s `name` — 3.10f-2 removes them
-  (read.py:245, 334, 632-634, 734, 755, 820). Lane's notes: `_v9` renames while holding BEGIN
+  (read.py:245, 334, 632-634, 734, 755, 820) — DONE, **3.10f-2 LANDED e86190b** (Qwen/ai1 job
+  283af1bd-f874-4a7d-9e17-9a6c3120c396, 152 turns, 13 min, 762 tests; the first lane whose own
+  record carries `server_version 0.2.0+85344a5`, `prefill_tps` and a UUID branch — the restarted
+  server's code is live). One `shortId`/`jobLink` exported from app.js; the dropped-job line
+  links straight off `dropped_job_id`; the job page header shows the full id. Lane's notes for
+  folds: the §5a field gate is ONE-directional (emitted keys ⊆ spec) so a key removed from a
+  route never fails it — a reverse check (spec-named keys ⊆ emitted) would have caught 3.10f-1's
+  spec stragglers; endpoint.js `header()` carries a dead `hist` parameter; `wide.js`/`keep.js`
+  hand-render a 200-char job NAME the page no longer draws, so their README floor numbers (946)
+  are stale — re-measure with 3.10g. Lane's notes: `_v9` renames while holding BEGIN
   IMMEDIATE (a slow state dir lengthens the write lock); kept worktrees under the old names are
   not renamed (the row's `worktree` JSON holds the path). **Until its review is clean, do not
   restart the operator's monitor or MCP server: the first process on this code migrates the real

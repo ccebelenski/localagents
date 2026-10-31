@@ -40,9 +40,11 @@ first process on this code migrates the real database and renames the real job d
 INCIDENT 22:44: the real database was migrated to v9 from the lane's worktree code before the
 landing (EPICS 3.10f-1 incident); the operator reconnected the MCP server (~23:15) and must restart
 the monitor the same way. 1.15 (a4252ce) now makes a worktree refuse the default state directory.
-Queue: the 3.10f-1 review (Qwen/ai2, with 1.15 in its brief), 3.10f-2 (monitor side: the JSON
-keys and pages show the short id), 3.10g (the one-column stretch: cap the card width; the job
-lines out of the floor awaits the operator), 3.10b, 3.10c. Suite 752. Every lane brief from now
+3.10f-2 landed (e86190b, 762 tests). Running: the 3.10f-1 + 1.15 review (Qwen/ai2), 3.10h(a) the
+shim's generation clock (DeepSeek), 3.10b one jobs table / one requests table (Qwen/ai1). Queue:
+3.10h(b) the request table's prompt/new columns (after 3.10b), 3.10c paging/sorting/filters,
+3.10g (cap the card width now; the job lines out of the floor awaits the operator's word),
+folds: a reverse §5a gate, endpoint.js header's dead `hist`, wide.js/keep.js re-measured. Every lane brief from now
 exports XDG_STATE_HOME and LOCALAGENTS_DB together (the smoke README recipe does).
 
 **Awaiting the operator.**
