@@ -33,18 +33,15 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-31 ~00:10).** Landed since the 22:44 incident: 1.15 (the worktree
-guard), 3.10f-2 (short ids on the pages), 3.10h(a) (the shim's clock), 3.10b (one jobs table), the
-3.10f-1 + 1.15 review clean (O1/O4 folded). Running: the 3.10h(a) review (dense Qwen/llamacpp),
-3.10h(b) prompt/new/reused columns (Qwen/ai1), 3.10g the card-width cap (Qwen/ai2). Queue: 3.10c
-paging/sorting/filters (after 3.10h(b): both edit `requestsTable`), the review of the page batch
-(3.10f-2, 3.10b, 3.10h(b), 3.10g), folds: a reverse §5a gate, endpoint.js header's dead `hist`,
-wide.js/keep.js re-measured. The MCP server (reconnected 23:15) predates 3.10h(a): its jobs carry
-the first-byte prefill figure until the next `/mcp` reconnect at a quiet moment — never while
-jobs run (operator). The floor half of 3.10g awaits the operator's word. Suite 776. PRE-CLOSE (EPICS 3.11, operator
-00:15): after 3.10c and the page-batch review, 3.11a an Opus codebase cleanliness/duplication/
-risk-reduction audit with folds, then 3.11b a test-suite audit (sycophant, too-narrow, dead
-tests) by DeepSeek with replacements; then the retro.
+**Lanes at the last note (2026-10-31 ~01:10).** The whole 3.10 usability pass is landed: 3.10a, b,
+c (+ the id fold 18efad4), d, f-1, f-2, g (the cap), h(a) + its fold, h(b); 1.14, 1.15. Running:
+the shim-fold review (Qwen/ai2), the page-batch review (DeepSeek: f-2, b, h(b), g, c), 3.10i the
+prefill rule for backends that report no cache (Qwen/ai1). Then: folds from those reviews, then
+3.11a (Opus codebase audit) and 3.11b (test-suite audit), then the retro. The MCP server
+(reconnected 23:15) predates 3.10h(a) and the shim fold: vLLM rows keep output 0 and every row
+the first-byte prefill until the next `/mcp` reconnect at a quiet moment (never while jobs run).
+3.10g's floor half and the vLLM flag (`--enable-prompt-tokens-details`, at vLLM's next natural
+restart) are the operator's. Suite 798.
 
 **Awaiting the operator.**
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is
