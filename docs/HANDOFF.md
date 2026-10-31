@@ -33,15 +33,15 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-31 ~01:10).** The whole 3.10 usability pass is landed: 3.10a, b,
-c (+ the id fold 18efad4), d, f-1, f-2, g (the cap), h(a) + its fold, h(b); 1.14, 1.15. Running:
-the shim-fold review (Qwen/ai2), the page-batch review (DeepSeek: f-2, b, h(b), g, c), 3.10i the
-prefill rule for backends that report no cache (Qwen/ai1). Then: folds from those reviews, then
-3.11a (Opus codebase audit) and 3.11b (test-suite audit), then the retro. The MCP server
-(reconnected 23:15) predates 3.10h(a) and the shim fold: vLLM rows keep output 0 and every row
-the first-byte prefill until the next `/mcp` reconnect at a quiet moment (never while jobs run).
-3.10g's floor half and the vLLM flag (`--enable-prompt-tokens-details`, at vLLM's next natural
-restart) are the operator's. Suite 798.
+**Lanes at the last note (2026-10-31 ~02:00, the operator asleep).** The 3.10 pass is landed (a-i,
+f-1/f-2, the shim fold); 3.10i landed; a `node --check` parse gate added. DeepSeek's page-batch
+review found F1/F2 in the table helper (the title guard inverted; blanks flip with the sort
+direction) and two pin gaps — the fold runs in the review worktree (DeepSeek). 3.11b, the test-suite
+audit, runs on the dense Qwen (llamacpp) with a no-edit rule on the test_3_10*.py files the fold
+touches. Next, in order: land the fold (a Qwen review of it), dispatch 3.11a (Opus, the brief at the
+session scratchpad `brief-3.11a.md`) once the fold is in, land 3.11b's replacements, update
+EPICS/HANDOFF/memory, draft the retro's counts (the retro itself is the operator's call). No push,
+no MCP reconnect, no touch of port 8765. Suite 808.
 
 **Awaiting the operator.**
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is
