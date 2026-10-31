@@ -1,7 +1,8 @@
 // 3.10c: every table pages, sorts and filters, client-side, and keeps the operator's view
 // across pushes. 3.12a extended the filters by column kind (the status pick is a select, turns
-// and started read ranges and comparators, and a "clear filters" link ends the pager line) —
-// step (c) exercises those, (d) the link and the push, (f) keeps the F1 title-needle witnesses. 3.12b adds (h): one field changed across a push — the wrap, the sideways scroll and the unchanged rows' elements all survive the patch — and (i): the identical rows again — level 1 skips the table without render skipping the snapshot. Runs over the seeded world on the overview (empty hash): the seeded snapshot
+// reads ranges and comparators, and a "clear filters" link ends the pager line); 3.12c gave the
+// started column a two-level picker (button + panel of date/hour selects) — step (c) exercises
+// those, (d) the link and the push, (f) keeps the F1 title-needle witness (the full job id). 3.12b adds (h): one field changed across a push — the wrap, the sideways scroll and the unchanged rows' elements all survive the patch — and (i): the identical rows again — level 1 skips the table without render skipping the snapshot. Runs over the seeded world on the overview (empty hash): the seeded snapshot
 // holds two jobs, so a snapshot COPY with 120 jobs (varied status/started/elapsed/turns) is
 // hand-rendered into #jobs-body — the same table the push draws. Reads (a)-(e), (h) and (i)
 // into window.__d1; nothing awaits between the renders and the reads, so a real SSE push cannot
@@ -105,24 +106,76 @@
   setSel(filterSel("status"), ""); // "any" deletes the key
   // 3.12d: the elapsed box reads the unit its CELLS print — "<10m" is ten MINUTES, not ten
   // seconds. The expected count is computed from the hand rows' elapsed_s under 600, as (c)
-  // computes its own expectations (not hard-coded); the box is cleared after, leaving the
-  // started-window step the only filter again.
+  // computes its own expectations (not hard-coded); the box is cleared after.
   const underTenM = copy.jobs.filter((j) => j.elapsed_s < 600).length;
   typeIn(filterInput("elapsed"), "<10m");
   const c2c = { under: underTenM, matched: matched(), pager: pagerText() };
   typeIn(filterInput("elapsed"), "");
-  const winStart = new Date(NOW * 1000); winStart.setHours(11, 0, 0, 0);
-  const winEnd = new Date(NOW * 1000); winEnd.setHours(11, 30, 59, 999);
-  const windowRows = copy.jobs.filter((j) => j.started_at >= winStart.getTime() / 1000 &&
-    j.started_at <= winEnd.getTime() / 1000).length;
-  typeIn(filterInput("started"), "11:00-11:30");
-  const c3 = { window: windowRows, matched: matched(), pager: pagerText(),
-    filters: Object.assign({}, L.TABLE_STATE.jobs.filters) };
+  // 3.12c: started is the two-level PICKER, not a box. The filter cell's control: the button
+  // and the cell's widths read unset. Open the panel — its parent is the block, its rect
+  // inside the block's and its top at or below the wrap's bottom (a child of the wrapper
+  // would be clipped or scroll it, spec §5/§7; the three rects go with the booleans).
+  // Choose the "today" option (every hand row sits on NOW's local day -> all 120), then from
+  // "11" and to "11" -> the 11-o'clock rows (expected computed from the hand rows' local
+  // hours, as (c) computes its own), then the panel's "clear" -> 120 and the state's key
+  // gone, then "done" closes. The summary and the widths read with the control set.
+  const timeTh = box().querySelector('.table-filters th[data-filter-kind="time"]');
+  const startedBtn = box().querySelector('button.filter-pick[data-filter="started"]');
+  if (!startedBtn) { window.__d1 = { error: "no started filter-pick button" }; return; }
+  const thUnset = timeTh.getBoundingClientRect().width;
+  const btnUnset = startedBtn.getBoundingClientRect().width;
+  startedBtn.click(); // open
+  const panel = box().querySelector(".filter-panel");
+  const blockRect = box().querySelector(".table-block").getBoundingClientRect();
+  const wrapRect = box().querySelector(".table-wrap").getBoundingClientRect();
+  const panelRect = panel ? panel.getBoundingClientRect() : null;
+  const hourRows = copy.jobs.filter((j) => new Date(j.started_at * 1000).getHours() === 11).length;
+  const dateSel = panel.querySelector("select.fp-date");
+  const todayOpt = Array.from(dateSel.options).find((o) => o.textContent.indexOf("today") === 0);
+  setSel(dateSel, todayOpt.value);
+  const c3date = { label: todayOpt.textContent, value: todayOpt.value, matched: matched() };
+  setSel(panel.querySelector("select.fp-from"), "11");
+  setSel(panel.querySelector("select.fp-to"), "11");
+  const c3 = {
+    window: hourRows, matched: matched(), pager: pagerText(),
+    filters: Object.assign({}, L.TABLE_STATE.jobs.filters),
+    summary: startedBtn.textContent,
+    date: c3date,
+    panel: {
+      parent: panel ? panel.parentNode.className : null,
+      insideBlock: !!panelRect && panelRect.left >= blockRect.left - 1 &&
+        panelRect.right <= blockRect.right + 1 && panelRect.top >= blockRect.top - 1 &&
+        panelRect.bottom <= blockRect.bottom + 1,
+      // the panel hangs UNDER its header cell, so it overlaps the wrapper's area — the point
+      // of the parentage is that it is not a child of .table-wrap (no clip, and the wrapper
+      // never gains scroll from it: scrollWidth == clientWidth here), and it stays inside the
+      // block's box. The three rects are reported with the booleans.
+      belowWrapTop: !!panelRect && panelRect.top >= wrapRect.top - 1,
+      wrapDoesNotScroll: box().querySelector(".table-wrap").scrollWidth ===
+        box().querySelector(".table-wrap").clientWidth,
+      block: { left: blockRect.left, top: blockRect.top, right: blockRect.right, bottom: blockRect.bottom },
+      wrap: { left: wrapRect.left, top: wrapRect.top, right: wrapRect.right, bottom: wrapRect.bottom },
+      panel: panelRect ? { left: panelRect.left, top: panelRect.top,
+        right: panelRect.right, bottom: panelRect.bottom } : null,
+    },
+    widths: { th: thUnset, btn: btnUnset },
+  };
+  c3.widthsSet = { th: timeTh.getBoundingClientRect().width,
+    btn: startedBtn.getBoundingClientRect().width,
+    // no ellipsis, no clipping: the set summary fits the button it is written in (3.7u)
+    btnScroll: startedBtn.scrollWidth, btnClient: startedBtn.clientWidth,
+    summary: startedBtn.textContent };
+  Array.from(panel.querySelectorAll(".pager-btn")).find((b) => b.textContent === "clear").click();
+  c3.afterClear = { matched: matched(), keyGone: !("started" in L.TABLE_STATE.jobs.filters),
+    summary: startedBtn.textContent };
+  Array.from(panel.querySelectorAll(".pager-btn")).find((b) => b.textContent === "done").click();
+  c3.closed = box().querySelector(".filter-panel") === null;
 
-  // (d) 3.12a §7: "clear filters" wipes the window — the line reads "1–50 of 120" and carries
-  //     no link any more; then a PUSH (a new rows array): the same sort and page survive —
-  //     they live in TABLE_STATE.jobs, not the DOM
-  clearBtn().click();
+  // (d) 3.12a §7: "clear filters" ends the pager line whenever a filter is set — the picker's
+  //     own clear already emptied the state in (c), so the link is guarded; then a PUSH (a new
+  //     rows array): the same sort and page survive — they live in TABLE_STATE.jobs, not the DOM
+  const dClear = clearBtn();
+  if (dClear) dClear.click();
   const d0 = { pager: pagerText(), filters: Object.keys(L.TABLE_STATE.jobs.filters) };
   Array.from(box().querySelectorAll(".pager-btn")).find((b) => b.textContent === "next").click();
   const d1 = { pager: pagerText(), page: L.TABLE_STATE.jobs.page };
@@ -191,10 +244,10 @@
   i.ok = i.tableSkipped === 1 && i.mark === 1 && i.sameWrap;
 
   // (f) F1 (fold of the page-batch review 2026-10-30): the filter matches the cell's TITLE as
-  //     well as its text whenever the title adds characters. Two needles the old guard dropped
-  //     (the title was a superset of the cell): the date string behind the started cell's
-  //     clock ("10/31/2026" — every hand job's title carries the same day) and one row's full
-  //     36-character UUID behind its 8-character short id.
+  //     well as its text whenever the title adds characters — one row's full 36-character UUID
+  //     behind its 8-character short id. (The F1 family's other needle, the date string behind
+  //     the started cell's clock, went with the started box in 3.12c: the picker's date level
+  //     does that job now, witnessed by c3.date.)
   const cellAttr = (col, attr) => {
     const idx = colIdx(col), row = bodyRows()[0];
     return row && row.cells[idx] ? row.cells[idx].getAttribute(attr) : null;
@@ -206,10 +259,6 @@
     const a = cell ? cell.querySelector("a") : null;
     return a ? a.getAttribute("title") : null;
   };
-  const startedDate = (cellAttr("started", "title") || "").split(",")[0];
-  typeIn(filterInput("started"), startedDate);
-  const fStarted = { date: startedDate, matched: matched(), rows: bodyRows().length, pager: pagerText() };
-  typeIn(filterInput("started"), "");
   const fullId = copy2.jobs[0].id;
   typeIn(filterInput("job"), fullId);
   const jobRow = bodyRows()[0];
@@ -220,7 +269,7 @@
     tdTitle: cellAttr("job", "title") }; // the old read: null, the witness's whole defect
   fJob.ok = fJob.title === fullId; // F4: the witness must BE the full id, never null
   typeIn(filterInput("job"), "");
-  const f = { started: fStarted, jobFullId: fJob, ok: fJob.ok };
+  const f = { jobFullId: fJob, ok: fJob.ok };
 
   // (g) F2 (fold of the page-batch review 2026-10-30): a missing value sorts LAST in both
   //     directions. prefill tok/s (numeric; every fourth row NULL) descending and last

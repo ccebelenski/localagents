@@ -654,42 +654,32 @@
     });
   }
 
-  // 3.12a §6: the time filter's literals, parsed BY HAND into a local Date (never Date.parse,
-  // whose format acceptance varies by engine). `HH:MM` (24-hour) is the clock on the day the
-  // table's `now` falls in; `YYYY-MM-DD` is a day; `YYYY-MM-DD HH:MM` both. Answers {a, b} in
-  // epoch seconds — `a` the literal's start (a lower bound), `b` its end as an upper bound:
-  // inclusive to the end of its minute (+59 s), or of its day for a bare date. Null when the
-  // text is not a literal — the box's reading 3 (substring) then, a mistyped bound made
-  // visible by the pager's count. The four-digit year is the shape-marker: `10-31` alone is
-  // never a literal and a bare date is never split into a range.
-  function parseTimeLiteral(s, now) {
-    var m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{1,2}):(\d{2}))?$/.exec(s);
-    if (m) {
-      var y = +m[1], mo = +m[2] - 1, d = +m[3];
-      if (mo < 0 || mo > 11 || d < 1 || d > 31) return null;
-      var first = new Date(y, mo, d);
-      if (first.getDate() !== d) return null; // a real day: no rollover (2026-02-31 parses as nothing)
-      if (m[4] === undefined) {
-        var nextDay = new Date(y, mo, d + 1);
-        return { a: first.getTime() / 1000, b: nextDay.getTime() / 1000 - 1 };
-      }
-      var h = +m[4], mi = +m[5];
-      if (h > 23 || mi > 59) return null;
-      var both = new Date(y, mo, d, h, mi);
-      if (both.getDate() !== d) return null;
-      var tStart = both.getTime() / 1000;
-      return { a: tStart, b: tStart + 59 };
-    }
-    m = /^(\d{1,2}):(\d{2})$/.exec(s);
-    if (m) {
-      var hh = +m[1], mm = +m[2];
-      if (hh > 23 || mm > 59 || now == null || !isFinite(now)) return null;
-      var onDay = new Date(now * 1000);
-      onDay.setHours(hh, mm, 0, 0); // the day `now` falls in, DST included
-      var hhmmStart = onDay.getTime() / 1000;
-      return { a: hhmmStart, b: hhmmStart + 59 };
-    }
-    return null;
+  // 3.12c (spec §3): the local day of an epoch-seconds key as "YYYY-MM-DD", read BY HAND from
+  // the Date's components (the app's rule: never Date.parse, never a locale formatter for a
+  // comparison — the cells print local time, so the filter's day is local too).
+  function localDay(v) {
+    var d = new Date(v * 1000);
+    var mo = d.getMonth() + 1, day = d.getDate();
+    return d.getFullYear() + "-" + (mo < 10 ? "0" + mo : mo) + "-" + (day < 10 ? "0" + day : day);
+  }
+
+  // 3.12c (spec §3): the time filter's whole grammar, narrowed to the picker's two shapes —
+  // "YYYY-MM-DD" (that local day) or "YYYY-MM-DD HH-HH" (that day, hours INCLUSIVE over whole
+  // hours: 09-11 is 09:00:00 through 11:59:59; from > to matches nothing, as a number range
+  // does). A null or non-finite key never matches; any other shape matches nothing — the typed
+  // literals of 3.12a §6 (HH:MM, a - b, <a, >a, and the substring reading) are retired with
+  // the box, and the panel is the state's only writer. The state stays a plain string, so the
+  // smoke (or a hand-set view) can still write one.
+  function timeFilterMatch(f, v) {
+    if (typeof v !== "number" || !isFinite(v)) return false;
+    var m = /^(\d{4}-\d{2}-\d{2})(?: (\d{2})-(\d{2}))?$/.exec(f);
+    if (!m) return false;
+    if (localDay(v) !== m[1]) return false;
+    if (m[2] === undefined) return true;
+    var from = +m[2], to = +m[3];
+    if (from > to) return false;
+    var hour = new Date(v * 1000).getHours();
+    return hour >= from && hour <= to;
   }
 
   // 3.12d (the operator: "the columns display format 00m00s but filter is text search, so I
@@ -949,44 +939,11 @@
           }
         }
         if (col.filter === "time") {
-          // 3.12a §6: the same three readings over time literals. A range is two literals
-          // around " - " (spaces), or two HH:MM around a bare hyphen — a bare date literal is
-          // never split (the year's own hyphens). A range's ends are inclusive over each
-          // literal's whole span (`b` to the end of its minute or day); `>a` and `<a` are
-          // STRICT over the whole span — after the literal's end, before its start — so the
-          // two never share a row and the literal's own minute (or day) is in neither (the
-          // fold at landing: `<a` had reached the end of its minute and overlapped `>a`).
-          // An unparseable bound falls through to the substring below.
-          var litA = null, litB = null;
-          var dash = f.indexOf(" - ");
-          if (dash > 0 && f.indexOf(" - ", dash + 1) < 0) {
-            litA = parseTimeLiteral(f.slice(0, dash), opts.now);
-            litB = parseTimeLiteral(f.slice(dash + 3), opts.now);
-          } else {
-            var hmhm = /^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/.exec(f);
-            if (hmhm) {
-              litA = parseTimeLiteral(hmhm[1], opts.now);
-              litB = parseTimeLiteral(hmhm[2], opts.now);
-            }
-          }
-          if (litA && litB) {
-            idx = idx.filter(function (i) {
-              var v = keyOf(col, i);
-              return typeof v === "number" && isFinite(v) && v >= litA.a && v <= litB.b;
-            });
-            return;
-          }
-          if (f.charAt(0) === ">" || f.charAt(0) === "<") {
-            var litOne = parseTimeLiteral(f.slice(1), opts.now);
-            if (litOne) {
-              var tGt = f.charAt(0) === ">";
-              idx = idx.filter(function (i) {
-                var v = keyOf(col, i);
-                return typeof v === "number" && isFinite(v) && (tGt ? v > litOne.b : v < litOne.a);
-              });
-              return;
-            }
-          }
+          // 3.12c (spec §3): the picker's state string, matched whole by timeFilterMatch. No
+          // fall-through: the typed time grammar and the substring reading of 3.12a §6 are
+          // retired with the box, so a state in any other shape matches nothing.
+          idx = idx.filter(function (i) { return timeFilterMatch(f, keyOf(col, i)); });
+          return;
         }
         var needle = typed.toLowerCase();
         idx = idx.filter(function (i) { return cellText(col, i).indexOf(needle) >= 0; });
@@ -1123,6 +1080,23 @@
         // in the controls, and the cell carries the kind (data-filter-kind) so the drawn row
         // pins it. A spec without the field is text — every old caller keeps its filters.
         var kind = col.filter || "text";
+        if (kind === "time") {
+          // 3.12c (spec §4): the picker's control — a button styled as the text box was, reading
+          // the column name when unset and the state's summary when set (pickSummary, one
+          // function, also read by patchFilterRow every draw). Click toggles the panel (§5);
+          // Enter/Space is the button's own. The time box and its title grammar are gone.
+          var btn = h("button", { type: "button", class: "filter-pick", "data-filter": col.name,
+            "data-filter-kind": "time" });
+          pickSummary(col, btn);
+          // the slot rule again (3.12b B2 (a)): this button persists across pushes, so the
+          // click reads the CURRENT call's toggle through TABLE_DOM — a captured toggle would
+          // open the panel over the BUILDING call's rows (the smoke caught the first draw's
+          // 2 seeded jobs listing "today (2)" while the table showed 120)
+          btn.addEventListener("click", function () {
+            TABLE_DOM[id].toggleTimePanel(col, btn);
+          });
+          return h("th", { "data-filter-kind": kind }, [btn]);
+        }
         if (kind === "pick") {
           // 3.12a §4: a native select, styled as the box is — "any" (value ""), then each
           // distinct value labelled "value (count)": the count is the rows the OTHER columns'
@@ -1147,8 +1121,7 @@
           : col.unit === "%" ? "; n as 50%" : "";
         var boxTitle = kind === "number"
           ? col.name + (col.unit ? ", " + col.unit : "") + " — text, x-y, <n, >n" + unitHint
-          : kind === "time" ? col.name + " — text, HH:MM, YYYY-MM-DD, a - b, <a, >a"
-          : col.name;
+          : col.name; // 3.12c: the time kind returns above — its box's grammar title is gone
         // the box's text IS the state (3.12a §2): written at build, never by a draw, so the
         // caret and any half-typed bound survive every push
         var input = h("input", { type: "text", placeholder: col.name, "data-filter": col.name,
@@ -1207,17 +1180,262 @@
           if (document.activeElement === sel) { sel.__stale = true; return; }
           selectOptions(sel, col);
         }
+        if ((col.filter || "text") === "time") {
+          // 3.12c: the summary is re-read every draw (the panel's writes, "clear filters", or
+          // a hand-set state), and an OPEN panel is not closed by a push — its three selects
+          // keep their elements and rebuild their options by the pick's focus rule
+          pickSummary(col, cell.querySelector("button.filter-pick"));
+          if (rec.panel && rec.panelCol === col.name) patchTimePanelSelects(col);
+        }
         // the input box: its value was written at build and never again by a draw
       });
       // the slot the persistent focusout listener reads: THIS call's counts and pickValues
+      // (3.12c: panel selects carry __panel and rebuild as the whole panel instead)
       rec.onFocusOut = function (t) {
         if (!t || !t.__stale) return;
         t.__stale = false;
         var name = t.getAttribute("data-filter");
         var col = null;
         columns.forEach(function (c) { if (c.name === name) col = c; });
-        if (col) selectOptions(t, col);
+        if (!col) return;
+        if (t.__panel) patchTimePanelSelects(col);
+        else selectOptions(t, col);
       };
+    }
+
+    // ---- 3.12c (spec §4-§5): the started picker ------------------------------------------------
+    //
+    // The time kind's button opens a small panel of three native selects — a DATE (any;
+    // today; yesterday; each older date present, newest first; every option labelled
+    // "label (count)", the count over the rows the OTHER columns' filters leave, the pick's
+    // faceting) and two HOUR bounds (the hours present among the faceted rows on the chosen
+    // date; "09:00" labels for from, "09:59" for to; disabled until a date is chosen) — plus
+    // clear and done. Every change writes the §3 state string through setFilter and redraws
+    // through the TABLE_DOM slot (3.12b: never a captured draw — a captured closure would pin
+    // dead rows and caches).
+    //
+    // The panel is ONE per table, a child of rec.container (the .table-block, position:
+    // relative) and NEVER of rec.wrap: the wrapper's overflow-x: auto would clip an
+    // absolutely positioned child or scroll it instead (spec §7). It closes on done, Escape,
+    // an outside mousedown, or a second click on the control; the Escape and mousedown
+    // listeners ride on document while it is open and come off when it closes. A push while
+    // it is open keeps the panel element (3.12b's rule) and refreshes the counts in place.
+
+    // the §3 state string split (or null when the state holds another shape)
+    function timeSummaryParts(f) {
+      var m = /^(\d{4}-\d{2}-\d{2})(?: (\d{2})-(\d{2}))?$/.exec(f || "");
+      return m ? { day: m[1], from: m[2] || "", to: m[3] || "" } : null;
+    }
+
+    // the time button's face (spec §4): the column name when unset; set, the summary —
+    // "today"/"yesterday" judged against opts.now's local day (the clock the started cells
+    // day-stamp against), else the date as the cells' own short date (toLocaleDateString of
+    // the state's day: the date half of what fmt.date prints), then " 09 to 11" when hours
+    // are bound. The `set` class rides with a set state (ink, not muted, as a typed
+    // filter's text is). One function, read at build and by patchFilterRow every draw. A
+    // state outside the §3 shape (a hand-set view) reads as the raw string, never a crash.
+    function pickSummary(col, btn) {
+      var f = st.filters[col.name];
+      var set = f != null && f !== "";
+      var text = col.name;
+      if (set) {
+        var parts = timeSummaryParts(f);
+        if (parts) {
+          text = "";
+          if (opts.now != null && isFinite(opts.now)) {
+            var nd = new Date(opts.now * 1000);
+            if (parts.day === localDay(opts.now)) text = "today";
+            else if (parts.day === localDay(new Date(nd.getFullYear(), nd.getMonth(),
+              nd.getDate() - 1).getTime() / 1000)) text = "yesterday";
+          }
+          if (!text) {
+            var p = parts.day.split("-");
+            text = new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString();
+          }
+          if (parts.from) text += " " + parts.from + " to " + parts.to;
+        } else {
+          text = String(f);
+        }
+      }
+      btn.textContent = text;
+      if (set) btn.classList.add("set");
+      else btn.classList.remove("set");
+    }
+
+    function toggleTimePanel(col, btn) {
+      if (rec.panel) {
+        var wasBtn = rec.panelBtn;
+        closeTimePanel();
+        if (wasBtn === btn) return; // a second click on the same control closes (spec §4)
+      }
+      openTimePanel(col, btn);
+    }
+
+    // the state string the three selects write (spec §3): date alone is "YYYY-MM-DD"; both
+    // hours "YYYY-MM-DD HH-HH"; ONE hour bound takes the day's edge for the missing side —
+    // from alone reads "HH-23", to alone "00-HH" (a single handle means "from that hour to
+    // the end of the day" / "the day's start to that hour", the inclusive span's other half);
+    // "any" date empties the state (setFilter deletes the key).
+    function timePanelState(ds, fs, ts) {
+      var day = ds.value;
+      if (!day) return "";
+      if (fs.value && ts.value) return day + " " + fs.value + "-" + ts.value;
+      if (fs.value) return day + " " + fs.value + "-23";
+      if (ts.value) return day + " 00-" + ts.value;
+      return day;
+    }
+
+    function openTimePanel(col, btn) {
+      var panel = h("div", { class: "filter-panel" });
+      var onChange = function () {
+        setFilter(col, timePanelState(ds, fs, ts));
+        TABLE_DOM[id].draw(); // the slot (3.12b)
+      };
+      var ds = h("select", { class: "fp-date", "data-filter": col.name, "data-fp": "date" });
+      var fs = h("select", { class: "fp-from", "data-filter": col.name, "data-fp": "from" });
+      var ts = h("select", { class: "fp-to", "data-filter": col.name, "data-fp": "to" });
+      [ds, fs, ts].forEach(function (sel) {
+        sel.__panel = true;
+        sel.addEventListener("change", onChange);
+      });
+      panel.appendChild(h("span", { class: "fp-label", text: "date" }));
+      panel.appendChild(ds);
+      panel.appendChild(h("span", { class: "fp-label", text: "from" }));
+      panel.appendChild(fs);
+      panel.appendChild(h("span", { class: "fp-label", text: "to" }));
+      panel.appendChild(ts);
+      panel.appendChild(h("button", { type: "button", class: "pager-btn", text: "clear" }));
+      panel.children[panel.children.length - 1].addEventListener("click", function () {
+        setFilter(col, ""); // empties the state (spec §5); the panel re-reads it and stands by
+        TABLE_DOM[id].draw();
+      });
+      panel.appendChild(h("button", { type: "button", class: "pager-btn", text: "done" }));
+      panel.children[panel.children.length - 1].addEventListener("click", function () {
+        closeTimePanel();
+      });
+      // the panel sits OUTSIDE the filter row, so it carries its own focusout into the same
+      // slot: a select the operator is holding open is marked by a push and rebuilt here
+      panel.addEventListener("focusout", function (e) { rec.onFocusOut(e.target); });
+      rec.panel = panel;
+      rec.panelBtn = btn;
+      rec.panelCol = col.name;
+      rec.container.appendChild(panel);
+      // position under the cell: the button's bottom edge, left clamped inside the block,
+      // measured AFTER the append (under fakedom every rect is zeros and every clamp passes)
+      panel.style.position = "absolute";
+      var cRect = rec.container.getBoundingClientRect();
+      var bRect = btn.getBoundingClientRect();
+      panel.style.top = (bRect.bottom - cRect.top) + "px";
+      var left = bRect.left - cRect.left;
+      var maxLeft = cRect.width - panel.getBoundingClientRect().width;
+      if (maxLeft < 0) maxLeft = 0; // a block narrower than the panel: pin to the left edge
+      if (left > maxLeft) left = maxLeft;
+      if (left < 0) left = 0;
+      panel.style.left = left + "px";
+      patchTimePanelSelects(col);
+      // close paths the panel itself cannot see: Escape and an outside mousedown, live on
+      // document while open, off on close (spec §5)
+      rec.panelKey = function (e) { if (e.key === "Escape") closeTimePanel(); };
+      rec.panelDown = function (e) {
+        var t = e.target;
+        while (t) {
+          if (t === panel || t === btn) return; // inside the panel or on its control
+          t = t.parentNode;
+        }
+        closeTimePanel();
+      };
+      document.addEventListener("keydown", rec.panelKey);
+      document.addEventListener("mousedown", rec.panelDown);
+    }
+
+    function closeTimePanel() {
+      if (!rec.panel) return;
+      document.removeEventListener("keydown", rec.panelKey);
+      document.removeEventListener("mousedown", rec.panelDown);
+      rec.panel.remove();
+      rec.panel = null;
+      rec.panelBtn = null;
+      rec.panelCol = null;
+    }
+
+    // rebuild the panel's three selects from THIS call's rows and caches: labels and counts
+    // per spec §5, values from the state, from/to disabled until a date is chosen. The pick's
+    // focus rule (B2 (c)): a focused select is marked __stale instead — its rebuild lands at
+    // the panel's focusout, never yanking an open dropdown.
+    function patchTimePanelSelects(col) {
+      var panel = rec.panel;
+      if (!panel) return;
+      var ds = panel.querySelector("select.fp-date");
+      var fs = panel.querySelector("select.fp-from");
+      var ts = panel.querySelector("select.fp-to");
+      var held = timeSummaryParts(st.filters[col.name]) || { day: "", from: "", to: "" };
+      // the DATE list is every day the ROWS hold (an option at faceted 0 is still a real
+      // date — the date list is the point, unlike the pick's faceted zero); the counts, and
+      // the hour list, read the rows the OTHER columns' filters leave (filterIdx(col))
+      var days = Object.create(null), counts = Object.create(null), hours = Object.create(null);
+      rows.forEach(function (row, i) {
+        var v = keyOf(col, i);
+        if (typeof v === "number" && isFinite(v)) days[localDay(v)] = 1;
+      });
+      filterIdx(col).forEach(function (i) {
+        var v = keyOf(col, i);
+        if (typeof v !== "number" || !isFinite(v)) return;
+        var d = localDay(v);
+        counts[d] = (counts[d] || 0) + 1;
+        if (d === held.day) {
+          var hh = new Date(v * 1000).getHours();
+          hours[(hh < 10 ? "0" : "") + hh] = 1;
+        }
+      });
+      var today = "", yest = "";
+      if (opts.now != null && isFinite(opts.now)) {
+        today = localDay(opts.now);
+        var nd = new Date(opts.now * 1000);
+        yest = localDay(new Date(nd.getFullYear(), nd.getMonth(), nd.getDate() - 1).getTime() / 1000);
+      }
+      // a held date the rows no longer have (a push dropped it) stays listed "(0)", as
+      // pickValues does for the pick
+      if (held.day && !days[held.day]) days[held.day] = 1;
+      var older = Object.keys(days).filter(function (d) { return d !== today && d !== yest; });
+      older.sort(function (a, b) { return a < b ? 1 : (a > b ? -1 : 0); }); // newest first
+      var dayLabel = function (d) {
+        var p = d.split("-");
+        return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString();
+      };
+      var rebuild = function (sel, fill) {
+        if (document.activeElement === sel) { sel.__stale = true; return; }
+        fill(sel);
+      };
+      rebuild(ds, function (sel) {
+        sel.replaceChildren();
+        sel.appendChild(h("option", { value: "", text: "any" }));
+        if (days[today]) sel.appendChild(h("option", { value: today, title: today,
+          text: "today (" + (counts[today] || 0) + ")" }));
+        if (days[yest]) sel.appendChild(h("option", { value: yest, title: yest,
+          text: "yesterday (" + (counts[yest] || 0) + ")" }));
+        older.forEach(function (d) {
+          sel.appendChild(h("option", { value: d, text: dayLabel(d) + " (" + (counts[d] || 0) + ")" }));
+        });
+        sel.value = held.day;
+      });
+      // the hours present on the chosen date (faceted), zero-padded and ascending; a held
+      // bound the rows no longer carry stays selectable (the state is the truth)
+      var hourList = Object.keys(hours).sort();
+      if (held.from && hourList.indexOf(held.from) < 0) hourList.push(held.from);
+      if (held.to && hourList.indexOf(held.to) < 0) hourList.push(held.to);
+      if (held.from || held.to) hourList.sort();
+      var hourOptions = function (sel, suffix) {
+        sel.replaceChildren();
+        sel.appendChild(h("option", { value: "", text: "any" }));
+        hourList.forEach(function (hh) {
+          sel.appendChild(h("option", { value: hh, text: hh + ":" + suffix }));
+        });
+        sel.value = held.day ? (suffix === "00" ? held.from : held.to) : "";
+        if (held.day) sel.removeAttribute("disabled");
+        else sel.setAttribute("disabled", "");
+      };
+      rebuild(fs, function (sel) { hourOptions(sel, "00"); });
+      rebuild(ts, function (sel) { hourOptions(sel, "59"); });
     }
 
     // the tr's row signature: the whole row serialized (spec §7: a cell is a function of its
@@ -1314,6 +1532,10 @@
       // parts leave with the replaceChildren: a list that empties and refills rebuilds them
       // once, one flash on a real change.
       if (!rows.length) {
+        // 3.12c: a panel open over a list that just emptied goes with it — the replaceChildren
+        // below drops the table parts anyway, and leaving the panel would leave its document
+        // Escape/mousedown listeners over a detached element
+        closeTimePanel();
         var emptyParts = [h("div", { class: "empty", text: opts.empty || "" })];
         if (anyFilter) {
           emptyParts.push(pagerButton("clear filters", false, function () {
@@ -1362,6 +1584,7 @@
 
     rec.hash = hash;
     rec.draw = draw; // the slot every persistent listener reads (B2 (a))
+    rec.toggleTimePanel = toggleTimePanel; // 3.12c: the filter cell's button reads THIS call too
     if (typeof rec.onFocusOut !== "function") rec.onFocusOut = function () {};
     TABLE_DOM[id] = rec;
     draw();
@@ -1421,7 +1644,7 @@
     return dataTable(opts.id || "jobs", specs, rows, {
       empty: opts.empty || "no jobs yet",
       note: opts.note,
-      now: opts.now, // 3.12a §6: the started box's HH:MM literals need the day
+      now: opts.now, // 3.12c: the started picker's "today"/"yesterday" judge against this clock
       rowAttrs: function (job) { return { "data-job": job.id }; },
       // 3.12b: the body reconciles by job id (request rows carry none, so the requests table
       // stays positional) — an unchanged job's tr survives every push
@@ -2422,7 +2645,7 @@
     return dataTable(opts.id || "requests-" + (opts.job === false ? "job" : "endpoint"), specs, rows, {
       empty: opts.empty || "no requests",
       class: "requests-table",
-      now: opts.now, // 3.12a §6: the time box's HH:MM literals need the day
+      now: opts.now, // 3.12c: the time picker's "today"/"yesterday" judge against this clock
       rowAttrs: function (req) {
         var cls = memo.row(req).cls;
         return { class: cls.length ? cls.join(" ") : null };

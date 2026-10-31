@@ -341,7 +341,10 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
    header's own text stays clean and the screen reader gets the sort through aria-sort.
    The pager is a muted line (the .muted class carries the colour); its buttons read as the
    accent links and go muted when disabled at the ends of the range. */
-.table-block { min-width: 0; }
+/* 3.12c: position: relative — the anchor for the started picker's absolutely positioned
+   panel, which is a child of the block and never of .table-wrap (the wrapper's
+   overflow-x: auto would clip it or scroll — spec §5, §7) */
+.table-block { position: relative; min-width: 0; }
 th.sortable { cursor: pointer; }
 th.sort-asc::after { content: "▲"; margin-left: 4px; font-size: 11px; color: var(--muted); }
 th.sort-desc::after { content: "▼"; margin-left: 4px; font-size: 11px; color: var(--muted); }
@@ -351,6 +354,23 @@ th.sort-desc::after { content: "▼"; margin-left: 4px; font-size: 11px; color: 
   border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; width: 100%; min-width: 3.5em;
   box-sizing: border-box; }
 .table-filters input:focus, .table-filters select:focus { outline: 1px solid var(--accent); color: var(--ink); }
+/* 3.12c: the time kind's picker button takes the input's box exactly (the same border,
+   padding and size, text left-aligned) — the filter row never grows. A set filter reads
+   ink, not muted, as a typed filter's text does. */
+.table-filters .filter-pick { font: inherit; font-size: 13px; color: var(--muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; width: 100%; min-width: 3.5em;
+  box-sizing: border-box; text-align: left; cursor: pointer; }
+.table-filters .filter-pick.set { color: var(--ink); }
+.table-filters .filter-pick:focus { outline: 1px solid var(--accent); color: var(--ink); }
+/* the picker's panel: one line of labels, three native selects, clear and done (a
+   pager-btn); positioned absolutely by app.js under its control, inside the block */
+.filter-panel { position: absolute; z-index: 3; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font-size: 13px; white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); }
+.filter-panel .fp-label { color: var(--muted); margin-right: 4px; }
+.filter-panel select { font: inherit; font-size: 13px; color: var(--ink); background: transparent;
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; margin-right: 6px; }
+.filter-panel .pager-btn { margin-right: 6px; }
 .table-pager { padding: 6px 2px 0; font-size: 13px; }
 .pager-sep { color: var(--border); }
 .pager-btn { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }

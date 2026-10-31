@@ -174,19 +174,28 @@ reads the one table's full contract into `__d1`,
 synchronously (a real push would otherwise overwrite the hand-edited DOM mid-sequence):
 (a) the pager reads "1–50 of 120" with 50 body rows; (b) clicking the "turns" header sorts
 ascending (first cell 0, last 49; the header carries the arrow class and `aria-sort:
-ascending`), the second click reverses (119…70); (c) 3.12a: the status SELECT lists `any /
+ascending`), the second click reverses (119 down to 70); (c) 3.12a: the status SELECT lists `any /
 done (40) / failed (40) / running (40)`; set to "done" it leaves only done pills and "1–40 of
-40 · … · clear filters"; then ">100" in turns leaves only 119…101 ("1–7 of 7", page 1) and
-"101-119" the same seven; "11:00-11:30" in started leaves the 31 rows of that window (the
-count computed from the hand rows); "clear filters" on the pager restores "1–50 of 120";
+40 · previous · next · clear filters"; then ">100" in turns leaves only 119 down to 101 ("1–7 of 7", page 1) and
+"101-119" the same seven; then the 3.12c started PICKER (`c3`): the button opens a panel whose
+parent is the `.table-block` (never the wrapper), its rect inside the block's and the wrapper
+still unscrolled — the three rects ride in `c3.panel`; the "today" date option (label
+`today (120)`, filled from the CURRENT draw — the smoke caught a captured-closure "today (2)"
+and the fix is the TABLE_DOM slot) leaves all 120; hour bounds 11-to-11 leave the 60 rows of
+that hour (the count computed from the hand rows) and the summary reads "today 11 to 11"; the
+panel's "clear" restores 120 and deletes the key; the filter cell/button widths read before
+and after (99.7 → 118.1 px) with the summary unclipped (`btnScroll` == `btnClient`, no
+ellipsis);
 (d) "next" reads "51–100 of 120", and a PUSH (a new rows array through `render`) keeps the
 sort, the (empty) filters and page 2 — the state is `TABLE_STATE.jobs`, not the DOM; (e) the
-job page's requests table (9 filter boxes + 2 selects, no job column) and the endpoint page's
-(10 + 2, 152 rows paged 50) both sort by "duration" numerically, and the job page's path pick
+job page's requests table (8 filter boxes + 2 selects + 1 time picker button, no job column)
+and the endpoint page's (9 + 2 + 1, 152 rows paged 50 — 3.12c moved the time column from box
+to button) both sort by "duration" numerically, and the job page's path pick
 set to "/api/hello" leaves one row.
-(f) F1 (fold of the page-batch review 2026-10-30): a filter matches the cell's title too — the
-started cell's date string ("10/31/2026", behind the clock) leaves all 120 rows, and one row's
-full 36-character UUID (behind its 8-character short id) leaves that one row. (g) F2: a missing
+(f) F1 (fold of the page-batch review 2026-10-30): a filter matches the cell's title too — one
+row's full 36-character UUID (behind its 8-character short id) leaves that one row. (The date
+-string needle behind the started cell's clock went with the started box in 3.12c; the picker's
+date level does that job, witnessed by `c3.date`.) (g) F2: a missing
 value sorts last in BOTH directions — "prefill tok/s" descending and "last activity" ascending
 each hold no blank in the first 50 rows and their blanks at the end of the list. The job page's
 `.job-name` text and length (36, the full UUID — F3) ride in `e.jobName`. Read `d1` in

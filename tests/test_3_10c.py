@@ -111,12 +111,14 @@ def test_the_filter_grammar_substring_and_the_numeric_comparators():
 
 def test_the_filter_row_is_inputs_one_per_column_built_from_the_state():
     """3.10c: one control per column, built from TABLE_STATE's filters. 3.12a §4 widened the
-    control: a pick column draws a native <select data-filter> (no free-text search), the rest
-    keep the text input."""
+    control: a pick column draws a native <select data-filter> (no free-text search); 3.12c
+    widened it again — a time column draws a `.filter-pick` button (its panel is the state's
+    writer); the rest keep the text input."""
     js = _app_js()
     body = _js_function(js, "dataTable")
     assert 'h("input", { type: "text"' in body
     assert 'h("select", { "data-filter"' in body  # 3.12a: the pick
+    assert 'class: "filter-pick"' in body  # 3.12c: the time kind's button
     assert 'addEventListener("change"' in body  # the select redraws on change
     assert "placeholder:" in body
     # typing updates the state and redraws THIS table in place through the container it owns

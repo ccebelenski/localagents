@@ -141,6 +141,11 @@ class Event { constructor(type) { this.type = type; } }
 
 function install() {
   const body = new El("body");
+  // 3.12c: the document is a real listener target now (the started picker keeps its Escape and
+  // outside-mousedown listeners on document while its panel is open, and the tests close the
+  // panel by dispatching those events and count the listeners). Same shape as El's; the old
+  // no-op addEventListener would have swallowed the panel's listeners.
+  const docListeners = {};
   const document = {
     readyState: "loading", // the page's start() waits for DOMContentLoaded, which never comes
     activeElement: null,
@@ -152,7 +157,16 @@ function install() {
     getElementById: () => null,
     querySelector: (s) => body.querySelector(s),
     querySelectorAll: (s) => body.querySelectorAll(s),
-    addEventListener: () => {},
+    listeners: docListeners,
+    addEventListener: (type, fn) => { (docListeners[type] = docListeners[type] || []).push(fn); },
+    removeEventListener: (type, fn) => {
+      docListeners[type] = (docListeners[type] || []).filter((f) => f !== fn);
+    },
+    dispatchEvent: (ev) => {
+      if (ev.target == null) ev.target = document;
+      (docListeners[ev.type] || []).slice().forEach((fn) => fn.call(document, ev));
+      return true;
+    },
   };
   global.document = document;
   global.Event = Event;

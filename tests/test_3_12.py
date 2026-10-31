@@ -263,64 +263,6 @@ def test_the_number_box_reads_a_range_then_the_comparators_then_the_substring(tm
     assert got["titleNoUnit"] == "elapsed — text, x-y, <n, >n", got
 
 
-# --- step 4: the time box reads the same three readings over time literals (spec §6) ----------------
-
-
-def test_the_time_box_reads_time_literals_inclusively_then_comparators_then_substring(tmp_path):
-    """§6: `HH:MM` (24-hour, the clock on the day opts.now falls in), `YYYY-MM-DD` (a day: its
-    start as a lower bound, its END as an upper bound) and `YYYY-MM-DD HH:MM`, parsed by hand;
-    a range is two literals around " - " (spaces) or two HH:MM around a bare hyphen, a bare
-    date is never split; a range's ends are inclusive over each literal's whole span (the
-    end of its minute, +59 s, or of its day); `>a` and `<a` are STRICT over the whole span —
-    `>a` means after the literal's end, `<a` before its start, so `<11:30` and `>11:30` never
-    share a row and the 11:30 minute itself is in neither (the coordinator's fold at landing:
-    the first spec text had `<a` reaching the end of its minute, so `<a` and `>a` overlapped
-    by a minute, and by a day for a bare date); an unparseable literal is
-    reading 3, substring — including the date the cell's title carries ("10/30" style, read
-    from a drawn cell so the locale does not matter). Hand rows: started_at noon - 60 i for
-    i 0..119 on Oct 30 2026 local, so "11:00-11:30" keeps 11:00:00..11:30:59 — rows i 30..60."""
-    got = _page_js(tmp_path, _NUM_BOX.replace('elapsed', 'started') + """
-  var noon = new Date(2026, 9, 30, 12, 0, 0).getTime() / 1000;
-  var rows = []; for (var i = 0; i < 120; i++) rows.push({ v: noon - 60 * i });
-  var cols = [{ name: "started", filter: "time", unit: null, title: null,
-    cell: function (r) { return M.h("td", { text: M.fmt.time(r.v), title: M.fmt.date(r.v) }); },
-    sortKey: function (r) { return r.v; } }];
-  var el = M.dataTable("t312-time-a", cols, rows, { now: noon });
-  var out = {
-    window: typeIn(el, "11:00-11:30"),
-    gtStrict: typeIn(el, ">11:30"),
-    ltStrict: typeIn(el, "<11:30"),
-    exactMinute: typeIn(el, "11:30-11:30"),
-    dateAsUpperEnd: typeIn(el, "11:00 - 2026-10-30"),
-    ltDateStrict: typeIn(el, "<2026-10-30"),
-    gtPreviousDay: typeIn(el, ">2026-10-29"),
-    fullLiteralGt: typeIn(el, ">2026-10-30 11:30"),
-    fullLiteralRange: typeIn(el, "2026-10-30 10:30 - 2026-10-30 11:00"),
-  };
-  // the F1 witness moved here from the smoke's text path: the date the title carries still
-  // matches as substring (locale-independent: take it from a drawn cell's own title)
-  var dayText = el.querySelector("tbody tr td").getAttribute("title").split(",")[0];
-  out.substringDay = typeIn(el, dayText);
-  out.dateNeverSplit = typeIn(el, "2026-10-30"); // not a range: substring, holds nothing
-  out.badLiteral = typeIn(el, ">25:00"); // outside 24 h: reading 3
-  out.title = el.querySelector('input[data-filter="started"]').getAttribute("title");
-  return out;
-""")
-    assert got["window"] == 31, got  # 11:00:00 through 11:30:59 inclusive, both ends
-    assert got["gtStrict"] == 30, got  # after 11:30:59: 11:31 through 12:00
-    assert got["ltStrict"] == 89, got  # before 11:30:00: 10:01 through 11:29
-    assert got["exactMinute"] == 1, got  # the minute itself, by the range form
-    assert got["gtStrict"] + got["ltStrict"] + got["exactMinute"] == 120, got  # a partition, no overlap
-    assert got["dateAsUpperEnd"] == 61, got  # 11:00 through the END of Oct 30
-    assert got["ltDateStrict"] == 0, got  # before Oct 30 starts: every row is on Oct 30
-    assert got["gtPreviousDay"] == 120, got  # after Oct 29 ends: every row
-    assert got["fullLiteralGt"] == 30, got
-    assert got["fullLiteralRange"] == 31, got  # 10:30:00 .. 11:00:59
-    assert got["substringDay"] == 120, got
-    assert got["dateNeverSplit"] == 0, got
-    assert got["badLiteral"] == 0, got
-    assert got["title"] == "started — text, HH:MM, YYYY-MM-DD, a - b, <a, >a", got
-
 
 # --- step 5: "clear filters" and the empty-deletes rule (spec §7) -----------------------------------
 
