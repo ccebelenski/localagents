@@ -320,10 +320,12 @@ def seed(conn: sqlite3.Connection, now: float, fixtures_dir: Path | str, force: 
             age = _collector_age(conn, time.time())
             if age is not None:
                 raise SeedRefused(_collector_sentence(age))
-            # children first (the foreign keys are enforced), then the lookup and job tables
+            # children first (the foreign keys are enforced), then the lookup and job tables;
+            # every table the schema has (3.11a: host_probes, v5, was missing — a reseed kept
+            # the previous world's node-fallback answers; transcripts went by cascade)
             for table in ("probe_hardware", "probe_counters", "probes", "endpoint_events",
-                          "endpoint_load", "requests", "tool_calls", "jobs", "mcp_servers",
-                          "paths", "models", "endpoints"):
+                          "host_probes", "endpoint_load", "requests", "tool_calls", "transcripts",
+                          "jobs", "mcp_servers", "paths", "models", "endpoints"):
                 conn.execute(f"DELETE FROM {table}")
         _write(conn, now, world)
         # story 3.7-fold-2 (D5): the read path takes last_active from the stored witness, so the

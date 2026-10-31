@@ -7,7 +7,6 @@ import dataclasses
 import json
 import shutil
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -25,10 +24,9 @@ from claude_agent_sdk import (
     query,
 )
 
+from .derive import EDIT_TOOLS  # the write rule's list is the read rule's (files_touched)
 from .jobs import Job, prune, state_dir
 from .registry import Registry, Resolution, backend_kind, fetch_metrics, metrics_delta
-
-EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 
 def build_env(res: Resolution, base_url: str) -> dict[str, str]:
@@ -191,28 +189,37 @@ def finish_worktree(job: Job) -> None:
             return
         wt.update(kept=False, note="no changes; worktree removed")
         return
-    _git(root, "add", "-A")
-    diffstat = _git(root, "diff", "--cached", "--stat", wt["base"]).stdout.strip()
-    _git(root, "reset", "-q")
+    # each step's return code is read (3.11a row 7, as the no-change branch above reads its
+    # own): a diffstat is recorded only when the add and the diff both worked, the reset always
+    # runs (a partial add staged something), and every failure is named in the note and a line
+    add = _git(root, "add", "-A")
+    diff = _git(root, "diff", "--cached", "--stat", wt["base"]) if add.returncode == 0 else None
+    reset = _git(root, "reset", "-q")
+    problems = []
+    if add.returncode != 0:
+        problems.append(f"git add -A failed ({' '.join(add.stderr.split())}): no diffstat was taken")
+    elif diff is not None and diff.returncode != 0:
+        problems.append(f"git diff --cached --stat failed ({' '.join(diff.stderr.split())}): no diffstat was taken")
+    if reset.returncode != 0:
+        problems.append(f"git reset failed ({' '.join(reset.stderr.split())}): the changes are left staged in the index")
+    wt.pop("diffstat", None)  # a previous finish's diffstat is not this tree's truth
+    if add.returncode == 0 and diff is not None and diff.returncode == 0:
+        wt["diffstat"] = diff.stdout.strip()
     wt.update(
         kept=True,
-        diffstat=diffstat,
         note=(
             f"Changes left in worktree {root} on branch {wt['branch']}. "
             f"Review with: git -C {root} status --short && git -C {root} diff {wt['base']}  "
             "(uncommitted work; status also lists files git has not tracked yet) — "
             f"then merge/cherry-pick or `git worktree remove --force {root}`."
+            + "".join(f" {p}." for p in problems)
         ),
     )
+    for p in problems:
+        job.log_text(f"[worktree-error] {p}")
 
 
 # ---------------- message handling ----------------
-
-def _block_to_dict(b: Any) -> dict[str, Any]:
-    d = dataclasses.asdict(b) if dataclasses.is_dataclass(b) else {"repr": repr(b)}
-    d["type"] = type(b).__name__
-    return d
-
 
 def _msg_to_dict(m: Any) -> dict[str, Any]:
     if dataclasses.is_dataclass(m):
@@ -332,8 +339,7 @@ async def _make_worktree_shielded(job: Job) -> dict[str, Any]:
                 pass
         absorbed = (task.cancelling() if task is not None else 0) - started
         if absorbed:
-            _log_safe(
-                job,
+            job._log_safe(
                 f"[cancel] {absorbed} cancel(s) arrived during the job's worktree step; "
                 "the tree was finished and removed",
             )
@@ -347,7 +353,7 @@ async def _make_worktree_shielded(job: Job) -> dict[str, Any]:
             # the cancel wins (the job is `cancelled`), but the thread's own error is not
             # dropped without a word (DeepSeek review of 6005f94)
             e = made.exception()
-            _log_safe(job, f"[worktree-error] {type(e).__name__}: {e}")
+            job._log_safe(f"[worktree-error] {type(e).__name__}: {e}")
         raise
 
 
@@ -445,15 +451,6 @@ async def run_job(
         await _to_the_end(job, asyncio.to_thread(prune, d.job_retention_days), "prune")
 
 
-def _log_safe(job: Job, text: str) -> None:
-    """A transcript line from the finally, which must not raise: a failing write (ENOSPC, a
-    read-only state directory) falls back to stderr."""
-    try:
-        job.log_text(text)
-    except Exception as e:  # noqa: BLE001
-        print(f"localagents: job {job.id}: {text} (transcript write failed: {e})", file=sys.stderr)
-
-
 async def _to_the_end(job: Job, aw: Any, what: str) -> None:
     """Await `aw` to completion whatever happens to the caller: a cancel is absorbed (the work
     goes on in its task or thread and is waited for, like _make_worktree_shielded), and any
@@ -472,12 +469,12 @@ async def _to_the_end(job: Job, aw: Any, what: str) -> None:
             pass
     absorbed = (task.cancelling() if task is not None else 0) - started
     if absorbed:
-        _log_safe(job, f"[cancel] {absorbed} cancel(s) arrived during the job's {what} step; it ran to the end")
+        job._log_safe(f"[cancel] {absorbed} cancel(s) arrived during the job's {what} step; it ran to the end")
     if fut.cancelled():
-        _log_safe(job, f"[{what}-error] cancelled")
+        job._log_safe(f"[{what}-error] cancelled")
     elif fut.exception() is not None:
         e = fut.exception()
-        _log_safe(job, f"[{what}-error] {type(e).__name__}: {e}")
+        job._log_safe(f"[{what}-error] {type(e).__name__}: {e}")
 
 
 async def _finish(job: Job, res: Resolution, metrics_before: dict[str, float] | None, probe_timeout_s: float) -> None:
@@ -495,11 +492,11 @@ async def _finish(job: Job, res: Resolution, metrics_before: dict[str, float] | 
                 backend=backend_kind(res.endpoint.backend),
             )
             if job.metrics:
-                _log_safe(job, f"[metrics] {json.dumps(job.metrics)}")
+                job._log_safe(f"[metrics] {json.dumps(job.metrics)}")
         except Exception as e:  # noqa: BLE001
             job.metrics = None
-            _log_safe(job, f"[metrics-error] {type(e).__name__}: {e}")
+            job._log_safe(f"[metrics-error] {type(e).__name__}: {e}")
     try:
         await asyncio.to_thread(finish_worktree, job)
     except Exception as e:  # noqa: BLE001
-        _log_safe(job, f"[worktree-error] {e}")
+        job._log_safe(f"[worktree-error] {e}")

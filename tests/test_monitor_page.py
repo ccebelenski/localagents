@@ -903,7 +903,11 @@ def test_requests_table_labels_a_handshake_row_as_no_error():
     # (the wrong implementation kept the muted pill but pushed req-err anyway), and the
     # handshake branch is chosen before the null-status branch (a handshake with no status is
     # a handshake, not the "–" dash)
-    assert 'if (bad && !handshake) cls.push("req-err");' in body, body
+    # 3.11a row 36: the mark reads the one exported rule, whose first line is the handshake
+    # exception (behaviour over the ten row shapes: tests/test_3_11a.py)
+    assert 'if (requestFailed(req)) cls.push("req-err");' in body, body
+    rule = _js_function(_app_js(), "requestFailed")
+    assert rule.index('if (req.path === "/api/hello") return false;') < rule.index("http_status"), rule
     assert body.index("if (handshake)") < body.index("else if (req.http_status == null)"), body
 
 
@@ -920,10 +924,9 @@ def test_job_header_names_both_error_figures():
     # keeps the label (tools/smoke/handshake.js exercises the row rule the count must follow)
     body = js[js.index("function requestErrors("):]
     body = body[:body.index("\n    function ")]
-    assert 'req.path === "/api/hello"' in body, body
-    assert "req.http_status" in body, body
-    assert "req.error" in body, body
-    assert "n++" in body and "return n;" in body, body
+    # 3.11a row 36: the rows are counted through app.js's one rule (requestFailed: the two
+    # reads, /api/hello skipped), not a hand copy of it — its behaviour is tests/test_3_11a.py's
+    assert "M.requestFailed(req)" in body and ".filter(" in body and ".length" in body, body
     assert "return 0;" not in body, body
 
 

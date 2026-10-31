@@ -291,8 +291,12 @@ class Shim:
             return JSONResponse({"input_tokens": est})
 
         if body is not None and (job.dump or os.environ.get("LOCALAGENTS_DUMP_REQUESTS") == "1"):
-            with open(os.path.join(job.log_dir, "requests_full.jsonl"), "a") as f:
-                f.write(json.dumps({"path": path, "body": body}) + "\n")
+            # a debugging side file never fails the session's request (3.11a row 6)
+            try:
+                with open(os.path.join(job.log_dir, "requests_full.jsonl"), "a") as f:
+                    f.write(json.dumps({"path": path, "body": body}) + "\n")
+            except OSError as e:
+                job._log_safe(f"[dump-error] requests_full.jsonl: {type(e).__name__}: {e}")
 
         resp_headers = {k: v for k, v in resp.headers.items() if k.lower() in ("content-type", "cache-control")}
         if resp.status_code >= 400 or not resp.headers.get("content-type", "").startswith("text/event-stream"):
@@ -332,8 +336,8 @@ class Shim:
                         if t_first is None and (b"content_block_start" in chunk
                                                 or b"content_block_delta" in chunk):
                             t_first = time.monotonic()
-                        if len(head) < HEAD_BYTES:
-                            head += chunk
+                        if len(head) < HEAD_BYTES:  # a hard cap: never one whole read past it
+                            head += chunk[:HEAD_BYTES - len(head)]
                         # the tail is the stream's own last 8 KiB of bytes, not the final read:
                         # a message_stop delivered as its own read no longer hides the
                         # message_delta that carries the final output_tokens
@@ -383,9 +387,16 @@ class Shim:
             job.log_text(f"[backend {kw['status']}] {str(kw['error'])[:300]}")
 
 
+def _object(v: Any) -> dict[str, Any] | None:
+    """The backend's ``usage`` when it is a JSON object, else None: every reader below hands
+    back an object or nothing, so a backend that sends a string or an array there can neither
+    fail the reply nor lose the row (3.11a row 4)."""
+    return v if isinstance(v, dict) else None
+
+
 def _usage_from_json(data: bytes) -> dict[str, Any] | None:
     try:
-        return json.loads(data).get("usage")
+        return _object(json.loads(data).get("usage"))
     except Exception:  # noqa: BLE001
         return None
 
@@ -395,7 +406,7 @@ def _usage_from_sse_head(chunk: bytes) -> dict[str, Any] | None:
     for line in chunk.decode(errors="replace").splitlines():
         if line.startswith("data:") and '"message_start"' in line:
             try:
-                return (json.loads(line[5:]).get("message") or {}).get("usage")
+                return _object((json.loads(line[5:]).get("message") or {}).get("usage"))
             except Exception:  # noqa: BLE001
                 pass
     return None
@@ -418,7 +429,7 @@ def _usage_from_sse_tail(bytes_: bytes) -> dict[str, Any] | None:
     for line in bytes_.decode(errors="replace").splitlines():
         if line.startswith("data:") and '"message_delta"' in line:
             try:
-                parsed = json.loads(line[5:]).get("usage")
+                parsed = _object(json.loads(line[5:]).get("usage"))
             except Exception:  # noqa: BLE001
                 continue
             if parsed is not None:

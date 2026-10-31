@@ -368,7 +368,7 @@
     return { host: null, ep: null };
   }
 
-  function header(name, snap, host, ep, hist, err) {
+  function header(name, snap, host, ep, err) {
     var back = h("a", { class: "back", href: "#/", text: "← overview" });
     if (!ep) {
       return h("div", { class: "ep-detail-head" }, [back, h("h2", { class: "ep-title" }, [h("span", { text: name })]),
@@ -457,7 +457,7 @@
     function drawCurrent() {
       var snap = state.snap;
       var found = find(snap, name);
-      headBox.replaceChildren(header(name, snap, found.host, found.ep, page.hist, page.err));
+      headBox.replaceChildren(header(name, snap, found.host, found.ep, page.err));
       var range = page.range || state.range;
       var span = rangeSeconds(range);
       var now = nowOf();

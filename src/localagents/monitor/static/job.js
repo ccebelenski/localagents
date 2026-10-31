@@ -468,18 +468,11 @@
       return h("span", { class: "fig" }, [h("span", { class: "label", text: label }), num]);
     }
 
-    // the header's "request errors" figure (3.7v): the shared renderer's own row rule — a
-    // status outside 2xx or a non-empty error — with the /api/hello handshake rows skipped
-    // exactly as the table skips them (the shim's startup probe recorded with the backend's
-    // 404/501: not a failure of this job). 0 draws as "0", not blank.
+    // the header's "request errors" figure (3.7v): the rows the shared renderer marks req-err,
+    // counted through its own rule (app.js requestFailed: a status outside 2xx or a non-empty
+    // error, the /api/hello handshake excepted — 3.11a made it one function). 0 draws as "0".
     function requestErrors(reqs) {
-      var n = 0;
-      (reqs || []).forEach(function (req) {
-        if (req.path === "/api/hello") return;
-        if (typeof req.http_status === "number" && (req.http_status < 200 || req.http_status >= 300)) n++;
-        else if (req.error != null && req.error !== "") n++;
-      });
-      return n;
+      return (reqs || []).filter(function (req) { return M.requestFailed(req); }).length;
     }
 
     // story 1.14: the build stamp of the MCP server that ran the job, with the muted note

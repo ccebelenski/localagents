@@ -12,7 +12,8 @@ import json
 import sqlite3
 import time
 
-# runner.py EDIT_TOOLS: the tools whose input carries a touched file path (spec write rule).
+# the tools whose input carries a touched file path: the spec's write rule (runner.py imports
+# this one copy) and files_touched's read rule
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 
 # the jobs columns holding the /metrics delta, rebuilt into Job.metrics at read time

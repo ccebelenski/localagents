@@ -268,8 +268,8 @@ def _ensure_sampler() -> None:
 FOREIGN_POLL_S = 2.0
 FOREIGN_SWEEP_S = 30.0
 
-# the row statuses that mean the job is over — Job.done's list, as list_jobs' unfinished filter
-_TERMINAL_STATUSES = ("succeeded", "failed", "timeout", "cancelled", "lost")
+# the row statuses that mean the job is over — Job.done's list itself (jobs.TERMINAL_STATUSES)
+_TERMINAL_STATUSES = jobs.TERMINAL_STATUSES
 
 # list_jobs(all=True), keyed by include_finished; module-level so tests/test_query_plans.py
 # pins their EXPLAIN QUERY PLAN (3.9E audit). The live-only filter is the status IN form —
@@ -524,11 +524,7 @@ async def run_agent(
             store.describe_server(shim_port=shim.port)  # once: the port is the process's, not the job's
             _shim_port_recorded = True  # only on success: a dropped write is retried by the next job
         except Exception as e:  # noqa: BLE001
-            line = f"[db-error] shim_port: {type(e).__name__}: {e}"
-            try:
-                job.log_text(line)
-            except Exception as log_e:  # noqa: BLE001
-                print(f"localagents: job {job.id}: {line} (transcript write failed: {log_e})", file=sys.stderr)
+            job._log_safe(f"[db-error] shim_port: {type(e).__name__}: {e}")
     _ensure_sampler()
     job._task = asyncio.create_task(
         run_job(

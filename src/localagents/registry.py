@@ -275,12 +275,20 @@ class Registry:
             r = await c.get(f"{ep.url}/props")
             if r.status_code != 200:
                 return {}, "", {}
+            # 3.11a row 20: a side route's body is the backend's, not ours — a JSON shape this
+            # code does not read (an array where an object belongs, a non-object slot) is
+            # ignored like an absent route, never an AttributeError that probe() would turn
+            # into "down" for an endpoint that just answered /v1/models
             props = r.json()
-            n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx")
+            if not isinstance(props, dict):
+                return {}, "", {}
+            gen = props.get("default_generation_settings")
+            n_ctx = gen.get("n_ctx") if isinstance(gen, dict) else None
             if props.get("endpoint_slots") or is_strata:
                 sl = await c.get(f"{ep.url}/slots")
-                if sl.status_code == 200 and isinstance(sl.json(), list):
-                    slots = sl.json()
+                body = sl.json() if sl.status_code == 200 else None
+                if isinstance(body, list):
+                    slots = [x for x in body if isinstance(x, dict)]
                     busy = sum(1 for x in slots if x.get("is_processing"))
                     extra["slots"] = {"total": len(slots), "busy": busy, "free": len(slots) - busy}
             if "slots" not in extra and isinstance(props.get("total_slots"), int):
@@ -289,7 +297,9 @@ class Registry:
             if is_strata:
                 mt = await c.get(f"{ep.url}/metrics")
                 if mt.status_code == 200:
-                    live = (mt.json() or {}).get("live") or {}
+                    doc = mt.json()
+                    live = doc.get("live") if isinstance(doc, dict) else None
+                    live = live if isinstance(live, dict) else {}
                     if isinstance(live.get("queued"), int):
                         extra["load"] = {"requests_waiting": live["queued"]}
             elif is_llama and kind == "llamacpp":

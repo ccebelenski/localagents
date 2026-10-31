@@ -571,7 +571,7 @@
   // endpoint is hidden on a down node too, and a host left with nothing to draw — down included
   // — gets no card (hostCard). render() counts the hidden ones under a line naming each node's
   // state, so the node's own alert stays visible without a card drawn for it.
-  function neverSeenOn(host, ep) {
+  function neverSeenOn(ep) {
     return ep.state === "dormant" && ep.last_seen == null;
   }
 
@@ -599,7 +599,7 @@
     var body = host.endpoints.map(function (ep) {
       if (ep.state === "live") return liveEndpoint(snap, ep);
       if (ep.state === "down") return downEndpoint(snap, ep, alert);
-      return neverSeenOn(host, ep) ? null : dormantEndpoint(ep);
+      return neverSeenOn(ep) ? null : dormantEndpoint(ep);
     }).filter(Boolean);
     if (!body.length) return null; // 3.7a: a host with nothing drawn; 3.7y: a down node included
     return h("div", { class: cls, "data-host": host.name }, [
@@ -745,9 +745,16 @@
     // and path cells' full text) and a child's (the id link's full uuid behind the short id;
     // the status pill's numeric http status behind "ok"). A title equal to the text adds
     // nothing, so no guard is needed; a SUPERSET is exactly the case to keep — the old
-    // "shares nothing with the text" guard dropped the id and time titles the operator pastes
-    function cellText(col, row) {
-      var td = col.cell(row);
+    // "shares nothing with the text" guard dropped the id and time titles the operator pastes.
+    // 3.11a: the text is built ONCE per row and column for this table's life (lower-cased,
+    // keyed by the row's index in `rows`): a cell is a function of its row and the caller's
+    // opts, both fixed here — a push or a new list is a new dataTable call with its own cache.
+    // Building the td per row per filtered column on every keystroke cost 175 ms at 1,000 rows.
+    var textCache = {}; // column name -> [lower-cased filter text by row index]
+    function cellText(col, i) {
+      var byCol = textCache[col.name] || (textCache[col.name] = []);
+      if (byCol[i] !== undefined) return byCol[i];
+      var td = col.cell(rows[i]);
       var own = td.textContent;
       var titles = [];
       if (td.getAttribute("title")) titles.push(td.getAttribute("title"));
@@ -756,11 +763,12 @@
         if (v) titles.push(v);
       });
       var t = titles.join(" ");
-      return t ? own + " " + t : own;
+      byCol[i] = (t ? own + " " + t : own).toLowerCase();
+      return byCol[i];
     }
 
     function filterRows() {
-      var out = rows;
+      var idx = rows.map(function (row, i) { return i; }); // filtered by index: the cache's key
       columns.forEach(function (col) {
         var f = st.filters[col.name];
         if (!f) return;
@@ -769,19 +777,17 @@
           var want = parseFloat(f.slice(1));
           if (!isNaN(want)) {
             var gt = f.charAt(0) === ">";
-            out = out.filter(function (row) {
-              var v = col.sortKey(row);
+            idx = idx.filter(function (i) {
+              var v = col.sortKey(rows[i]);
               return typeof v === "number" && isFinite(v) && (gt ? v > want : v < want);
             });
             return;
           }
         }
         var needle = f.toLowerCase();
-        out = out.filter(function (row) {
-          return cellText(col, row).toLowerCase().indexOf(needle) >= 0;
-        });
+        idx = idx.filter(function (i) { return cellText(col, i).indexOf(needle) >= 0; });
       });
-      return out;
+      return idx.map(function (i) { return rows[i]; });
     }
 
     function sortRows(list) {
@@ -894,6 +900,27 @@
     return container;
   }
 
+  // 3.11a: a renderer that builds a WHOLE row to answer one column (requestsTable's reqRow,
+  // jobsTable's jobRow) is asked for the same row back to back — each column's td, its row
+  // attributes, a sort key — and rebuilt every row's twelve cells per column (a 50-row page:
+  // 7,800 tds). One entry remembers the last row's build. A td is handed out once: a second
+  // ask for a column already given (a row object listed twice, the next draw) rebuilds, so no
+  // element is ever placed in two rows. `row(r)` is for the non-DOM reads (attrs, sort keys).
+  function rowMemo(build) {
+    var last = null, out = null, used = {};
+    function row(r) {
+      if (r !== last) { last = r; out = build(r); used = {}; }
+      return out;
+    }
+    function cell(r, key) {
+      if (r === last && used[key]) last = null; // already placed: build fresh elements
+      var built = row(r);
+      used[key] = true;
+      return built;
+    }
+    return { row: row, cell: cell };
+  }
+
   // story 3.10b: the one jobs-table renderer, called by both pages (the operator, 3.10: "that
   // table should be the same table from the primary page, just filtered to this endpoint - no
   // need to have two different tables - and the code should be re-used"). `rows` are §5a job
@@ -912,10 +939,11 @@
     // the sort keys match what the cells show (3.10c): the started cell by its timestamp, the
     // pill by the word it prints ("done" for a succeeded job, "lost" for a dead server's live
     // row), the id cell by the full id (the page shows the short one, the title holds this)
+    var memo = rowMemo(function (job) { return jobRow(job, opts.now); }); // one build per row (3.11a)
     var specs = columns.map(function (c) {
       return {
         name: c, numeric: !!NUMERIC[c], title: COLUMN_TITLES[c] || null,
-        cell: function (job) { return jobRow(job, opts.now)[c]; },
+        cell: function (job) { return memo.cell(job, c)[c]; },
         sortKey: function (job) { return jobSortKey(c, job); },
       };
     });
@@ -1005,7 +1033,7 @@
     // its arrival must not force a rebuild of a card it never joins
     var parts = [host.name, host.state];
     host.endpoints.forEach(function (ep) {
-      if (!neverSeenOn(host, ep)) parts.push(ep.name + "\x00" + ep.state);
+      if (!neverSeenOn(ep)) parts.push(ep.name + "\x00" + ep.state);
     });
     return parts.join("\x01");
   }
@@ -1239,7 +1267,7 @@
       host.endpoints.forEach(function (ep) {
         // 3.7y: the line names the node's state — a never-seen endpoint hidden on a node that
         // cannot be reached is the node's own alert, and must not read like a merely idle one
-        if (!neverSeenOn(host, ep)) return;
+        if (!neverSeenOn(ep)) return;
         hidden.push(ep.name + (host.state === "down" ? " (node down)"
           : host.state === "unknown" ? " (node unknown)" : "")); // config order: hosts then endpoints
       });
@@ -1739,6 +1767,17 @@
     return "";
   }
 
+  // the one request-failure rule (3.11a: it was hand-copied here and in job.js's "request
+  // errors" figure): a status outside 2xx, or a non-empty error text — except the /api/hello
+  // handshake (3.7v: Claude Code's startup probe, recorded with the backend's 404/501, is a
+  // fact about the backend's routing, never a failure of the job). The table's req-err mark
+  // and the job header's count both read it; exported for job.js.
+  function requestFailed(req) {
+    if (req.path === "/api/hello") return false;
+    if (typeof req.http_status === "number" && (req.http_status < 200 || req.http_status >= 300)) return true;
+    return req.error != null && req.error !== "";
+  }
+
   // opts: {job: show the job column (default true), empty: the empty sentence,
   // now: the server's clock the day-stamp rule runs against (3.7-fold-4: the endpoint page
   // passes the snapshot's now, the job page the detail's clock — same rule as the endpoint
@@ -1774,10 +1813,8 @@
       // req-err mark, and each caller's error count skips it (3.7t makes the shim answer 200
       // and write no row, so NEW databases hold none; the rows already in history stay).
       var handshake = req.path === "/api/hello";
-      var bad = typeof req.http_status === "number" && (req.http_status < 200 || req.http_status >= 300);
-      if (req.error != null && req.error !== "") bad = true;
       var cls = [];
-      if (bad && !handshake) cls.push("req-err");
+      if (requestFailed(req)) cls.push("req-err"); // the one rule, the handshake excepted
       if (req.context_exceeded) cls.push("req-ctx"); // the same truthy read: a non-empty string or true
       var prefill = prefillRate(req);
       var decode = decodeRate(req);
@@ -1857,13 +1894,14 @@
     // the sort keys read what the cells show (3.10c): the time cell by its timestamp, the
     // pill by its word, the id cell by the full id; the derived figures reuse the cells'
     // own helpers, so the number that sorts is the number that prints
+    var memo = rowMemo(reqRow); // one build per row, not one per column (3.11a)
     var specs = columns.map(function (c) {
       return {
         name: c, numeric: !!REQ_NUMERIC[c], title: REQ_TITLES[c] || null,
-        cell: function (req) { return reqRow(req).cells[c]; },
+        cell: function (req) { return memo.cell(req, c).cells[c]; },
         sortKey: function (req) {
           if (c === "time") return req.t;
-          if (c === "status") return reqRow(req).word;
+          if (c === "status") return memo.row(req).word;
           if (c === "job") return req.job_id == null ? "" : req.job_id;
           if (c === "path") return req.path || "";
           if (c === "prompt") return promptTotal(req);
@@ -1881,7 +1919,7 @@
       empty: opts.empty || "no requests",
       class: "requests-table",
       rowAttrs: function (req) {
-        var cls = reqRow(req).cls;
+        var cls = memo.row(req).cls;
         return { class: cls.length ? cls.join(" ") : null };
       },
     });
@@ -1898,6 +1936,7 @@
     range: range,
     state: state,
     requestsTable: requestsTable, // 3.7k: the one renderer both request logs draw through
+    requestFailed: requestFailed, // 3.11a: the one request-failure rule (the row mark; job.js's count)
     jobsTable: jobsTable, // 3.10b: the one renderer both jobs tables draw through
     renders: renders, // 3.7-fold-3 smoke: {full, inPlace, skipped} counts of render passes
     onSnapshot: onSnapshot, // 3.9D D4: the detail pages' snapshot hook; returns the remover

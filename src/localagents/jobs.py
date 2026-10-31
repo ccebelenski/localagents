@@ -80,6 +80,10 @@ def prune(days: int, now: float | None = None, dry_run: bool = False) -> list[Pa
 # How often a blocking wait sends a progress notification (well under Claude Code's idle timeouts).
 PROGRESS_INTERVAL_S = 60.0
 
+# The statuses that mean the job is over: Job.done reads it, and so do the server's row reads
+# (server._TERMINAL_STATUSES is this tuple) — one list, so the two can never disagree.
+TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "timeout", "lost")
+
 
 def oldest_first(job: "Job") -> tuple[bool, float]:
     """Sort key for in-process jobs, oldest first: a None created_at is the oldest, as a NULL
@@ -125,9 +129,10 @@ class Job:
     _conn: sqlite3.Connection | None = field(default=None, repr=False)  # the store's db connection
     _pending_tools: dict[str, int] = field(default_factory=dict, repr=False)  # tool_use_id -> rowid of its tool_calls row (spec write rule)
 
-    # metrics columns written from Job.metrics; the first three decide the NULL-on-reset rule
-    _METRIC_COUNTERS = ("generated_tokens", "prompt_tokens_processed", "prompt_tokens_cached")
-    _METRIC_COLUMNS = _METRIC_COUNTERS + ("cache_hit_ratio", "prompt_tps", "generate_tps", "spec_decode_acceptance")
+    # metrics columns written from Job.metrics (derive's one list, which reads them back); the
+    # first three decide the NULL-on-reset rule
+    _METRIC_COLUMNS = derive._METRICS_COLUMNS
+    _METRIC_COUNTERS = _METRIC_COLUMNS[:3]  # generated_tokens, prompt_tokens_processed, prompt_tokens_cached
     # storage details: summary()/job_status shows the job, and the id identifies it; the id
     # columns resolve to model/endpoint/base_url there (DeepSeek review of 1.2)
     _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id")
@@ -178,7 +183,7 @@ class Job:
                 )
         except sqlite3.Error as e:
             # the database observes the job; a locked or broken db must never fail the job itself
-            self.log_text(f"[db-error] job row update: {e}")
+            self._log_safe(f"[db-error] job row update: {e}")
 
     def record_tool_call(self, t: float, tool: str, tool_use_id: str, input_text: str | None) -> None:
         """One ``tool_calls`` row per ToolUseBlock. The ``input_text`` follows the current input
@@ -198,7 +203,7 @@ class Job:
                 )
                 self._pending_tools[tool_use_id] = cur.lastrowid
         except sqlite3.Error as e:
-            self.log_text(f"[db-error] tool call insert: {e}")
+            self._log_safe(f"[db-error] tool call insert: {e}")
 
     def record_tool_result(self, tool_use_id: str, t: float, is_error: bool | None) -> None:
         """Set ``finished``/``is_error`` on the call's row by its remembered rowid. A result
@@ -213,7 +218,7 @@ class Job:
                     (t, 1 if is_error else 0, rowid),
                 )
         except sqlite3.Error as e:
-            self.log_text(f"[db-error] tool result update: {e}")
+            self._log_safe(f"[db-error] tool result update: {e}")
 
     def record_request(self, rec: dict[str, Any]) -> None:
         """Write one shim request record to the ``requests`` table (shim._log builds ``rec``).
@@ -241,7 +246,7 @@ class Job:
                 )
         except sqlite3.Error as e:
             # same rule as _row_update: the database observes the job and must never fail it
-            self.log_text(f"[db-error] record_request: {e}")
+            self._log_safe(f"[db-error] record_request: {e}")
 
     def record_transcript(self) -> None:
         """Story 1.12: copy the transcript file's text into the ``transcripts`` row, once, at
@@ -272,7 +277,8 @@ class Job:
 
     def _log_safe(self, text: str) -> None:
         """A transcript line that must not raise: a failing write (ENOSPC, a read-only state
-        directory) falls back to stderr. The pattern runner._log_safe uses for its own lines."""
+        directory) falls back to stderr. The one copy (3.11a row 2): the runner's finally
+        steps, the server's shim_port line and this store's own error lines all call it."""
         try:
             self.log_text(text)
         except Exception as e:  # noqa: BLE001
@@ -280,7 +286,7 @@ class Job:
 
     @property
     def done(self) -> bool:
-        return self.status in ("succeeded", "failed", "cancelled", "timeout", "lost")
+        return self.status in TERMINAL_STATUSES
 
     @property
     def settled(self) -> bool:
@@ -300,7 +306,7 @@ class Job:
             d["worktree"] = dict(d["worktree"])
         start = self.started_at or self.created_at  # None only for a hand-built Job: 0, as summary_from_row
         d["elapsed_s"] = round((self.finished_at or time.time()) - start, 1) if start is not None else 0
-        d["task"] = self.task if len(self.task) < 300 else self.task[:300] + "…"
+        d["task"] = derive._truncate(self.task)  # the row summary's own cut
         met = self._metric_values()  # the row's rule, as derive.summary_from_row reads it back
         d["metrics"] = None if all(v is None for v in met) else dict(zip(self._METRIC_COLUMNS, met))
         if not include_result:

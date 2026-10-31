@@ -45,7 +45,9 @@ def test_f1_cell_text_appends_the_title_that_extends_the_cell():
     anchor carries the full UUID behind the short id, the requests pill's span the numeric
     code behind "ok" — so the cell's titles are its own and its descendants'."""
     body = _nested_function(_app_js(), "cellText")
-    assert 'return t ? own + " " + t : own;' in body, body
+    # 3.11a row 38: the same expression, now stored lower-cased in the per-table cache
+    # (the cache's behaviour, title matches included: tests/test_3_11a.py)
+    assert '(t ? own + " " + t : own)' in body, body
     assert "indexOf(own)" not in body, body
     assert 'td.querySelectorAll("[title]")' in body, body
     assert 'titles.join(" ")' in body, body
