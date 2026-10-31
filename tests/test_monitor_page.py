@@ -552,9 +552,11 @@ ENDPOINT_CLASSES = ["endpoint-detail", "tiles", "tile", "tier-0", "tier-1", "tie
                     "events", "requests-table", "pill-ok", "pill-error", "req-ctx", "req-err"]
 
 # the names endpoint.js reads the route bodies through (its header says so): snapshot, host,
-# snapshot endpoint, endpoint hardware, endpoint rates, endpoint history, one history job, one
-# history event, the requests body, one request row, the requests totals
-ENDPOINT_JSON_VARS = ("snap", "host", "ep", "hw", "rates", "hist", "job", "ev", "reqs", "req", "totals")
+# snapshot endpoint, endpoint hardware, endpoint rates, endpoint history, one history event,
+# the requests body, one request row, the requests totals. 3.10b: the history's jobs arrive as
+# §5a rows and are read by app.js's shared jobs-table renderer, so endpoint.js names no job
+# variable of its own anymore.
+ENDPOINT_JSON_VARS = ("snap", "host", "ep", "hw", "rates", "hist", "ev", "reqs", "req", "totals")
 
 
 def _endpoint_js():
@@ -614,9 +616,10 @@ def test_requests_tables_share_one_renderer():
     assert "M.requestsTable(reqs.requests, { empty: \"no requests in this range\", now: now })" in _endpoint_js()
     assert "M.requestsTable(reqs, { job: false, now: nowClock() })" in (STATIC / "job.js").read_text()
     # the endpoint page's old column list and local numeric map are gone; the generic table()
-    # stays for its jobs and events sections
+    # stays for its events section (3.10b: the jobs table moved to app.js's shared renderer,
+    # and the page's own JOB_COLUMNS with it — gone)
     js = _endpoint_js()
-    assert "REQ_COLUMNS" not in js and "REQ_NUMERIC" not in js
+    assert "REQ_COLUMNS" not in js and "REQ_NUMERIC" not in js and "JOB_COLUMNS" not in js
     assert "function table(columns, rows, numeric)" in js
 
 
@@ -629,10 +632,11 @@ def test_endpoint_js_reads_only_section_5a_field_names():
     fields = _read_fields(_endpoint_js(), ENDPOINT_JSON_VARS, ("state", "page"))
     # the regex does see the reads, through every one of the names (3.7k: the request row's own
     # fields — tokens, cache_read, job_id, http_status — moved with the table into
-    # app.js's shared renderer, whose `req` walk checks them there)
+    # app.js's shared renderer, whose `req` walk checks them there; 3.10b: the job row's fields
+    # — started_at among them — moved the same way, into app.js's `job` walk)
     assert {"hosts", "endpoints", "now", "state", "fallback", "hardware", "rates", "gpu_mem_total", "ram_total",
             "prompt_tps", "cached_tps", "t", "jobs", "events", "requests", "totals",
-            "count", "cache_creation_tokens", "errors", "started_at",
+            "count", "cache_creation_tokens", "errors",
             "kind", "detail", "dropped_job_id", "last_seen", "base_url",
             "host", "last_model", "last_context"} <= fields
     missing = sorted(f for f in fields if not re.search(r"(?<![A-Za-z_])" + re.escape(f) + r"(?![A-Za-z_])", spec))

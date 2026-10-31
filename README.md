@@ -491,15 +491,21 @@ them with the port-22 fallback note; and a value is never cut with an ellipsis �
 to fit it.) A
 tile whose source reported nothing in the range is left out rather than drawn empty, and a
 figure the newest probe lacks (a down endpoint) shows the newest value in the range, marked as
-such. Then come the state strip, the jobs that ran on the endpoint in the range, its up, down
-and restart events, and the request table: our own jobs' requests to it (time, job, path,
+such. Then come the state strip, the jobs that ran on the endpoint in the range, its restart
+and outage events, and the request table: our own jobs' requests to it (time, job, path,
 status, milliseconds, tokens in, out and from cache, streaming, error), newest first, under a
 totals line. (True now, 3.7k/3.7-fold-4: both request tables — this one and the job page's —
 draw through one renderer with one look: time, a status pill, job, path, prompt, reused,
 output, prefill t/s, decode t/s, duration (whole ms under a second, tenths above) and error;
 the stream flag and the raw gen_ms are gone, the two rates are the per-request derivations
 Strata derives from the same facts, and the time cell reads clock time inside 24 h and the
-date past it.) The range buttons apply here too; the tiles follow each snapshot, and the
+date past it.) (True now, 3.10b: the endpoint page has no tables of its own anymore — the
+jobs table is the Recent-jobs table filtered to the endpoint, one renderer with the endpoint
+column dropped and every row a full snapshot job row; events are the collector's up/down
+transitions and are drawn only when the range holds one, as "Restarts and outages"; and every
+section heading is a noun phrase with the filter — "Jobs · <name> · last <range>", "Requests ·
+<name> · last <range>", "Restarts and outages · <name> · last <range>" — no parentheses of
+explanation.) The range buttons apply here too; the tiles follow each snapshot, and the
 series and tables are re-fetched on a range change and at most every 30 s.
 
 The job detail page (`#/job/<id>`, from the running-jobs table — True now, 3.7g: from the

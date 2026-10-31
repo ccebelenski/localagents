@@ -643,7 +643,10 @@
     });
   }
 
-  function jobRow(job, now) {
+  // one job row (3.10b): the cells are keyed by their JOB_COLUMNS name and drawn in column
+  // order minus `omit` — the header row and this row filter the same list, so a column left
+  // out leaves no empty cell behind.
+  function jobRow(job, now, omit) {
     var ctx = null;
     if (job.ctx_pct != null) {
       var w = Math.max(0, Math.min(100, job.ctx_pct));
@@ -663,35 +666,39 @@
     if (job.compactions > 0) {
       idCell.push(h("span", { class: "badge", text: fmt.int(job.compactions) + " compaction" + (job.compactions === 1 ? "" : "s") }));
     }
-    return h("tr", { "data-job": job.id }, [
-      h("td", null, idCell),
-      h("td", null, [statusPill(lost ? "lost" : job.status)]),
-      timeTd(job.started_at, now),
-      h("td", { class: "cut", title: job.model || "", text: job.model || "" }),
-      h("td", null, [job.endpoint ? endpointLink(job.endpoint) : null]),
-      h("td", { class: "n", text: fmt.dur(job.elapsed_s) }),
-      // 3.7h: a live job's turn count is 0 until the first assistant turn lands, and a plain 0
-      // reads like a counter that never ran — a muted dash until the number is a figure
-      h("td", { class: "n" }, [job.status === "running" && !job.num_turns
-        ? h("span", { class: "muted", text: "–" })
-        : h("span", { text: fmt.int(job.num_turns) })]),
-      h("td", { class: "n", text: fmt.int(job.tool_calls) }),
+    var cells = {
+      job: h("td", null, idCell),
+      status: h("td", null, [statusPill(lost ? "lost" : job.status)]),
+      started: timeTd(job.started_at, now),
+      model: h("td", { class: "cut", title: job.model || "", text: job.model || "" }),
+      endpoint: h("td", null, [job.endpoint ? endpointLink(job.endpoint) : null]),
+      elapsed: h("td", { class: "n", text: fmt.dur(job.elapsed_s) }),
+      turns: h("td", { class: "n" }, [
+        // 3.7h: a live job's turn count is 0 until the first assistant turn lands, and a plain 0
+        // reads like a counter that never ran — a muted dash until the number is a figure
+        job.status === "running" && !job.num_turns
+          ? h("span", { class: "muted", text: "–" })
+          : h("span", { text: fmt.int(job.num_turns) })]),
+      "tool calls": h("td", { class: "n", text: fmt.int(job.tool_calls) }),
       // 3.7i: the badge is a link — the count is tool results that came back as errors, and
       // the job page is where they are listed by tool
-      h("td", { class: "n" }, [job.errors > 0
+      "tool errors": h("td", { class: "n" }, [job.errors > 0
         ? h("a", { class: "badge err", href: "#/job/" + encodeURIComponent(job.id),
           title: COLUMN_TITLES["tool errors"], text: fmt.int(job.errors) })
         : h("span", { text: fmt.int(job.errors) })]),
-      h("td", null, [ctx]),
+      context: h("td", null, [ctx]),
       // 3.10a: the pair, the snapshot's own job figures (derive.gen_tps, derive.prefill_tps);
       // fmt.speed as before — the unit is in the headers now, as in the requests table
-      h("td", { class: "n", text: job.prefill_tps != null ? fmt.speed(job.prefill_tps) : "" }),
-      h("td", { class: "n", text: job.gen_tps != null ? fmt.speed(job.gen_tps) : "" }),
+      "prefill tok/s": h("td", { class: "n", text: job.prefill_tps != null ? fmt.speed(job.prefill_tps) : "" }),
+      "decode tok/s": h("td", { class: "n", text: job.gen_tps != null ? fmt.speed(job.gen_tps) : "" }),
       // 3.7g: no "current tool" column — on a running row it was always the same line as the
       // last activity, and on a finished row it is history; the activity cell below holds the
       // full text in its title
-      h("td", { class: "cut", title: job.last_activity || "", text: oneLine(job.last_activity) }),
-    ]);
+      "last activity": h("td", { class: "cut", title: job.last_activity || "", text: oneLine(job.last_activity) }),
+    };
+    return h("tr", { "data-job": job.id }, JOB_COLUMNS.filter(function (c) {
+      return !omit || omit.indexOf(c) < 0;
+    }).map(function (c) { return cells[c]; }));
   }
 
   function oneLine(text) {
@@ -699,24 +706,32 @@
     return String(text).split("\n")[0];
   }
 
-  function jobsTable(snap) {
-    // 3.7g: the snapshot's order is the log's contract (live jobs by start, then the newest
-    // finished first) — no client-side re-sort, which used to scramble the finished tail
-    var jobs = snap.jobs || [];
-    if (!jobs.length) {
-      return h("div", { class: "table-wrap" }, [h("div", { class: "empty", text: "no jobs yet" })]);
+  // story 3.10b: the one jobs-table renderer, called by both pages (the operator, 3.10: "that
+  // table should be the same table from the primary page, just filtered to this endpoint - no
+  // need to have two different tables - and the code should be re-used"). `rows` are §5a job
+  // rows in the server's order (3.7g: that order is the log's contract — live jobs by start,
+  // then the newest finished first — never re-sorted here). `opts`: `now` the clock the started
+  // cell day-stamps against (3.10a), `empty` the sentence an empty list draws (each page keeps
+  // its own), `note` the line under the table spelling out the row order (3.7g: the order
+  // carries meaning; a "show all" link waits for an all-jobs page, so the notes stay plain),
+  // `omit` the column names to leave out (the endpoint page drops "endpoint": every row is
+  // that endpoint).
+  function jobsTable(rows, opts) {
+    opts = opts || {};
+    rows = rows || [];
+    var omit = opts.omit || [];
+    var columns = JOB_COLUMNS.filter(function (c) { return omit.indexOf(c) < 0; });
+    if (!rows.length) {
+      return h("div", { class: "table-wrap" }, [h("div", { class: "empty", text: opts.empty || "no jobs yet" })]);
     }
-    var head = h("tr", null, JOB_COLUMNS.map(function (c) {
+    var head = h("tr", null, columns.map(function (c) {
       return h("th", { class: NUMERIC[c] ? "n" : null, title: COLUMN_TITLES[c] || null, text: c });
     }));
-    // the note spells out the row order (3.7g: the table now holds finished rows too, and the
-    // order carries meaning). A "show all" link like Strata's log has waits for an all-jobs
-    // page — the server keeps the full history, but no route lists it yet, so the note is plain
     return h("div", null, [
       h("div", { class: "table-wrap" }, [h("table", null, [h("thead", null, [head]),
-        // the started cell day-stamps against the snapshot's own clock (3.10a)
-        h("tbody", null, jobs.map(function (job) { return jobRow(job, snap.now); }))])]),
-      h("div", { class: "jobs-note muted", text: "running and queued first, then the last 10 finished" }),
+        // the started cell day-stamps against the caller's clock (3.10a)
+        h("tbody", null, rows.map(function (job) { return jobRow(job, opts.now, omit); }))])]),
+      opts.note ? h("div", { class: "jobs-note muted", text: opts.note }) : null,
     ]);
   }
 
@@ -1056,7 +1071,10 @@
     }
     raiseCardFloor(); // 3.7u: the cards are in place; the floor follows their widest line
     renders[rebuilt ? "full" : "inPlace"]++;
-    byId("jobs-body").replaceChildren(jobsTable(snap));
+    // 3.10b: the overview passes the snapshot's rows and its own note; the endpoint page calls
+    // the same renderer from endpoint.js
+    byId("jobs-body").replaceChildren(jobsTable(snap.jobs, {
+      now: snap.now, note: "running and queued first, then the last 10 finished" }));
     snapshotListeners.slice().forEach(function (fn) { fn(); }); // 3.9D D4: the snapshot redraw is done
   }
 
@@ -1569,6 +1587,7 @@
     range: range,
     state: state,
     requestsTable: requestsTable, // 3.7k: the one renderer both request logs draw through
+    jobsTable: jobsTable, // 3.10b: the one renderer both jobs tables draw through
     renders: renders, // 3.7-fold-3 smoke: {full, inPlace, skipped} counts of render passes
     onSnapshot: onSnapshot, // 3.9D D4: the detail pages' snapshot hook; returns the remover
     cardLayout: cardLayout, // 3.7u smoke: {floor, need, raised} — the column floor's high-water mark

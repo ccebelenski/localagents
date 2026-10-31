@@ -202,6 +202,11 @@ headings — the page draws the tiles in that order under plain labels (speeds, 
 hardware) with no numbering; the endpoint/node state tiles are gone (the header says it, with
 the port-22 note); tile values are never cut, the tile grows (the 3.7u rule).
 
+True now (3.10b, 2026-10-30): the endpoint page's jobs are the overview's table filtered to the
+endpoint (one renderer, the endpoint column omitted); its requests table is the shared
+renderer; events are drawn only when the range holds one, as "Restarts and outages"; every
+heading is "Noun · endpoint · last range".
+
 The per-request table for non-Strata endpoints is built from the `requests` table (our jobs'
 traffic only).
 
@@ -436,10 +441,14 @@ the schema allows it) reports `elapsed_s` null — a finished row never shows a 
   "gpu_pcie_rx_mb": [ ... ], "gpu_pcie_tx_mb": [ ... ], "cpu": [ ... ], "ram_used": [ ... ],
   "disk_read_mb": [ ... ], "disk_write_mb": [ ... ]                                          ← tier 3
   "events": [ {"t", "kind", "detail"}, ... ],     the endpoint's events in the range, oldest first
-  "jobs": [ {"id", "status", "started_at", "finished_at", "model"}, ... ]
-                                    jobs on the endpoint that overlap the range (started — or
-                                    created, if never started — by `now`, not finished before
-                                    the range starts), oldest first
+  "jobs": [ running_job, ... ]      story 3.10b: the §5a job rows (`running_job`, the shape the
+                                    snapshot's log rows have — the five-key listing this carried
+                                    is gone) of the jobs that overlap the range on this
+                                    endpoint, ordered as the overview's log: live jobs oldest
+                                    start first, then the newest finished first. Overlapping is
+                                    the timeline's predicate (`jobs_overlapping`: started by the
+                                    window's end, not finished before its start) — so a queued
+                                    job that has never started, having no span, is not listed
 }
 ```
 

@@ -53,7 +53,9 @@ def test_history_jobs_rows_carry_no_name_key(world):
     conn, _ = world
     h = read.endpoint_history(conn, endpoint_id(conn, "ai1"), NOW - HOUR, NOW)
     assert sorted(j["status"] for j in h["jobs"]) == ["running", "succeeded"]
-    assert all(set(j) == {"id", "status", "started_at", "finished_at", "model"} for j in h["jobs"])
+    # story 3.10b made these full §5a job rows (their key set is pinned against the snapshot's
+    # rows in tests/test_3_10b.py); the name key stays out of every one.
+    assert all("name" not in j and j["id"] for j in h["jobs"])
 
 
 def test_timeline_job_rows_carry_no_name_key(world):

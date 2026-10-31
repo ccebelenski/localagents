@@ -201,6 +201,21 @@ _LIVE_TAIL = (" WHERE j.status IN ('queued', 'running')"
 _FINISHED_TAIL = (" WHERE j.status NOT IN ('queued', 'running')"
                   " ORDER BY j.finished_at DESC, j.rowid DESC LIMIT ?")
 
+# story 3.10b: the one window predicate — the job spans ``[since_t, now]`` (started at or before
+# the window's end, unfinished or finished at or after its start; a job that never started has
+# no span to overlap). Factored out of ``jobs_overlapping`` so the history's job SELECTs below
+# answer the same question; the params are always ``(now, since_t)``.
+_OVERLAP_WHERE = (" j.started_at IS NOT NULL AND j.started_at <= ?"
+                  " AND (j.finished_at IS NULL OR j.finished_at >= ?)")
+
+# the history body's job listing (story 3.10b): this endpoint's §5a job rows overlapping the
+# range, in the overview's log order — live by start, then the newest finished first. No LIMIT:
+# the range bounds the count.
+_ENDPOINT_JOBS_LIVE_TAIL = (" WHERE j.endpoint_id = ? AND j.status IN ('queued', 'running') AND"
+                            + _OVERLAP_WHERE + " ORDER BY COALESCE(j.started_at, j.created_at), j.rowid")
+_ENDPOINT_JOBS_FINISHED_TAIL = (" WHERE j.endpoint_id = ? AND j.status NOT IN ('queued', 'running') AND"
+                                + _OVERLAP_WHERE + " ORDER BY j.finished_at DESC, j.rowid DESC")
+
 # story 3.7-fold-4s: a finished row's derived figures are computed once per process. The store's
 # write rules make them static: run_job's finally sets ``finished_at`` and writes the row with the
 # job's LAST ``changed()`` (runner.py's tail), and record_request, record_tool_call and
@@ -629,16 +644,17 @@ def endpoint_history(
             "SELECT t, kind, detail FROM endpoint_events WHERE endpoint_id = ? AND t >= ? AND t <= ?"
             " ORDER BY t, id", (endpoint_id, since_t, now))
     ]
-    out["jobs"] = [
-        {"id": r["id"], "status": r["status"], "started_at": r["started_at"],
-         "finished_at": r["finished_at"], "model": r["served_id"]}
-        for r in conn.execute(
-            "SELECT j.id, j.status, j.started_at, j.finished_at, m.served_id FROM jobs j"
-            " LEFT JOIN models m ON m.id = j.model_id"
-            " WHERE j.endpoint_id = ? AND COALESCE(j.started_at, j.created_at) <= ?"
-            " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
-            " ORDER BY COALESCE(j.started_at, j.created_at), j.rowid", (endpoint_id, now, since_t))
-    ]
+    # story 3.10b: full §5a job rows (the five-key listing is gone — the endpoint page draws
+    # these through the overview's jobs table). Same SELECT and derivation the snapshot uses;
+    # ``frozen=True`` gives a finished row the run's length, never a moving figure. These rows
+    # do NOT join ``_FINISHED_CACHE``: that cache's eviction is keyed to the overview's last-10
+    # tail, so it would drop a history row between calls (recomputing it anyway) and could be
+    # starved by a long range.
+    jobs = [_job_entry(conn, j, now, frozen=False)
+            for j in conn.execute(_JOB_SELECT + _ENDPOINT_JOBS_LIVE_TAIL, (endpoint_id, now, since_t))]
+    jobs += [_job_entry(conn, j, now, frozen=True)
+             for j in conn.execute(_JOB_SELECT + _ENDPOINT_JOBS_FINISHED_TAIL, (endpoint_id, now, since_t))]
+    out["jobs"] = jobs
     return out
 
 
@@ -734,8 +750,7 @@ def jobs_overlapping(conn: sqlite3.Connection, since_t: float, now: float) -> li
         for r in conn.execute(
             "SELECT j.id, e.name AS endpoint, j.status, j.started_at, j.finished_at"
             " FROM jobs j LEFT JOIN endpoints e ON e.id = j.endpoint_id"
-            " WHERE j.started_at IS NOT NULL AND j.started_at <= ?"
-            " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
+            " WHERE" + _OVERLAP_WHERE +
             " ORDER BY j.started_at ASC, j.rowid ASC",
             (now, since_t),
         )

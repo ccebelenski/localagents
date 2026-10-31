@@ -725,8 +725,11 @@ def test_ai1_history_event_is_the_restart(world):
 def test_ai1_history_jobs_are_the_two_seeded(world):
     conn, _ = world
     h = read.endpoint_history(conn, endpoint_id(conn, "ai1"), NOW - HOUR, NOW)
-    assert sorted(j["status"] for j in h["jobs"]) == ["running", "succeeded"]
-    assert set(h["jobs"][0]) == {"id", "status", "started_at", "finished_at", "model"}
+    # story 3.10b: the §5a job rows in the overview's log order (live first, newest finished
+    # next); the key set is compared against the snapshot's rows there, so only the values
+    # that are this world's are pinned here.
+    assert [j["status"] for j in h["jobs"]] == ["running", "succeeded"]
+    assert all(j["endpoint"] == "ai1" for j in h["jobs"])
     assert all(j["model"] == "qwen3.8-flash-next-iq3_s" for j in h["jobs"])
 
 
@@ -912,7 +915,9 @@ def test_a_seven_day_history_reads_only_the_points_it_answers(tmp_path):
     old = _endpoint_history_before_r1(conn, eid, since, NOW)
     old_ms = (time.monotonic() - t0) * 1000
     # 3.10f-2 dropped the history jobs' name key (the algorithm half of the oracle is verbatim
-    # at 5499c35; the jobs block is the fixed SELECT it copied, and the shape half tracks now)
+    # at 5499c35; the jobs block is the fixed SELECT it copied, and the shape half tracks now).
+    # 3.10b made the history jobs full §5a rows; the seven-day world holds no jobs, so the
+    # shape half of this oracle only ever compares two empty lists.
     for _j in old["jobs"]:
         _j.pop("name")
     stmts: list[str] = []

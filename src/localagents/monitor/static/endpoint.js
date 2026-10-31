@@ -13,7 +13,9 @@
  *     when the history response carries that series (§5a: absent keys mean no source);
  *   - the state strip over the range (the history's `state` series);
  *   - the request table with its totals line (/api/endpoints/<name>/requests);
- *   - the jobs that ran on it in the range and its events in the range (both from the history).
+ *   - the jobs that ran on it in the range: the history body's §5a job rows, drawn through
+ *     app.js's one jobs-table renderer with the endpoint column dropped (3.10b) — and its
+ *     restart and outage events, a section only when the range holds one (3.10b).
  *
  * Redraw. The page registers with app.js's snapshot hook (localagentsMonitor.onSnapshot: the
  * listener runs at the end of every render(), the skip path included — 3.9D D4 replaced the
@@ -25,8 +27,9 @@
  *
  * The JSON is §5a's (docs/superpowers/specs/2026-10-29-monitor-design.md); the route bodies are
  * read through fixed names, as app.js does: `snap` (the snapshot), `host`, `ep` (the snapshot's
- * endpoint), `hw` (ep.hardware), `rates` (ep.rates), `hist` (the endpoint history), `job` (one of
- * hist.jobs), `ev` (one of hist.events), `reqs` (the requests body), `req` (one of its rows) and
+ * endpoint), `hw` (ep.hardware), `rates` (ep.rates), `hist` (the endpoint history; its `jobs`
+ * arrive as §5a rows that app.js's shared renderer reads), `ev` (one of hist.events),
+ * `reqs` (the requests body), `req` (one of its rows) and
  * `totals` (reqs.totals). tests/test_monitor_page.py checks every field read through them is a
  * §5a name. Text goes in through h() (textContent), never as HTML.
  */
@@ -291,14 +294,15 @@
     return h("table", null, [h("thead", null, [head]), h("tbody", null, rows)]);
   }
 
-  function requestsSection(reqs, range, now) {
+  // the log look (3.7k): the one shared renderer, with the job column (this page's log
+  // spans jobs), this page's empty sentence, and the page's clock for the day-stamped
+  // time column (3.7-fold-4: the snapshot's now, via nowOf()). 3.10b: the heading is a noun
+  // phrase with the filter — no parentheses of explanation; the totals line is unchanged.
+  function requestsSection(reqs, range, name, now) {
     var body;
     if (!reqs) {
       body = h("div", { class: "empty", text: "loading" });
     } else {
-      // the log look (3.7k): the one shared renderer, with the job column (this page's log
-      // spans jobs), this page's empty sentence, and the page's clock for the day-stamped
-      // time column (3.7-fold-4: the snapshot's now, via nowOf())
       body = M.requestsTable(reqs.requests, { empty: "no requests in this range", now: now });
     }
     var totalsLine = null;
@@ -315,45 +319,40 @@
         h("span", { class: "fig" + (totals.errors > 0 ? " err" : "") }, [h("span", { class: "label", text: "errors" }), h("span", { class: "num", text: fmt.int(totals.errors) })]),
       ]);
     }
-    return h("section", { class: "requests" }, [h("h2", { text: "Requests (" + range + ", our jobs only)" }), totalsLine, body]);
+    return h("section", { class: "requests" }, [h("h2", { text: "Requests · " + name + " · last " + range }), totalsLine, body]);
   }
 
-  var JOB_COLUMNS = ["job", "status", "started", "finished", "model"];
-
-  function jobsSection(hist, range, now) {
-    var jobs = hist && Array.isArray(hist.jobs) ? hist.jobs.slice().reverse() : null; // newest first
-    var body;
-    if (!jobs) body = h("div", { class: "empty", text: "loading" });
-    else if (!jobs.length) body = h("div", { class: "empty", text: "no jobs ran on it in this range" });
-    else {
-      body = h("div", { class: "table-wrap" }, [table(JOB_COLUMNS, jobs.map(function (job) {
-        return h("tr", { "data-job": job.id }, [
-          h("td", null, [M.jobLink(job.id)]),
-          h("td", { text: job.status || "" }),
-          h("td", { text: when(job.started_at, now) }),
-          h("td", { text: job.finished_at != null ? when(job.finished_at, now) : "" }),
-          h("td", { class: "cut", title: job.model || "", text: job.model || "" }),
-        ]);
-      }), {})]);
-    }
-    return h("section", { class: "ep-jobs-list" }, [h("h2", { text: "Jobs on it (" + range + ")" }), body]);
+  // 3.10b (the operator: "that table should be the same table from the primary page, just
+  // filtered to this endpoint - no need to have two different tables - and the code should be
+  // re-used"): the history body's jobs are now full §5a job rows in the overview's log order,
+  // so this section draws through app.js's one jobs-table renderer with the endpoint column
+  // omitted (every row is this endpoint) and the filter spelled in the heading and the note.
+  // No slice/reverse: the server's order is the log's contract (3.7g).
+  function jobsSection(hist, range, name, now) {
+    var body = hist && Array.isArray(hist.jobs)
+      ? M.jobsTable(hist.jobs, { omit: ["endpoint"], now: now,
+        empty: "no jobs ran on it in this range",
+        note: "jobs that ran on " + name + " in the last " + range })
+      : h("div", { class: "empty", text: "loading" });
+    return h("section", { class: "ep-jobs-list" }, [h("h2", { text: "Jobs · " + name + " · last " + range }), body]);
   }
 
-  function eventsSection(hist, range, now) {
-    var evs = hist && Array.isArray(hist.events) ? hist.events.slice().reverse() : null; // newest first
-    var body;
-    if (!evs) body = h("div", { class: "empty", text: "loading" });
-    else if (!evs.length) body = h("div", { class: "empty", text: "no events in this range" });
-    else {
-      body = h("div", { class: "table-wrap" }, [table(["time", "kind", "detail"], evs.map(function (ev) {
-        return h("tr", { class: "ev-" + (ev.kind || "") }, [
-          h("td", { text: when(ev.t, now) }),
-          h("td", { text: ev.kind || "" }),
-          h("td", { class: "wrap", text: ev.detail || "" }),
-        ]);
-      }), {})]);
-    }
-    return h("section", { class: "events" }, [h("h2", { text: "Events (" + range + ")" }), body]);
+  // 3.10b (the operator: "What is 'events'? I have none."): the collector writes an event only
+  // on an up/down transition, so most ranges hold none — then the section is absent, not an
+  // empty table with an explaining sentence. Before the history arrives there is no event to
+  // show either, so it stays absent until one lands. With events, the heading says what they
+  // are, and the draw (drawTables) tolerates the null.
+  function eventsSection(hist, range, name, now) {
+    var evs = hist && Array.isArray(hist.events) && hist.events.length ? hist.events.slice().reverse() : null; // newest first
+    if (!evs) return null;
+    var body = h("div", { class: "table-wrap" }, [table(["time", "kind", "detail"], evs.map(function (ev) {
+      return h("tr", { class: "ev-" + (ev.kind || "") }, [
+        h("td", { text: when(ev.t, now) }),
+        h("td", { text: ev.kind || "" }),
+        h("td", { class: "wrap", text: ev.detail || "" }),
+      ]);
+    }), {})]);
+    return h("section", { class: "events" }, [h("h2", { text: "Restarts and outages · " + name + " · last " + range }), body]);
   }
 
   // the snapshot's endpoint called `name`, with its host; nulls when there is no snapshot yet or
@@ -488,12 +487,15 @@
         tablesBox.replaceChildren();
         return;
       }
-      tablesBox.replaceChildren(
+      // 3.10b: the events section is null when the range holds no event (and until the
+      // history arrives); replaceChildren would print a null as the text "null", so the list
+      // is filtered first, as drawCurrent does for its parts.
+      tablesBox.replaceChildren.apply(tablesBox, [
         // the short lists first: the request table can run to 1000 rows
-        jobsSection(page.hist, range, now),
-        eventsSection(page.hist, range, now),
-        requestsSection(page.reqs, range, now)
-      );
+        jobsSection(page.hist, range, name, now),
+        eventsSection(page.hist, range, name, now),
+        requestsSection(page.reqs, range, name, now),
+      ].filter(Boolean));
     }
 
     function draw() {
