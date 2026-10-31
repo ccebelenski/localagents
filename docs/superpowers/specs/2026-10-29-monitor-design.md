@@ -164,7 +164,9 @@ longer sets the card column's floor.) (True now, fold of the batch review F1, 20
 unknown node is quiet the same way — the head note "unknown", the sentence in its title, no
 `.ep-error` line.) (True now (3.7y, 2026-10-30): a never-seen endpoint is
 hidden on a down node too, a down node with nothing left to draw has no card, and the
-hidden-count line names it "<endpoint> (node down)".)
+hidden-count line names it "<endpoint> (node down)".) (True now (3.10g, 2026-10-30): a card
+never stretches past one and a half floors — a lone column packs left and leaves space rather
+than spreading the fixed tiles across the window; the floor itself is unchanged.)
 
 ## 5. Page and navigation
 

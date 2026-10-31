@@ -80,9 +80,19 @@ h2 { font-size: 16.5px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 60
   --card-floor: 360px;
   grid-template-columns: repeat(auto-fill, minmax(min(var(--card-floor), 100%), 1fr));
 }
+/* 3.10g (operator 2026-10-30, a 1712-px window: "A window that is just not quite wide enough
+   degrades the render in an interesting and bad way"): a card never grows past one and a half
+   floors. With the track a 1fr column (the .hosts rule above, and the 3.7u pin that keeps it),
+   a lone column hands its card the whole row and the twelve fixed tiles spread across it with
+   the sparklines stretched between; the cap is the card's own, so the lone column packs left
+   and leaves the space on the right instead. The cap travels with the floor, not the track:
+   the cap at min(--card-floor, 100%) is untouched — past it one full-width column stays
+   full-width (the cap exceeds the narrower track), the 3.7u scrolling lines unchanged. The
+   narrow media query releases it: a phone's card is the window, there is nothing to spread. */
 .host {
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
   min-width: 0;
+  max-width: calc(var(--card-floor) * 1.5);
 }
 .host-head { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
 .host-name { font-weight: 600; font-size: 16.5px; }
@@ -265,6 +275,7 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 
 @media (max-width: 760px) {
   .hosts { grid-template-columns: 1fr; }
+  .host { max-width: none; } /* 3.10g: the phone's card is the window — nothing to spread */
   .tile { min-width: 140px; } /* 3.10d: the flex tiles' narrow-screen floor (was the grid's) */
   .top { align-items: flex-start; }
 }
