@@ -11,6 +11,7 @@
 (function () {
   var M = window.localagentsMonitor;
   var hostsEl = document.getElementById("hosts");
+  var firstCard = hostsEl.querySelector(".host");
   var each = function (list, fn) { Array.prototype.forEach.call(list, fn); };
   var px = function (v) { return parseFloat(v) || 0; };
   var lines = [];
@@ -64,6 +65,11 @@
     floorIsText: Math.abs(M.cardLayout.floor - oracle) <= 1,
     columns: getComputedStyle(hostsEl).gridTemplateColumns.split(" ").length,
     cols: getComputedStyle(hostsEl).gridTemplateColumns,
+    // 3.10g (F4 fold): the first card's rendered width. The 1.5x floor cap is a card rule, so
+    // a released override (a later top-level `.host { max-width: none; }`) widens this while
+    // the floor — the text's need — does not move. floor.mjs fails a step above 760 px whose
+    // card exceeds the cap.
+    cardWidth: firstCard ? Math.round(firstCard.getBoundingClientRect().width * 10) / 10 : null,
     hostsWidth: hostsEl.clientWidth,
     page: document.documentElement.scrollWidth + "/" + document.documentElement.clientWidth,
     top: lines.slice(0, 4),

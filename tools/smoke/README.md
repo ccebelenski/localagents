@@ -112,8 +112,10 @@ measured after every render, there is no resize listener) and evaluates `floor.j
 measures every card line's need on its own — a block line's text extent through a Range, a flex row's
 items summed with their gaps, plus the chrome between the line's box and the card's edge, a flex item
 counted through its row — and reports it as `oracle` beside the page's `cardLayout.floor`/`need`, the
-grid's `columns`, `needIsText` and `floorIsText`. The process exits 1 when any step's floor or need is
-not the text's. Run it on the seeded world with no hand render (a hand render that shrinks the texts
+grid's `columns`, the first card's `cardWidth`, `needIsText` and `floorIsText`. The process exits 1
+when any step's floor or need is not the text's, and (3.10g, F4 fold) when a card above the 760 px
+narrow query is wider than 1.5 × the floor — the cap is a card rule, so a released override
+otherwise leaves the floor untouched and exits 0. Run it on the seeded world with no hand render (a hand render that shrinks the texts
 leaves the floor, a high-water mark, above the current text by design; `needIsText` still holds there).
 Seeded world, 3.7u-fix P-1 fold: floor 946 (the down endpoint's error line) at every step, columns
 2/2/2/1/2; before the fold the floor read 1078 → 1953 → 2153 → 2153 → 2153, columns 2/1/1/1/1.
@@ -166,7 +168,9 @@ node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/t.png '#/endpoin
 ## tables.js: 3.10c — the pager, the sort, the filters, and the view across a push
 
 The seeded overview holds two jobs, so tables.js hand-renders a snapshot COPY with 120 jobs
-(varied status/started/elapsed/turns) and reads the one table's full contract into `__d1`,
+(varied status/started/elapsed/turns; 36-character UUID ids, 120 started times inside NOW's
+local day, and blanks in `prefill tok/s` and `last activity` for the fold's witnesses) and
+reads the one table's full contract into `__d1`,
 synchronously (a real push would otherwise overwrite the hand-edited DOM mid-sequence):
 (a) the pager reads "1–50 of 120" with 50 body rows; (b) clicking the "turns" header sorts
 ascending (first cell 0, last 49; the header carries the arrow class and `aria-sort:
@@ -176,7 +180,13 @@ leaves only done pills and "1–40 of 40", then ">100" in turns leaves only 119�
 rows array through `render`) keeps the sort, the (empty) filters and page 2 — the state is
 `TABLE_STATE.jobs`, not the DOM; (e) the job page's requests table (11 filter boxes, no job
 column) and the endpoint page's (12, 152 rows paged 50) both sort by "duration" numerically.
-Read `d1` in AFTER_JSON.
+(f) F1 (fold of the page-batch review 2026-10-30): a filter matches the cell's title too — the
+started cell's date string ("10/31/2026", behind the clock) leaves all 120 rows, and one row's
+full 36-character UUID (behind its 8-character short id) leaves that one row. (g) F2: a missing
+value sorts last in BOTH directions — "prefill tok/s" descending and "last activity" ascending
+each hold no blank in the first 50 rows and their blanks at the end of the list. The job page's
+`.job-name` text and length (36, the full UUID — F3) ride in `e.jobName`. Read `d1` in
+AFTER_JSON.
 
 ```bash
 # both variables, your own ports (8795/9255 at the story's run)

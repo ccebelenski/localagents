@@ -740,14 +740,23 @@
     if (!rows.length) return h("div", { class: "empty", text: opts.empty || "" });
     var container = h("div", { class: "table-block", "data-table": id });
 
-    // the filter matches what the operator sees: the cell's own text, plus its title where
-    // the title holds more than the text does (the id cell's full uuid; the status pill's
-    // numeric http status behind "ok")
+    // the filter matches what the operator sees: the cell's own text, plus every title the
+    // cell carries — its own (the started cell's full date-time behind the clock; the model
+    // and path cells' full text) and a child's (the id link's full uuid behind the short id;
+    // the status pill's numeric http status behind "ok"). A title equal to the text adds
+    // nothing, so no guard is needed; a SUPERSET is exactly the case to keep — the old
+    // "shares nothing with the text" guard dropped the id and time titles the operator pastes
     function cellText(col, row) {
       var td = col.cell(row);
       var own = td.textContent;
-      var t = td.getAttribute("title");
-      return t && t.indexOf(own) < 0 ? own + " " + t : own;
+      var titles = [];
+      if (td.getAttribute("title")) titles.push(td.getAttribute("title"));
+      Array.prototype.forEach.call(td.querySelectorAll("[title]"), function (el) {
+        var v = el.getAttribute("title");
+        if (v) titles.push(v);
+      });
+      var t = titles.join(" ");
+      return t ? own + " " + t : own;
     }
 
     function filterRows() {
@@ -783,12 +792,18 @@
       var dir = st.sort.dir;
       // two finite numbers compare numerically wherever the column map calls them numeric
       // (the jobs table's "context" holds a percent the map does not mark .n); everything
-      // else compares as text, and a missing figure sorts past every figure
+      // else compares as text. A missing value — no finite figure, or a text column's null or
+      // blank ("last activity" on a job with none) — is ABSENT, not small: it sorts past every
+      // present value in BOTH directions, so blanks sit at the end of the page whichever way
+      // the arrow points (F2 fold: the old sentinel multiplied by dir and put text blanks
+      // through localeCompare, so a descending sort led with them)
       return list.slice().sort(function (a, b) {
         var x = col.sortKey(a), y = col.sortKey(b);
-        var xn = typeof x === "number" && isFinite(x), yn = typeof y === "number" && isFinite(y);
-        if (xn && yn) return (x - y) * dir;
-        if (xn !== yn) return (xn ? -1 : 1) * dir;
+        var xnum = typeof x === "number" && isFinite(x), ynum = typeof y === "number" && isFinite(y);
+        // present: a finite figure or a non-empty text (the xn/yn names, not numericness)
+        var xn = xnum || (x != null && x !== ""), yn = ynum || (y != null && y !== "");
+        if (xn !== yn) return xn ? -1 : 1;
+        if (xnum && ynum) return (x - y) * dir;
         return String(x == null ? "" : x).localeCompare(String(y == null ? "" : y)) * dir;
       });
     }

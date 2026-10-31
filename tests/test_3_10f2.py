@@ -149,6 +149,17 @@ def test_shortid_is_defined_and_exported():
     assert re.search(r"\bshortId: shortId\b", app), "shortId not exported on window.localagentsMonitor"
 
 
+def test_the_job_page_header_draws_the_full_id():
+    """3.10f-2's own clause ("the job page header shows the full id"): the header is the one
+    place the UUID is shown in full — every other id display is the short form. The pins above
+    never read job.js, so ``text: shortId(detail.id)`` passed the whole suite uncaught (fold of
+    the page-batch review 2026-10-30, F3); tools/smoke/tables.js reads the rendered
+    ``.job-name`` length (36) as the runtime witness."""
+    job = _each_static()["job.js"]
+    assert re.search(r'h\("span", \{ class: "job-name", text: detail\.id \}\)', job), job
+    assert "shortId(detail.id)" not in job
+
+
 def test_joblink_draws_the_short_id_with_the_full_id_as_title():
     """jobLink takes only the id, draws shortId(id) and titles the full id — a caller cannot
     pass a name any more (no two-argument call survives in any page file)."""

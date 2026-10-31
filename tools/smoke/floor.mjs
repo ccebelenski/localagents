@@ -6,7 +6,8 @@
 // window did, and the columns must come back when the window does.
 // usage: node tools/smoke/floor.mjs <devtools-port> <url> [widths=2200,2000,2200,1400,2200] [settle_s=3]
 // prints one JSON line per step and a SUMMARY line; exits 1 if any step's floorIsText or
-// needIsText is false.
+// needIsText is false, or — above the 760 px narrow query — the first card's width exceeds
+// 1.5 x the floor (3.10g F4: the cap is a card rule, and a released override used to pass).
 import { readFileSync } from "node:fs";
 
 const [port, url, widthsArg = "2200,2000,2200,1400,2200", settleArg = "3"] = process.argv.slice(2);
@@ -42,8 +43,15 @@ for (let i = 0; i < widths.length; i++) {
   steps.push(o);
   console.log(JSON.stringify(o));
 }
-const ok = steps.every((s) => s.floorIsText && s.needIsText);
-console.log("SUMMARY " + JSON.stringify({ ok, steps: steps.map((s) => `${s.w}: floor ${s.floor} need ${s.need} text ${s.oracle} cols ${s.columns}`), logs }));
+// 3.10g (F4 fold): above the narrow query (760 px) a card never grows past one and a half
+// floors. The cap is a card rule, so a released override — a later top-level
+// `.host { max-width: none; }` — shows up as a wide card while floorIsText and needIsText
+// stay true; the old exit logic only checked those two. At/below 760 px the query releases
+// the cap on purpose (the phone's card is the window).
+const cardOk = (s) => s.w <= 760 || s.cardWidth == null || s.floor == null
+  || s.cardWidth <= s.floor * 1.5 + 1;
+const ok = steps.every((s) => s.floorIsText && s.needIsText && cardOk(s));
+console.log("SUMMARY " + JSON.stringify({ ok, steps: steps.map((s) => `${s.w}: floor ${s.floor} need ${s.need} text ${s.oracle} cols ${s.columns} card ${s.cardWidth} cardOk ${cardOk(s)}`), logs }));
 await fetch(`http://127.0.0.1:${port}/json/close/${target.id}`);
 ws.close();
 process.exit(ok ? 0 : 1);
