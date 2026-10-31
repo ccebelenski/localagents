@@ -2238,7 +2238,12 @@ the plan the operator agreed to.
   positional, by row signature); a focused filter control is never touched; the three callers mount
   the table once instead of re-inserting it. Retires the dead caret restore; `sortRows` reads the key
   cache. Qwen/ai1, then a DeepSeek construct-it review, the fold, the operator's eyes on Firefox.
-  Waits for "go".
+  Go given 2026-10-31 afternoon; builds after 3.12d lands. The operator's BEFORE reading, taken at
+  4f5b0b5 with two lanes running (every push changes the jobs table, the wrapper still rebuilt):
+  "the scrollbar behaviors have been tamed", then "Correct - not completely tamed - but reduced
+  right now." The after reading is the same page and tab once 3.12b lands; if the flash outlives
+  the wrapper's identity, the spec's risk row names the next suspect (the document scrollbar on a
+  height change).
 - ☐ **3.12c The started picker.** Design APPROVED:
   docs/superpowers/specs/2026-10-31-started-picker-design.md. The `time` kind's text box and its
   typed grammar are retired for a two-level picker: a control in the filter cell opening a panel with
