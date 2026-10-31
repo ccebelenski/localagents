@@ -140,8 +140,7 @@ def test_a_down_probe_is_a_row_with_the_failure_sentence_and_no_counters(monkeyp
     probe, _ = _probe_and_doc(monkeypatch, {"/v1/models": None}, "strata")
     assert probe["up"] is False
     # a refusal: the box answers, nothing listens (classify_connect_failure reads ECONNREFUSED)
-    sentence = ("10.0.0.60 is reachable but nothing is listening on 10.0.0.60:8080 "
-                "(nothing started there, or the port in models.yaml is wrong)")
+    sentence = "10.0.0.60 reachable, port 8080 no response"
     assert probe["error"] == sentence
     for doc in (None, ("strata", {"totals": {"prompt_tokens": 5}})):  # a stale document is ignored
         r = rows.probe_to_rows(3, None, probe, doc, T)

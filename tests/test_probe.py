@@ -23,7 +23,7 @@ def _wrapped(oserr: OSError) -> httpx.ConnectError:
 def test_refused_means_host_up_wrong_port():
     out = classify_connect_failure(_wrapped(ConnectionRefusedError(errno.ECONNREFUSED, "refused")), URL)
     assert out["host"] == "up"
-    assert "10.0.0.60" in out["error"] and ":8000" in out["error"] and "nothing is listening" in out["error"]
+    assert "10.0.0.60" in out["error"] and "port 8000" in out["error"] and "reachable, port 8000 no response" in out["error"]
 
 
 def test_unreachable_means_host_down():
@@ -47,8 +47,8 @@ def test_read_timeout_proves_the_box_up():
     out = classify_connect_failure(httpx.ReadTimeout("timed out"), URL)
     assert out["host"] == "up"
     assert "10.0.0.60:8000" in out["error"]
-    assert "answered the connection but did not respond in time" in out["error"]
-    assert "stalled or overloaded" in out["error"]
+    assert "connected, no reply in time" in out["error"]
+    assert "stalled or overloaded" in out["hint"]  # 3.12e: the explanation is the hint now
     assert "firewall" not in out["error"]
 
 
@@ -56,7 +56,7 @@ def test_write_timeout_proves_the_box_up():
     """Symmetric to read: the body upload stalled on a connection the box accepted."""
     out = classify_connect_failure(httpx.WriteTimeout("timed out"), URL)
     assert out["host"] == "up"
-    assert "answered the connection but did not respond in time" in out["error"]
+    assert "connected, no reply in time" in out["error"]
 
 
 def test_connect_and_pool_timeouts_stay_unknown():
@@ -66,7 +66,7 @@ def test_connect_and_pool_timeouts_stay_unknown():
     for exc in (httpx.ConnectTimeout("timed out"), httpx.PoolTimeout("timed out")):
         out = classify_connect_failure(exc, URL)
         assert out["host"] == "unknown", type(exc).__name__
-        assert out["error"] == "10.0.0.60:8000 timed out (host off, or a firewall dropping packets)"
+        assert out["error"] == "10.0.0.60:8000 timed out"
 
 
 def test_other_errors_fall_through_verbatim():

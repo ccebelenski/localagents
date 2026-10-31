@@ -75,7 +75,7 @@ def test_direct_requests_records_status_usage_latency_and_the_refusal_sentence()
     assert [c.ok for c in checks] == [True, True, False]
     assert "HTTP 200" in checks[0].detail and "output_tokens=7" in checks[0].detail
     assert "ms" in checks[0].detail
-    assert "nothing is listening" in checks[2].detail  # classify_connect_failure's sentence
+    assert "no response" in checks[2].detail  # classify_connect_failure's sentence
 
 
 def test_direct_requests_bodies_are_the_short_ping_and_the_endpoint_key():
@@ -273,7 +273,7 @@ def test_down_state_reads_the_refused_endpoint_end_to_end(monkeypatch, conn):
     assert all(c.ok for c in checks), [c.name + ": " + c.detail for c in checks if not c.ok]
     row = conn.execute("SELECT * FROM probes ORDER BY id DESC LIMIT 1").fetchone()
     assert row["up"] == 0 and row["host"] == "up"
-    assert "nothing is listening" in row["error"]
+    assert "no response" in row["error"]
     # never written to yaml: the only endpoints row is the temporary one the tick made
     eps = conn.execute("SELECT name FROM endpoints").fetchall()
     assert [r["name"] for r in eps] == ["smoke-dead"]

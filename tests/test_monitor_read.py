@@ -280,7 +280,7 @@ def test_the_down_endpoint_names_its_sentence_and_no_dropped_job(world):
     dgx = _ep(read.overview(conn, reg, NOW, WINDOW_S), "dgx1-a")
     assert dgx["state"] == "down"
     assert dgx["error"] == seed._refused_sentence("http://10.0.0.70:8000")
-    assert "refused" in dgx["error"] or "nothing" in dgx["error"]
+    assert "no response" in dgx["error"]  # 3.12e: the words of the short sentence
     assert "dropped_job" not in dgx  # 3.10f-2: the name key is gone from the entry
     assert dgx["dropped_job_id"] is None  # the seed's jobs ran on ai1
     assert dgx["last_seen"] == pytest.approx(NOW - 20 * 60.0)

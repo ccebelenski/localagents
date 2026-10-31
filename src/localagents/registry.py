@@ -100,7 +100,12 @@ def _chain_errno(exc: BaseException) -> int | None:
 
 
 def classify_connect_failure(exc: BaseException, url: str) -> dict[str, Any]:
-    """Turn a failed probe into ``{"host": up|down|unknown, "error": <plain sentence>}``.
+    """Turn a failed probe into ``{"host": up|down|unknown, "error": <short sentence>,
+    "hint": <one-line explanation>}`` — no ``hint`` on the unclassified fallback.
+
+    Story 3.12e: the sentence is what the down card prints (the operator: "I don't need a
+    paragraph and explanation line"), the explanation is the ``hint``, which spreads into
+    ``list_models`` and ``ModelUnavailable`` but never into the database or the page.
 
     The kernel already distinguishes the two cases that matter, so no extra ping is needed:
     ECONNREFUSED means the box is up and nothing listens on that port (a wrong port in
@@ -112,16 +117,18 @@ def classify_connect_failure(exc: BaseException, url: str) -> dict[str, Any]:
     used to re-prove this every tick of a stalled engine).
     """
     parts = urlsplit(url)
-    hostport = f"{parts.hostname}:{parts.port}" if parts.port else str(parts.hostname)
+    host, port = parts.hostname, parts.port
+    hostport = f"{host}:{port}" if port else str(host)
     n = _chain_errno(exc)
     if n == errno.ECONNREFUSED:
-        return {"host": "up", "error": f"{parts.hostname} is reachable but nothing is listening on {hostport} (nothing started there, or the port in models.yaml is wrong)"}
+        short = f"{host} reachable, port {port} no response" if port else f"{host} reachable, no response"
+        return {"host": "up", "error": short, "hint": "nothing started there, or the port in models.yaml is wrong"}
     if n in (errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EHOSTDOWN):
-        return {"host": "down", "error": f"{parts.hostname} is unreachable ({errno.errorcode[n]})"}
+        return {"host": "down", "error": f"{host} is unreachable ({errno.errorcode[n]})", "hint": "box off, or unroutable from here"}
     if isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout)):
-        return {"host": "up", "error": f"{hostport} answered the connection but did not respond in time (the engine is stalled or overloaded)"}
+        return {"host": "up", "error": f"{hostport} connected, no reply in time", "hint": "the engine is stalled or overloaded"}
     if isinstance(exc, httpx.TimeoutException):
-        return {"host": "unknown", "error": f"{hostport} timed out (host off, or a firewall dropping packets)"}
+        return {"host": "unknown", "error": f"{hostport} timed out", "hint": "host off, or a firewall dropping packets"}
     return {"host": "unknown", "error": f"{type(exc).__name__}: {exc}"}
 
 

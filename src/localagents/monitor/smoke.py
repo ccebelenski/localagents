@@ -252,7 +252,7 @@ async def down_state(conn: Any, host: str = "127.0.0.1", port: int = 1, reg: Reg
     """The down state against the kernel's real refusal: an endpoint on a port nothing listens
     on, never written to any yaml. The probe is the real Registry probe, the rows are the real
     collector's. What must show: a ``probes`` row with ``up = 0`` and ``host = "up"`` — the
-    refusal itself proves the box up — the failure sentence naming ``nothing is listening``,
+    refusal itself proves the box up — the failure sentence naming ``no response``,
     and both display states: ``endpoint_state`` dormant (never seen up: §4) and ``node_state``
     up (the refusal settles the node)."""
     ep = Endpoint(name="smoke-dead", base_url=f"http://{host}:{port}", backend="llama.cpp", host="local")
@@ -263,7 +263,7 @@ async def down_state(conn: Any, host: str = "127.0.0.1", port: int = 1, reg: Reg
               f"probes row for {ep.base_url}: up={row['up'] if row is not None else 'no row'}"),
         Check("dead-port refusal names the box up (host = up)", row is not None and row["host"] == "up",
               f"host={row['host'] if row is not None else 'no row'}"),
-        Check("failure sentence (nothing is listening)", row is not None and "nothing is listening" in (row["error"] or ""),
+        Check("failure sentence (no response)", row is not None and "no response" in (row["error"] or ""),
               row["error"] if row is not None else ""),
     ]
     if row is not None:

@@ -202,8 +202,7 @@ def test_up_then_down_then_up_writes_down_with_the_sentence_then_up(monkeypatch,
     eid = collect.endpoint_id(conn, ep)
     for k in range(3):
         asyncio.run(collect.tick(reg, conn, ep, eid, T0 + 5 * k, "strata"))
-    sentence = ("10.0.0.60 is reachable but nothing is listening on 10.0.0.60:8080 "
-                "(nothing started there, or the port in models.yaml is wrong)")
+    sentence = "10.0.0.60 reachable, port 8080 no response"
     assert _events(conn) == [(T0 + 5, "down", sentence), (T0 + 10, "up", None)]
     assert fetched == ["ai2", "ai2"]  # a down probe does not ask for /metrics
     row = conn.execute("SELECT up, host, error, model_id FROM probes WHERE t = ?", (T0 + 5,)).fetchone()
@@ -247,8 +246,7 @@ def test_a_rate_whose_interval_spans_a_down_probe_has_no_rate_and_no_restarted_e
     eid = collect.endpoint_id(conn, ep)
     for t in (T0, T0 + 5, T0 + 10, T0 + 1000, T0 + 1139):
         asyncio.run(collect.tick(reg, conn, ep, eid, t, "strata"))
-    sentence = ("10.0.0.60 is reachable but nothing is listening on 10.0.0.60:8080 "
-                "(nothing started there, or the port in models.yaml is wrong)")
+    sentence = "10.0.0.60 reachable, port 8080 no response"
     # no `restarted` for the gap: only the transition events
     assert _events(conn) == [(T0 + 5, "down", sentence), (T0 + 1000, "up", None)]
     assert _count(conn, "probes") == 5 and _count(conn, "probe_counters") == 3
@@ -285,8 +283,7 @@ def test_a_reset_across_a_gap_writes_restarted_during_a_gap(monkeypatch, conn):
     eid = collect.endpoint_id(conn, ep)
     for k, t in enumerate((T0, T0 + 5, T0 + 10)):
         asyncio.run(collect.tick(reg, conn, ep, eid, t, "llamacpp"))
-    sentence = ("10.0.0.60 is reachable but nothing is listening on 10.0.0.60:8080 "
-                "(nothing started there, or the port in models.yaml is wrong)")
+    sentence = "10.0.0.60 reachable, port 8080 no response"
     ev = _events(conn)
     assert ev[:2] == [(T0 + 5, "down", sentence), (T0 + 10, "up", None)]
     (t, kind, detail), = [e for e in ev if e[1] == "restarted"]
@@ -319,8 +316,7 @@ def test_a_plain_gap_writes_no_restarted(monkeypatch, conn):
     eid = collect.endpoint_id(conn, ep)
     for k, t in enumerate((T0, T0 + 5, T0 + 10)):
         asyncio.run(collect.tick(reg, conn, ep, eid, t, "strata"))
-    sentence = ("10.0.0.60 is reachable but nothing is listening on 10.0.0.60:8080 "
-                "(nothing started there, or the port in models.yaml is wrong)")
+    sentence = "10.0.0.60 reachable, port 8080 no response"
     assert _events(conn) == [(T0 + 5, "down", sentence), (T0 + 10, "up", None)]
     assert calls == []
 
@@ -599,8 +595,7 @@ def test_on_tick_is_called_after_each_written_tick_and_its_error_is_one_line(mon
 _TIMEOUT = {"up": False, "models": [], "host": "unknown",
             "error": "x timed out (host off, or a firewall dropping packets)"}
 _REFUSED = {"up": False, "models": [], "host": "up",
-            "error": "x is reachable but nothing is listening on x:8080 "
-                     "(nothing started there, or the port in models.yaml is wrong)"}
+            "error": "x reachable, port 8080 no response"}
 
 
 def _fallback_calls(monkeypatch, answer="refused"):
