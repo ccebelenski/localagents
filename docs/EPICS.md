@@ -1048,7 +1048,8 @@ The 3.7 chain's reviews are closed: no open defect.
   handshake. One story; operator decides.
 
 - **Operator, 2026-10-30 late evening, during the usability pass (for the retro):** "Making good
-  progress, reviews are holding up - including the human one."
+  progress, reviews are holding up - including the human one." And at 23:40, with ai1, ai2, dgx1-a
+  and the local llamacpp each running a lane: "Achievement unlocks: All endpoints active!"
 - **Operator, 2026-10-30, after the first live jobs on the landed page (for the retro):** "Much
   improved UI experience, I like the timeline now." "The cards sizing is better, but could still
   be improved."
