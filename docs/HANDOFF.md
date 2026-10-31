@@ -35,8 +35,10 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
 
 **Lanes at the last note (2026-10-30 ~20:00).** The three evening stories are landed: 3.7t
 (6c65906, DeepSeek; Qwen review clean), 3.7v (39fdb3a, Qwen/ai1), 3.7y (63df4de, Qwen/ai2); plus the
-coordinator's 3.7x (56364bb) and the ES5 gate (ab4ddb6). One review outstanding: DeepSeek over the
-page batch (3.7v, 3.7y, 3.7x, the gate) — see the EPICS records for its result when it lands.
+coordinator's 3.7x (56364bb) and the ES5 gate (ab4ddb6). DeepSeek's review of the page batch found F1 (an
+unknown node printed the probe sentence as text) and four test-strength findings; its fold is
+landed (1bfe4f3, 714 tests). The Qwen review of that fold is the last open lane; its result closes
+the evening's chains (record in EPICS under the batch review).
  Every chain opened today is closed: 3.9A/B/C/D/E with
 their folds, the package-side folds review (F1–F3 folded), the page folds review (P-1/P-2 folded
 and reviewed clean), 1.12, 3.7u, 3.7w. One Haiku worktree (`.claude/worktrees/agent-a793f5489d5ed8033`)

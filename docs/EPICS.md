@@ -1160,7 +1160,12 @@ The 3.7 chain's reviews are closed: no open defect.
   card transition (no duplicate, no throw, repeat render skipped), every 3.7v row and the seeded
   job page, the floor unchanged by a 300-char title on a DOWN node. Disposition: F1-F5 folded by
   the reviewer (ruling (a)), fresh job in the review worktree; P-1 and P-2 stay as written; P-3
-  and P-4 noted.
+  and P-4 noted. FOLDED and landed 1bfe4f3 (DeepSeek job 20261030-202159-a6e2707a, 91 turns, 20 min,
+  714 tests): `alert` = down or unknown gates the title and the quiet flag (unknown-node smoke
+  need 946 → 946, title the 300 chars, no `.ep-error`); the gate blanks string literals first
+  (eleven cases); the three pins now fail the described wrong implementations (checked by the
+  lane against them); `tools/smoke/handshake.js`, `unknown.js`, `neverseen.js` case (d) committed
+  with README paragraphs. Review of the fold: next (Qwen).
 - ☑ **3.7w The monitor tab's memory.** (Probe landed: `tools/smoke/mem.mjs`, Haiku worktree
   agent, 31 tool uses, 11 min. Measured at ~3 render passes a second over the seeded world:
   overview 908 passes, DOM nodes 200 → a plateau of 1443–1568 → 200 after a forced GC, heap
