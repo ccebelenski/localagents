@@ -70,7 +70,7 @@ def _seed_prefill_tps(reqs):
 def test_overview_top_level_keys(world):
     conn, reg = world
     ov = read.overview(conn, reg, NOW, WINDOW_S)
-    assert set(ov) == {"now", "window_s", "refresh_s", "db_path", "hosts", "jobs", "events"}
+    assert set(ov) == {"now", "window_s", "refresh_s", "db_path", "build", "hosts", "jobs", "events"}
     assert ov["now"] == NOW and ov["window_s"] == WINDOW_S
     assert ov["refresh_s"] == 5.0  # story 3.7m: the fan-out's clock period, carried to the page
     assert read.overview(conn, reg, NOW, WINDOW_S, refresh_s=0.5)["refresh_s"] == 0.5
@@ -392,7 +392,8 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
     assert set(j) == {
         "id", "name", "model", "endpoint", "status", "started_at", "finished_at", "elapsed_s",
         "num_turns", "tool_calls", "errors", "last_tool", "last_activity", "ctx_pct", "ctx_tokens",
-        "context", "gen_tps", "prefill_tps", "compactions", "files", "owner", "server_live",
+        "context", "gen_tps", "prefill_tps", "compactions", "files", "owner", "server_version",
+        "server_live",
     }
 
 

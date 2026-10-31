@@ -190,7 +190,8 @@ KEEP_FINISHED = 10  # the log's finished tail (the page's "then the last 10 fini
 # one UNION because each side wants its own ordering and only the finished side carries a LIMIT
 _JOB_SELECT = (
     "SELECT j.*, m.served_id AS model_served, e.name AS endpoint_name,"
-    " s.pid AS server_pid, s.owner AS server_owner, s.updated AS server_updated, s.stopped AS server_stopped"
+    " s.pid AS server_pid, s.owner AS server_owner, s.updated AS server_updated, s.stopped AS server_stopped,"
+    " s.version AS server_version"
     " FROM jobs j LEFT JOIN models m ON m.id = j.model_id"
     " LEFT JOIN endpoints e ON e.id = j.endpoint_id"
     " LEFT JOIN mcp_servers s ON s.id = j.mcp_server_id"
@@ -261,6 +262,9 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
         "compactions": j["compactions"],
         "files": len(derive.files_touched(conn, jid)),
         "owner": j["server_owner"],
+        # story 1.14: the build stamp of the server that ran the job (static: written once at
+        # that server's start, so a cached finished entry keeps it)
+        "server_version": j["server_version"],
         "server_live": _server_live(j, now),
     }
 
@@ -379,7 +383,8 @@ def _fallback(conn: sqlite3.Connection, host: str, now: float) -> tuple[str | No
 
 
 def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
-             db_path: str | None = None, *, refresh_s: float = 5.0) -> dict[str, Any]:
+             db_path: str | None = None, *, refresh_s: float = 5.0,
+             build: str | None = None) -> dict[str, Any]:
     """The SSE snapshot (spec §5 "Overview"; shape §5a): hosts in models.yaml order (endpoints
     grouped by ``host``, config order within), each with its node state (resolved from the
     newest fresh port-22 fallback row, story 3.1b), its fallback fields and endpoints; the
@@ -388,8 +393,10 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
     the database file this server opened, passed in by the route (serve knows it: ``--db``, the
     ``monitor:`` section's db, else ``db.db_path()``); null when the app was built without one.
     ``refresh_s`` (story 3.7m) is the fan-out's clock period, carried to the page so it can say
-    how often it is told. An endpoint in the database but not in the config is ignored (its
-    events too)."""
+    how often it is told. ``build`` (story 1.14) is the monitor's own build stamp, computed once
+    at the app's start (``db.build_stamp``), carried so the job page can say when a job's server
+    ran other code; null when the app was built without one. An endpoint in the database but
+    not in the config is ignored (its events too)."""
     recent = _recent_jobs(conn, now)
     # the cards' ``jobs_running`` stays a live count (story 3.7e's contract: the card's jobs
     # block is running rows); the log tail is only for the snapshot's ``jobs`` list (3.7g)
@@ -432,7 +439,7 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
                 (*configured_ids, EVENTS_LIMIT),
             )
         ]
-    return {"now": now, "window_s": window_s, "refresh_s": refresh_s, "db_path": db_path,
+    return {"now": now, "window_s": window_s, "refresh_s": refresh_s, "db_path": db_path, "build": build,
             "hosts": hosts, "jobs": [j for _, j in recent], "events": events}
 
 

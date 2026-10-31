@@ -4,7 +4,8 @@
  * (the §5a job detail: the summary dict plus requests, tool_call_log and the transcript tail),
  * draws into the detail element, and returns the teardown app.js calls before the next route.
  * A running job's header refreshes from each snapshot's jobs[] entry (elapsed, turns, tool
- * calls, last tool; a server_live of false marks it lost, spec §6) — for that the page keeps
+ * calls, last tool; a server_live of false marks it lost, spec §6; a snapshot `build` other than
+ * the job's server_version reads "server code differs", story 1.14) — for that the page keeps
  * its own /events subscription, closed by the teardown; the overview's stream keeps drawing
  * while the page is open.
  *
@@ -183,6 +184,7 @@
     // detail arrives, then from each snapshot the page's own stream pushes
     function applySnapshot(snap) {
       if (!detail || !snap) return;
+      applyBuild(snap); // before the jobs[] lookup: a job past the log's tail still compares
       var job = null;
       (snap.jobs || []).forEach(function (j) { if (j.id === detail.id) job = j; });
       if (!job) return;
@@ -200,6 +202,17 @@
       try { snap = JSON.parse(e.data); } catch (err) { return; }
       applySnapshot(snap);
     });
+
+    // story 1.14: the "server" figure's muted note — the job's server ran other code than this
+    // monitor runs (their build stamps differ). Said only when both stamps are known: an
+    // unknown stamp is not a difference
+    function applyBuild(snap) {
+      var note = live.buildNote;
+      if (!note) return;
+      var differs = snap.build != null && snap.build !== "" && snap.build !== detail.server_version;
+      note.textContent = differs ? "server code differs from the monitor's" : "";
+      note.title = differs ? "monitor " + snap.build : "";
+    }
 
     function setLost() {
       lost = true;
@@ -469,6 +482,17 @@
       return n;
     }
 
+    // story 1.14: the build stamp of the MCP server that ran the job, with the muted note
+    // applyBuild fills from each snapshot's ``build``; absent when the stamp is unknown
+    function serverFig() {
+      var f = fig("server", detail.server_version);
+      if (!f) return null;
+      var note = h("span", { class: "muted build-note" });
+      live.buildNote = note;
+      f.appendChild(note);
+      return f;
+    }
+
     function header() {
       var status = lost ? "lost" : detail.status;
       var mark = h("span", {
@@ -497,6 +521,7 @@
         fig("request errors", fmt.int(requestErrors(detail.requests))),
         detail.compactions > 0 ? fig("compactions", fmt.int(detail.compactions)) : null,
         liveFig("last tool", "last_tool", oneLine(detail.last_tool)),
+        serverFig(),
       ].filter(Boolean);
       return h("div", { class: "job-header" }, [
         h("div", { class: "job-head" }, [

@@ -506,7 +506,11 @@ a tool-call timeline across the job's duration — one mark per call coloured by
 red, the context fill drawn over it — and the breakdown by tool; the request table with a
 totals line; and the transcript tail with the job's log directory path (copy it to open the
 transcript; a sentence when the directory is gone). A running job's header refreshes in place
-from the snapshot stream; a job whose server stopped beating is shown lost.
+from the snapshot stream; a job whose server stopped beating is shown lost. The header's
+"server" figure is the build stamp of the MCP server that ran the job (`<version>+<short git
+sha>`, written once when that server starts; `job_status` and `list_jobs` carry it as
+`server_version`), with a muted "server code differs from the monitor's" beside it when the
+monitor's own stamp is another, so a server left running on older code is visible on its jobs.
 
 An optional top-level `monitor:` section in `models.yaml` holds its settings; the MCP server
 ignores it, and an unknown key or a bad value in it is an error naming the key:

@@ -62,6 +62,13 @@ node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/handshake.png "j
 # after 7d into the probe's `d3` field. The axis must follow the pressed range; read d3 in the
 # AFTER_JSON line. (cdp.mjs awaits the js: expression, so a step may await its own witnesses.)
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/range.png "js:$(cat tools/smoke/range.js)"
+# story 1.14: stamp.js opens the running job's page and reads its header: the "server" figure
+# (the seed stamps its server row with the tree's build stamp, so a monitor started from the same
+# tree draws no note), then dispatches a hand-edited snapshot with another `build` on the page's
+# own stream (EventSource is wrapped before the page opens it) — the muted "server code differs
+# from the monitor's" note must appear — and the real snapshot again, which must clear it. Read
+# d1 in AFTER_JSON: d1.ok is true when all three reads match.
+node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/stamp.png "js:$(cat tools/smoke/stamp.js)"
 ```
 
 The seeded world needs a `models.yaml` naming the seed's three endpoints (tests/monitor_seeded.py

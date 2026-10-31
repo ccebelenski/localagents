@@ -139,6 +139,8 @@ h2 { font-size: 16.5px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 60
 .fig { white-space: nowrap; }
 .fig .label { color: var(--muted); margin-right: 4px; }
 .fig svg { vertical-align: middle; margin-left: 4px; }
+/* story 1.14: the job header's "server code differs" note, beside the server stamp */
+.fig .build-note:not(:empty) { margin-left: 6px; }
 .ep-jobs { font-size: 14.5px; margin-top: 6px; overflow-wrap: anywhere; }
 .ep-note { font-size: 13px; margin-top: 2px; }
 

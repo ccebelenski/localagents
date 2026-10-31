@@ -207,7 +207,10 @@ traffic only).
 **Job detail.** Context gauge; request table; the metrics delta the runner recorded; files
 touched; a tool-call timeline strip across the job's duration (one mark per call, coloured by
 tool, errors red, context fill drawn over it) and a breakdown by tool; transcript tail with a
-link to the directory.
+link to the directory. True now (story 1.14): the header's "server" figure is the build stamp
+of the MCP server that ran the job (`server_version`), and when the snapshot's `build` (the
+monitor's own stamp) differs from it a muted "server code differs from the monitor's" sits
+beside it — a server process left running on older code is visible on its jobs.
 
 ## 5a. Routes and JSON shapes (story 3.1)
 
@@ -265,6 +268,13 @@ covers `[now - r, now]`, both ends included.
                                     `monitor:` section's `db`, else `db.db_path()`); named by the
                                     snapshot so the page can say what it is showing (story 3.2a);
                                     null only when the app was built without one
+  "build": "0.2.0+8ce7d91",         story 1.14: the monitor's own build stamp (`db.build_stamp`:
+                                    `<version>+<short sha>`, the version alone when no checkout
+                                    or git answers), computed once at the app's start
+                                    (`app.state.build`); the job page compares it with the job's
+                                    `server_version` and says "server code differs from the
+                                    monitor's" (muted) when they differ; null only when the read
+                                    was not given one
   "hosts": [ host, ... ],           models.yaml order: endpoints grouped by `host`, first-seen order
   "jobs": [ running_job, ... ],     the page's Recent jobs log (story 3.7g): every queued or
                                     running job oldest first, then the last 10 finished jobs
@@ -378,6 +388,9 @@ running_job = {
   "compactions",
   "files",                          count of distinct files touched (derive.files_touched)
   "owner",                          the job's MCP server's owner pid (the Claude Code session)
+  "server_version",                 story 1.14: that server's build stamp (its
+                                    `mcp_servers.version`, written once at its start); null
+                                    when the server row is gone
   "server_live"                     true when that server is alive: not stopped, a heartbeat
                                     within 60 s, its pid alive (the status line's rule); false
                                     means the job's record says running but nothing is running
@@ -569,7 +582,9 @@ the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoin
 `/metrics` delta, or null), `usage` (`input_tokens`, `output_tokens`,
 `cache_read_input_tokens`, `cache_creation_input_tokens`), `tool_calls` (count),
 `tool_counts` (`{tool: {"calls", "errors"}}`), `errors`, `last_tool`, `files_touched` (list),
-`ctx_tokens`, `gen_tps`, `prefill_tps`, `elapsed_s` (to the wall clock while unfinished). No `result`.
+`ctx_tokens`, `gen_tps`, `prefill_tps`, `elapsed_s` (to the wall clock while unfinished),
+`server_version` (story 1.14: the build stamp — `<version>+<short sha>`, `db.build_stamp` — of
+the MCP server that ran the job, its `mcp_servers.version`; null when that row is gone). No `result`.
 
 **Job detail** (`GET /api/jobs/{id}`): the same dict **with** `result`, and:
 

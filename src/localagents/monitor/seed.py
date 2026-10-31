@@ -22,7 +22,6 @@ which deletes every row of every table and seeds fresh, never appending to a liv
 from __future__ import annotations
 
 import errno
-import importlib.metadata
 import json
 import math
 import os
@@ -136,12 +135,6 @@ def _refused_sentence(url: str) -> str:
     read)."""
     return classify_connect_failure(ConnectionRefusedError(errno.ECONNREFUSED, "refused"), url)["error"]
 
-
-def _package_version() -> str:
-    try:
-        return importlib.metadata.version("localagents")
-    except importlib.metadata.PackageNotFoundError:  # a source tree without installed metadata
-        return "dev"
 
 
 def default_fixtures_dir() -> Path:
@@ -358,13 +351,15 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
     lcpp_model_id = db.lookup_id(conn, "models", served_id=world.lcpp_served)
 
     # the seed's own live server row: stopped NULL, a fresh heartbeat, a live pid — the status
-    # line reads it as a live server so its jobs show on the line
+    # line reads it as a live server so its jobs show on the line. Its version is the build
+    # stamp of the tree the seed runs from (story 1.14): a monitor started from the same tree
+    # stamps itself the same, so the seeded job page draws no "server code differs" note
     server_id = db.new_uuid()
     conn.execute(
         "INSERT INTO mcp_servers (id, pid, owner, started, updated, cwd, version)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
         (server_id, os.getpid(), db.session_pid() or os.getppid(),
-         now - 3600.0, now, str(_REPO), _package_version()),
+         now - 3600.0, now, str(_REPO), db.build_stamp()),
     )
 
     # --- jobs ---------------------------------------------------------------------

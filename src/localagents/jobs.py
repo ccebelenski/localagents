@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.metadata
 import json
 import os
 import re
@@ -301,6 +300,7 @@ class Job:
             d["ctx_tokens"] = derive.ctx_tokens(conn, self.id)
             d["gen_tps"] = derive.gen_tps(conn, self.id)
             d["prefill_tps"] = derive.prefill_tps(conn, self.id)
+            d["server_version"] = derive.server_version(conn, self.mcp_server_id)
         else:
             d["usage"] = None
             d["tool_calls"] = 0
@@ -311,6 +311,7 @@ class Job:
             d["ctx_tokens"] = None
             d["gen_tps"] = None
             d["prefill_tps"] = None
+            d["server_version"] = None
         return d
 
     # ----- logging -----
@@ -377,10 +378,9 @@ class JobStore:
         # heartbeat(), stopped by close(); the story-1.5a sampler and status line drive them.
         conn = db.open_db()
         server_id = db.new_uuid()
-        try:
-            version = importlib.metadata.version("localagents")
-        except importlib.metadata.PackageNotFoundError:  # running from a source tree without metadata
-            version = "dev"
+        # story 1.14: the build stamp (<version>+<short sha>), so a job run on stale code says
+        # so; written once, at the row's birth — the code a process runs never changes under it
+        version = db.build_stamp()
         with db.immediate(conn):
             # updated = started: a row with no heartbeat yet must still count as live for its
             # first 60 s (spec Liveness); NULL would make it dead the moment it is written.

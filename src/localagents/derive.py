@@ -129,6 +129,16 @@ def prefill_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
     return tokens / seconds if seconds else None
 
 
+def server_version(conn: sqlite3.Connection, server_id: str | None) -> str | None:
+    """The build stamp of the MCP server that ran the job (story 1.14): its ``mcp_servers``
+    row's ``version``, written once at that server's start (``db.build_stamp``). None when the
+    job names no server or the row is gone."""
+    if not server_id:
+        return None
+    row = conn.execute("SELECT version FROM mcp_servers WHERE id = ?", (server_id,)).fetchone()
+    return row[0] if row is not None else None
+
+
 def _truncate(task: str | None) -> str | None:
     """job_status shows the brief's first 300 chars, as Job.summary always did."""
     return task if task is None or len(task) < 300 else task[:300] + "…"
@@ -196,6 +206,7 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "ctx_tokens": ctx_tokens(conn, job_id),
         "gen_tps": gen_tps(conn, job_id),
         "prefill_tps": prefill_tps(conn, job_id),
+        "server_version": server_version(conn, row["mcp_server_id"]),
     }
     end = row["finished_at"] if row["finished_at"] is not None else (time.time() if now is None else now)
     d["elapsed_s"] = round(end - start, 1) if start is not None else 0

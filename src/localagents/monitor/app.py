@@ -226,6 +226,9 @@ def make_app(
     it when it started the app without a collector (``--no-collect``), see ``_Fanout``."""
     window_s = float(settings.attention_hours) * 3600.0
     db_path_s = str(db_path) if db_path is not None else None
+    # story 1.14: the monitor's own build stamp, once at the app's start (the code this process
+    # runs never changes under it); every snapshot carries it as ``build``
+    build = db.build_stamp()
     fan = _Fanout(tick, stop, float(settings.refresh_s), self_tick=self_tick)
     # story 3.7p: ONE snapshot read per push, shared by every stream (and by /api/snapshot
     # while that push is current). Keyed on the fan-out's monotonic push counter; the first
@@ -265,7 +268,7 @@ def make_app(
                     or time.monotonic() - snapshot_cache["at"] >= float(settings.refresh_s)):
                 try:
                     body = await in_thread(read.overview, reg, now(), window_s, db_path_s,
-                                           refresh_s=float(settings.refresh_s))
+                                           refresh_s=float(settings.refresh_s), build=build)
                     entry: dict[str, Any] = {"snap": body, "sse": _sse("snapshot", body), "error": None}
                 except (sqlite3.Error, db.SchemaError) as e:
                     entry = {"snap": None, "sse": None, "error": f"{type(e).__name__}: {e}"}
@@ -488,6 +491,7 @@ def make_app(
         Mount("/static", app=_RevalidatingStatic(directory=STATIC_DIR), name="static"),
     ])
     app.state.fanout = fan
+    app.state.build = build
     # the history cache's size is its contract (review 3.9C R2: bounded at five windows ×
     # (endpoints + 2)); exposed so the test can count entries, not statements
     app.state.history_cache = history_cache

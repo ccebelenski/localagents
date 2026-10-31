@@ -538,3 +538,95 @@ def immediate(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
         if conn.in_transaction:  # some errors (SQLITE_FULL, ...) have already rolled back
             conn.execute("ROLLBACK")
         raise
+
+
+# --- the build stamp (story 1.14) --------------------------------------------------------------
+
+BUILD_STAMP_GIT_TIMEOUT_S = 2.0
+
+
+def _editable_checkout() -> Path | None:
+    """The checkout an editable install points at: the dist-info's ``direct_url.json`` with
+    ``"dir_info": {"editable": true}`` names it as a ``file://`` URL. None when the install is
+    not editable, has no metadata, or the file cannot be read."""
+    import importlib.metadata
+    import json
+    from urllib.parse import unquote, urlparse
+
+    try:
+        text = importlib.metadata.distribution("localagents").read_text("direct_url.json")
+        info = json.loads(text) if text else None
+        if not isinstance(info, dict) or not (info.get("dir_info") or {}).get("editable"):
+            return None
+        url = urlparse(info.get("url") or "")
+        return Path(unquote(url.path)) if url.scheme == "file" and url.path else None
+    except Exception:  # noqa: BLE001  best effort: no checkout is an answer, never an error
+        return None
+
+
+def _source_checkout() -> Path | None:
+    """The checkout this module's own file lives in (``<root>/src/localagents/db.py``): the
+    code that is actually running. None when ``<root>`` holds no pyproject.toml (a wheel in
+    site-packages)."""
+    root = Path(__file__).resolve().parents[2]
+    return root if (root / "pyproject.toml").is_file() else None
+
+
+def _pyproject_version(root: Path) -> str | None:
+    import tomllib
+
+    try:
+        with open(root / "pyproject.toml", "rb") as f:
+            project = tomllib.load(f).get("project") or {}
+        if project.get("name") != "localagents":
+            return None
+        v = project.get("version")
+        return v if isinstance(v, str) and v else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _git_short_sha(root: Path) -> str | None:
+    import subprocess
+
+    try:
+        p = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=BUILD_STAMP_GIT_TIMEOUT_S, stdin=subprocess.DEVNULL,
+        )
+    except Exception:  # noqa: BLE001  no git, a timeout, an unreadable directory: no sha
+        return None
+    sha = (p.stdout or "").strip()
+    if p.returncode != 0 or not sha or any(c.isspace() for c in sha):
+        return None
+    return sha
+
+
+def build_stamp(package_root: Path | str | None = None) -> str:
+    """``<version>+<short sha>``: which code a process runs (story 1.14). Written once into the
+    server row's ``version`` at server start, and computed once by the monitor at its start.
+
+    The version is the installed metadata's when it matches the source tree's pyproject.toml,
+    else pyproject's (an editable install's dist-info keeps the version it was installed at;
+    the source tree is the code that runs); "dev" when neither says. The sha is the checkout's
+    ``git rev-parse --short HEAD`` when the code runs from a checkout (an editable install, or
+    a source tree on the path); any failure leaves the version alone. ``package_root`` is the
+    checkout (the directory holding pyproject.toml); None finds it — this file's own tree,
+    else the editable install's ``direct_url.json``. Never raises; standard library only."""
+    import importlib.metadata
+
+    try:
+        try:
+            meta: str | None = importlib.metadata.version("localagents")
+        except Exception:  # noqa: BLE001  PackageNotFoundError, or a broken dist-info
+            meta = None
+        if package_root is not None:
+            root: Path | None = Path(package_root)
+        else:
+            root = _source_checkout() or _editable_checkout()
+        source = _pyproject_version(root) if root is not None and (root / "pyproject.toml").is_file() else None
+        version = source or meta or "dev"
+        sha = _git_short_sha(root) if root is not None and (root / ".git").exists() else None
+        return f"{version}+{sha}" if sha else version
+    except Exception:  # noqa: BLE001  the stamp is best effort: a server must start without one
+        return "dev"
