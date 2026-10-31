@@ -1138,6 +1138,29 @@ The 3.7 chain's reviews are closed: no open defect.
   draw has no card; the hidden line names the node's state so the alert is not lost ("… ai9
   (node down)"). A down node with a SEEN endpoint keeps its card and its "down" note (3.7x).
   Lane: Qwen/ai2, page story; DOM smoke; cross-model review with the batch.
+- **Review of the evening page batch** (3.7x 56364bb, 3.7v 39fdb3a, 3.7y 63df4de, the ES5 gate
+  ab4ddb6) by DeepSeek/dgx1-a job 20261030-194853-5f581983, 83 turns, 32 min, four construct-it
+  probes over the seeded world (eight card worlds, eight request rows, the seeded and a synthetic
+  job page, the endpoint page, a 300-char sentence against the floor, eleven gate strings, the
+  three pins against their smallest wrong implementations). Findings verbatim:
+  F1 (correctness / contract drift) — an `unknown` node still prints the probe sentence as card
+  text and it sets the column floor (`app.js:587`, `app.js:591` vs spec §4 lines 161-163):
+  VERIFIED at the lines — `downEndpoint(snap, ep, nodeDown)` is quiet only for a down node and
+  `said` is computed only for one, so on an unknown node the `.ep-error` line carries the
+  sentence; measured need 946 → 2634. F2 (tests) — the ES5 gate is defeated by a `//` inside a
+  string before real code on the same line (`tests/test_monitor_es5.py:12`); latent today.
+  F3 (tests) — the 3.7v requests-table pin does not pin the `req-err` exclusion; no committed
+  smoke does. F4 (tests) — the 3.7v header pin passes with `requestErrors` returning a constant
+  0, and the seed's value is 0 too. F5 (tests) — the 3.7y pin passes with every never-seen
+  endpoint hidden, down or not (the `ep.state === "dormant"` clause unpinned); `neverseen.js`
+  only exercises dormant. Possible: P-1 the job page's two error counts can disagree (header
+  row-rule vs section error-text rule — by design, 3.7v); P-2 endpoint server totals count a
+  non-empty `/api/hello` error (historical rows only); P-3 a handshake row's recorded body still
+  prints in the error column; P-4 latent gate false positives (`x = "a"// c`). Clean: every 3.7y
+  card transition (no duplicate, no throw, repeat render skipped), every 3.7v row and the seeded
+  job page, the floor unchanged by a 300-char title on a DOWN node. Disposition: F1-F5 folded by
+  the reviewer (ruling (a)), fresh job in the review worktree; P-1 and P-2 stay as written; P-3
+  and P-4 noted.
 - ☑ **3.7w The monitor tab's memory.** (Probe landed: `tools/smoke/mem.mjs`, Haiku worktree
   agent, 31 tool uses, 11 min. Measured at ~3 render passes a second over the seeded world:
   overview 908 passes, DOM nodes 200 → a plateau of 1443–1568 → 200 after a forced GC, heap
