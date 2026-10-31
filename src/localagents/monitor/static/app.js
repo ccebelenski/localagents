@@ -904,7 +904,9 @@
         sortKey: function (job) { return jobSortKey(c, job); },
       };
     });
-    return dataTable("jobs", specs, rows, {
+    // 3.10c fold: each page's jobs table keeps its own view — the overview is "jobs", the endpoint
+    // page passes its own id — a filter typed on one never filters the other
+    return dataTable(opts.id || "jobs", specs, rows, {
       empty: opts.empty || "no jobs yet",
       note: opts.note,
       rowAttrs: function (job) { return { "data-job": job.id }; },

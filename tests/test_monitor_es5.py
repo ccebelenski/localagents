@@ -6,7 +6,7 @@ page-batch review 2026-10-30: a `//` inside a string used to eat the rest of its
 real `const`). Backticks are NOT blanked — a template string is what this gate hunts. Known limit
 (R1, the same review): a regex literal is not a string to this gate, so a quote inside one pairs
 with the next string's quote and blanks real code between them (`var r = /"/; const a = 1; var s =
-"x";` hides the const); app.js has one such literal today and the shifts cancel there. A parser
+"x";` hides the const); app.js holds such literals today (the escape idiom `/["\\\\]/g`) and the shifts cancel there. A parser
 would be the next step if the page scripts ever grow regex literals with quotes."""
 import re
 from pathlib import Path

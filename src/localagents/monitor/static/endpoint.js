@@ -330,7 +330,7 @@
   // No slice/reverse: the server's order is the log's contract (3.7g).
   function jobsSection(hist, range, name, now) {
     var body = hist && Array.isArray(hist.jobs)
-      ? M.jobsTable(hist.jobs, { omit: ["endpoint"], now: now,
+      ? M.jobsTable(hist.jobs, { id: "jobs-endpoint", omit: ["endpoint"], now: now,
         empty: "no jobs ran on it in this range",
         note: "jobs that ran on " + name + " in the last " + range })
       : h("div", { class: "empty", text: "loading" });
