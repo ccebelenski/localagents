@@ -2055,13 +2055,24 @@ draft's pop-out, hold and multi-pick are withdrawn (history: 660e3aa, ff2d819); 
 dispatched on the first draft (Qwen/ai1 job 00e14ee2-baf2-4f9a-9254-16cbaa9502e6) was cancelled
 at 16 turns, nothing landed.
 
-- ☐ **3.12 Design: filters by column type.** Design first, no build: the design is
+Then (operator): "No, you're taking me too literally - no pop out needed for the simple values -
+dates maybe still need one? Your call. Maybe go with your new understanding and we can see how
+that works. For the pick I don't see a need for any ability to free-text search - the bounded
+choices aren't a big list - if we had a big list then okay the type/search is good." Decided: the
+second draft builds as 3.12a; dates typed first, the pop-out the fallback; the select has no search.
+
+- ☑ **3.12 Design: filters by column type.** Design first, no build: the design is
   docs/superpowers/specs/2026-10-31-table-filters-design.md, second draft: everything in the
   filter row — a native select for status/model/endpoint/path ("any" + values with counts);
   number boxes read text first, then `x-y` (inclusive), then `<n`/`>n` (strict); time boxes the
   same three readings over `HH:MM` / `YYYY-MM-DD` / `YYYY-MM-DD HH:MM`; the state shape unchanged;
-  "clear filters" on the pager line. Build story 3.12a is cut when the operator nods. Sequence:
-  after 3.11a's review (landed clean).
+  "clear filters" on the pager line. Approved (above).
+- ☐ **3.12a Build: typed filters in the filter row.** The spec's §3–§7 and §10 verbatim: the
+  `FILTER_KIND` maps, the native select with faceted counts, the number box's three readings
+  (`x-y` inclusive, `<n`/`>n` strict, substring), the time box's three readings over `HH:MM` /
+  `YYYY-MM-DD` / both, "clear filters"; `tests/test_3_12.py` under node + fakedom; the two 3.10c
+  pins extended; `tools/smoke/tables.js` step (c). Qwen/ai1, one lane; then a cross-model
+  construct-it review. The operator reads the live page before the tick.
 
 ## Epic 4: operations (V2, not scheduled)
 

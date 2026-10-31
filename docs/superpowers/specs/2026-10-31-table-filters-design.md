@@ -15,8 +15,12 @@ overdesigned for the tables - I don't think we need a multi-pick for example. Fo
 like numbers, text search first and then allow x-y range and simple < and > - no need for a
 pop-out". This is the second draft: everything stays in the filter row.
 
-Status: DESIGN, second draft, awaiting the operator's nod. The first draft's pop-out, hold and
-multi-pick are gone (history in git: 660e3aa, ff2d819).
+Status: APPROVED to build as 3.12a (operator: "no pop out needed for the simple values - dates
+maybe still need one? Your call. Maybe go with your new understanding and we can see how that
+works. For the pick I don't see a need for any ability to free-text search - the bounded choices
+aren't a big list"). The coordinator's call on dates: the typed form first (§6), the pop-out held
+as the fallback if typing dates proves awkward on the live page. The pick is the plain select,
+no search. The first draft's pop-out, hold and multi-pick are gone (history: 660e3aa, ff2d819).
 
 ## 1. What exists (3.10c, folded by 3.11a)
 
