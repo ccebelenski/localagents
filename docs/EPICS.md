@@ -1755,6 +1755,28 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   floor (`max-width` on `.host`, the grid packing left), so a lone column leaves space instead of
   spreading fixed tiles. Operator decides the first (it changes the 3.7u trade "fewer cards, more
   complete information": the two job lines would show complete on hover/scroll, not at rest).
+- ☐ **3.10h "prompt = 1": the request table's prompt column, and the shim's first-byte clock.**
+  Operator (2026-10-30 23:00, a job page's request table, screenshot): "Weird - prompt = 1? I hope
+  that's due to transient state?" Not transient. Two things: (1) the column shows the API's
+  `input_tokens` — the uncached, un-created tail of the prompt. On a hot prefix cache
+  (Strata/llama.cpp re-evaluate the last token) that is 1 on every row; the whole prompt is
+  `input + cache_read + cache_creation` (the screenshot: 1 + 16,384 + ~3,000). Truthful, useless
+  as "prompt". (2) the prefill t/s column (and 3.10a's job-level prefill) is
+  `(input + cache_creation) / (ms − gen_ms)`, where the shim stamps `gen_ms` from the FIRST BYTE
+  of the stream (shim.py:318-328 `t_first` on the first chunk) — and the first byte is the
+  `message_start` event, which the backends emit BEFORE prompt processing. So `ms − gen_ms` is
+  network latency, not prefill: 3,000 new tokens "in 19 ms" = 159,775 t/s (physically impossible;
+  the one cache-miss row in the screenshot, 67,420 tokens in 6.8 s, shows the real rate near
+  10k t/s). Design: (a) the shim stamps `t_first` at the first chunk carrying generated content
+  (`content_block_start`/`content_block_delta`), so `gen_ms` is decode time and `ms − gen_ms` is
+  time-to-first-token (queue + prefill), the honest prefill denominator; a test over a fake stream
+  (message_start at 0, the first delta at 0.5 s: `gen_ms` excludes the 0.5 s); the spec's
+  `gen_ms` sentence gets its True-now. (b) the request table: "prompt" becomes the whole prompt
+  (input + cache_read + cache_creation), "reused" stays the cache_read share, a "new" column is
+  input + cache_creation (what was processed), prefill t/s = new / ttft; the job page and endpoint
+  page share the renderer so both follow; the schema spec's derived-columns prose (monitor
+  spec ~:477, which already explains "input − reused") gets its True-now. Lanes: (a) DeepSeek now
+  (shim only); (b) after 3.10f-2 lands (it edits `requestsTable`'s job column).
 - ☐ **3.10b One jobs table, one requests table.** `jobsTable(rows, opts)` becomes the renderer
   for every jobs list: the overview (as now), the endpoint page (`opts.filter` = the endpoint;
   the title "Jobs" with the filter and range stated once: "Jobs · ai1 · last 24h"), and later
