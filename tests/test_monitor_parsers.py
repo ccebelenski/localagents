@@ -128,7 +128,7 @@ def test_a_strata_document_without_drafts_has_no_spec_keys_in_the_delta_or_the_j
     d = registry.metrics_delta(before, after, backend="strata")
     assert d is not None and "spec_decode_acceptance" not in d
     assert d["prompt_tokens_processed"] == 4654 and d["generated_tokens"] == 2584
-    job = Job(id="j", name="n", task="t", model="m", endpoint="e", base_url="u",
+    job = Job(id="j", task="t", model="m", endpoint="e", base_url="u",
               cwd="c", run_cwd="c", isolation="none")
     job.metrics = d
     values = dict(zip(job._METRIC_COLUMNS, job._metric_values()))

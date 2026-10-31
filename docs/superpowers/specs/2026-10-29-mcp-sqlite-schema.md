@@ -44,7 +44,14 @@ paths
 
 jobs
   id            TEXT PRIMARY KEY    -- uuid4; the job_id of every tool, including resume_job
-  name          TEXT                -- YYYYMMDD-HHMMSS-<first 8 hex of id>; directory and branch name
+  name          TEXT                -- RETIRED in v9 (3.10f-1, 2026-10-30): was
+                                    --   YYYYMMDD-HHMMSS-<first 8 hex of id>, the directory and
+                                    --   branch name; a second key whose stamp only proxied
+                                    --   created_at. True now: the job's one key is its UUID;
+                                    --   the directory, worktree and branch are named by it;
+                                    --   name is gone (v9 dropped the column after renaming
+                                    --   terminal jobs' directories); prune ages a job
+                                    --   directory by its newest mtime.
   mcp_server_id TEXT REFERENCES mcp_servers(id)
   endpoint_id   INTEGER REFERENCES endpoints(id)
   model_id      INTEGER REFERENCES models(id)
@@ -120,7 +127,8 @@ transcripts                         -- one row per FINISHED job: the transcript 
                                     --   primary key is the lookup
 
 indexes
-  jobs(name), jobs(mcp_server_id), jobs(endpoint_id), jobs(model_id), jobs(status, finished_at),
+  jobs(name)                        -- RETIRED in v9 (3.10f-1): dropped with the column
+  jobs(mcp_server_id), jobs(endpoint_id), jobs(model_id), jobs(status, finished_at),
   jobs(created_at)                  -- added to v1 before the first release (story 1.8); after a
                                     --   release an index is a version-N step
   mcp_servers(updated)
@@ -163,7 +171,8 @@ that never logged a line has neither, and readers say so.
   job's `/v1/messages` rows where all four fields are numbers, ms > gen_ms and the processed
   tokens > 0 (the monitor page's own row rule). O(requests per job), exact.
 - **run_cwd**: `worktree.path` when the worktree JSON is present, else `cwd`.
-- **log_dir**: `state_dir() / "jobs" / name`.
+- **log_dir**: `state_dir() / "jobs" / id` (True now: 3.10f-1 — the id is the directory name;
+  the retired rule was `state_dir() / "jobs" / name`).
 
 ## Write rules (multi-process)
 
@@ -208,7 +217,8 @@ user's process), so a stale heartbeat with a live pid of this user is spared as 
   `requests(job_id, t)`.
 - `job_log(tools=N)`: last N rows by `tool_calls(job_id, t)`.
 - Monitor (Epic 2): jobs by `endpoint_id` / `model_id` over a time range; requests by job.
-- `jobs(name)` is for ordering listings by name; nothing looks a job up by name.
+- `jobs(name)` — RETIRED in v9 (3.10f-1): the index went with the column, and nothing looks a
+  job up by name; the id is the lookup.
 - Monitor snapshot (3.9E audit, schema version 7 appended 2026-10-30): the Recent-jobs log's
   finished tail (terminal statuses, `ORDER BY finished_at DESC, rowid DESC LIMIT 10`) walks
   `jobs(finished_at)` (`jobs_finished_at`) backwards, no sort — at version 6 it was a full
@@ -249,8 +259,11 @@ user's process), so a stale heartbeat with a live pid of this user is spared as 
   argument named `claude` — an npm install runs as node), the parent pid when there is none —
   the same walk `status.my_owner` does, so a session's own jobs match their session on the
   status line (story 1.9 item 9; the node case added in 1.9a row 5).
-- `localagents prune` matches directories named `YYYYMMDD-HHMMSS-<hex>{4,}` (the old four-hex
-  names and the new eight-hex names); retention must exceed the longest configured
+- `localagents prune` — RETIRED in v9 (3.10f-1): the old rule matched directories named
+  `YYYYMMDD-HHMMSS-<hex>{4,}` and aged them by the stamp in the name. True now: it ages any
+  directory under `jobs/` whose name is a UUID (the job's id) or the old stamp shape by the
+  newest mtime of the directory and its direct children — "nothing written for N days" — and
+  leaves a name that is neither shape alone; retention must exceed the longest configured
   `timeout_s`, which the README says.
 
 ## What stays a file in the job directory

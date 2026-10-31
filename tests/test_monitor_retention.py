@@ -126,8 +126,8 @@ def test_pruning_three_endpoints_of_a_thousand_old_probes_each_stays_under_a_sec
                          (NOW - 10, eid))
         job_id = db.new_uuid()
         conn.execute(
-            "INSERT INTO jobs (id, name, endpoint_id, task, cwd, status, created_at, started_at, updated, last_activity)"
-            " VALUES (?, 'j', ?, 't', '/t', 'succeeded', ?, ?, ?, ?)",
+            "INSERT INTO jobs (id, endpoint_id, task, cwd, status, created_at, started_at, updated, last_activity)"
+            " VALUES (?, ?, 't', '/t', 'succeeded', ?, ?, ?, ?)",
             (job_id, eids[0], NOW - 30 * DAY, NOW - 30 * DAY, NOW - 30 * DAY + 60, NOW - 30 * DAY + 60))
     cutoff = NOW - retention.RETENTION_DAYS * DAY
     t0 = time.monotonic()

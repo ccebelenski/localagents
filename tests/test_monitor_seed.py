@@ -146,15 +146,15 @@ def _dump(conn, table, cols, order):
 
 def test_seed_is_deterministic_in_now(tmp_path):
     """Two files seeded with the same now are byte-identical on probes and jobs, apart from the
-    uuid columns (jobs.id, jobs.mcp_server_id, and jobs.name, which embeds the id's hex) and the
-    probes rowid (insertion order)."""
+    uuid columns (jobs.id, jobs.mcp_server_id: 3.10f-1 dropped jobs.name) and the probes rowid
+    (insertion order)."""
     a = db.open_db(tmp_path / "a.db")
     seed.seed(a, NOW, FX)
     b = db.open_db(tmp_path / "b.db")
     seed.seed(b, NOW, FX)
     assert _dump(a, "probes", list(rows_mod.PROBE_COLUMNS), "endpoint_id, t") == \
            _dump(b, "probes", list(rows_mod.PROBE_COLUMNS), "endpoint_id, t")
-    job_cols = [c for c in seed._JOB_COLS if c not in ("id", "mcp_server_id", "name")]
+    job_cols = [c for c in seed._JOB_COLS if c not in ("id", "mcp_server_id")]
     assert _dump(a, "jobs", job_cols, "started_at") == _dump(b, "jobs", job_cols, "started_at")
     # the lookup rows too: first_seen is the world's clock, not the wall clock (F4)
     ep_cols = ("id", "name", "base_url", "backend", "host", "first_seen")

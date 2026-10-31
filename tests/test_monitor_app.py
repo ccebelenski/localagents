@@ -515,8 +515,8 @@ def test_the_snapshot_cache_expires_by_age_not_only_by_push(dbpath, tmp_path):
         conn = db.open_db(dbpath)
         try:
             with db.immediate(conn):
-                conn.execute("INSERT INTO jobs (id, name, status, created_at)"
-                             " VALUES ('hand', 'hand-insert', 'queued', ?)", (NOW,))
+                conn.execute("INSERT INTO jobs (id, status, created_at)"
+                             " VALUES ('hand', 'queued', ?)", (NOW,))
         finally:
             conn.close()
         # inside the period the cached entry still answers: the job is not visible yet
@@ -539,8 +539,8 @@ def test_a_no_collect_app_self_ticks_the_streams_every_refresh_period(dbpath, tm
         conn = db.open_db(dbpath)
         try:
             with db.immediate(conn):
-                conn.execute("INSERT INTO jobs (id, name, status, created_at)"
-                             " VALUES ('hand', 'hand-insert', 'queued', ?)", (NOW,))
+                conn.execute("INSERT INTO jobs (id, status, created_at)"
+                             " VALUES ('hand', 'queued', ?)", (NOW,))
         finally:
             conn.close()
         name, body = _event(await s.next_chunk(timeout=0.7))  # the period is 0.1 s; 2x + slack
@@ -592,8 +592,8 @@ def test_overview_history_jobs_overlap_the_window(dbpath, tmp_path):
     c = sqlite3.connect(dbpath)
     ai1 = c.execute("SELECT id FROM endpoints WHERE name = 'ai1'").fetchone()[0]
     seeded_finished = c.execute("SELECT id FROM jobs WHERE status = 'succeeded'").fetchone()[0]
-    c.execute("INSERT INTO jobs (id, name, endpoint_id, status, created_at, started_at, finished_at)"
-              " VALUES ('gone', 'gone before the window', ?, 'succeeded', ?, ?, ?)",
+    c.execute("INSERT INTO jobs (id, endpoint_id, status, created_at, started_at, finished_at)"
+              " VALUES ('gone', ?, 'succeeded', ?, ?, ?)",
               (ai1, NOW - 2 * 3600, NOW - 2 * 3600, NOW - 90 * 60))
     c.commit()
     c.close()

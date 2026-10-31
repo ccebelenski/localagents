@@ -33,9 +33,9 @@ def repo(tmp_path, monkeypatch):
 
 def job(jid, repo, log_dir, worktree=None):
     log_dir.mkdir(parents=True, exist_ok=True)
-    # id and name deliberately differ: make_worktree must name the branch and directory after the NAME
+    # 3.10f-1: the id is the job's one key, so make_worktree names the branch and directory by it
     return Job(
-        id="e3b0c442-98fc-4c00-9a96-54a3242b1f0e", name=jid, task="t", model="m", endpoint="e",
+        id=jid, task="t", model="m", endpoint="e",
         base_url="http://e", cwd=str(repo), run_cwd=str(repo),
         isolation="worktree", worktree=worktree, log_dir=str(log_dir),
     )
@@ -45,7 +45,7 @@ def test_no_change_job_removes_tree_and_branch(repo, tmp_path):
     j = job("j1", repo, tmp_path / "logs" / "j1")
     j.worktree = make_worktree(j)
     assert Path(j.worktree["root"]).is_dir()
-    # the branch and directory carry the job NAME, not the uuid id
+    # 3.10f-1: the branch and directory carry the job's id, its one key
     assert j.worktree["branch"] == "local-agent/j1"
     assert j.worktree["root"] == str(state_dir() / "worktrees" / "repo" / "j1")
     finish_worktree(j)
@@ -463,8 +463,8 @@ def test_cancel_during_make_worktree_leaves_no_tree(repo, monkeypatch):
     assert j.status == "cancelled" and j.settled
     assert j.worktree is not None and j.worktree["kept"] is False
     assert not Path(j.worktree["root"]).exists()
-    assert not _branch_exists(repo, f"local-agent/{j.name}")
-    assert not (state_dir() / "worktrees" / repo.name / j.name).exists()
+    assert not _branch_exists(repo, f"local-agent/{j.id}")
+    assert not (state_dir() / "worktrees" / repo.name / j.id).exists()
 
 
 def test_cancel_during_the_first_metrics_probe_finishes_cancelled(repo, monkeypatch):
@@ -588,8 +588,8 @@ def test_make_worktree_removes_its_tree_when_a_step_after_the_add_fails(repo, mo
     assert j.status == "failed" and "is not under the repo" in j.error
     assert "is not under the repo" in j.transcript_tail()
     assert j.worktree is None
-    assert not (state_dir() / "worktrees" / repo.name / j.name).exists()
-    assert not _branch_exists(repo, f"local-agent/{j.name}")
+    assert not (state_dir() / "worktrees" / repo.name / j.id).exists()
+    assert not _branch_exists(repo, f"local-agent/{j.id}")
     assert "local-agent" not in git(repo, "worktree", "list")
 
 
@@ -677,14 +677,14 @@ def test_a_partially_failed_add_deletes_the_branch_it_created(repo, tmp_path):
     behind and an error that never said so. The failed add removes the branch it created and
     the raised error names it."""
     j = job("j8", repo, tmp_path / "logs" / "j8")
-    wt = state_dir() / "worktrees" / repo.name / j.name
+    wt = state_dir() / "worktrees" / repo.name / j.id
     wt.mkdir(parents=True)
     (wt / "occupied").write_text("leftover\n")  # the add fails: the target already exists
     with pytest.raises(RuntimeError) as ei:
         make_worktree(j)
     assert "git worktree add failed" in str(ei.value)  # git's own reason is still there
-    assert f"branch local-agent/{j.name} removed" in str(ei.value)
-    assert not _branch_exists(repo, f"local-agent/{j.name}")
+    assert f"branch local-agent/{j.id} removed" in str(ei.value)
+    assert not _branch_exists(repo, f"local-agent/{j.id}")
     assert "main" in git(repo, "branch", "--list", "main")  # the clean-up touched nothing else
 
 
@@ -721,7 +721,7 @@ def test_a_cancel_during_make_worktree_prints_a_cancel_line(repo, monkeypatch):
     assert j.settled and j.status == "cancelled"
     assert j.worktree is not None and j.worktree["kept"] is False
     assert not Path(j.worktree["root"]).exists()
-    assert not _branch_exists(repo, f"local-agent/{j.name}")
+    assert not _branch_exists(repo, f"local-agent/{j.id}")
     assert lines == [WORKTREE_CANCEL_LINE]
 
 
@@ -851,7 +851,7 @@ def test_a_second_cancel_inside_the_finally_cannot_strand_the_job(repo, monkeypa
     assert j.status == "cancelled"
     assert store.conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()[0] == "cancelled"
     assert j.worktree["kept"] is False and not Path(j.worktree["root"]).exists()
-    assert not _branch_exists(repo, f"local-agent/{j.name}")
+    assert not _branch_exists(repo, f"local-agent/{j.id}")
     if where == "metrics":
         assert j.metrics == {"generated_tokens": 1}  # the probe was waited for, not abandoned
 

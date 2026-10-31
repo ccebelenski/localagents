@@ -171,7 +171,7 @@ def _progress_rows(job_ids: list[str]) -> dict[str, Any]:
     """The rows _report_many's line reads for another server's jobs (None: no such row)."""
     return {
         jid: store.conn.execute(
-            "SELECT name, status, started_at, created_at, num_turns FROM jobs WHERE id = ?", (jid,)
+            "SELECT status, started_at, created_at, num_turns FROM jobs WHERE id = ?", (jid,)
         ).fetchone()
         for jid in job_ids
     }
@@ -206,9 +206,9 @@ async def _report_many(ctx: Context, job_ids: list[str]) -> None:
                 if j.settled:
                     done += 1
                     continue
-                # name, not uuid: a user comparing this line with list_jobs or a job directory
-                # can match it (DeepSeek review of 1.2)
-                parts.append(f"{j.name}: {j.status} {int(_elapsed(j))}s, {j.num_turns} turns")
+                # the id, the job's one handle since 3.10f-1: the same string list_jobs and the
+                # job directory show
+                parts.append(f"{j.id}: {j.status} {int(_elapsed(j))}s, {j.num_turns} turns")
             elif jid in finished:
                 done += 1
             elif rows.get(jid) is None:
@@ -217,7 +217,7 @@ async def _report_many(ctx: Context, job_ids: list[str]) -> None:
                 row = rows[jid]
                 start = row["started_at"] or row["created_at"]  # summary_from_row's elapsed rule
                 elapsed = int(time.time() - start) if start is not None else 0
-                parts.append(f"{row['name']}: {row['status']} {elapsed}s, {row['num_turns']} turns")
+                parts.append(f"{jid}: {row['status']} {elapsed}s, {row['num_turns']} turns")
         try:
             await ctx.report_progress(done, len(job_ids), "; ".join([f"{done}/{len(job_ids)} done", *parts]))
         except Exception:  # a client without progress support must not break the wait
@@ -428,7 +428,7 @@ async def run_agent(
       endpoint: Force a specific endpoint; with no `model`, uses whatever it is serving.
       cwd: Working directory (default: this server's cwd, i.e. the current project).
       isolation: "none" (work in cwd) or "worktree" (fresh git worktree on branch
-        local-agent/<name>, kept only if the agent changed something; see job.worktree).
+        local-agent/<job id>, kept only if the agent changed something; see job.worktree).
       wait_s: If > 0, block up to this many seconds and return the final record, else return
         the job id at once. Pass the job's timeout: Claude Code backgrounds a long call and
         delivers the record as a task notification; progress is reported every minute.
@@ -463,7 +463,7 @@ async def run_agent(
             # the resume would reuse (review of 1.7)
             return {
                 "error": "job_running",
-                "message": f"job {prev.name} ({prev.id}) has not finished; wait_job for it, then resume",
+                "message": f"job {prev.id} has not finished; wait_job for it, then resume",
             }
         if not prev.session_id:
             return {"error": "bad_argument", "message": f"job {resume_job} has no session to resume"}
@@ -714,7 +714,7 @@ def _row_summary(row: Any, include_result: bool = True) -> dict[str, Any]:
         # tool answers database_error (review of 1.8, finding 5). The line names the row: a
         # silently degraded listing is how a broken writer hides.
         print(f"localagents: row_error {row['id']}: {type(e).__name__}: {e}", file=sys.stderr)
-        return {"id": row["id"], "name": row["name"], "status": row["status"], "row_error": f"{type(e).__name__}: {e}"}
+        return {"id": row["id"], "status": row["status"], "row_error": f"{type(e).__name__}: {e}"}
 
 
 @mcp.tool()
@@ -796,12 +796,12 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
             status_, log_dir, transcript = job.status, job.log_dir, job.transcript_tail(tail_lines)
             has_row = store.conn.execute("SELECT 1 FROM transcripts WHERE job_id = ?", (job_id,)).fetchone() is not None
         except KeyError as e:
-            row = store.conn.execute("SELECT status, name FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            row = store.conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if row is None:
                 return {"error": "unknown_job", "message": e.args[0]}
-            # another server's job: its log directory follows from its name (spec derivation)
+            # another server's job: its log directory is jobs/<id> (spec derivation, 3.10f-1)
             status_ = row["status"]
-            log_dir = str(state_dir() / "jobs" / row["name"]) if row["name"] else None
+            log_dir = str(state_dir() / "jobs" / job_id)
             trow = store.conn.execute("SELECT text FROM transcripts WHERE job_id = ?", (job_id,)).fetchone()
             has_row = trow is not None
             if trow is not None:

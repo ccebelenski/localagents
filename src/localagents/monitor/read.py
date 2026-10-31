@@ -242,7 +242,8 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
     root = status._job_root(j)
     return {
         "id": jid,
-        "name": j["name"],
+        # 3.10f-1: the name key carries the id until 3.10f-2 removes the key and moves the page
+        "name": jid,
         "model": j["model_served"],
         "endpoint": j["endpoint_name"],
         "status": j["status"],
@@ -333,7 +334,8 @@ def _endpoint(conn: sqlite3.Connection, ep: Endpoint, eid: int | None, now: floa
         if first_down is not None:
             job = monitor_jobs.running_job_at(conn, eid, first_down)
             if job is not None:  # row 3: dropped_job needed its id to click through to
-                dropped, dropped_id = job["name"], job["id"]
+                # 3.10f-1: the name carries the id until 3.10f-2 removes the key
+                dropped, dropped_id = job["id"], job["id"]
     known = last_up_row is not None and st in ("down", "dormant")
     up = bool(last["up"]) if last is not None else False
     entry = {
@@ -633,10 +635,11 @@ def endpoint_history(
             " ORDER BY t, id", (endpoint_id, since_t, now))
     ]
     out["jobs"] = [
-        {"name": r["name"], "id": r["id"], "status": r["status"], "started_at": r["started_at"],
+        # 3.10f-1: the name key carries the id until 3.10f-2 removes the key
+        {"name": r["id"], "id": r["id"], "status": r["status"], "started_at": r["started_at"],
          "finished_at": r["finished_at"], "model": r["served_id"]}
         for r in conn.execute(
-            "SELECT j.name, j.id, j.status, j.started_at, j.finished_at, m.served_id FROM jobs j"
+            "SELECT j.id, j.status, j.started_at, j.finished_at, m.served_id FROM jobs j"
             " LEFT JOIN models m ON m.id = j.model_id"
             " WHERE j.endpoint_id = ? AND COALESCE(j.started_at, j.created_at) <= ?"
             " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
@@ -735,7 +738,7 @@ def jobs_overlapping(conn: sqlite3.Connection, since_t: float, now: float) -> li
         {"id": r["id"], "name": r["name"], "endpoint": r["endpoint"], "status": r["status"],
          "started_at": r["started_at"], "finished_at": r["finished_at"]}
         for r in conn.execute(
-            "SELECT j.id, j.name, e.name AS endpoint, j.status, j.started_at, j.finished_at"
+            "SELECT j.id, j.id AS name, e.name AS endpoint, j.status, j.started_at, j.finished_at"
             " FROM jobs j LEFT JOIN endpoints e ON e.id = j.endpoint_id"
             " WHERE j.started_at IS NOT NULL AND j.started_at <= ?"
             " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
@@ -756,7 +759,7 @@ def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t
     string the export writes on clean requests (review of 3.3: ``SUM(error IS NOT NULL)``
     counted those as errors)."""
     rows_ = ([] if endpoint_id is None else conn.execute(
-        "SELECT p.path, r.*, j.id AS job_id, j.name AS job_name FROM requests r"
+        "SELECT p.path, r.*, j.id AS job_id, j.id AS job_name FROM requests r"
         " JOIN jobs j ON j.id = r.job_id LEFT JOIN paths p ON p.id = r.path_id"
         " WHERE j.endpoint_id = ? AND r.t >= ? AND r.t <= ?"
         " ORDER BY r.t DESC, r.rowid DESC LIMIT ?", (endpoint_id, since_t, now, limit)
@@ -785,20 +788,19 @@ def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t
     }}
 
 
-def _transcript(conn: sqlite3.Connection, job_id: str, name: str | None) -> tuple[str | None, str | None]:
+def _transcript(conn: sqlite3.Connection, job_id: str) -> tuple[str | None, str | None]:
     """(tail, note): the last ``TRANSCRIPT_LINES`` lines of the job's transcript, or None and
     the sentence saying why there is none. Story 1.12 read order: the ``transcripts`` row when
     present (the finished job — its text, surviving the file's retention), else the file (a
-    running job, or a job from before this change); the note names both things it looked for."""
-    from ..jobs import state_dir  # the MCP server's module; the monitor may read it, never the reverse
+    running job, or a job from before this change); the note names both things it looked for.
+    3.10f-1: the directory is ``jobs/<id>`` — the id is the job's one key."""
+    from ..db import state_dir  # the MCP server's package; the monitor may read it, never the reverse
 
     row = conn.execute("SELECT text FROM transcripts WHERE job_id = ?", (job_id,)).fetchone()
     if row is not None:
         tail = deque(row["text"].splitlines(), maxlen=TRANSCRIPT_LINES)
         return "\n".join(tail), None
-    if not name:
-        return None, "no transcripts row, and the job has no name, so no job directory"
-    d = state_dir() / "jobs" / name
+    d = state_dir() / "jobs" / job_id
     if not d.is_dir():
         return None, (
             f"no transcripts row and the job directory {d} is gone "
@@ -821,6 +823,8 @@ def job_detail(conn: sqlite3.Connection, job_id: str, now: float | None = None) 
     if row is None:
         return None
     d = derive.summary_from_row(conn, row, now=now)
+    # 3.10f-1: the page's job-name field carries the id until 3.10f-2 removes the key
+    d["name"] = job_id
     d["requests"] = [
         {"path": r["path"], "t": r["t"], "http_status": r["http_status"], "ms": r["ms"], "gen_ms": r["gen_ms"],
          "tokens": {"input": r["input_tokens"], "output": r["output_tokens"],
@@ -840,5 +844,5 @@ def job_detail(conn: sqlite3.Connection, job_id: str, now: float | None = None) 
             "SELECT t, finished, tool, tool_use_id, input, is_error FROM tool_calls"
             " WHERE job_id = ? ORDER BY t, rowid", (job_id,))
     ]
-    d["transcript_tail"], d["transcript_note"] = _transcript(conn, job_id, row["name"])
+    d["transcript_tail"], d["transcript_note"] = _transcript(conn, job_id)
     return d

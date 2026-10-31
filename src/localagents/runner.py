@@ -76,8 +76,8 @@ def make_worktree(job: Job) -> dict[str, Any]:
     if top.returncode != 0:
         raise RuntimeError(f"isolation=worktree requires a git repo at {job.cwd}: {top.stderr.strip()}")
     repo = top.stdout.strip()
-    branch = f"local-agent/{job.name}"
-    wt = state_dir() / "worktrees" / Path(repo).name / job.name
+    branch = f"local-agent/{job.id}"
+    wt = state_dir() / "worktrees" / Path(repo).name / job.id
     wt.parent.mkdir(parents=True, exist_ok=True)
     r = _git(repo, "worktree", "add", "-b", branch, str(wt), "HEAD")
     if r.returncode != 0:

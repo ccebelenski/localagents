@@ -1,6 +1,5 @@
 """The SQLite schema module (docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md)."""
 
-import calendar
 import os
 import sqlite3
 import subprocess
@@ -19,7 +18,8 @@ TABLES = {"mcp_servers", "endpoints", "endpoint_load", "models", "paths", "jobs"
 # version 3 (story 2.2): the monitor's tables, monitor-design spec §3 "Storage"
 MONITOR_TABLES = {"probes", "probe_counters", "probe_hardware", "endpoint_events", "host_probes"}
 INDEXES = {
-    "jobs_name", "jobs_mcp_server_id", "jobs_endpoint_id", "jobs_model_id", "jobs_status_finished_at",
+    # version 9 (3.10f-1, ruling (n)): jobs_name went with the column it indexed
+    "jobs_mcp_server_id", "jobs_endpoint_id", "jobs_model_id", "jobs_status_finished_at",
     "jobs_created_at",
     # version 7 (3.9E audit finding E1): the snapshot's finished-jobs tail reads this backwards
     "jobs_finished_at",
@@ -34,7 +34,8 @@ COLUMNS = {
     "endpoint_load": ["endpoint_id", "updated", "load"],
     "models": ["id", "served_id"],
     "paths": ["id", "path"],
-    "jobs": ["id", "name", "mcp_server_id", "endpoint_id", "model_id", "task", "cwd", "isolation", "status",
+    # version 9 (3.10f-1): the job's one key is its uuid; name is gone
+    "jobs": ["id", "mcp_server_id", "endpoint_id", "model_id", "task", "cwd", "isolation", "status",
              "created_at", "started_at", "finished_at", "updated", "session_id", "result", "error",
              "last_activity", "num_turns", "context", "generated_tokens", "prompt_tokens_processed",
              "prompt_tokens_cached", "cache_hit_ratio", "prompt_tps", "generate_tps",
@@ -82,12 +83,13 @@ def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     the version-3 step (story 2.2: the monitor's tables), the version-4 step (story 3.1a
     ruling A: probes.state, probe_hardware's disk columns), the version-5 step (story 3.1b:
     host_probes), the version-6 step (story 3.7-fold-2: endpoints.last_active), the
-    version-7 step (3.9E audit finding E1: jobs_finished_at) and the version-8 step (story
-    1.11: transcripts), so it comes up at version 8 with the table."""
+    version-7 step (3.9E audit finding E1: jobs_finished_at), the version-8 step (story 1.11:
+    transcripts) and the version-9 step (3.10f-1: jobs.name dropped), so it comes up at version
+    9 with the table."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
-    assert db.SCHEMA_VERSION == 8 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
+    assert db.SCHEMA_VERSION == 9 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -207,8 +209,9 @@ def test_a_version_1_file_migrates_to_version_2_with_its_rows_intact(dbfile):
 
 def test_a_version_2_file_migrates_to_version_3_with_its_job_intact(dbfile):
     """Story 2.2: the version-3 step only adds the monitor's tables. A file a 1.11 localagents
-    left at version 2 (both earlier steps run, user_version 2, one job row) opens at version 3
-    with the job row unchanged and the four monitor tables empty."""
+    left at version 2 (both earlier steps run, user_version 2, one job row) opens at the current
+    version with the job row unchanged but for version 9's dropped name, and the monitor tables
+    empty."""
     raw = sqlite3.connect(dbfile)
     db.MIGRATIONS[0](raw)
     db.MIGRATIONS[1](raw)
@@ -223,8 +226,8 @@ def test_a_version_2_file_migrates_to_version_3_with_its_job_intact(dbfile):
     conn = db.open_db()
     assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
-    row = conn.execute("SELECT name, status, updated, num_turns, compactions FROM jobs WHERE id = 'j1'").fetchone()
-    assert tuple(row) == ("20261029-000000-00000000", "succeeded", 2.0, 7, 1)
+    row = conn.execute("SELECT status, updated, num_turns, compactions FROM jobs WHERE id = 'j1'").fetchone()
+    assert tuple(row) == ("succeeded", 2.0, 7, 1)
     for table in MONITOR_TABLES:
         assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
     conn.close()
@@ -491,15 +494,6 @@ def test_new_uuid_is_uuid4_text():
     assert str(uuid.UUID(a)) == a and uuid.UUID(a).version == 4
 
 
-@pytest.fixture
-def utc(monkeypatch):
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
-
-
 _WRITER = r"""
 import os, sys, time
 from pathlib import Path
@@ -524,9 +518,9 @@ for i in range(100):
         jid = db.new_uuid()
         t = time.time()
         conn.execute(
-            "INSERT INTO jobs (id, name, mcp_server_id, endpoint_id, model_id, status, created_at, updated) "
-            "VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)",
-            (jid, db.job_name(t, jid), sid, ep, m, t, t),
+            "INSERT INTO jobs (id, mcp_server_id, endpoint_id, model_id, status, created_at, updated) "
+            "VALUES (?, ?, ?, ?, 'queued', ?, ?)",
+            (jid, sid, ep, m, t, t),
         )
         conn.execute("INSERT INTO requests (job_id, path_id, t) VALUES (?, ?, ?)", (jid, p, t))
 conn.close()
@@ -617,9 +611,84 @@ def test_processes_racing_first_sight_lookups_converge_on_one_row_each(tmp_path)
     conn.close()
 
 
-def test_job_name_is_local_timestamp_and_first_8_hex(utc):
-    created = calendar.timegm((2026, 10, 29, 3, 16, 17, 0, 0, 0)) + 0.75
-    assert db.job_name(created, "adf7c0de-1234-4abc-8def-0123456789ab") == "20261029-031617-adf7c0de"
+def _v8_file(path: Path, rows: list[tuple[str, str | None, str, str]]) -> None:
+    """A file as a pre-3.10f localagents would have left it: every step through version 8 ran,
+    user_version says 8. ``rows`` are (id, name, status, task) inserted as jobs rows."""
+    raw = sqlite3.connect(path)
+    for step in db.MIGRATIONS[:8]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 8")
+    for jid, name, status, task in rows:
+        raw.execute(
+            "INSERT INTO jobs (id, name, status, created_at, updated, task) VALUES (?, ?, ?, 1.0, 1.0, ?)",
+            (jid, name, status, task),
+        )
+    raw.commit()
+    raw.close()
+
+
+def test_a_version_8_file_drops_name_and_renames_terminal_job_directories(dbfile, tmp_path, capsys):
+    """3.10f-1, ruling (n): the job's one key is its uuid. Version 9 renames every terminal
+    job's directory ``jobs/<name>`` to ``jobs/<id>`` (the old name is gone once the column
+    drops), leaves a live job's directory alone — its server holds the path in memory — and
+    logs that skip with the id, then drops ``jobs(jobs_name)`` and the column. Every other row
+    is intact, a NULL name is simply dropped."""
+    rows = [
+        ("11111111-1111-4111-8111-111111111111", "20261030-000000-11111111", "succeeded", "a"),
+        ("22222222-2222-4222-8222-222222222222", "20261030-000001-22222222", "timeout", "b"),
+        ("33333333-3333-4333-8333-333333333333", "20261030-000002-33333333", "running", "c"),
+        ("44444444-4444-4444-8444-444444444444", None, "queued", "d"),
+    ]
+    _v8_file(dbfile, rows)
+    root = tmp_path / "localagents" / "jobs"
+    for jid, name, _status, _task in rows:
+        if name is not None:
+            d = root / name
+            d.mkdir(parents=True)
+            (d / "transcript.txt").write_text(jid + "\n")
+
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(jobs)")]
+    assert "name" not in cols and cols == COLUMNS["jobs"]
+    assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
+    # terminal jobs: the directory moved to the id, contents and all
+    for jid, name, status, _task in rows[:2]:
+        assert (root / jid).is_dir() and not (root / name).exists()
+        assert (root / jid / "transcript.txt").read_text() == jid + "\n"
+    # the live job's directory stays where its server knows it, and the skip names the id
+    live_id, live_name = rows[2][0], rows[2][1]
+    assert (root / live_name).is_dir() and not (root / live_id).exists()
+    err = capsys.readouterr().err
+    assert live_id in err and live_name in err
+    # no other row lost a value
+    got = [tuple(r) for r in conn.execute("SELECT id, status, task, created_at FROM jobs ORDER BY id")]
+    assert got == [(jid, status, task, 1.0) for jid, _name, status, task in rows]
+    conn.close()
+
+
+def test_a_version_8_file_with_no_job_directories_still_comes_up_at_9(dbfile):
+    """The rename step tolerates rows whose directory was already pruned: nothing to move is
+    not an error."""
+    _v8_file(dbfile, [("11111111-1111-4111-8111-111111111111", "20261030-000000-11111111", "succeeded", "a")])
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    assert "name" not in [r["name"] for r in conn.execute("PRAGMA table_info(jobs)")]
+    conn.close()
+
+
+def test_the_version_9_rename_is_idempotent(dbfile, tmp_path):
+    """Opening the migrated file a second time runs no step: the directory stays at its id and
+    the old name is not resurrected (the file is already at 9)."""
+    jid, name = "11111111-1111-4111-8111-111111111111", "20261030-000000-11111111"
+    _v8_file(dbfile, [(jid, name, "succeeded", "a")])
+    (tmp_path / "localagents" / "jobs" / name).mkdir(parents=True)
+    db.open_db().close()
+    conn = db.open_db()
+    root = tmp_path / "localagents" / "jobs"
+    assert (root / jid).is_dir() and not (root / name).exists()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    conn.close()
 
 
 def _fake_proc(monkeypatch, files):

@@ -57,7 +57,7 @@ def test_resume_refuses_a_job_that_has_not_settled(reg):
     prev = _prev_job()
     prev.status = "running"
     out = asyncio.run(server.run_agent(task="next", resume_job=prev.id))
-    assert out["error"] == "job_running" and prev.name in out["message"]
+    assert out["error"] == "job_running" and prev.id in out["message"]
     prev.status = "succeeded"  # status final, finally still running
     assert asyncio.run(server.run_agent(task="next", resume_job=prev.id))["error"] == "job_running"
     _settle(prev)

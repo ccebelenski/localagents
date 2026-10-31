@@ -195,7 +195,7 @@ async def real_job(
     checks: list[Check] = [Check(
         "job row terminal and succeeded",
         row is not None and row["status"] == "succeeded",
-        f"job {job.name}: status={row['status'] if row is not None else 'no row'}"
+        f"job {job.id}: status={row['status'] if row is not None else 'no row'}"
         + (f", error={row['error']}" if row is not None and row["error"] else ""),
     )]
 

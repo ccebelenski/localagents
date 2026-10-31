@@ -3,7 +3,6 @@ UPDATEs from changed()). In-memory Job fields and the status file keep working u
 
 import dataclasses
 import os
-import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -36,7 +35,7 @@ def test_new_job_inserts_row(monkeypatch, tmp_path):
     job = _new(store, backend="llama.cpp", host="dgx1")
     row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job.id,)).fetchone()
     assert row is not None, "new() wrote no jobs row"
-    assert row["id"] == job.id and row["name"] == job.name
+    assert row["id"] == job.id
     assert row["status"] == "queued" and row["task"] == "the brief"
     assert row["cwd"] == "/tmp" and row["isolation"] == "none"
     assert row["mcp_server_id"] == store.server_id
@@ -113,7 +112,7 @@ def test_new_row_carries_the_fields_known_at_creation(monkeypatch, tmp_path):
 
 def test_lost_counts_as_done():
     """1.5a writes status='lost'; a waiter must not block on it (DeepSeek review of 1.2)."""
-    j = jobs.Job(id="x", name="n", task="t", model="m", endpoint="e", base_url="b", cwd="c", run_cwd="c",
+    j = jobs.Job(id="x", task="t", model="m", endpoint="e", base_url="b", cwd="c", run_cwd="c",
                  isolation="none", status="lost")
     assert j.done
 
@@ -138,13 +137,16 @@ def test_mcp_servers_row_at_first_use(monkeypatch, tmp_path):
     assert r["updated"] == r["started"]
 
 
-def test_directory_and_branch_use_name(monkeypatch, tmp_path):
+def test_the_job_directory_is_named_by_the_id(monkeypatch, tmp_path):
+    """3.10f-1: the id is the job's one key, so its directory is ``jobs/<id>`` — no stamp, no
+    second name that could disagree with ``created_at``."""
     store = _store(monkeypatch, tmp_path)
     job = _new(store)
-    assert re.match(r"^\d{8}-\d{6}-[0-9a-f]{8}$", job.name), job.name
-    assert job.id != job.name
-    assert job.log_dir == str(jobs.state_dir() / "jobs" / job.name)
-    assert not (jobs.state_dir() / "jobs" / job.name / "task.txt").exists()
+    assert job.log_dir == str(jobs.state_dir() / "jobs" / job.id)
+    assert (jobs.state_dir() / "jobs" / job.id).is_dir()
+    assert not (jobs.state_dir() / "jobs" / job.id / "task.txt").exists()
+    # and no second name/skew directory was minted beside it
+    assert list((jobs.state_dir() / "jobs").iterdir()) == [jobs.state_dir() / "jobs" / job.id]
 
 
 FULL_METRICS = {
@@ -251,7 +253,7 @@ def test_summary_reads_the_duplicated_values_from_rows(monkeypatch, tmp_path):
 
 
 def test_summary_of_a_job_outside_the_store_has_empty_derived_fields():
-    j = jobs.Job(id="x", name="n", task="t", model="m", endpoint="e", base_url="b", cwd="c",
+    j = jobs.Job(id="x", task="t", model="m", endpoint="e", base_url="b", cwd="c",
                  run_cwd="c", isolation="none")
     s = j.summary()
     assert s["usage"] is None
@@ -553,7 +555,7 @@ def test_record_transcript_row_equals_the_file(monkeypatch, tmp_path):
     job.log_text("[start] line one")
     job.log_text("résumé — ünïcøde")
     job.log_text("[metrics] {}")
-    text = (tmp_path / "localagents" / "jobs" / job.name / "transcript.txt").read_text()
+    text = (tmp_path / "localagents" / "jobs" / job.id / "transcript.txt").read_text()
     job.record_transcript()
     row = _trow(store, job.id)
     assert row["text"] == text

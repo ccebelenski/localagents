@@ -49,7 +49,7 @@ Three things make this more than an environment variable:
 
 3. **The same isolation model as Claude's own subagents.** By default a job works
    in your tree, like the Agent tool does. `isolation: worktree` gives it a fresh
-   git worktree on a `local-agent/<name>` branch (named after the job — see
+   git worktree on a `local-agent/<id>` branch (named by the job's id — see
    [Job records](#job-records)), kept only if it changed something, with a
    diffstat in the job record so Claude can review it as a diff.
 
@@ -267,22 +267,24 @@ job's requests, `tool_calls` with `tool_counts` per tool, `errors`, `last_tool`,
 not a derivation: the runner counts the harness's `compact_boundary` messages into
 it (and the status line shows the count when it is above zero).
 
-The directory — `~/.local/state/localagents/jobs/<name>/`, where `<name>` is the job's
-readable name `YYYYMMDD-HHMMSS-<8 hex>` (tools take the job's uuid as `job_id`; the name
-— and with it the directory and the worktree branch `local-agent/<name>` — is the
-timestamp plus its first 8 hex digits) — holds
+The directory — `~/.local/state/localagents/jobs/<id>/`, where `<id>` is the job's uuid
+(the same `job_id` the tools take; it also names the worktree branch `local-agent/<id>`)
+— holds
 `transcript.txt` (what the agent said and did) and nothing else unless debugging is on:
 `events.jsonl` (every SDK message, tool results included; it was 98% of a 6 GB state
 directory before it became opt-in) with `defaults.log_events: true` or
 `LOCALAGENTS_LOG_EVENTS=1`, and `requests_full.jsonl` (every request body) with
 `defaults.dump_requests: true` or `LOCALAGENTS_DUMP_REQUESTS=1`.
 
-**Retention.** Job directories older than `defaults.job_retention_days` (default 7, `0`
-disables) are deleted when a server starts and after every job finishes. The date in the
-directory name decides, and nothing that is not named like a job directory is touched;
-database rows are never deleted. Keep retention above the longest `timeout_s` you
-configure: prune deletes by directory name, so a job still running past its directory's
-expiry would have its transcript deleted out from under it. The same pass is available
+**Retention.** Job directories with nothing written for more than
+`defaults.job_retention_days` (default 7, `0` disables) are deleted when a server starts
+and after every job finishes. The age is mtime — the newest of the directory itself and
+its files — because the directory is named by the job's opaque uuid (3.10f-1 retired the
+old `YYYYMMDD-HHMMSS-<8 hex>` name, whose stamp only stood in for the creation time), and
+nothing that is not named like a job directory is touched; database rows are never
+deleted. Keep retention above the longest `timeout_s` you configure: prune deletes by
+age, so a job still running past its directory's expiry would have its transcript deleted
+out from under it. The same pass is available
 by hand, which is also how you clean up a state directory that predates this rule:
 
 ```bash

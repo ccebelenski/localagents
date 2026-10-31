@@ -12,8 +12,10 @@ and version 6 — ``endpoints.last_active``, the stored last-active witness — 
 only ``localagents.monitor`` writes or prunes them. Their migration lives here because the file
 is shared and versioned as one, so the MCP server creates them too (an idle table costs nothing),
 and the MCP server never imports the monitor package (HANDOFF "Decided, do not reopen"; the
-static guard in ``tests/test_server.py``). A migration step may only touch the file with plain
-SQL — the version-6 witness backfill lives in the monitor, which runs it at its start (see ``_v6``).
+static guard in ``tests/test_server.py``). A migration step that has arithmetic to do leaves it
+to the monitor, which runs it at its start (the version-6 witness backfill, see ``_v6``); the
+one step that moves files is version 9's directory rename (``_v9``), a filesystem move the
+monitor cannot do before the server opens the file.
 
 Write rules every caller keeps:
 
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -42,13 +45,21 @@ class SchemaError(RuntimeError):
     """The file's schema version is one this code cannot open."""
 
 
+def state_dir() -> Path:
+    """``$XDG_STATE_HOME/localagents`` (or ``~/.local/state/localagents``), created on first use.
+    Lives here because both the database's own path and the job directories derive from it, and
+    a version-9 migration step (``_v9``) needs it too; ``jobs.state_dir`` re-exports the name."""
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    d = Path(base) / "localagents"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def db_path() -> Path:
     """``LOCALAGENTS_DB`` when set, else ``<state_dir>/localagents.db``."""
     override = os.environ.get("LOCALAGENTS_DB")
     if override:
         return Path(override).expanduser()
-    from .jobs import state_dir  # lazy: jobs imports this module at top level (story 1.2)
-
     return state_dir() / "localagents.db"
 
 
@@ -322,10 +333,45 @@ _V8 = [
 ]
 
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 8.
+# Version 9 (story 3.10f-1, ruling (n) of the 3.10 discussion): the job's one key is its uuid.
+# ``jobs.name`` (``YYYYMMDD-HHMMSS-<first 8 hex of the id>``) was a second unique key whose stamp
+# was only a proxy for ``created_at``; the directory, worktree and branch are named by the id
+# now. A step is a callable, and this one has filesystem work to do before the column goes:
+# every terminal job's ``jobs/<name>`` directory is renamed to ``jobs/<id>``. A live job
+# (queued/running) keeps its directory: its server holds that path in memory and keeps writing
+# there, and the name is still its handle until that server exits; the skip is logged with the
+# id. A row whose old directory is already gone (pruned) has nothing to move; one whose id
+# directory already exists (a retried rename) is left for the next step's release. An OSError
+# is logged, never raised: a read-only state directory must not wedge every open of the file.
+# Then the index the column carried and the column itself go (DROP COLUMN needs SQLite 3.35+).
+def _v9(conn: sqlite3.Connection) -> None:
+    if sqlite3.sqlite_version_info < (3, 35):
+        raise SchemaError(
+            f"schema version 9 drops jobs.name and needs SQLite >= 3.35; this is {sqlite3.sqlite_version}"
+        )
+    root = state_dir() / "jobs"
+    for jid, name, status in conn.execute("SELECT id, name, status FROM jobs WHERE name IS NOT NULL").fetchall():
+        old, new = root / name, root / jid
+        try:
+            if not old.is_dir():
+                continue
+            if status in ("queued", "running"):
+                print(f"localagents: job {jid}: live job, leaving its directory {old} in place", file=sys.stderr)
+                continue
+            if new.exists():
+                print(f"localagents: job {jid}: {new} already exists, leaving {old} in place", file=sys.stderr)
+                continue
+            old.rename(new)
+        except OSError as e:
+            print(f"localagents: job {jid}: could not rename {old}: {e}", file=sys.stderr)
+    conn.execute("DROP INDEX jobs_name")
+    conn.execute("ALTER TABLE jobs DROP COLUMN name")
+
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 9.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5), _v6,
-    _statements(_V7), _statements(_V8),
+    _statements(_V7), _statements(_V8), _v9,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -520,11 +566,6 @@ def session_pid(start_pid: int | None = None) -> int | None:
 def new_uuid() -> str:
     """A uuid4 as text with dashes: ``mcp_servers.id`` and ``jobs.id``."""
     return str(uuid.uuid4())
-
-
-def job_name(created_at: float, job_id: str) -> str:
-    """``YYYYMMDD-HHMMSS-<first 8 hex of the id>`` in local time: the job directory and branch name."""
-    return time.strftime("%Y%m%d-%H%M%S", time.localtime(created_at)) + "-" + job_id.replace("-", "")[:8]
 
 
 @contextmanager

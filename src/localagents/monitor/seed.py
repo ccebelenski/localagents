@@ -114,7 +114,7 @@ def _live_server_pid(conn: sqlite3.Connection, now_wall: float) -> int | None:
 
 # the jobs columns, in the schema's order (db._V1 plus jobs.compactions from _V2)
 _JOB_COLS = (
-    "id", "name", "mcp_server_id", "endpoint_id", "model_id", "task", "cwd", "isolation",
+    "id", "mcp_server_id", "endpoint_id", "model_id", "task", "cwd", "isolation",
     "status", "created_at", "started_at", "finished_at", "updated", "session_id", "result",
     "error", "last_activity", "num_turns", "context", "generated_tokens",
     "prompt_tokens_processed", "prompt_tokens_cached", "cache_hit_ratio", "prompt_tps",
@@ -250,7 +250,7 @@ def _ai1_hardware(base: dict[str, float | None], i: int) -> dict[str, float | No
     return hw
 
 
-def _job_insert(conn: sqlite3.Connection, job_id: str, name: str, server_id: str,
+def _job_insert(conn: sqlite3.Connection, job_id: str, server_id: str,
                 endpoint_id: int, model_id: int, src: dict, *, status: str, created_at: float,
                 started_at: float, finished_at: float | None, updated: float, num_turns: int,
                 result: str | None, requests: list[dict], shift,
@@ -260,7 +260,7 @@ def _job_insert(conn: sqlite3.Connection, job_id: str, name: str, server_id: str
     the export's window: the running job was handed ai1's own (F10)."""
     conn.execute(
         f"INSERT INTO jobs ({', '.join(_JOB_COLS)}) VALUES ({', '.join('?' * len(_JOB_COLS))})",
-        (job_id, name, server_id, endpoint_id, model_id, src["task"], src["cwd"],
+        (job_id, server_id, endpoint_id, model_id, src["task"], src["cwd"],
          src["isolation"], status, created_at, started_at, finished_at, updated,
          src["session_id"], result, src["error"], src["last_activity"], num_turns,
          src["context"] if context is None else context, src["generated_tokens"],
@@ -383,14 +383,14 @@ def _write(conn: sqlite3.Connection, now: float, world: _World) -> None:
         r["path_id"] = db.lookup_id(conn, "paths", path=r["path"])
 
     _job_insert(
-        conn, job_id_f, db.job_name(created_f, job_id_f), server_id, ai1, model, j,
+        conn, job_id_f, server_id, ai1, model, j,
         status="succeeded", created_at=created_f, started_at=j["started_at"] + delta,
         finished_at=now - 10 * 60.0, updated=j["updated"] + delta, num_turns=j["num_turns"],
         result=j["result"], requests=world.job_requests, shift=lambda t: t + delta,
         tool_calls=world.job_tool_calls, shift_finished=lambda t: t + delta if t is not None else None,
     )
     _job_insert(
-        conn, job_id_r, db.job_name(now - 300.0, job_id_r), server_id, ai1, model, j,
+        conn, job_id_r, server_id, ai1, model, j,
         status="running", created_at=now - 300.0, started_at=now - 300.0, finished_at=None,
         updated=now, num_turns=40, result=None, requests=reqs_r, shift=rshift,
         tool_calls=tcs_r, shift_finished=rshift, context=AI1_CONTEXT,

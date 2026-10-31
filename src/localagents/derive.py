@@ -150,12 +150,13 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
     job: every column under its Job field name, the lookup ids resolved to model/endpoint/
     base_url, worktree parsed from its JSON, metrics rebuilt from the seven columns or None,
     plus every read-time derivation. Storage details (mcp_server_id, endpoint_id, model_id)
-    stay out; ``name`` identifies the job. Same keys as ``Job.summary()`` for the same job.
+    stay out; the id identifies the job (3.10f-1 dropped ``name``). Same keys as
+    ``Job.summary()`` for the same job.
 
     A running job's ``elapsed_s`` is computed against ``now``, the caller's clock (a route passes
     its own; the seed's world runs on ``--now``), and only against ``time.time()`` when no clock
     is given. A finished job's elapsed is its own span either way."""
-    from .jobs import state_dir  # lazy: jobs.py imports this module at top level
+    from .db import state_dir  # lazy: the statusline path keeps this module light
 
     job_id = row["id"]
     model = (
@@ -172,7 +173,6 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
     start = row["started_at"] or row["created_at"]
     d: dict = {
         "id": job_id,
-        "name": row["name"],
         "task": _truncate(row["task"]),
         "model": model["served_id"] if model is not None else None,
         "endpoint": ep["name"] if ep is not None else None,
@@ -191,7 +191,7 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "compactions": row["compactions"],
         "worktree": worktree,
         "last_activity": row["last_activity"],
-        "log_dir": str(state_dir() / "jobs" / row["name"]) if row["name"] else None,
+        "log_dir": str(state_dir() / "jobs" / job_id),
         "dump": bool(row["dump"]),
         "log_events": bool(row["log_events"]),
         "context": row["context"],

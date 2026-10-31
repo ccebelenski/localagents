@@ -26,7 +26,7 @@ from localagents.monitor import read
 # the jobs_overlapping statement, verbatim from read.py (a 3.9E pin: if the statement changes,
 # the plan pin must be re-read by hand, which is the point)
 _OVERLAPPING_SQL = (
-    "SELECT j.id, j.name, e.name AS endpoint, j.status, j.started_at, j.finished_at"
+    "SELECT j.id, j.id AS name, e.name AS endpoint, j.status, j.started_at, j.finished_at"
     " FROM jobs j LEFT JOIN endpoints e ON e.id = j.endpoint_id"
     " WHERE j.started_at IS NOT NULL AND j.started_at <= ?"
     " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
@@ -60,9 +60,9 @@ def conn(tmp_path):
     ]
     for jid, status, created, started, finished in rows:
         c.execute(
-            "INSERT INTO jobs (id, name, status, created_at, started_at, finished_at, updated)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (jid, f"n-{jid}", status, created, started, finished, started or created),
+            "INSERT INTO jobs (id, status, created_at, started_at, finished_at, updated)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (jid, status, created, started, finished, started or created),
         )
     yield c
     c.close()

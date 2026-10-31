@@ -116,7 +116,7 @@ def test_summary_from_row_reads_the_row_and_the_derivations(monkeypatch, tmp_pat
 
     row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job.id,)).fetchone()
     s = derive.summary_from_row(store.conn, row)
-    assert s["id"] == job.id and s["name"] == job.name
+    assert s["id"] == job.id and "name" not in s  # 3.10f-1: the id is the one handle
     assert s["model"] == "served-model" and s["endpoint"] == "llamacpp" and s["base_url"] == "http://x:8080"
     assert s["task"] == "x" * 300 + "…"
     assert s["status"] == "succeeded" and s["result"] == "done" and s["error"] is None
@@ -126,7 +126,7 @@ def test_summary_from_row_reads_the_row_and_the_derivations(monkeypatch, tmp_pat
     assert s["elapsed_s"] == 60.0
     assert s["isolation"] == "worktree" and s["worktree"] == wt
     assert s["run_cwd"] == "/wt/sub"  # worktree.path when the tree is present
-    assert s["log_dir"] == str(jobs.state_dir() / "jobs" / job.name)
+    assert s["log_dir"] == str(jobs.state_dir() / "jobs" / job.id)
     assert s["dump"] is False and s["log_events"] is False
     assert s["metrics"] == {
         "generated_tokens": 100, "prompt_tokens_processed": 500, "prompt_tokens_cached": 900,
@@ -240,11 +240,11 @@ def test_job_status_reads_a_foreign_jobs_row(monkeypatch, tmp_path):
     foreign.record_tool_result("u1", 1051.0, True)
 
     out = asyncio.run(server.job_status(foreign.id))
-    assert out["id"] == foreign.id and out["name"] == foreign.name
+    assert out["id"] == foreign.id and "name" not in out
     assert out["task"] == "the other server's brief" and out["model"] == "served-model"
     assert out["status"] == "succeeded" and out["result"] == "their result" and out["elapsed_s"] == 60.0
     assert out["tool_calls"] == 1 and out["errors"] == 1 and out["last_tool"] == "Bash: ls"
-    assert out["log_dir"] == str(jobs.state_dir() / "jobs" / foreign.name)
+    assert out["log_dir"] == str(jobs.state_dir() / "jobs" / foreign.id)
     assert "mcp_server_id" not in out and "endpoint_id" not in out and "model_id" not in out
     assert asyncio.run(server.job_status("no-such-job"))["error"] == "unknown_job"
 
@@ -293,7 +293,7 @@ def test_wait_job_polls_a_foreign_row_until_the_timeout(monkeypatch, tmp_path):
     out = asyncio.run(server.wait_job(foreign.id, timeout_s=1))
     waited = time.monotonic() - t0
     assert out["status"] == "running" and out["id"] == foreign.id
-    assert out["name"] == foreign.name  # a row summary, not an error
+    assert "name" not in out and out["id"] == foreign.id  # a row summary, not an error
     assert 0.9 <= waited < 1.5
     # and an id neither this process nor the database knows is still unknown_job
     assert asyncio.run(server.wait_job("no-such-id", timeout_s=0.05))["error"] == "unknown_job"
@@ -458,10 +458,10 @@ def test_wait_jobs_reports_one_line_per_interval_over_every_id(monkeypatch, tmp_
     values = [p for p, _, _ in reports]
     assert values == sorted(values) and values[0] == 0 and values[-1] == 1, values
     before = re.compile(
-        rf"0/3 done; {mine.name}: running 4[23]s, 4 turns; {old.name}: running 50[01]s, 0 turns; "
-        rf"{young.name}: running 4[23]s, 4 turns"
+        rf"0/3 done; {mine.id}: running 4[23]s, 4 turns; {old.id}: running 50[01]s, 0 turns; "
+        rf"{young.id}: running 4[23]s, 4 turns"
     )
-    after = re.compile(rf"1/3 done; {mine.name}: running 4[23]s, 4 turns; {old.name}: running 50[01]s, 0 turns")
+    after = re.compile(rf"1/3 done; {mine.id}: running 4[23]s, 4 turns; {old.id}: running 50[01]s, 0 turns")
     for p, _, m in reports:
         assert (before if p == 0 else after).fullmatch(m), m
     assert any(p == 0 for p in values) and any(p == 1 for p in values)
@@ -557,7 +557,7 @@ def test_list_jobs_all_reads_every_servers_jobs(monkeypatch, tmp_path):
 
 
 def test_job_log_works_for_any_job_and_tails_the_tool_calls(monkeypatch, tmp_path):
-    """job_log answers for another server's job (log_dir derived from its name); tools=N adds
+    """job_log answers for another server's job (log_dir derived from its id); tools=N adds
     the last N recorded calls, oldest first."""
     other = jobs.JobStore()
     foreign = _new(other)
@@ -567,7 +567,7 @@ def test_job_log_works_for_any_job_and_tails_the_tool_calls(monkeypatch, tmp_pat
 
     out = asyncio.run(server.job_log(foreign.id, tools=2))
     assert out["job_id"] == foreign.id and out["status"] == "queued"
-    assert out["log_dir"] == str(jobs.state_dir() / "jobs" / foreign.name)
+    assert out["log_dir"] == str(jobs.state_dir() / "jobs" / foreign.id)
     assert out["transcript"] == ""  # the job never ran: no transcript file
     calls = out["tool_calls"]
     assert [c["tool"] for c in calls] == ["Edit", "Grep"]  # last two, oldest first
@@ -663,20 +663,20 @@ def test_summary_metrics_none_when_unset(monkeypatch, tmp_path):
     job = _new(store)
     job.changed()
     assert job.summary()["metrics"] is None
-    assert jobs.Job(id="x", name="n", task="t", model="m", endpoint="e", base_url="b", cwd="c",
+    assert jobs.Job(id="x", task="t", model="m", endpoint="e", base_url="b", cwd="c",
                     run_cwd="c", isolation="none").summary()["metrics"] is None
 
 
-def test_unknown_job_hint_pairs_names_with_ids(monkeypatch, tmp_path):
-    """The tools take ids; the hint shows ``name (id)`` for the ten newest jobs, newest first,
-    so a caller can copy the id it needs (review of 1.5b, finding 3)."""
+def test_unknown_job_hint_lists_the_ids(monkeypatch, tmp_path):
+    """The tools take ids; the hint shows the ten newest jobs' ids, newest first, so a caller
+    can copy the one it needs (review of 1.5b; 3.10f-1: the id is the only handle)."""
     store = _store(monkeypatch, tmp_path)
     made = [_new(store, created_at=1000.0 + i) for i in range(12)]
     with pytest.raises(KeyError) as e:
         store.get("nosuch")
     msg = e.value.args[0]
     newest = made[-1]
-    assert f"{newest.name} ({newest.id})" in msg
+    assert newest.id in msg
     assert msg.index(made[-1].id) < msg.index(made[-2].id)  # newest first
     assert made[1].id not in msg and made[0].id not in msg  # ten newest only
 
@@ -692,7 +692,7 @@ def test_unknown_job_hint_falls_back_to_the_database(monkeypatch, tmp_path):
     with pytest.raises(KeyError) as e:
         empty.get("nosuch")
     msg = e.value.args[0]
-    assert f"{theirs[-1].name} ({theirs[-1].id})" in msg
+    assert theirs[-1].id in msg
     assert theirs[-11].id not in msg and theirs[0].id not in msg  # ten newest, from the rows
 
     mine = _new(empty, created_at=2000.0)
@@ -748,7 +748,7 @@ def test_run_job_writes_the_worktree_before_the_first_message(monkeypatch, tmp_p
 
     store = _store(monkeypatch, tmp_path)
     job = _new(store, isolation="worktree")
-    wt = {"repo": "/repo", "path": "/wt/sub", "root": "/wt", "branch": f"local-agent/{job.name}", "base": "abc"}
+    wt = {"repo": "/repo", "path": "/wt/sub", "root": "/wt", "branch": f"local-agent/{job.id}", "base": "abc"}
     seen = {}
 
     async def no_metrics(*a, **kw):
@@ -867,7 +867,7 @@ def _insert_row(**cols):
 
     conn = server.store.conn
     jid = db.new_uuid()
-    base = dict(id=jid, name=db.job_name(time.time(), jid), mcp_server_id=server.store.server_id,
+    base = dict(id=jid, mcp_server_id=server.store.server_id,
                 task="x", cwd="/c", isolation="none", status="succeeded", created_at=time.time())
     base.update(cols)
     with db.immediate(conn):
@@ -897,25 +897,25 @@ def test_null_created_at_sorts_at_the_oldest_end_of_the_listing(monkeypatch, tmp
 
 
 def test_summary_from_row_reads_nullable_columns_defensively(monkeypatch, tmp_path):
-    """name NULL -> log_dir None; created_at (and started_at) NULL -> elapsed_s 0; a worktree
-    JSON without a path -> run_cwd is cwd; and one bad row never breaks list_jobs(all=True)
-    (review of 1.5b)."""
-    no_name = _insert_row(name=None)
+    """created_at (and started_at) NULL -> elapsed_s 0; a worktree JSON without a path ->
+    run_cwd is cwd; log_dir follows from the id whatever the row says (3.10f-1: there is no
+    nullable name any more); and one bad row never breaks list_jobs(all=True) (review of 1.5b)."""
+    bare = _insert_row()
     no_created = _insert_row(created_at=None, finished_at=None)
     no_path = _insert_row(worktree=json.dumps({"repo": "/r"}), isolation="worktree")
     garbled = _insert_row(worktree="{not json")
 
-    s = asyncio.run(server.job_status(no_name))
-    assert s["name"] is None and s["log_dir"] is None
+    s = asyncio.run(server.job_status(bare))
+    assert s["log_dir"] == str(jobs.state_dir() / "jobs" / bare) and "name" not in s
     assert asyncio.run(server.job_status(no_created))["elapsed_s"] == 0
     s = asyncio.run(server.job_status(no_path))
     assert s["run_cwd"] == "/c" and s["worktree"] == {"repo": "/r"}
 
     out = asyncio.run(server.list_jobs(all=True, limit=0))
     by_id = {j["id"]: j for j in out}
-    assert {no_name, no_created, no_path, garbled} <= set(by_id)
+    assert {bare, no_created, no_path, garbled} <= set(by_id)
     assert "row_error" in by_id[garbled] and by_id[garbled]["status"] == "succeeded"
-    assert all("row_error" not in by_id[j] for j in (no_name, no_created, no_path))
+    assert all("row_error" not in by_id[j] for j in (bare, no_created, no_path))
 
 
 def test_row_summary_catches_only_row_problems_and_says_so(monkeypatch, tmp_path, capsys):
@@ -978,9 +978,10 @@ def test_job_log_says_when_the_directory_is_gone(monkeypatch, tmp_path):
     out = asyncio.run(server.job_log(mine.id))
     assert out["transcript"] == "" and out["note"] == f"transcript pruned or never written ({mine.log_dir})"
 
-    no_name = _insert_row(name=None)
-    out = asyncio.run(server.job_log(no_name))
-    assert out["log_dir"] is None and out["transcript"] == "" and "note" in out
+    never = _insert_row()  # a row whose directory was never created: the id still derives it
+    out = asyncio.run(server.job_log(never))
+    assert out["log_dir"] == str(jobs.state_dir() / "jobs" / never)
+    assert out["transcript"] == "" and "note" in out
 
 
 def test_job_log_reads_the_transcript_row_first(monkeypatch, tmp_path):

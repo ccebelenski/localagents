@@ -317,10 +317,10 @@ def test_dropped_job_names_the_job_running_when_the_endpoint_dropped(world):
         rows.insert(conn, rows.ProbeRows(
             {**dict.fromkeys(rows.PROBE_COLUMNS), "t": NOW + 5, "endpoint_id": ai1, "up": 0, "host": "up",
              "error": seed._refused_sentence("http://10.0.0.50:8080")}, None, None))
-    running = conn.execute("SELECT id, name FROM jobs WHERE status = 'running'").fetchone()
+    running = conn.execute("SELECT id FROM jobs WHERE status = 'running'").fetchone()
     ep = _ep(read.overview(conn, reg, NOW + 10, WINDOW_S), "ai1")
     assert ep["state"] == "down"
-    assert ep["dropped_job"] == running["name"]
+    assert ep["dropped_job"] == running["id"]  # 3.10f-1: the key carries the id for now
     # story 3.2a row 3 (3.3's gap: dropped_job had no id to click through to)
     assert ep["dropped_job_id"] == running["id"]
 
@@ -373,7 +373,7 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
     assert len(ov["jobs"]) == 2 and ov["jobs"][1]["status"] == "succeeded"
     j = ov["jobs"][0]
     row = conn.execute("SELECT * FROM jobs WHERE status = 'running'").fetchone()
-    assert j["id"] == row["id"] and j["name"] == row["name"]
+    assert j["id"] == row["id"] and j["name"] == row["id"]  # 3.10f-1: the key carries the id
     assert j["status"] == "running"
     assert j["endpoint"] == "ai1" and j["model"] == "qwen3.8-flash-next-iq3_s"
     assert j["tool_calls"] == 50 and j["num_turns"] == 40
@@ -421,9 +421,9 @@ def test_only_the_ten_newest_finished_jobs_join_the_log(world):
     with db.immediate(conn):
         for k in range(12):  # 'failed': a terminal status of its own, finished k s apart
             conn.execute(
-                "INSERT INTO jobs (id, name, status, created_at, started_at, finished_at, updated,"
-                " num_turns) VALUES (?, ?, 'failed', ?, ?, ?, ?, ?)",
-                (f"seedfin{k}", f"fin-{k}", NOW - 200.0 + k, NOW - 200.0 + k,
+                "INSERT INTO jobs (id, status, created_at, started_at, finished_at, updated,"
+                " num_turns) VALUES (?, 'failed', ?, ?, ?, ?, ?)",
+                (f"seedfin{k}", NOW - 200.0 + k, NOW - 200.0 + k,
                  NOW - 100.0 + k, NOW - 100.0 + k, k))
     ids = [j["id"] for j in read.overview(conn, reg, NOW, WINDOW_S)["jobs"]]
     assert ids[0] == running_id  # the live row stays first
@@ -450,9 +450,9 @@ def _add_finished(conn, n):
     with db.immediate(conn):
         for k in range(n):
             conn.execute(
-                "INSERT INTO jobs (id, name, status, created_at, started_at, finished_at, updated,"
-                " num_turns) VALUES (?, ?, 'failed', ?, ?, ?, ?, ?)",
-                (f"seedfin{k}", f"fin-{k}", NOW - 200.0 + k, NOW - 200.0 + k,
+                "INSERT INTO jobs (id, status, created_at, started_at, finished_at, updated,"
+                " num_turns) VALUES (?, 'failed', ?, ?, ?, ?, ?)",
+                (f"seedfin{k}", NOW - 200.0 + k, NOW - 200.0 + k,
                  NOW - 100.0 + k, NOW - 100.0 + k, k))
 
 
@@ -529,8 +529,8 @@ def test_server_live_recomputes_on_a_cached_finished_row(world):
     with db.immediate(conn):
         conn.execute("INSERT INTO mcp_servers (id, pid, owner, started, updated) VALUES (?, ?, ?, ?, ?)",
                      ("srv-fin", os.getpid(), os.getuid(), NOW - 30.0, NOW))
-        conn.execute("INSERT INTO jobs (id, name, mcp_server_id, status, created_at, started_at,"
-                     " finished_at, updated) VALUES ('fin-srv', 'fin srv', 'srv-fin', 'succeeded', ?, ?, ?, ?)",
+        conn.execute("INSERT INTO jobs (id, mcp_server_id, status, created_at, started_at,"
+                     " finished_at, updated) VALUES ('fin-srv', 'srv-fin', 'succeeded', ?, ?, ?, ?)",
                      (NOW - 400.0, NOW - 400.0, NOW - 200.0, NOW - 200.0))
         conn.execute("INSERT INTO tool_calls (job_id, t, tool, tool_use_id, input)"
                      " VALUES ('fin-srv', ?, 'Bash', 'tu1', 'ls')", (NOW - 300.0,))
@@ -551,8 +551,8 @@ def test_a_terminal_row_with_null_finished_at_shows_no_moving_elapsed(world):
     to ``now`` and the figure grew 120 s between the two reads below."""
     conn, reg = world
     with db.immediate(conn):
-        conn.execute("INSERT INTO jobs (id, name, status, created_at, started_at, updated)"
-                     " VALUES ('fin-nul', 'fin null', 'failed', ?, ?, ?)",
+        conn.execute("INSERT INTO jobs (id, status, created_at, started_at, updated)"
+                     " VALUES ('fin-nul', 'failed', ?, ?, ?)",
                      (NOW - 400.0, NOW - 300.0, NOW - 300.0))
     a = next(j for j in read.overview(conn, reg, NOW, WINDOW_S)["jobs"] if j["id"] == "fin-nul")
     b = next(j for j in read.overview(conn, reg, NOW + 120.0, WINDOW_S)["jobs"] if j["id"] == "fin-nul")
@@ -850,10 +850,10 @@ def _endpoint_history_before_r1(conn, endpoint_id, since_t, now, max_points=600)
             " ORDER BY t, id", (endpoint_id, since_t, now))
     ]
     out["jobs"] = [
-        {"name": r["name"], "id": r["id"], "status": r["status"], "started_at": r["started_at"],
+        {"name": r["id"], "id": r["id"], "status": r["status"], "started_at": r["started_at"],
          "finished_at": r["finished_at"], "model": r["served_id"]}
         for r in conn.execute(
-            "SELECT j.name, j.id, j.status, j.started_at, j.finished_at, m.served_id FROM jobs j"
+            "SELECT j.id, j.status, j.started_at, j.finished_at, m.served_id FROM jobs j"
             " LEFT JOIN models m ON m.id = j.model_id"
             " WHERE j.endpoint_id = ? AND COALESCE(j.started_at, j.created_at) <= ?"
             " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
@@ -1004,7 +1004,7 @@ def test_endpoint_requests_holds_both_seeded_jobs_newest_first(world):
     joined through jobs.endpoint_id, newest first, each rendered as the job detail renders a
     request plus job_id/job_name, with a totals line summing the range."""
     conn, _ = world
-    names = {r["name"] for r in conn.execute("SELECT name FROM jobs")}
+    names = {r["id"] for r in conn.execute("SELECT id FROM jobs")}  # 3.10f-1: job_name carries the id
     out = read.endpoint_requests(conn, endpoint_id(conn, "ai1"), NOW - 24 * HOUR, NOW)
     reqs, tot = out["requests"], out["totals"]
     assert len(reqs) == 152  # the finished job's 112 plus the running job's truncated 40
@@ -1102,7 +1102,7 @@ def test_job_detail_of_the_finished_job(world):
     assert set(d["tool_call_log"][0]) == {"t", "finished", "tool", "tool_use_id", "input", "is_error"}
     # the seed made no job directory: the tail is null and the note says why
     assert d["transcript_tail"] is None
-    assert isinstance(d["transcript_note"], str) and row["name"] in d["transcript_note"]
+    assert isinstance(d["transcript_note"], str) and row["id"] in d["transcript_note"]
     # the summary is the job_status dict (derive.summary_from_row)
     assert d["usage"]["output_tokens"] == sum(r["output_tokens"] or 0 for r in seed._load(FX).job_requests)
     json.dumps(d)
@@ -1111,7 +1111,7 @@ def test_job_detail_of_the_finished_job(world):
 def test_job_detail_tails_the_transcript_when_the_directory_exists(world):
     conn, _ = world
     row = _finished(conn)
-    d = state_dir() / "jobs" / row["name"]
+    d = state_dir() / "jobs" / row["id"]
     d.mkdir(parents=True)
     (d / "transcript.txt").write_text("".join(f"line {i}\n" for i in range(200)))
     out = read.job_detail(conn, row["id"])
@@ -1133,7 +1133,7 @@ def test_job_detail_reads_the_transcript_row_before_the_file(world):
     assert out["transcript_tail"].splitlines() == [f"row {i}" for i in range(120, 200)]
     assert out["transcript_note"] is None
 
-    d = state_dir() / "jobs" / row["name"]
+    d = state_dir() / "jobs" / row["id"]
     d.mkdir(parents=True)  # a file exists too: the row still wins
     (d / "transcript.txt").write_text("only the file\n")
     out = read.job_detail(conn, row["id"])
@@ -1144,7 +1144,7 @@ def test_job_detail_reads_the_transcript_row_before_the_file(world):
     (d / "transcript.txt").unlink()  # neither: the note says what was looked for
     out = read.job_detail(conn, row["id"])
     assert out["transcript_tail"] is None
-    assert "no transcripts row" in out["transcript_note"] and row["name"] in out["transcript_note"]
+    assert "no transcripts row" in out["transcript_note"] and row["id"] in out["transcript_note"]
 
 
 def test_job_detail_of_an_unknown_job_is_none(world):

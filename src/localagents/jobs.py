@@ -15,42 +15,62 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from . import db, derive
+from .db import state_dir  # re-exported: jobs.state_dir is the long-standing import (3.10f-1)
 
 
-def state_dir() -> Path:
-    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    d = Path(base) / "localagents"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-# A job directory is named ``<YYYYMMDD>-<HHMMSS>-<hex>``: 4 hex under the old ids, 8 hex now
-# (Job.name, see JobStore.new); prune touches nothing else.
+# A job directory is named by the job's id (a uuid, since 3.10f-1) or by the old
+# ``<YYYYMMDD>-<HHMMSS>-<hex>`` stamp (4 hex under the very old ids, 8 under the retired name);
+# prune touches nothing else.
 _JOB_DIR = re.compile(r"^(\d{8}-\d{6})-[0-9a-f]{4,}$")
+_UUID_DIR = re.compile(r"^[0-9a-f-]{36}$")
+
+
+def _newest_mtime(p: Path) -> float:
+    """When anything in the directory was last written: the newest mtime of the directory
+    itself and its direct children (the transcript, a debug dump). A child that cannot be
+    stat'ed is skipped; a directory that cannot be stat'ed propagates its OSError."""
+    newest = p.stat().st_mtime
+    for child in p.iterdir():
+        try:
+            newest = max(newest, child.stat().st_mtime)
+        except OSError:
+            continue
+    return newest
 
 
 def prune(days: int, now: float | None = None, dry_run: bool = False) -> list[Path]:
-    """Delete job directories whose id dates them more than ``days`` ago; returns what was (or
-    with ``dry_run`` would be) removed, oldest first.
+    """Delete job directories with nothing written for more than ``days``; returns what was (or
+    with ``dry_run`` would be) removed.
 
-    The date in the directory name decides, never mtime, and a name that is not a job id is left
-    alone whatever its age. ``days <= 0`` disables pruning. A job can run for at most about 28
-    hours, so any sane cutoff is past every live job of every server on the machine.
-    """
+    A directory is a job's when its name is a uuid (the job's id, the one key since 3.10f-1) or
+    the old ``YYYYMMDD-HHMMSS-<hex>`` stamp; a name that is neither is left alone whatever its
+    age, and so is a plain file. **The age is mtime**, the newest among the directory itself
+    and its direct children: the age a prune wants is how long since the last write, and the
+    old name's stamp was only a proxy for the directory's creation time (ruling (n) of the 3.10
+    discussion — the files have real timestamps). A running job keeps writing its transcript,
+    so it never reaches any sane cutoff; a finished job that wrote nothing at all is stamped by
+    the directory's creation, which is when the job started.
+
+    The trap: anything outside the job that touches its directory rejuvenates it — opening and
+    saving a transcript in an editor, a backup tool that rewrites mtimes, a recursive walk that
+    updates atimes on a filesystem mounted with ``noatime`` off and ``strictatime`` on. Prune
+    trusts mtime; the operator's own reads are not free.
+
+    ``days <= 0`` disables pruning (a job can run for at most about 28 hours, so any sane cutoff
+    is past every live job of every server on the machine)."""
     if days <= 0:
         return []
     cutoff = (now if now is not None else time.time()) - days * 86400
     root = state_dir() / "jobs"
     out: list[Path] = []
     for p in sorted(root.iterdir()) if root.is_dir() else []:
-        m = _JOB_DIR.match(p.name)
-        if not m or not p.is_dir():
+        if not p.is_dir() or not (_JOB_DIR.match(p.name) or _UUID_DIR.match(p.name)):
             continue
         try:
-            stamp = time.mktime(time.strptime(m.group(1), "%Y%m%d-%H%M%S"))
-        except ValueError:
+            written = _newest_mtime(p)
+        except OSError:  # a directory this process cannot stat is not proven old
             continue
-        if stamp < cutoff:
+        if written < cutoff:
             out.append(p)
             if not dry_run:
                 shutil.rmtree(p, ignore_errors=True)
@@ -69,8 +89,7 @@ def oldest_first(job: "Job") -> tuple[bool, float]:
 
 @dataclass
 class Job:
-    id: str  # uuid4 (db.new_uuid): the job_id every tool takes, including resume_job
-    name: str  # db.job_name(created_at, id): the job directory and worktree branch name
+    id: str  # uuid4 (db.new_uuid): the job_id every tool takes, and the job directory's name
     task: str
     model: str
     endpoint: str
@@ -109,8 +128,8 @@ class Job:
     # metrics columns written from Job.metrics; the first three decide the NULL-on-reset rule
     _METRIC_COUNTERS = ("generated_tokens", "prompt_tokens_processed", "prompt_tokens_cached")
     _METRIC_COLUMNS = _METRIC_COUNTERS + ("cache_hit_ratio", "prompt_tps", "generate_tps", "spec_decode_acceptance")
-    # storage details: summary()/job_status shows the job, and name identifies it; the id columns
-    # resolve to model/endpoint/base_url there (DeepSeek review of 1.2)
+    # storage details: summary()/job_status shows the job, and the id identifies it; the id
+    # columns resolve to model/endpoint/base_url there (DeepSeek review of 1.2)
     _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id")
 
     def changed(self) -> None:
@@ -399,15 +418,14 @@ class JobStore:
     def new(self, *, backend: str, host: str, **kw: Any) -> Job:
         jid = db.new_uuid()
         created_at = kw.setdefault("created_at", time.time())
-        name = db.job_name(created_at, jid)
         # open the database (and this server's row) before anything is made on disk: a failed
         # first open must leave no job directory behind (review of 1.7, finding 7)
         server_id, conn = self.server_id, self.conn
-        log_dir = state_dir() / "jobs" / name
-        log_dir.mkdir(parents=True, exist_ok=False)  # a name collision would be a minting bug; don't hide it
+        log_dir = state_dir() / "jobs" / jid
+        log_dir.mkdir(parents=True, exist_ok=False)  # an id collision would be a minting bug; don't hide it
         # the task itself is the jobs.task column now (task.txt is dropped)
         try:
-            job = Job(id=jid, name=name, log_dir=str(log_dir), **kw)
+            job = Job(id=jid, log_dir=str(log_dir), **kw)
             job.mcp_server_id = server_id
             self.jobs[jid] = job
             job._conn = conn
@@ -419,11 +437,11 @@ class JobStore:
                 model_id = db.lookup_id(self.conn, "models", served_id=job.model)
                 job.endpoint_id, job.model_id = endpoint_id, model_id
                 self.conn.execute(
-                    """INSERT INTO jobs (id, name, mcp_server_id, endpoint_id, model_id, task, cwd,
+                    """INSERT INTO jobs (id, mcp_server_id, endpoint_id, model_id, task, cwd,
                                          isolation, status, created_at, updated, dump, log_events, worktree,
                                          context, num_turns, last_activity)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (jid, name, self.server_id, endpoint_id, model_id, job.task, job.cwd, job.isolation,
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (jid, self.server_id, endpoint_id, model_id, job.task, job.cwd, job.isolation,
                      job.status, created_at, time.time(), 1 if job.dump else 0, 1 if job.log_events else 0,
                      json.dumps(job.worktree) if job.worktree is not None else None,
                      job.context, job.num_turns, job.last_activity),
@@ -550,20 +568,20 @@ class JobStore:
 
     def get(self, jid: str) -> Job:
         if jid not in self.jobs:
-            # "name (id)", newest first: the name is what a caller recognises from list_jobs or a
-            # job directory (DeepSeek review of 1.2), the id is what every tool takes (review of 1.5b)
+            # the ids, newest first: the id is the job's one handle now, the one list_jobs and a
+            # job directory show (3.10f-1, ruling (n))
             if self.jobs:
                 newest = sorted(self.jobs.values(), key=oldest_first)[-10:][::-1]
-                known = ", ".join(f"{j.name} ({j.id})" for j in newest)
+                known = ", ".join(j.id for j in newest)
             else:
                 # this server has run nothing, but the shared database holds every other
                 # server's jobs and one of them is probably the id the caller meant
                 # (review of 1.8). A broken database must not change the unknown_job answer.
                 try:
                     rows = self.conn.execute(
-                        "SELECT name, id FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT 10"
+                        "SELECT id FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT 10"
                     ).fetchall()
-                    known = ", ".join(f"{r['name']} ({r['id']})" for r in rows)
+                    known = ", ".join(r["id"] for r in rows)
                 except (sqlite3.Error, db.SchemaError):
                     # any failure of the fallback (a newer-schema file raises SchemaError, a
                     # RuntimeError) leaves the plain message (review of 1.8, finding 6)
