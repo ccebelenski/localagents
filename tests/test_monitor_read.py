@@ -142,7 +142,7 @@ def test_fallback_resolves_an_all_timeout_host(world):
 ENDPOINT_KEYS = {
     "name", "backend", "base_url", "host", "state", "last_seen", "last_active", "model", "context",
     "probe_state", "last_model", "last_context", "slots", "requests", "kv_cache_usage", "latency_ms",
-    "since", "error", "dropped_job", "dropped_job_id", "rates", "gen_tps_live", "hardware",
+    "since", "error", "dropped_job_id", "rates", "gen_tps_live", "hardware",
     "jobs_running",
 }
 
@@ -258,7 +258,7 @@ def test_the_live_endpoint_carries_its_gauges_rates_and_hardware(world):
     assert ai1["latency_ms"] == seed.LATENCY_MS
     # the restart at NOW-1800 changed since (the last probe is in the post-restart segment)
     assert ai1["since"] == NOW - 1800.0
-    assert ai1["error"] is None and ai1["dropped_job"] is None
+    assert ai1["error"] is None and ai1["dropped_job_id"] is None
     # the seed test's pinned constant rate (test_ai1_rates_are_constant_and_non_zero): the ai2
     # pair's deltas (4654 prompt, 2584 generated, 484756 cached) over one 360-interval half
     # hour -> 4654/1800, 2584/1800, 484756/1800 per second; spec acceptance 0.822 = 1731/2106
@@ -280,8 +280,8 @@ def test_the_down_endpoint_names_its_sentence_and_no_dropped_job(world):
     assert dgx["state"] == "down"
     assert dgx["error"] == seed._refused_sentence("http://10.0.0.70:8000")
     assert "refused" in dgx["error"] or "nothing" in dgx["error"]
-    assert dgx["dropped_job"] is None  # the seed's jobs ran on ai1
-    assert dgx["dropped_job_id"] is None
+    assert "dropped_job" not in dgx  # 3.10f-2: the name key is gone from the entry
+    assert dgx["dropped_job_id"] is None  # the seed's jobs ran on ai1
     assert dgx["last_seen"] == pytest.approx(NOW - 20 * 60.0)
     # a down probe has no gauges, no counters, no hardware
     assert dgx["model"] is None and dgx["slots"] is None and dgx["requests"] is None
@@ -301,16 +301,16 @@ def test_the_dormant_endpoint_is_last_seen_a_week_ago(world):
     lcpp = _ep(read.overview(conn, reg, NOW, WINDOW_S), "llamacpp")
     assert lcpp["state"] == "dormant"
     assert lcpp["last_seen"] == pytest.approx(NOW - seed.LCPP_UP_AGO_S)
-    assert lcpp["dropped_job"] is None  # named only for a down-recent endpoint
+    assert "dropped_job" not in lcpp  # the id key rides only on a down-recent endpoint
     assert lcpp["dropped_job_id"] is None
     # dormant too gets the last-known pair: its one UP probe a week ago
     assert lcpp["last_model"] == "esatapedico/Qwen3.8-27B-NVFP4-MTP-GGUF"
     assert lcpp["last_context"] == seed.LCPP_CONTEXT
 
 
-def test_dropped_job_names_the_job_running_when_the_endpoint_dropped(world):
+def test_the_dropped_job_id_names_the_job_running_when_the_endpoint_dropped(world):
     """ai1 goes down at NOW+5 while the seed's running job is still running: the overview at
-    NOW+10 names that job."""
+    NOW+10 carries that job's id (3.10f-2: the id is the key — no name key beside it)."""
     conn, reg = world
     ai1 = endpoint_id(conn, "ai1")
     with db.immediate(conn):  # rows.write went with story 2.2a: a tick's insert in its own transaction
@@ -320,8 +320,8 @@ def test_dropped_job_names_the_job_running_when_the_endpoint_dropped(world):
     running = conn.execute("SELECT id FROM jobs WHERE status = 'running'").fetchone()
     ep = _ep(read.overview(conn, reg, NOW + 10, WINDOW_S), "ai1")
     assert ep["state"] == "down"
-    assert ep["dropped_job"] == running["id"]  # 3.10f-1: the key carries the id for now
-    # story 3.2a row 3 (3.3's gap: dropped_job had no id to click through to)
+    assert "dropped_job" not in ep  # 3.10f-2: the name key is gone
+    # story 3.2a row 3 (3.3's gap: the sentence clicks through to the job by its id)
     assert ep["dropped_job_id"] == running["id"]
 
 
@@ -373,7 +373,7 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
     assert len(ov["jobs"]) == 2 and ov["jobs"][1]["status"] == "succeeded"
     j = ov["jobs"][0]
     row = conn.execute("SELECT * FROM jobs WHERE status = 'running'").fetchone()
-    assert j["id"] == row["id"] and j["name"] == row["id"]  # 3.10f-1: the key carries the id
+    assert j["id"] == row["id"]  # 3.10f-2: the id is the job's one key (no name key)
     assert j["status"] == "running"
     assert j["endpoint"] == "ai1" and j["model"] == "qwen3.8-flash-next-iq3_s"
     assert j["tool_calls"] == 50 and j["num_turns"] == 40
@@ -390,7 +390,7 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
     assert j["context"] == seed.AI1_CONTEXT and j["ctx_pct"] == 94
     assert j["server_live"] is True  # the seed's server row: a live pid, a heartbeat at NOW
     assert set(j) == {
-        "id", "name", "model", "endpoint", "status", "started_at", "finished_at", "elapsed_s",
+        "id", "model", "endpoint", "status", "started_at", "finished_at", "elapsed_s",
         "num_turns", "tool_calls", "errors", "last_tool", "last_activity", "ctx_pct", "ctx_tokens",
         "context", "gen_tps", "prefill_tps", "compactions", "files", "owner", "server_version",
         "server_live",
@@ -726,7 +726,7 @@ def test_ai1_history_jobs_are_the_two_seeded(world):
     conn, _ = world
     h = read.endpoint_history(conn, endpoint_id(conn, "ai1"), NOW - HOUR, NOW)
     assert sorted(j["status"] for j in h["jobs"]) == ["running", "succeeded"]
-    assert set(h["jobs"][0]) == {"name", "id", "status", "started_at", "finished_at", "model"}
+    assert set(h["jobs"][0]) == {"id", "status", "started_at", "finished_at", "model"}
     assert all(j["model"] == "qwen3.8-flash-next-iq3_s" for j in h["jobs"])
 
 
@@ -911,6 +911,10 @@ def test_a_seven_day_history_reads_only_the_points_it_answers(tmp_path):
     t0 = time.monotonic()
     old = _endpoint_history_before_r1(conn, eid, since, NOW)
     old_ms = (time.monotonic() - t0) * 1000
+    # 3.10f-2 dropped the history jobs' name key (the algorithm half of the oracle is verbatim
+    # at 5499c35; the jobs block is the fixed SELECT it copied, and the shape half tracks now)
+    for _j in old["jobs"]:
+        _j.pop("name")
     stmts: list[str] = []
     conn.set_trace_callback(stmts.append)
     t0 = time.monotonic()
@@ -1002,16 +1006,16 @@ def test_fleet_history_grid_capped_and_endpoints_without_probes_left_out(world, 
 def test_endpoint_requests_holds_both_seeded_jobs_newest_first(world):
     """Ruling D (review of 3.1): the requests of jobs that ran on the endpoint in the range,
     joined through jobs.endpoint_id, newest first, each rendered as the job detail renders a
-    request plus job_id/job_name, with a totals line summing the range."""
+    request plus job_id, with a totals line summing the range."""
     conn, _ = world
-    names = {r["id"] for r in conn.execute("SELECT id FROM jobs")}  # 3.10f-1: job_name carries the id
+    ids = {r["id"] for r in conn.execute("SELECT id FROM jobs")}  # 3.10f-2: job_id is the one key
     out = read.endpoint_requests(conn, endpoint_id(conn, "ai1"), NOW - 24 * HOUR, NOW)
     reqs, tot = out["requests"], out["totals"]
     assert len(reqs) == 152  # the finished job's 112 plus the running job's truncated 40
     assert [r["t"] for r in reqs] == sorted((r["t"] for r in reqs), reverse=True)
-    assert {r["job_name"] for r in reqs} == names
+    assert {r["job_id"] for r in reqs} == ids
     assert set(reqs[0]) == {"path", "t", "http_status", "ms", "gen_ms", "tokens", "stream",
-                            "context_exceeded", "error", "job_id", "job_name"}
+                            "context_exceeded", "error", "job_id"}
     assert set(reqs[0]["tokens"]) == {"input", "output", "cache_read", "cache_creation"}
     all_reqs = seed._load(FX).job_requests
     both = all_reqs + all_reqs[:40]  # the running job is the same export, truncated to 40

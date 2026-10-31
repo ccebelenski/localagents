@@ -193,7 +193,7 @@ def test_endpoint_requests_route(client):
     assert set(out) == {"requests", "totals"}
     assert len(out["requests"]) == 152
     ts = [q["t"] for q in out["requests"]]
-    assert ts == sorted(ts, reverse=True) and out["requests"][0]["job_name"]
+    assert ts == sorted(ts, reverse=True) and out["requests"][0]["job_id"]
     assert out["totals"]["count"] == 152 and out["totals"]["output_tokens"] > 0
     empty = client.get("/api/endpoints/dgx1-a/requests").json()
     assert empty["requests"] == [] and all(v == 0 for v in empty["totals"].values())
@@ -600,7 +600,7 @@ def test_overview_history_jobs_overlap_the_window(dbpath, tmp_path):
     with TestClient(_app(dbpath, tmp_path)) as cl:
         jobs = cl.get("/api/overview/history?range=1h").json()["jobs"]
         assert [j["id"] for j in jobs] == [seeded_finished, _job_id(dbpath, "running")]
-        assert all(set(j) == {"id", "name", "endpoint", "status", "started_at", "finished_at"} for j in jobs)
+        assert all(set(j) == {"id", "endpoint", "status", "started_at", "finished_at"} for j in jobs)
         running = jobs[1]
         assert running["status"] == "running" and running["endpoint"] == "ai1"
         assert running["started_at"] == NOW - 300.0 and running["finished_at"] is None

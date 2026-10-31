@@ -219,7 +219,7 @@ _FINISHED_CACHE: dict[tuple[str, float | None, float | None], dict[str, Any]] = 
 
 def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: bool) -> dict[str, Any]:
     """One snapshot job row (spec §5a ``running_job``): the status line's entry
-    (status.collect) plus id, name, elapsed, errors and the last tool. ``frozen`` marks a
+    (status.collect) plus id, elapsed, errors and the last tool. ``frozen`` marks a
     finished row: its ``elapsed_s`` reads finished_at - started_at, the run's length, so the
     figure stops moving; a finished row whose ``finished_at`` is NULL (the schema allows it, no
     write path produces one) has ``elapsed_s`` null — no end is known, and a finished row never
@@ -241,9 +241,7 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
     # import it). The raw text stays on the job detail and the /api/jobs summaries.
     root = status._job_root(j)
     return {
-        "id": jid,
-        # 3.10f-1: the name key carries the id until 3.10f-2 removes the key and moves the page
-        "name": jid,
+        "id": jid,  # 3.10f-2: the id is the job's one key; the pages show its first eight chars
         "model": j["model_served"],
         "endpoint": j["endpoint_name"],
         "status": j["status"],
@@ -326,16 +324,14 @@ def _endpoint(conn: sqlite3.Connection, ep: Endpoint, eid: int | None, now: floa
                    if eid is not None else None)
     last_up = last_up_row["t"] if last_up_row is not None else None
     st = state.endpoint_state(last, last_up, now, window_s)
-    dropped = None
     dropped_id = None
     if st == "down":
         first_down = conn.execute(
             "SELECT MIN(t) FROM probes WHERE endpoint_id = ? AND up = 0 AND t > ?", (eid, last_up)).fetchone()[0]
         if first_down is not None:
             job = monitor_jobs.running_job_at(conn, eid, first_down)
-            if job is not None:  # row 3: dropped_job needed its id to click through to
-                # 3.10f-1: the name carries the id until 3.10f-2 removes the key
-                dropped, dropped_id = job["id"], job["id"]
+            if job is not None:  # row 3: the sentence clicks through to the job by its id
+                dropped_id = job["id"]
     known = last_up_row is not None and st in ("down", "dormant")
     up = bool(last["up"]) if last is not None else False
     entry = {
@@ -362,7 +358,6 @@ def _endpoint(conn: sqlite3.Connection, ep: Endpoint, eid: int | None, now: floa
         "latency_ms": last["latency_ms"] if last is not None else None,
         "since": last["since"] if last is not None else None,
         "error": last["error"] if last is not None and not up else None,
-        "dropped_job": dropped,
         "dropped_job_id": dropped_id,
         "rates": _pair_rates(prev, last, backend_kind(ep.backend)),
         "gen_tps_live": last["gen_tps"] if last is not None else None,
@@ -635,8 +630,7 @@ def endpoint_history(
             " ORDER BY t, id", (endpoint_id, since_t, now))
     ]
     out["jobs"] = [
-        # 3.10f-1: the name key carries the id until 3.10f-2 removes the key
-        {"name": r["id"], "id": r["id"], "status": r["status"], "started_at": r["started_at"],
+        {"id": r["id"], "status": r["status"], "started_at": r["started_at"],
          "finished_at": r["finished_at"], "model": r["served_id"]}
         for r in conn.execute(
             "SELECT j.id, j.status, j.started_at, j.finished_at, m.served_id FROM jobs j"
@@ -731,14 +725,14 @@ def jobs_overlapping(conn: sqlite3.Connection, since_t: float, now: float) -> li
     """Story 3.7l: the job spans the fleet timeline draws — jobs OVERLAPPING ``[since_t, now]``
     (``started_at`` set and at or before the window's end, unfinished or ``finished_at`` at or
     after its start; a job that never started has no span to draw), oldest start first, each
-    ``{id, name, endpoint, status, started_at, finished_at}`` — ``endpoint`` is the endpoints
+    ``{id, endpoint, status, started_at, finished_at}`` — ``endpoint`` is the endpoints
     row's name (null when the job has no endpoint row). One statement, no derive calls: a 7 d
     window over the full log would run ``summary_from_row`` once per job for a bar's label."""
     return [
-        {"id": r["id"], "name": r["name"], "endpoint": r["endpoint"], "status": r["status"],
+        {"id": r["id"], "endpoint": r["endpoint"], "status": r["status"],
          "started_at": r["started_at"], "finished_at": r["finished_at"]}
         for r in conn.execute(
-            "SELECT j.id, j.id AS name, e.name AS endpoint, j.status, j.started_at, j.finished_at"
+            "SELECT j.id, e.name AS endpoint, j.status, j.started_at, j.finished_at"
             " FROM jobs j LEFT JOIN endpoints e ON e.id = j.endpoint_id"
             " WHERE j.started_at IS NOT NULL AND j.started_at <= ?"
             " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
@@ -753,13 +747,13 @@ def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t
     """The endpoint's per-request table (review of 3.1, ruling D; shape §5a): the ``requests``
     rows of jobs that ran on this endpoint (joined through ``jobs.endpoint_id``) with ``t`` in
     the range, newest first, at most ``limit``. Each row is rendered exactly as ``job_detail``
-    renders its requests, plus ``job_id`` and ``job_name``. The ``totals`` object sums the
+    renders its requests, plus ``job_id`` (3.10f-2: the id is the job's one key). The ``totals`` object sums the
     whole range (not just the capped list): count, the four token columns, the ms sum (NULLs
     skipped) and the number of requests whose error column is set — not null and not the empty
     string the export writes on clean requests (review of 3.3: ``SUM(error IS NOT NULL)``
     counted those as errors)."""
     rows_ = ([] if endpoint_id is None else conn.execute(
-        "SELECT p.path, r.*, j.id AS job_id, j.id AS job_name FROM requests r"
+        "SELECT p.path, r.*, j.id AS job_id FROM requests r"
         " JOIN jobs j ON j.id = r.job_id LEFT JOIN paths p ON p.id = r.path_id"
         " WHERE j.endpoint_id = ? AND r.t >= ? AND r.t <= ?"
         " ORDER BY r.t DESC, r.rowid DESC LIMIT ?", (endpoint_id, since_t, now, limit)
@@ -771,7 +765,7 @@ def endpoint_requests(conn: sqlite3.Connection, endpoint_id: int | None, since_t
                     "cache_read": r["cache_read_tokens"], "cache_creation": r["cache_creation_tokens"]},
          "stream": bool(r["stream"]) if r["stream"] is not None else None,
          "context_exceeded": r["context_exceeded"], "error": r["error"],
-         "job_id": r["job_id"], "job_name": r["job_name"]}
+         "job_id": r["job_id"]}
         for r in rows_
     ]
     sums = ([0] * 7 if endpoint_id is None else conn.execute(
@@ -823,8 +817,6 @@ def job_detail(conn: sqlite3.Connection, job_id: str, now: float | None = None) 
     if row is None:
         return None
     d = derive.summary_from_row(conn, row, now=now)
-    # 3.10f-1: the page's job-name field carries the id until 3.10f-2 removes the key
-    d["name"] = job_id
     d["requests"] = [
         {"path": r["path"], "t": r["t"], "http_status": r["http_status"], "ms": r["ms"], "gen_ms": r["gen_ms"],
          "tokens": {"input": r["input_tokens"], "output": r["output_tokens"],

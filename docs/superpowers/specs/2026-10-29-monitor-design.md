@@ -180,7 +180,8 @@ with a sparkline, jobs running on it. Down-and-recent and dormant as in §4. Bel
 Recent jobs log (story 3.7g): job, status pill, model, endpoint, elapsed, turns, tool calls,
 tool errors, context fill as a bar, speed, last activity — running and queued first, then the
 last 10 finished with elapsed frozen. True now (3.10a, 2026-10-30): a "started" column
-(day-stamped) follows the name; the "server gone" badge is gone — a live job whose server
+(day-stamped) follows the job column (its cell is the job id, first eight characters since
+3.10f-2); the "server gone" badge is gone — a live job whose server
 stopped beating wears the pill "lost"; "speed" is two columns, prefill tok/s and decode tok/s. Below that the fleet charts: decode and prefill
 speed per live endpoint on a shared time axis, and occupancy.
 
@@ -337,11 +338,10 @@ endpoint = {
   "latency_ms": 12,
   "since": 1793028865.0,            the server's start epoch when known (Strata)
   "error": "...",                   the last probe's failure sentence when it is down, else null
-  "dropped_job": "20261029-...",    state "down" only: the `name` of the job that was running on
-                                    it at its first down probe after last_seen
-                                    (jobs.running_job_at); else null
-  "dropped_job_id": "0f9c…",        that job's id beside its name, so the sentence is clickable
-                                    (3.3's gap, story 3.2a); null with dropped_job
+  "dropped_job_id": "0f9c…",        state "down" only: the id of the job that was running on it
+                                    at its first down probe after last_seen
+                                    (jobs.running_job_at), so the sentence is clickable
+                                    (3.3's gap, story 3.2a); else null
   "rates": {                        rates.rates between the LAST TWO probes
     "prompt_tps": 1.2, "gen_tps": 0.6, "cached_tps": 134.8, "spec_acceptance": 0.822,
     "reason": null                  null when computed; else why the four are null: "no probes",
@@ -362,7 +362,7 @@ endpoint = {
 }
 
 running_job = {
-  "id", "name", "model", "endpoint",
+  "id", "model", "endpoint",
   "status",                         live: "queued" | "running"; on a finished log row
                                     (story 3.7g) a terminal value: "succeeded" | "failed" |
                                     "cancelled" | "timeout" | "lost" (jobs.py's done check)
@@ -400,6 +400,10 @@ running_job = {
 event = {"t", "endpoint" (its name), "kind" ("up" | "down" | "restarted"), "detail"}
 ```
 
+True now (3.10f-2, 2026-10-30): a job has one key, its UUID; the pages show its first eight
+characters with the full id in the title; `name`, `dropped_job` and `job_name` are gone from
+every shape (`dropped_job_id` and `job_id` stay).
+
 An endpoint in the database but not in models.yaml is ignored: it has no host card and its
 events are left out of `events`. A configured endpoint with no `endpoints` row yet (never
 probed, never ran a job) is listed, dormant, every figure null; the read creates no row (the
@@ -432,7 +436,7 @@ the schema allows it) reports `elapsed_s` null — a finished row never shows a 
   "gpu_pcie_rx_mb": [ ... ], "gpu_pcie_tx_mb": [ ... ], "cpu": [ ... ], "ram_used": [ ... ],
   "disk_read_mb": [ ... ], "disk_write_mb": [ ... ]                                          ← tier 3
   "events": [ {"t", "kind", "detail"}, ... ],     the endpoint's events in the range, oldest first
-  "jobs": [ {"name", "id", "status", "started_at", "finished_at", "model"}, ... ]
+  "jobs": [ {"id", "status", "started_at", "finished_at", "model"}, ... ]
                                     jobs on the endpoint that overlap the range (started — or
                                     created, if never started — by `now`, not finished before
                                     the range starts), oldest first
@@ -469,8 +473,7 @@ the schema allows it) reports `elapsed_s` null — a finished row never shows a 
 ```
 {
   "requests": [ a job detail request row — {"path", "t", "http_status", "ms", "gen_ms",
-                "tokens", "stream", "context_exceeded", "error"} — plus "job_id" and
-                "job_name", ... ]
+                "tokens", "stream", "context_exceeded", "error"} — plus "job_id", ... ]
                                     the requests of jobs on this endpoint (joined through
                                     jobs.endpoint_id) whose t is in the range, newest first,
                                     at most 1000
@@ -555,7 +558,7 @@ to fetch the fleet grid plus one history per live endpoint every refresh period.
                                     `finished_at` at or after its start), oldest start first,
                                     no cap and no summary: a timeline row reads the spans, it
                                     does not enumerate the log
-    { "id": "...", "name": "...",   the six fields, the same names as the job summaries below;
+    { "id": "...",                   the five fields (3.10f-2: no name — the id is the key);
       "endpoint": "...",             `endpoint` is the endpoints row's name (null when the job
       "status": "...",               has no endpoint row); a running job's `finished_at` is
       "started_at": ...,             null and draws to now on the page
@@ -575,7 +578,7 @@ entry uses): a job that starts between two probes appears at the next probe, at 
 late is inside the drawing's own resolution.
 
 **Job summaries** (`GET /api/jobs`): each is `derive.summary_from_row(include_result=False)`,
-the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoint`,
+the `job_status` dict: `id`, `task` (first 300 chars), `model`, `endpoint`,
 `base_url`, `cwd`, `run_cwd`, `isolation`, `status`, `created_at`, `started_at`,
 `finished_at`, `session_id`, `error`, `num_turns`, `compactions`, `worktree`,
 `last_activity`, `log_dir`, `dump`, `log_events`, `context`, `metrics` (the seven-column
@@ -594,7 +597,7 @@ the MCP server that ran the job, its `mcp_servers.version`; null when that row i
                  "stream" (bool | null), "context_exceeded", "error"}, ... ]     time order
   "tool_call_log": [ {"t", "finished", "tool", "tool_use_id", "input",
                       "is_error" (bool; null while the result has not arrived)}, ... ]   time order
-  "transcript_tail": "...",         the last 80 lines of <state_dir>/jobs/<name>/transcript.txt,
+  "transcript_tail": "...",         the last 80 lines of <state_dir>/jobs/<id>/transcript.txt,
                                     joined by "\n"; null when there is none
   "transcript_note": null           null when there is a tail; else the sentence saying why not
                                     (the job directory is gone — pruned after the retention days,
@@ -602,7 +605,7 @@ the MCP server that ran the job, its `mcp_servers.version`; null when that row i
 ```
 
 The job page's requests table is the endpoint requests block's one renderer (`requestsTable`),
-with the job column omitted: these rows carry no `job_id`/`job_name` and are in time order.
+with the job column omitted: these rows carry no `job_id` and are in time order.
 
 In the job detail the LIST of calls lives under `tool_call_log` and `tool_calls` stays the
 count (its length is `len(tool_call_log)`); in a job summary `tool_calls` is the count. Named

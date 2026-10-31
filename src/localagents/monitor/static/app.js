@@ -170,7 +170,12 @@
     return h("span", { class: "fig" }, [h("span", { class: "label", text: label }), value, extra || null]);
   }
 
-  function jobLink(id, name) { return h("a", { href: "#/job/" + encodeURIComponent(id), text: name }); }
+  // 3.10f-2 (ruling (n)): a job has one key, its UUID — the pages show the first eight
+  // characters everywhere and hold the full id in the title (the started column of 3.10a
+  // carries the time; the job page's header shows the full id, being the page's subject).
+  // shortId and jobLink are exported: endpoint.js and job.js draw through the same rule.
+  function shortId(id) { return String(id).slice(0, 8); }
+  function jobLink(id) { return h("a", { href: "#/job/" + encodeURIComponent(id), title: id, text: shortId(id) }); }
   function endpointLink(name) {
     return h("a", { class: "ep-name", href: "#/endpoint/" + encodeURIComponent(name), text: name });
   }
@@ -356,7 +361,8 @@
     });
   }
 
-  // one job as the MCP status line (status.py's `_job_row`): the mark, the name, the elapsed,
+  // one job as the MCP status line (status.py's `_job_row`): the mark, the job's short id
+  // (3.10f-2), the elapsed,
   // then the bits that are actually there joined by ` · ` — calls, files, ctx, t/s,
   // compactions. The marks are status.py's MARK (running "⟳", queued "…"): the mark is the
   // queued word, no badge on the card row.
@@ -370,7 +376,7 @@
   // job carries (3.7n: a card's height never depends on its values).
   function epJobRow(job) {
     var row = [h("span", { text: job.status === "queued" ? "… " : "⟳ " }),
-      jobLink(job.id, job.name),
+      jobLink(job.id),
       h("span", { class: "num", text: " " + fmt.dur(job.elapsed_s) })];
     var trail = function (node) {
       row.push(h("span", { class: "muted", text: " · " }));
@@ -544,8 +550,8 @@
         h("span", { class: "ep-seen ep-line", text: ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "" })]),
       ep.error && !quiet ? h("div", { class: "ep-error ep-line", text: ep.error }) : null,
       // the id beside the name makes the sentence clickable; the name alone stays plain text
-      ep.dropped_job ? h("div", { class: "ep-jobs ep-line" }, ["running when it dropped: ",
-        ep.dropped_job_id ? jobLink(ep.dropped_job_id, ep.dropped_job) : ep.dropped_job]) : null,
+      ep.dropped_job_id ? h("div", { class: "ep-jobs ep-line" }, ["running when it dropped: ",
+        jobLink(ep.dropped_job_id)]) : null,
     ]);
   }
 
@@ -652,12 +658,13 @@
     // information — and on a live one the state belongs in the pill: the job page's word for a
     // record that says running while nothing runs it is "lost" (spec §6).
     var lost = job.server_live === false && (job.status === "running" || job.status === "queued");
-    var nameCell = [jobLink(job.id, job.name)];
+    // 3.10f-2: the first cell is the short id (title: the full one); the id is the job's one key
+    var idCell = [jobLink(job.id)];
     if (job.compactions > 0) {
-      nameCell.push(h("span", { class: "badge", text: fmt.int(job.compactions) + " compaction" + (job.compactions === 1 ? "" : "s") }));
+      idCell.push(h("span", { class: "badge", text: fmt.int(job.compactions) + " compaction" + (job.compactions === 1 ? "" : "s") }));
     }
     return h("tr", { "data-job": job.id }, [
-      h("td", null, nameCell),
+      h("td", null, idCell),
       h("td", null, [statusPill(lost ? "lost" : job.status)]),
       timeTd(job.started_at, now),
       h("td", { class: "cut", title: job.model || "", text: job.model || "" }),
@@ -1238,9 +1245,10 @@
             href: "#/job/" + encodeURIComponent(job.id),
             style: "left:" + left.toFixed(2) + "%;width:" + Math.max(right - left, 0.4).toFixed(2) +
               "%;background:" + fillOf(colourOf(name)) + ";border-color:" + colourOf(name),
-            title: (job.name || job.id) + " · started " + fmt.time(job.started_at) +
+            // 3.10f-2: the bar's label is the short id; the title keeps the full id first
+            title: job.id + " · started " + fmt.time(job.started_at) +
               " · " + fmt.dur(end - job.started_at) + " · " + job.status,
-            text: job.name || job.id,
+            text: shortId(job.id),
           }));
         });
         rows.appendChild(h("div", { class: "tl-row" }, [
@@ -1418,7 +1426,7 @@
   // log look with the two rates Strata derives from the same facts: time, a status pill, job
   // (omitted on a job page, where every row is the one job), path, prompt (tokens.input),
   // reused (tokens.cache_read), output, prefill t/s, decode t/s, duration, error. The rows are
-  // the endpoint route's (newest first, with job_id/job_name) or the job detail's (time order,
+  // the endpoint route's (newest first, with job_id) or the job detail's (time order,
   // no job fields); neither is re-sorted here. `opts.job === false` drops the job column;
   // `opts.empty` is the sentence an empty list draws (each page keeps its own).
   //
@@ -1525,8 +1533,8 @@
           title: String(req.http_status), text: ok ? "ok" : "error" })]));
       }
       if (withJob) {
-        cells.push(h("td", null, [req.job_id ? h("a", { href: "#/job/" + encodeURIComponent(req.job_id),
-          text: req.job_name || req.job_id }) : null]));
+        // 3.10f-2: the job column is the shared short-id link (the row carries job_id only)
+        cells.push(h("td", null, [req.job_id ? jobLink(req.job_id) : null]));
       }
       cells.push(
         h("td", { class: "cut", title: req.path || "", text: req.path || "" }),
@@ -1564,6 +1572,8 @@
     renders: renders, // 3.7-fold-3 smoke: {full, inPlace, skipped} counts of render passes
     onSnapshot: onSnapshot, // 3.9D D4: the detail pages' snapshot hook; returns the remover
     cardLayout: cardLayout, // 3.7u smoke: {floor, need, raised} — the column floor's high-water mark
+    shortId: shortId, // 3.10f-2: the one short-id rule, exported for the detail pages and the smoke
+    jobLink: jobLink, // 3.10f-2: the short id as a link, full id in the title
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

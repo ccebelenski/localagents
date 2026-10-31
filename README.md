@@ -425,9 +425,12 @@ the status is a word pill (running / queued / done / failed and friends) rather 
 and a running row's turn count is a muted dash until its first turn lands.) A non-zero tool
 errors count is a link: the count is tool results that came back as errors, and the job page
 lists them by tool. "server gone" marks a job whose MCP server no longer beats. (True now,
-3.10a, 2026-10-30: a "started" column (day-stamped) follows the name; the "server gone" badge
-is gone — a live job whose server stopped beating wears the pill "lost"; "speed" is two
-columns, prefill tok/s and decode tok/s.)
+3.10a, 2026-10-30: a "started" column (day-stamped) follows the job column; the "server gone"
+badge is gone — a live job whose server stopped beating wears the pill "lost"; "speed" is two
+columns, prefill tok/s and decode tok/s.) (True now, 3.10f-2, 2026-10-30: the job's one key is
+its UUID — the job column, a card's job row, a timeline bar's label and the request table's job
+column show its first eight characters with the full id in the title, and the job page's header
+shows the id itself.)
 Beneath the log the fleet section is one **timeline** on a shared time axis. One 36 px row
 per live endpoint, in card order: the endpoint's busy intervals from its own history as a
 6 px band along the row's bottom (idle is not drawn, so a box idle all day reads as an empty

@@ -525,7 +525,9 @@
       ].filter(Boolean);
       return h("div", { class: "job-header" }, [
         h("div", { class: "job-head" }, [
-          h("span", { class: "job-name", text: detail.name }),
+          // 3.10f-2: the job's one key is its UUID; this header is the one place that shows it
+          // in full — the page's subject (the overview's links title it, the tables show the short form)
+          h("span", { class: "job-name", text: detail.id }),
           mark,
           detail.model ? h("span", { class: "tag", text: detail.model }) : null,
           detail.endpoint ? h("a", { class: "ep-name", href: "#/endpoint/" + encodeURIComponent(detail.endpoint), text: detail.endpoint }) : null,

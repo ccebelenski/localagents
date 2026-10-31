@@ -230,10 +230,11 @@ def test_app_js_reads_only_section_5a_field_names():
     for name, vars in PAGE_VARS.items():
         fields = _read_fields((STATIC / name).read_text(), vars)
         # the regex does see the reads (a guard against a pattern that matches nothing)
-        assert {"hosts", "endpoints", "jobs", "rates", "gen_tps", "state", "t", "server_live", "dropped_job",
+        assert {"hosts", "endpoints", "jobs", "rates", "gen_tps", "state", "t", "server_live",
                 "dropped_job_id", "db_path", "probe_state",
-                # 3.7k: the shared requests renderer's row reads
-                "http_status", "tokens", "cache_read", "job_name", "gen_ms"} <= fields \
+                # 3.7k: the shared requests renderer's row reads; 3.10f-2: the job half of the
+                # row is job_id alone (the name keys are gone from every shape)
+                "http_status", "tokens", "cache_read", "job_id", "gen_ms"} <= fields \
             if name == "app.js" else \
             {"requests", "tool_call_log", "ctx_tokens", "usage", "metrics", "tool_counts",
              "files_touched", "transcript_tail", "elapsed_s", "server_live"} <= fields, name
@@ -627,12 +628,12 @@ def test_endpoint_js_reads_only_section_5a_field_names():
     spec = _section_5a()
     fields = _read_fields(_endpoint_js(), ENDPOINT_JSON_VARS, ("state", "page"))
     # the regex does see the reads, through every one of the names (3.7k: the request row's own
-    # fields — tokens, cache_read, job_id, job_name, http_status — moved with the table into
+    # fields — tokens, cache_read, job_id, http_status — moved with the table into
     # app.js's shared renderer, whose `req` walk checks them there)
     assert {"hosts", "endpoints", "now", "state", "fallback", "hardware", "rates", "gpu_mem_total", "ram_total",
             "prompt_tps", "cached_tps", "t", "jobs", "events", "requests", "totals",
             "count", "cache_creation_tokens", "errors", "started_at",
-            "kind", "detail", "dropped_job", "last_seen", "base_url",
+            "kind", "detail", "dropped_job_id", "last_seen", "base_url",
             "host", "last_model", "last_context"} <= fields
     missing = sorted(f for f in fields if not re.search(r"(?<![A-Za-z_])" + re.escape(f) + r"(?![A-Za-z_])", spec))
     assert missing == []

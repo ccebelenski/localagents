@@ -283,9 +283,8 @@
     return now != null && now - t < 86400 ? fmt.time(t) : fmt.date(t);
   }
 
-  function jobLink(id, name) {
-    return h("a", { href: "#/job/" + encodeURIComponent(id), text: name || id });
-  }
+  // 3.10f-2: the job link is app.js's exported jobLink (short id, full id in the title) — the
+  // local (id, name) builder is gone with the name keys
 
   function table(columns, rows, numeric) {
     var head = h("tr", null, columns.map(function (c) { return h("th", { class: numeric[c] ? "n" : null, text: c }); }));
@@ -329,7 +328,7 @@
     else {
       body = h("div", { class: "table-wrap" }, [table(JOB_COLUMNS, jobs.map(function (job) {
         return h("tr", { "data-job": job.id }, [
-          h("td", null, [jobLink(job.id, job.name)]),
+          h("td", null, [M.jobLink(job.id)]),
           h("td", { text: job.status || "" }),
           h("td", { text: when(job.started_at, now) }),
           h("td", { text: job.finished_at != null ? when(job.finished_at, now) : "" }),
@@ -380,11 +379,11 @@
       : ep.state === "live" ? "last seen " + fmt.ago(ep.last_seen, snap.now)
         : "last seen " + fmt.date(ep.last_seen) + " (" + fmt.ago(ep.last_seen, snap.now) + ")";
     var dropped = null;
-    if (ep.state === "down" && ep.dropped_job) {
-      // dropped_job is a name; the link needs an id, found when the job is in the range's history
-      var match = hist && Array.isArray(hist.jobs) ? hist.jobs.filter(function (job) { return job.name === ep.dropped_job; })[0] : null;
+    if (ep.state === "down" && ep.dropped_job_id) {
+      // 3.10f-2: the entry carries the job's id, so the sentence links without consulting the
+      // range's history for a match
       dropped = h("div", { class: "ep-dropped" }, ["running when it dropped: ",
-        match ? jobLink(match.id, ep.dropped_job) : h("span", { text: ep.dropped_job })]);
+        M.jobLink(ep.dropped_job_id)]);
     }
     // the card the endpoint sits under: the endpoint's own `host` (a page that re-sorts needs
     // it beside the endpoint), the containing host object as the fallback; the object's node
