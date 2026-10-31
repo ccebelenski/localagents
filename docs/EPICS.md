@@ -1842,6 +1842,34 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   breakdown stays (it is a different thing); the helper of 3.10c applies to its requests table
   with the job as the fixed filter; the "errors" header word pair from 3.7v stays.
 
+### 3.11 Pre-close passes (operator 2026-10-31 00:15)
+
+> Two passes to schedule pre-close for this sequence - one pass by opus over the codebase, code
+> cleanliness review, duplicated code, opportunities for risk reduction. Second pass by any
+> model over the automated tests - looking for code sycophants, tests that scope too narrow and
+> would miss actual useage patterns, dead tests, etc.
+
+Sequence: after 3.10c and the review of the page batch land, before the retro.
+- ☐ **3.11a Codebase pass (Opus, read-only audit → folds).** Every module under src/: cleanliness
+  (dead code, stale comments that narrate retired stories, names that lie), duplicated code (the
+  two hand-copies of the outside-2xx rule the fold review named; `timeTd`-style factorings not
+  yet made; the three `_log_safe`s), and risk reduction (unguarded writes, paths that trust input,
+  the `record_*` handlers DeepSeek noted, `finish_worktree`'s ignored return codes, shared
+  mutable state across the fan-out). Deliverable: a table — finding, file:line, kind, the fix's
+  size — then folds by Opus itself under the usual rule (test-first, a cross-model review of the
+  folds). Not a rewrite: the operator's words are review and reduction.
+- ☐ **3.11b Test-suite pass (any model; DeepSeek's window fits all of tests/).** Over every test
+  file: "code sycophants" — tests that restate the implementation (the regex pins over page
+  source are the known family; tests that assert a mock was called the way the code calls it;
+  tests whose expected values were copied from the output), tests scoped too narrowly to catch
+  real usage (a single-row fixture where the page sees fifty; a seeded world that never flips a
+  state; a test that pins a fake's shape and not a captured one), dead tests (vacuous asserts,
+  `new == old` over empty worlds like the R1 oracle's jobs half, skipped-forever markers,
+  duplicates), and gaps the live incidents exposed (the 22:44 incident: nothing tested that a
+  subprocess kept the redirect). Deliverable: a table per file — test, verdict (sycophant /
+  too narrow / dead / sound), the usage pattern it misses, the replacement's shape — then the
+  replacements built test-first by the reviewer, cross-model reviewed.
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to

@@ -41,7 +41,10 @@ paging/sorting/filters (after 3.10h(b): both edit `requestsTable`), the review o
 (3.10f-2, 3.10b, 3.10h(b), 3.10g), folds: a reverse §5a gate, endpoint.js header's dead `hist`,
 wide.js/keep.js re-measured. The MCP server (reconnected 23:15) predates 3.10h(a): its jobs carry
 the first-byte prefill figure until the next `/mcp` reconnect at a quiet moment — never while
-jobs run (operator). The floor half of 3.10g awaits the operator's word. Suite 776.
+jobs run (operator). The floor half of 3.10g awaits the operator's word. Suite 776. PRE-CLOSE (EPICS 3.11, operator
+00:15): after 3.10c and the page-batch review, 3.11a an Opus codebase cleanliness/duplication/
+risk-reduction audit with folds, then 3.11b a test-suite audit (sycophant, too-narrow, dead
+tests) by DeepSeek with replacements; then the retro.
 
 **Awaiting the operator.**
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is
