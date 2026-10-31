@@ -2458,6 +2458,19 @@ lands; 3.12c after 3.12b.
   listeners until the next click; the synthetic two-panel state. **Fold dispatched to the reviewer
   (ruling (a))**: F1 faceting by NAME and the button passes the name; F2 the hash carries the local
   day of the clock; F3 the events cache forgets its body when the events go.
+- ☑ **3.12c-fold** (Landed a5b62dc: DeepSeek/dgx1-a job 60fbb860, 79 turns, 19 min, three WIP
+  commits squashed, the reviewer's own probes re-run first; 901 tests. F1 `filterIdx` skips
+  `except` by `col.name === except.name`; the button calls `toggleTimePanel(col.name, btn)`, which
+  resolves the column in the current call's `columns` (quietly nothing on a stale name). F2 the
+  hash gains `localDay(opts.now)`. F3 `if (!evs) { if (cache.section) cache.sig = null; return
+  null; }`. The brief's F1 push ("new row objects, same values") could not reproduce — hash-identical,
+  level-1 skipped — so the lane changed one row's id, as the reviewer's probe had; disclosed.
+  tests/test_3_10b.py:214's source pin moved to the new branch. NOTICED by the lane: `TABLE_DOM`'s
+  docstring (app.js:807-809) still lists `{container, hash, draw}` and the entry now holds the
+  parts, the panel fields and the slots (stale doc); the panel's keyboard/a11y costs the reviewer
+  flagged stay open (no focus move on open, span words not labels, no aria-expanded); the hash
+  still omits `opts.page` and `opts.class` (no caller varies them today). The Qwen review of the
+  fold is next.)
 
 ## Epic 4: operations (V2, not scheduled)
 
