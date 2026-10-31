@@ -9,8 +9,11 @@ Node: `/home/linuxbrew/.linuxbrew/bin/node` (v26).
 
 ```bash
 # 1. a seeded world and a monitor serving it without collecting (ports are yours to pick)
-LOCALAGENTS_DB="$PWD/t/seed.db" uv run localagents seed
-LOCALAGENTS_DB="$PWD/t/seed.db" uv run localagents monitor --no-collect --no-open --port 8771 &
+# 1.15: BOTH variables — a package running from a worktree refuses the default state directory
+# (the 2026-10-30 22:44 incident), and the job directories, transcripts and prune all derive from it
+export XDG_STATE_HOME="$PWD/t/state" LOCALAGENTS_DB="$PWD/t/seed.db"
+uv run localagents seed
+uv run localagents monitor --no-collect --no-open --port 8771 &
 # 2. a browser with a DevTools port
 "$CH" --headless --no-sandbox --remote-debugging-port=9231 --user-data-dir="$PWD/t/profile" about:blank &
 # 3. the probe: JSON of what the DOM holds, then the console/exception log; the PNG is for the operator

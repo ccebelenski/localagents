@@ -45,11 +45,36 @@ class SchemaError(RuntimeError):
     """The file's schema version is one this code cannot open."""
 
 
+# story 1.15 (the 2026-10-30 22:44 incident: a lane's worktree code migrated the REAL database and
+# renamed 78 real job directories — the conftests' redirect is a convention a subprocess can drop):
+# the file this package runs from. A checkout under a `worktrees` directory — a lane's
+# `~/.local/state/localagents/worktrees/<repo>/<id>` or an Agent's `.claude/worktrees/agent-*` —
+# never opens the default state directory; it must be redirected. The operator's install (the main
+# checkout, or a wheel) has no such component and is unaffected. Module-level so a test can point it.
+PACKAGE_FILE = Path(__file__).resolve()
+WORKTREE_MARK = "worktrees"
+
+
+def _running_from_a_worktree() -> bool:
+    return WORKTREE_MARK in PACKAGE_FILE.parts
+
+
 def state_dir() -> Path:
     """``$XDG_STATE_HOME/localagents`` (or ``~/.local/state/localagents``), created on first use.
     Lives here because both the database's own path and the job directories derive from it, and
-    a version-9 migration step (``_v9``) needs it too; ``jobs.state_dir`` re-exports the name."""
-    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    a version-9 migration step (``_v9``) needs it too; ``jobs.state_dir`` re-exports the name.
+    Story 1.15: with no ``XDG_STATE_HOME`` set, a package running from a worktree checkout refuses
+    rather than touch the real state directory — the one database and the real job directories
+    belong to the operator's install alone."""
+    base = os.environ.get("XDG_STATE_HOME")
+    if not base:
+        if _running_from_a_worktree():
+            raise RuntimeError(
+                "refusing to use the default state directory from a worktree checkout "
+                f"({PACKAGE_FILE}): a lane never opens the real database or job directories — "
+                "set XDG_STATE_HOME (and LOCALAGENTS_DB) to a directory of its own"
+            )
+        base = str(Path.home() / ".local" / "state")
     d = Path(base) / "localagents"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -349,8 +374,8 @@ def _v9(conn: sqlite3.Connection) -> None:
         raise SchemaError(
             f"schema version 9 drops jobs.name and needs SQLite >= 3.35; this is {sqlite3.sqlite_version}"
         )
-    root = state_dir() / "jobs"
     for jid, name, status in conn.execute("SELECT id, name, status FROM jobs WHERE name IS NOT NULL").fetchall():
+        root = state_dir() / "jobs"  # 1.15: the jobs root only when a row needs renaming (a fresh or empty file never touches it)
         old, new = root / name, root / jid
         try:
             if not old.is_dir():
