@@ -1827,7 +1827,17 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   (pre-existing): a backend that dies mid-stream is recorded as a clean 200 with no error (the
   exception reaches the client; the row says nothing). P1 the split marker (disclosed). P3 a
   sub-millisecond decode reads 0. Disposition: F1 and P2 folded by the reviewer (ruling (a));
-  P1/P3 accepted boundaries. (b) after 3.10b.
+  P1/P3 accepted boundaries. **(b) LANDED 66be3d3** (Qwen/ai1 job
+  5ce88d5d-b1c9-4bd0-b37d-d9380b12e1d6, 78 turns, 9 min; 782 tests): columns path, prompt (the
+  whole prompt, three parts in the title), new (input + cache creation), reused, output, prefill
+  t/s, decode t/s, duration, error; `promptTotal`/`newTokens` named helpers; a missing part is 0
+  when another is present, none → blank; the handshake branch untouched (handshake.js d1.ok).
+  Smoke {1, 16384, 3000} → 19,385 / 3,001 / 16,384, prefill 6,002.0, decode 133.3. Spec §5a's
+  column list corrected, not only appended. Lane's notes: the job and endpoint totals lines sum
+  the bare `input` as "tokens in" (the same small number, now under an honest label — 3.11a may
+  want the whole prompt there); the job header's METRICS column "prompt" is the `prompt_tps` RATE,
+  the last bare "prompt" word on the pages; cdp.mjs computes `reqHeaders`/`reqRows`/`reqPills`
+  only onto the AFTER console line, not AFTER_JSON (a lane reading the JSON misses them).
 - ☑ **3.10b One jobs table, one requests table.** (Landed f0d423d: Qwen/ai1 job 7956ea64-5fc3-44c8-bbdb-42117d1a44cb, 115 turns, 16 min; 776 tests. `endpoint_history`'s jobs are the §5a rows of this endpoint's jobs overlapping the range — the overlap predicate factored out of `jobs_overlapping` (`_OVERLAP_WHERE`), so a queued never-started job no longer appears (consistent with "jobs that ran"; pinned); not joined to `_FINISHED_CACHE` (its eviction is keyed to the overview's tail); plans SEARCH `jobs_endpoint_id`. `jobsTable(rows, opts)` with empty/note/omit/now, cells built by column name; endpoint.js's own list gone; headings "Jobs · ai1 · last 1h" / "Requests · …" / "Restarts and outages · …" only when the range holds an event (the seed has three events; at 15m the section is absent). Lane's notes: `fleet_history` calls `endpoint_history` per endpoint and now pays ~7 derive statements per overlapping job for a `jobs` list it never reads — a `jobs=False` option is the fix — coordinator's check: the batched overview route and the endpoint page share one cached body per endpoint and span (app.py:319-323, 423), so the rows are derived once per endpoint per refresh, not twice; measured on the seeded world: 2 jobs → 23 statements, ~10 ms at every range; ~7 statements per overlapping job, all by `job_id` index. Left as is; the flag if a profile ever shows it; the seeded running job wears "lost" in every `--no-collect` smoke (the seed's heartbeat is stale against the live clock); the R1 oracle's jobs half compares two empty lists.) `jobsTable(rows, opts)` becomes the renderer
   for every jobs list: the overview (as now), the endpoint page (`opts.filter` = the endpoint;
   the title "Jobs" with the filter and range stated once: "Jobs · ai1 · last 24h"), and later
