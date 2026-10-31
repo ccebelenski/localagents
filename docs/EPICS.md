@@ -1836,7 +1836,17 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   (pre-existing): a backend that dies mid-stream is recorded as a clean 200 with no error (the
   exception reaches the client; the row says nothing). P1 the split marker (disclosed). P3 a
   sub-millisecond decode reads 0. Disposition: F1 and P2 folded by the reviewer (ruling (a));
-  P1/P3 accepted boundaries. **(b) LANDED 66be3d3** (Qwen/ai1 job
+  P1/P3 accepted boundaries. **FOLD LANDED 17b3278** (the same dense Qwen, job
+  e4f49aee-6fb3-4c58-8d29-4d8e869e1892, 57 turns, 10 min; 790 tests): `tail = (tail +
+  chunk)[-TAIL_BYTES:]` (8 KiB) and the LAST `message_delta` usage in it wins (a stop_reason-only
+  delta skipped; `HEAD_BYTES`/`TAIL_BYTES` constants); the generator catches `Exception` (in this
+  httpx `ReadError` is a TransportError, not a StreamError — the named-types list in the brief was
+  wrong, the lane caught it), records `error = "stream ended early: <type>: <msg>"[:300]` with
+  the header's status and the usage it had, re-raises; `GeneratorExit`/`CancelledError` pass
+  through (a client walk-away is not a backend failure). Lane's notes: a truncated-200 row writes
+  no `[backend]` transcript line (`_log` logs at ≥ 400 only — the row is the record); two error
+  shapes now coexist in `error` (800 bytes of a 4xx/5xx body vs the 300-char sentence); a death
+  AFTER content now keeps the real decoded count. Review of the fold: Qwen/ai2, next. **(b) LANDED 66be3d3** (Qwen/ai1 job
   5ce88d5d-b1c9-4bd0-b37d-d9380b12e1d6, 78 turns, 9 min; 782 tests): columns path, prompt (the
   whole prompt, three parts in the title), new (input + cache creation), reused, output, prefill
   t/s, decode t/s, duration, error; `promptTotal`/`newTokens` named helpers; a missing part is 0
