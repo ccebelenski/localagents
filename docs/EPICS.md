@@ -1590,6 +1590,15 @@ Coordinator's answers from the code (2026-10-30):
   `jobs.name` is `YYYYMMDD-HHMMSS-<hex8>`, the sortable one the table and the directory show.
   The name carries the start time in compressed form; 3.10a's "started" column makes it
   readable without the convention. No change to the scheme.
+  Operator: "the 'name' isn't very useful otherwise - we could just display the GUID + timestamp,
+  and drop the name entirely? Thoughts?" Coordinator: the name is the FILESYSTEM handle — the job
+  directory (jobs.py:404), the worktree directory and branch `local-agent/<name>` (runner.py:79-80),
+  and `prune` decides age from the stamp in the directory name with no database (jobs.py:30-37,
+  by design: a prune that works when the database is gone). The id is the API handle (every MCP
+  tool, every page link). Dropping the name means UUID directories and branches in the operator's
+  shell, and prune reading the database — a cross-cutting change for a cosmetic gain. On screen
+  the smaller move is available: show the 8-hex tail (the UUID's first 8, the same as the name's
+  tail) with the started column, full name and id in the title. Operator decides; not scheduled.
 - **"tier 0: every endpoint"** (endpoint.js:240 `TIER_NAME`): the spec's tiers (§5 line 185)
   group the tiles by which BACKENDS provide them — tier 0 "every backend provides these", tier 1
   counters, tier 2 occupancy, tier 3 hardware. A taxonomy of data sources leaked onto the page as
