@@ -2169,6 +2169,10 @@ Operator: "So, a running job would essentially force a refresh, but an idle endp
 updates when no job was running? If so, that seems okay" — yes, with the refinement that a running
 job's push changes one row, and level 2 swaps that row's element alone; the table's box is never
 rebuilt on a push under this design.
+Operator, on started: "my 'not intuitive' remark on the started column for example was that I
+really couldn't figure out how to make it work at all - so functionality is undetermined by me."
+(The likeliest path: a date typed alone matches 0 rows — the review's possible (1); the grammar is
+named only in the box's hover title.)
 
 ## Epic 4: operations (V2, not scheduled)
 
