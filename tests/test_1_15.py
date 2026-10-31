@@ -56,6 +56,12 @@ def test_the_subprocess_route_also_refuses_the_default_state_directory(tmp_path)
     code = (
         "import sys; sys.path.insert(0, r'" + str(_SRC) + "')\n"
         "from localagents import db\n"
+        # the lane that wrote this ran from a worktree, where the real path carries the mark; on the
+        # operator's main checkout it does not, so the child points the guard at a worktree-shaped
+        # path when its own is not one — the ROUTE under test (a fresh interpreter, the env, the
+        # import) is the same either way
+        "from pathlib import Path\n"
+        "if 'worktrees' not in db.PACKAGE_FILE.parts: db.PACKAGE_FILE = Path('/w/worktrees/x/src/localagents/db.py')\n"
         "db.state_dir()  # must raise: the worktree guard (XDG_STATE_HOME unset in the child)\n"
     )
     out = _run_subprocess(code, env)
