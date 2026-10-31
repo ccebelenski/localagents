@@ -1800,6 +1800,16 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   line (898 → 946), the job lines second (786) — the "~900 → ~600 if the job lines leave the
   floor" estimate is live-page-specific; headless Chromium's 15-px scrollbar shifts exact-width
   maths. (1) still awaits the operator.
+  Operator (2026-10-31 afternoon, the live page): "A side effect of our 'expand but not contract'
+  rule for the cards is that a tool line that causes an expansion results in a permanent
+  single-card per line display. A possible fix is to allow the truncation for that line only to
+  prevent very wide cards." Coordinator's reading: this is (1) narrowed to the one unbounded line —
+  `.ep-act` (app.js:416, the activity's own line, already carrying its full text in `title`) is in
+  the floor selector (app.js:1428: `.ep-head, .ep-job-figs, .ep-act, .ep-line`); leaving it out
+  lets it scroll barless when wider than the card (the 3.7u-fix mechanism: app.css:467
+  `overflow-x: auto`, :482 `scrollbar-width: none`, the `overflows` mark) with no ellipsis, so the
+  3.7u rule holds and the floor stops following tool lines. The figures line stays in the floor
+  (bounded width, structural). A design for the operator's reading; builds on its own "go".
 - ☐ **3.10h "prompt = 1": the request table's prompt column, and the shim's first-byte clock.**
   Operator (2026-10-30 23:00, a job page's request table, screenshot): "Weird - prompt = 1? I hope
   that's due to transient state?" Not transient. Two things: (1) the column shows the API's
