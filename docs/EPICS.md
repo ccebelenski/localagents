@@ -2333,9 +2333,43 @@ lowers that floor.
   passthrough text; the docstring at tests/test_monitor_smoke.py:267 says "nothing-is-listening";
   app.js:590's comment justifies a width by the old ~120-char sentence; a port-less or odd base_url
   prints "None" in the sentence (pre-existing). Design as proposed in chat — the hint does not
-  reach the page (no column for it) — under the go of this afternoon.) The four sentences get short at the source, the operator's own form for the
-  refused case ("10.0.0.70 reachable, port 8000 no response"); the explanation moves to a second
-  field the card shows only on hover.
+  reach the page (no column for it) — under the go of this afternoon. The chat proposal had said
+  the card would show the hint on hover; it does not and cannot without a column, so the page
+  shows the short sentence alone. 861 was the lane's count at its base; 865 is main's after the
+  3.12d merge.)
+- ☑ **Review of 3.12d + 3.12e** (DeepSeek/dgx1-a job 4a12382c, 84 turns, 28 min, three probes,
+  read-only; probes under t/ not landed). P1 over hand columns: every unit reading of the brief
+  as expected (`<10m` 3 of 7, `5m-10m` 2, `<1,000` 2, `>1,300` 2, `1,3` 2, the time branch
+  untouched, the three titles), the smoke `c2c` 86 == 86. **DEFECT (P1-1):** the comparator and
+  range tokens (app.js:933 `(\S+)`, :922 `[^\s-]+`) forbade an inner space, so the ms cells' own
+  print never reached readNum — `<1.2 s` 0 rows where 2 were right, `800 ms-1.2 s` 0 where 2; the
+  tests typed "800ms-1.2s" and missed it. **POSSIBLE:** `1.5m` / `<1.5m` silently match nothing
+  (decimal minutes are not in the grammar); comma stripping runs before the unit grammar so `<1,2s`
+  reads 12 s (the locale hazard already noticed). P2 over a REAL refusal at 127.0.0.1:1: the dict
+  `{up: false, models: [], host: "up", error: "127.0.0.1 reachable, port 1 no response", hint:
+  "nothing started there, or the port in models.yaml is wrong"}`; the probes row, the down event
+  and `read.overview` carry the short sentence and no hint anywhere in the snapshot; `ModelUnavailable
+  .to_dict()` carries error + hint under each endpoint, and run_agent (server.py:489-490) and
+  local_complete (:870-871) return it — CLEAN; odd urls: a port-less host prints "host reachable,
+  no response", no scheme prints "None" (as before), `http://host:abc/` raises ValueError in old
+  and new (pre-existing, escapes `Registry.probe`'s handler — NOTICED). Hand-typed sentence
+  table: `_TIMEOUT` (test_monitor_collect.py:600), test_monitor_read.py:114, test_monitor_page.py:880,
+  tools/smoke/neverseen.js:20, state.py:59-60's docstring, app.js:590's comment,
+  test_monitor_smoke.py:268 — stale wording, none load-bearing. P3 the pins: every hunk a minimum
+  edit with intent intact except tests/test_3_10c.py:99-103, which after 3.12d pinned only that a
+  regex exists and readNum is called (the numeric-on-sort-key intent survived only behaviourally),
+  and tests/test_probe.py:52 `"firewall" not in out["error"]`, vacuous once no error sentence names
+  a firewall. Process: both builds edited a pin the brief did not name (disclosed) — the brief's
+  "ONLY the pins named" rule is the wrong letter when the gate itself breaks a pin; see the retro.
+  NOTICED: the ms title prints "1.2s" while the cells print "1.2 s" (both read after the fold);
+  `ModelUnavailable.message` stays generic, the hint only under `endpoints`; the key `hint` now
+  means two things (the classifier's vs `_strata_hint`). **Fold LANDED 8051db5** (coordinator,
+  whole diff read, rides the 3.12b review as its P4): the comparator operand `(.+?)` and the range
+  tokens `[^-]+?` (the \s* either side trims), a decimal in every duration part, the 3.10c pin
+  says `(gt ? v > want : v < want)` again, the test_probe line checks the hint; tests/test_3_12d_fold.py
+  F1 (the cells' print with its space: `<1.2 s` 2, `>1.2 s` 1, `800 ms-1.2 s` 2, with spaces
+  around the hyphen 2, `<1 s` 2, "1.2 s" alone the substring 1) and F2 (`<1.5m` 1, `1.5h-2h` 1,
+  `<0.5d` 5, `>1.5h` 1, `<10m` still 2, `<10 m` 0 — the seconds grammar prints no space). Suite 883.
 
 Operator (2026-10-31 afternoon, every lane back): "3.12a closed per my observation. 3.10e closed also
 based on preliminary check. 3.10c also closed. I say go on the open build work now that all lanes
