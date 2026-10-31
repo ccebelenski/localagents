@@ -47,6 +47,12 @@ Rulings (f)–(m) accepted by the operator 2026-10-29 in the closing interview; 
 at the operator's correction: a judgement per pass, not a fixed count or line limit.
 Declined as rulings (practice already in the hints file): a probe cap per review brief (b);
 briefs passed by path (c).
+- **(n)** Operator, 2026-10-30: "You're free to argue with me on any point, at any time by the
+  way - project wide. I'm not always right, and sometimes I'm even pretty badly wrong. … The two
+  arguments I will never accept is 'The code is written', and 'It's difficult'. Those are factors
+  to consider, not blockers." A proposal is judged on correctness, data integrity and clarity;
+  effort is a cost to schedule around, never the verdict; the coordinator argues openly with
+  evidence and concedes plainly.
 
 Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before any parser;
 2.4 before any page story; 3.5 last.
@@ -1610,6 +1616,22 @@ Coordinator's answers from the code (2026-10-30):
   UUID as directory and branch name, `name` kept on old rows and shown when present else
   `id[:8]` with the started column, prune ageing both shapes by mtime, `dropped_job`/`job_name`
   → ids, seed and specs; DeepSeek, after the table stories; its own review (schema-shaped).
+  Operator: "I don't think I'm wrong on this one - and it saves one DB column too and some logic.
+  … my experience says this is exactly the kind of thing that matters later - data integrity and
+  clarity." (And ruling (n) above.) SCHEDULED, and FIRST — before 3.10b/c, so the first column
+  changes once. Split for the lanes: **3.10f-1 the package side** (DeepSeek): schema v9 drops
+  `jobs_name` and the `name` column (SQLite DROP COLUMN; the migration first renames each
+  existing `jobs/<name>` directory to `jobs/<id>` for rows whose status is terminal, best effort,
+  leaving live jobs' directories alone and logging what it skipped); `JobStore.new` mints no
+  name — `log_dir = jobs/<id>` (jobs.py:399-410, `db.job_name` retired); the worktree directory
+  and branch are the id (runner.py:79-80); `prune` ages ANY job directory (UUID-named or the
+  old stamp shape) by its newest mtime, docstring naming the outside-touch trap (jobs.py:30-50);
+  `derive.log_dir` from the id (derive.py:184); the status line, wait/resume messages and
+  `list_jobs` rows show the id (server.py:174-220, 466, 717; status.py); smoke.py:198; the seed
+  mints ids; tests. **3.10f-2 the monitor side** (after f-1 and 3.10d): read.py drops `name`,
+  `dropped_job` (the id stays in `dropped_job_id`) and `job_name`; the pages show `id.slice(0,
+  8)` with the full id in the title wherever a name was shown (app.js:373, 548, 655, 1241-1243,
+  1529; endpoint.js:334, 385-389); spec §5a; the field-name gate; DOM smoke.
 - **"tier 0: every endpoint"** (endpoint.js:240 `TIER_NAME`): the spec's tiers (§5 line 185)
   group the tiles by which BACKENDS provide them — tier 0 "every backend provides these", tier 1
   counters, tier 2 occupancy, tier 3 hardware. A taxonomy of data sources leaked onto the page as
