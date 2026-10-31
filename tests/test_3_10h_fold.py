@@ -218,3 +218,21 @@ def test_a_clean_stream_records_no_error(tmp_path, monkeypatch):
     assert row["http_status"] == 200
     assert row["error"] is None
     assert row["output_tokens"] == 57
+
+
+def test_a_final_message_delta_without_usage_does_not_hide_the_count(tmp_path, monkeypatch):
+    """A trailing message_delta carrying only stop_reason (no usage key) must not replace the
+    earlier real count: the fold's docstring promised the skip and nothing pinned it (the Qwen/ai2
+    review of 17b3278, probe p1c2, lifted into the suite)."""
+    no_usage = (b'event: message_delta\n'
+                b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n')
+    send = _sse_send([
+        (0, MESSAGE_START),
+        (0.5, CONTENT_BLOCK_START),
+        (0, CONTENT_BLOCK_DELTA),
+        (0.1, MESSAGE_DELTA_57),
+        (0, no_usage),
+        (0, MESSAGE_STOP),
+    ])
+    resp, out, err, row = _relay_and_row(tmp_path, monkeypatch, send, STREAM_BODY)
+    assert row["output_tokens"] == 57, row["output_tokens"]

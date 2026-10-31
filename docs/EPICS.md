@@ -1846,7 +1846,19 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   through (a client walk-away is not a backend failure). Lane's notes: a truncated-200 row writes
   no `[backend]` transcript line (`_log` logs at ≥ 400 only — the row is the record); two error
   shapes now coexist in `error` (800 bytes of a 4xx/5xx body vs the 300-char sentence); a death
-  AFTER content now keeps the real decoded count. Review of the fold: Qwen/ai2, next. **(b) LANDED 66be3d3** (Qwen/ai1 job
+  AFTER content now keeps the real decoded count. Review of the fold by Qwen/ai2 job
+  197b338e-57ea-4c79-9346-a414537804eb, 71 turns, 20 min, three probes: window-front split skip,
+  last-delta-wins, head+tail merge over an 82 KiB stream, all four death/walk-away shapes (a
+  death before any byte: error text, status 200, gen_ms None), the 300-char cut, no transcript
+  line; the clock shapes re-run on an independent harness; a MUTATED `TAIL_BYTES = 64` fails the
+  five window tests and none of the clock tests — the pins bind behaviour. One filed finding, F1:
+  more than 8 KiB after the final delta loses the count to the placeholder — the documented bound,
+  accepted (no Anthropic-shaped backend sends anything after its final delta but message_stop);
+  the fix-shape if ever: parse deltas in the loop and keep the last usage, no window. Possible: a
+  GRACEFUL truncation (a clean EOF with no message_stop and no exception) records a clean row.
+  Noticed: `head`'s cap is soft (overshoots by one chunk — harmless); the fold's docstring
+  promised the usage-less-delta skip and no test pinned it — the reviewer's probe p1c2 is lifted
+  into tests/test_3_10h_fold.py by the coordinator. Chain closed. **(b) LANDED 66be3d3** (Qwen/ai1 job
   5ce88d5d-b1c9-4bd0-b37d-d9380b12e1d6, 78 turns, 9 min; 782 tests): columns path, prompt (the
   whole prompt, three parts in the title), new (input + cache creation), reused, output, prefill
   t/s, decode t/s, duration, error; `promptTotal`/`newTokens` named helpers; a missing part is 0
