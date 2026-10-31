@@ -3,7 +3,11 @@ did). The monitor serves static/*.js to whatever browser the operator has; the h
 `let`/`const`, no arrow functions, no template strings. Comments are stripped first (the prose
 quotes code in backticks), and string literals are blanked before the comments (F2, fold of the
 page-batch review 2026-10-30: a `//` inside a string used to eat the rest of its line and hide a
-real `const`). Backticks are NOT blanked — a template string is what this gate hunts."""
+real `const`). Backticks are NOT blanked — a template string is what this gate hunts. Known limit
+(R1, the same review): a regex literal is not a string to this gate, so a quote inside one pairs
+with the next string's quote and blanks real code between them (`var r = /"/; const a = 1; var s =
+"x";` hides the const); app.js has one such literal today and the shifts cancel there. A parser
+would be the next step if the page scripts ever grow regex literals with quotes."""
 import re
 from pathlib import Path
 
@@ -13,9 +17,13 @@ STATIC = Path(__file__).resolve().parent.parent / "src" / "localagents" / "monit
 
 # F2: double- and single-quoted literals without a newline, escapes allowed; each becomes "".
 # Applied before the comment strippers (a `//`/`/*` inside a string is text, not a comment).
-_STR = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'')
+# R2 (Qwen review of the fold): an escape may be a backslash-newline (a line continuation), so the
+# escape class is `\\[\s\S]`, not `\\.`, or the continued string survives and its `//` eats the line
+_STR = re.compile(r'"(?:\\[\s\S]|[^"\\\n])*"|\'(?:\\[\s\S]|[^\'\\\n])*\'')
 _BLOCK = re.compile(r"/\*.*?\*/", re.S)
-_LINE = re.compile(r"(?m)(?<![:\"'])//.*$")  # a `//` after a colon or a quote is a URL, not a comment
+# strings are blanked before this runs, so every `//` left is a comment (R2: the old lookbehind
+# that spared a `//` after a quote kept `x = "a"// const y` as code and fired on comment text)
+_LINE = re.compile(r"(?m)//.*$")
 _CONSTRUCTS = {
     "let/const": re.compile(r"\b(let|const)\s+[A-Za-z_$]"),
     "arrow function": re.compile(r"=>"),
@@ -59,6 +67,8 @@ def test_the_page_scripts_are_es5():
     ('x = "a"// c', None),
     (r'var s = "a \" // b"; const y = 2;', "let/const"),
     ('var s = "`t`"; const y = 2;', "let/const"),
+    ('x = "a"// const y = 1', None),  # R2: comment text after a quote is a comment
+    ('var s = "a \\\n // b"; const y = 1;', "let/const"),  # R2: a line continuation inside the string
 ])
 def test_the_gate_reads_through_string_literals(src, caught):
     code = _code(src)
