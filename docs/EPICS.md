@@ -1994,7 +1994,18 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   top-level rules and the 760 block; floor.js/floor.mjs gain `cardWidth` and fail above the cap
   (2200 → 1078, 1712 → 1419, 1400 → 1353, 1000 → 953; RED proven with a planted override). Lane's
   note: `cellText` now runs `querySelectorAll("[title]")` per cell per keystroke — P1-a's 131 ms
-  may have grown; 3.11a measures and caches. Review of the fold: Qwen/ai2, next.
+  may have grown; 3.11a measures and caches. Review of the fold by Qwen/ai2 job
+  c72c9493-879e-4c61-9ab5-488248f7b510, 82 turns, 31 min, three probes: NO finding. A full UUID
+  → 1 row, a date → that day's rows (80/201/19 over 300), "ok" → the 2xx rows with the handshake
+  excluded, "501" → the handshake by its pill's title, "no status" → the null row; blanks last in
+  both directions over five columns with nulls and empty strings, ties keep the caller's order,
+  an all-blank column stable; floor.mjs and tables.js green; the planted `.host` override and
+  `shortId(detail.id)` each FAIL their pins. A keystroke at 1,000 rows now 28-45 ms (131 before
+  the fold — the descendant-title scan replaced a worse path). The one surprise ruled per the
+  oracle: "results" matches 240 rows through the tool-errors cell's tooltip sentence (the hover
+  shows it). Possible: NaN and whitespace-only values sort as present (unreachable from JSON);
+  the 1712-px card passes the cap by 1.5 px — one font-metrics tick flips floor.mjs red (a
+  tolerance to widen in 3.11a); blank cells inconsistently carry `title=""`. Chain closed.
 ### 3.11 Pre-close passes (operator 2026-10-31 00:15)
 
 > Two passes to schedule pre-close for this sequence - one pass by opus over the codebase, code
