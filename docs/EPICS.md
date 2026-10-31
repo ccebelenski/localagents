@@ -2261,8 +2261,20 @@ still shows; the second is a new finding of the F2 kind — the box must read wh
 elapsed is a `number` column keyed in seconds (app.js:1192, UNIT "seconds" app.js:628, the unit named
 only in the box's hover title app.js:1045), so `<10m` reads `parseFloat("10m")` = 10 and matches jobs
 under ten SECONDS (app.js:872-874), while the cell prints `fmt.dur` ("4m12s", "2h03m", app.js:81-89).
-- ☐ **3.12d The number box reads the cell's own unit.** Design proposed in chat, awaiting the
-  operator's reading and "go" (ruling (p)). A bound or range end on a `number` column is read through
+- ☑ **3.12d The number box reads the cell's own unit.** (Landed 5d5479b: Qwen/ai1 job 31b91e73,
+  64 turns, 11 min, three WIP commits squashed; 854 tests. `readNum(unit, s)` beside
+  `parseTimeLiteral`: commas first, then the unit's grammar — seconds read fmt.dur's shape, ms read
+  "800ms"/"1.2s"/"2m"/"1h", "%" strips one trailing percent — then a bare number only when the whole
+  remainder is one; the range is two hyphen-free tokens around a hyphen, each end through the
+  reader; the comparator's operand through it; an end or operand that reads NaN falls through to
+  the substring. Decided by the lane, disclosed: ">10x" no longer reads 10 (parseFloat's old
+  reading); the 3.10c source-shape pin (tests/test_3_10c.py:99-103) pinned the deleted comparator
+  and range literals and was moved to the new shape — not named in the brief, the brief's miss. The
+  smoke's c2c witness: "<10m" over the hand rows, under 86 / matched 86. NOTICED by the lane: the
+  3.10c source-string pin style is brittle by construction (every filter rewrite edits it; the
+  behavioural tests already cover its intent) — a candidate nit for a fold; the new range regex
+  accepts any token pair, one regex pass spent on text needles before the substring. Design as
+  proposed in chat and approved under the go of this afternoon.) A bound or range end on a `number` column is read through
   the column's unit: seconds (elapsed) accept the duration grammar the cell prints (`[Nd][Nh][Nm][Ns]`,
   any subset: `10m`, `1h30m`, `90s`, `2h`); ms (requests duration, cells "8 ms" / "1.2 s") accept
   `800ms`, `1.2s`, `2s`, `1m`; `%` (context) accepts a trailing `%`; a bare number keeps today's
