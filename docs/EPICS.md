@@ -2198,7 +2198,21 @@ the plan the operator agreed to.
   entry per endpoint page visited, never evicted; the `∅` sentinel collides with a value literally
   `∅`, theoretical; the smoke scripts have no general assertion helper (`d1.ok` is the convention and
   `cdp.mjs` does not surface a throwing script). Brief: the session scratchpad `brief-3.12a-fold.md`;
-  the reviewer fixing its own verified findings, ruling (a).) F1 the
+  the reviewer fixing its own verified findings, ruling (a). REVIEW of the fold, Qwen/ai1 job
+  9bc5bdbf…, 55 turns, 6.5 min, three construct-it probes over node + fakedom and the live smoke
+  (ports 8798/9258): P1 the blank option's count is faceted ("(blank) (2)" → "(blank) (1)" under a
+  status filter), a column with no blank rows draws no blank option, a model literally named "null"
+  stays distinct, the held sentinel survives a blank-free push as "(blank) (0)" and "any" deletes it;
+  P2 over cells 1,300 / 1,301 / 1,000 / 500 / 20,000 / 1,500 / 13,000: `>1,300` → 4 rows strict,
+  `<1,301` → 3, `1,000-20,000` → 6, `1,3` → 2 (13,000 NOT matched: the substring keeps the typed
+  text), `-1,000-1,000` → 2, a comma typed into a time box is a substring (0 rows; the time branch
+  untouched); P3 the two endpoint ids keep separate state, every call site matches the rule, the smoke
+  `f.ok` true, and a deliberately broken witness surfaces as `f.ok: false` in the JSON (dom.js also
+  prints SCRIPT_THREW) while NEITHER driver exits non-zero. NO DEFECT, no possible: the fold chain
+  closes. NOTICED: a model named "∅" collides with the sentinel (theoretical); `fmt.int` is
+  `toLocaleString()` with no pinned locale (app.js:52), so a browser in a dot-grouping locale prints
+  "1.300" and the comma grammar does not apply there — pre-existing, first load-bearing with F2;
+  `TABLE_STATE` grows one entry per endpoint page visited.) F1 the
   blank pick value gets a sentinel (`PICK_BLANK`, labelled "(blank)") so it no longer collides with
   "any"; F2 commas stripped before the number box's range and comparator readings (the substring
   reading keeps the text as typed); F3 the endpoint page's tables keyed per endpoint
