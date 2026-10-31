@@ -2240,7 +2240,24 @@ the plan the operator agreed to.
   (`jobs-endpoint-<name>`, `requests-endpoint-<name>`); F4 the smoke's full-id witness reads the id
   link's title and asserts it. Dropped from the fold on the operator's dispositions: the lone-literal
   time reading (the time box is retired by 3.12c) and the redraw hold (3.12b makes it unnecessary).
-- ☐ **3.12b Two-level table refresh.** Design APPROVED:
+- ☑ **3.12b Two-level table refresh.** (Landed 86204ad: Qwen/ai1 job 5693c32a, 138 turns, 23 min,
+  six commits squashed; 881 tests; no pre-existing test changed. Built as the spec says, with the
+  lane's mechanics: `TABLE_DOM[id] = {container, hash, draw, wrap, thead, head, filterRow, tbody,
+  pager, note, colsKey, onFocusOut}`; every persistent listener reads `TABLE_DOM[id].draw`; the
+  column key includes the filter KIND, so a kind flip swaps the cells inside the persistent thead
+  rows; a list that empties clears the key so a refill rebuilds its controls; `mount(parent, els)`
+  exported; endpoint.js keeps one section per page instance (`page.secJobs`/`page.secReqs`);
+  fakedom gained `isConnected`, `insertBefore` and a target-preserving `dispatchEvent`. The spec's
+  §5 job.js item was WRONG and is not built: job.js draws once per load (job.js:232-244, from the
+  detail fetch), the snapshot listener patches header figures only, so its requests table is
+  rebuilt only by the helper's own draw — now the patch. Smoke (h): wrap identity and the kept
+  row's element survive a changed push, the changed row's tr is new and reads the new figure;
+  `scrollLeft` read 0 because the 1400-px viewport leaves no horizontal overflow (identity is the
+  witness); (i): `tableSkipped` +1 across an identical push (the copy changes `window_s` so
+  render's own snapSig skip does not swallow it). NOTICED by the lane: the job page's requests
+  table never shows requests recorded after the page opened (pre-existing); fakedom has no `#id`
+  or `:first-child` selectors. The DeepSeek review and the operator's after reading on Firefox
+  are open.) Design APPROVED:
   docs/superpowers/specs/2026-10-31-table-refresh-design.md. Level 1: a table whose rows hash the
   same as its last draw is not touched (no stored hash, or a container no longer in the document,
   forces a full build). Level 2: on a change, or an operator action, the wrapper, header and filter
