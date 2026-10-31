@@ -109,6 +109,26 @@ def gen_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
     return ema
 
 
+def prefill_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
+    """Processed prompt tokens (input + cache_creation) per second of prefill (ms − gen_ms),
+    summed over the job's ``/v1/messages`` rows — a plain ratio over the job. Rows join only
+    when all four fields are numbers, ms > gen_ms and the processed tokens > 0: the page's own
+    rule (app.js prefillRate, story 3.9k). Not an EMA replay like gen_tps: decode's EMA is a
+    replay of the status line's note_usage history, and prefill has no such history to match —
+    a ratio is what "tokens processed per second of prefill" means (story 3.10a)."""
+    tokens = seconds = 0.0
+    for r in conn.execute(
+        f"SELECT r.ms, r.gen_ms, r.input_tokens, r.cache_creation_tokens {_MESSAGES} ORDER BY r.t",
+        (job_id,),
+    ).fetchall():
+        inp, cc, ms, gen = r["input_tokens"], r["cache_creation_tokens"], r["ms"], r["gen_ms"]
+        if inp is None or cc is None or ms is None or gen is None or ms <= gen or inp + cc <= 0:
+            continue
+        tokens += inp + cc
+        seconds += (ms - gen) / 1000
+    return tokens / seconds if seconds else None
+
+
 def _truncate(task: str | None) -> str | None:
     """job_status shows the brief's first 300 chars, as Job.summary always did."""
     return task if task is None or len(task) < 300 else task[:300] + "…"
@@ -175,6 +195,7 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "files_touched": files_touched(conn, job_id),
         "ctx_tokens": ctx_tokens(conn, job_id),
         "gen_tps": gen_tps(conn, job_id),
+        "prefill_tps": prefill_tps(conn, job_id),
     }
     end = row["finished_at"] if row["finished_at"] is not None else (time.time() if now is None else now)
     d["elapsed_s"] = round(end - start, 1) if start is not None else 0

@@ -234,6 +234,7 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
         elapsed = round(clock - start, 1) if start is not None else None
     ctx = derive.ctx_tokens(conn, jid)
     tps = derive.gen_tps(conn, jid)
+    prefill = derive.prefill_tps(conn, jid)
     # row 5 (3.2 review): the row carries the DISPLAY form the status bar shows — one line,
     # relative to the job's root (1.11b's rule; status.py is stdlib-only, so the monitor may
     # import it). The raw text stays on the job detail and the /api/jobs summaries.
@@ -256,6 +257,7 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
         "context": j["context"],
         "ctx_pct": round(100 * ctx / j["context"]) if ctx and j["context"] else None,
         "gen_tps": round(tps, 1) if tps else None,
+        "prefill_tps": round(prefill, 1) if prefill else None,
         "compactions": j["compactions"],
         "files": len(derive.files_touched(conn, jid)),
         "owner": j["server_owner"],

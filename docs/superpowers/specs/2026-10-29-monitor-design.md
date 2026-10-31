@@ -179,7 +179,9 @@ state strip (Strata's six states where known; up/busy otherwise), slots or queue
 with a sparkline, jobs running on it. Down-and-recent and dormant as in §4. Below the cards a
 Recent jobs log (story 3.7g): job, status pill, model, endpoint, elapsed, turns, tool calls,
 tool errors, context fill as a bar, speed, last activity — running and queued first, then the
-last 10 finished with elapsed frozen. Below that the fleet charts: decode and prefill
+last 10 finished with elapsed frozen. True now (3.10a, 2026-10-30): a "started" column
+(day-stamped) follows the name; the "server gone" badge is gone — a live job whose server
+stopped beating wears the pill "lost"; "speed" is two columns, prefill tok/s and decode tok/s. Below that the fleet charts: decode and prefill
 speed per live endpoint on a shared time axis, and occupancy.
 
 **Endpoint detail.** Stat tiles with sparklines for the tiers the endpoint provides (table
@@ -365,6 +367,9 @@ running_job = {
                                     `GET /api/jobs/{id}` (the detail route's summary)
   "ctx_tokens", "context", "ctx_pct" (round(100 × ctx_tokens / context), or null),
   "gen_tps",                        derive.gen_tps rounded to 1 decimal, or null
+  "prefill_tps",                    derive.prefill_tps rounded to 1 decimal, or null — the job's
+                                    processed prompt tokens (input + cache_creation) per second
+                                    of prefill (ms − gen_ms), story 3.10a
   "compactions",
   "files",                          count of distinct files touched (derive.files_touched)
   "owner",                          the job's MCP server's owner pid (the Claude Code session)
@@ -559,7 +564,7 @@ the `job_status` dict: `id`, `name`, `task` (first 300 chars), `model`, `endpoin
 `/metrics` delta, or null), `usage` (`input_tokens`, `output_tokens`,
 `cache_read_input_tokens`, `cache_creation_input_tokens`), `tool_calls` (count),
 `tool_counts` (`{tool: {"calls", "errors"}}`), `errors`, `last_tool`, `files_touched` (list),
-`ctx_tokens`, `gen_tps`, `elapsed_s` (to the wall clock while unfinished). No `result`.
+`ctx_tokens`, `gen_tps`, `prefill_tps`, `elapsed_s` (to the wall clock while unfinished). No `result`.
 
 **Job detail** (`GET /api/jobs/{id}`): the same dict **with** `result`, and:
 

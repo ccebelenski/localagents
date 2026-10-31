@@ -158,6 +158,10 @@ that never logged a line has neither, and readers say so.
 - **gen_tps**: replay of today's EMA, `0.5*prev + 0.5*(output_tokens / span)`, over the job's
   `/v1/messages` rows in `t` order where output_tokens > 0 and span > 0, with span = gen_ms if
   gen_ms else ms. O(requests per job), exact.
+- **prefill_tps** (3.10a, not a replay — the screen had no prefill figure before): processed
+  prompt tokens (input + cache_creation) per second of prefill (ms − gen_ms), summed over the
+  job's `/v1/messages` rows where all four fields are numbers, ms > gen_ms and the processed
+  tokens > 0 (the monitor page's own row rule). O(requests per job), exact.
 - **run_cwd**: `worktree.path` when the worktree JSON is present, else `cwd`.
 - **log_dir**: `state_dir() / "jobs" / name`.
 

@@ -604,9 +604,14 @@
 
   // --- the Recent jobs log (story 3.7g) ---------------------------------------------------------
 
-  var JOB_COLUMNS = ["job", "status", "model", "endpoint", "elapsed", "turns", "tool calls", "tool errors",
-    "context", "speed", "last activity"];
-  var NUMERIC = { elapsed: 1, turns: 1, "tool calls": 1, "tool errors": 1, speed: 1 };
+  // 3.10a (the operator: "Recent jobs doesn't have a timestamp - so answering 'when' is not
+  // possible from the screen... it shows 'speed' but really that's decode - where's prefill
+  // speed?"): a day-stamped "started" column, and the one speed column split into the pair the
+  // requests table already shows
+  var JOB_COLUMNS = ["job", "status", "started", "model", "endpoint", "elapsed", "turns", "tool calls",
+    "tool errors", "context", "prefill tok/s", "decode tok/s", "last activity"];
+  var NUMERIC = { elapsed: 1, turns: 1, "tool calls": 1, "tool errors": 1,
+    "prefill tok/s": 1, "decode tok/s": 1 };
   // 3.7i: the count is tool RESULTS that came back as errors, not a failing job — the header
   // says so, in the card badge's own words (the sentence epJobRow already carries), and a
   // non-zero count is a link: the job page lists them by tool
@@ -621,7 +626,18 @@
     return h("span", { class: cls, text: status === "succeeded" ? "done" : status });
   }
 
-  function jobRow(job) {
+  // the day-stamped time cell both tables share (3.10a: factored out of requestsTable's time
+  // column, 3.7-fold-4's rule, so the log's "started" reads like the request rows do): inside
+  // 24 h of the caller's clock the clock time, past it the date and time; the title always
+  // holds the full date-time
+  function timeTd(t, now) {
+    return h("td", {
+      text: t != null && now != null && now - t < 86400 ? fmt.time(t) : fmt.date(t),
+      title: t == null ? null : fmt.date(t),
+    });
+  }
+
+  function jobRow(job, now) {
     var ctx = null;
     if (job.ctx_pct != null) {
       var w = Math.max(0, Math.min(100, job.ctx_pct));
@@ -630,18 +646,20 @@
         h("span", { class: "num", text: fmt.pct(job.ctx_pct) }),
       ]);
     }
-    // 3.7g: no queued badge here — the status pill says it. Compaction and server-gone badges
-    // stay: they carry something the pill cannot.
+    // 3.7g: no queued badge here — the status pill says it. The compaction badge stays: a count
+    // is something the pill cannot carry. The server-gone badge is gone (3.10a, the operator
+    // asked its use): on a finished row it is the normal end state of every job — no
+    // information — and on a live one the state belongs in the pill: the job page's word for a
+    // record that says running while nothing runs it is "lost" (spec §6).
+    var lost = job.server_live === false && (job.status === "running" || job.status === "queued");
     var nameCell = [jobLink(job.id, job.name)];
     if (job.compactions > 0) {
       nameCell.push(h("span", { class: "badge", text: fmt.int(job.compactions) + " compaction" + (job.compactions === 1 ? "" : "s") }));
     }
-    if (job.server_live === false) {
-      nameCell.push(h("span", { class: "badge", title: "the job's MCP server no longer beats: nothing is running it", text: "server gone" }));
-    }
     return h("tr", { "data-job": job.id }, [
       h("td", null, nameCell),
-      h("td", null, [statusPill(job.status)]),
+      h("td", null, [statusPill(lost ? "lost" : job.status)]),
+      timeTd(job.started_at, now),
       h("td", { class: "cut", title: job.model || "", text: job.model || "" }),
       h("td", null, [job.endpoint ? endpointLink(job.endpoint) : null]),
       h("td", { class: "n", text: fmt.dur(job.elapsed_s) }),
@@ -658,7 +676,10 @@
           title: COLUMN_TITLES["tool errors"], text: fmt.int(job.errors) })
         : h("span", { text: fmt.int(job.errors) })]),
       h("td", null, [ctx]),
-      h("td", { class: "n", text: job.gen_tps != null ? fmt.speed(job.gen_tps) + " tok/s" : "" }),
+      // 3.10a: the pair, the snapshot's own job figures (derive.gen_tps, derive.prefill_tps);
+      // fmt.speed as before — the unit is in the headers now, as in the requests table
+      h("td", { class: "n", text: job.prefill_tps != null ? fmt.speed(job.prefill_tps) : "" }),
+      h("td", { class: "n", text: job.gen_tps != null ? fmt.speed(job.gen_tps) : "" }),
       // 3.7g: no "current tool" column — on a running row it was always the same line as the
       // last activity, and on a finished row it is history; the activity cell below holds the
       // full text in its title
@@ -686,7 +707,8 @@
     // page — the server keeps the full history, but no route lists it yet, so the note is plain
     return h("div", null, [
       h("div", { class: "table-wrap" }, [h("table", null, [h("thead", null, [head]),
-        h("tbody", null, jobs.map(jobRow))])]),
+        // the started cell day-stamps against the snapshot's own clock (3.10a)
+        h("tbody", null, jobs.map(function (job) { return jobRow(job, snap.now); }))])]),
       h("div", { class: "jobs-note muted", text: "running and queued first, then the last 10 finished" }),
     ]);
   }
@@ -1481,11 +1503,8 @@
       if (req.context_exceeded) cls.push("req-ctx"); // the same truthy read: a non-empty string or true
       var prefill = prefillRate(req);
       var decode = decodeRate(req);
-      // the time cell (3.7-fold-4): inside 24 h of the caller's clock, the clock time; past
-      // it, date and time (fmt.date) — the day stamp the old when() column carried
-      var timeTitle = req.t == null ? null : fmt.date(req.t);
-      var timeText = req.t != null && opts.now != null && opts.now - req.t < 86400
-        ? fmt.time(req.t) : fmt.date(req.t);
+      // the time cell: the shared day-stamped timeTd (3.7-fold-4's rule; factored for the
+      // jobs log's "started" in 3.10a)
       // the reused cell's title names both cache figures; a missing one drops its half of the
       // sentence (3.9D NOTICED: the old inline build kept the other half's words anyway —
       // null read and a present creation read "cache read , cache creation 300", both null
@@ -1494,7 +1513,7 @@
       if (fmt.int(cacheRead) !== "") cacheHalves.push("cache read " + fmt.int(cacheRead));
       if (fmt.int(cacheCreation) !== "") cacheHalves.push("cache creation " + fmt.int(cacheCreation));
       var reusedTitle = cacheHalves.join(", ");
-      var cells = [h("td", { text: timeText, title: timeTitle })];
+      var cells = [timeTd(req.t, opts.now)];
       if (handshake) {
         cells.push(h("td", null, [h("span", { class: "pill pill-muted",
           title: req.http_status == null ? "no status" : String(req.http_status), text: "handshake" })]));

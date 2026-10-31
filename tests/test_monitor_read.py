@@ -47,6 +47,23 @@ def _ep(ov, name):
     return next(e for h in ov["hosts"] for e in h["endpoints"] if e["name"] == name)
 
 
+def _seed_prefill_tps(reqs):
+    """derive.prefill_tps's rule re-applied to the export's request rows (story 3.10a): the
+    processed prompt tokens (input + cache_creation) summed over the prefill spans ((ms − gen_ms)
+    / 1000) of the ``/v1/messages`` rows where every one of the four fields is a number,
+    ms > gen_ms and the processed tokens > 0 — the page's own rule (app.js prefillRate)."""
+    tokens = seconds = 0.0
+    for r in reqs:
+        if r["path"] != "/v1/messages":
+            continue
+        inp, cc, ms, gen = r["input_tokens"], r["cache_creation_tokens"], r["ms"], r["gen_ms"]
+        if inp is None or cc is None or ms is None or gen is None or ms <= gen or inp + cc <= 0:
+            continue
+        tokens += inp + cc
+        seconds += (ms - gen) / 1000
+    return tokens / seconds if seconds else None
+
+
 # --- overview ------------------------------------------------------------------------------
 
 
@@ -363,6 +380,9 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
     assert j["elapsed_s"] == pytest.approx(300.0)
     assert j["started_at"] == pytest.approx(NOW - 300.0) and j["finished_at"] is None
     assert j["errors"] == sum(tc["is_error"] or 0 for tc in seed._load(FX).job_tool_calls[:50])
+    # story 3.10a: the same rule over the row's own request rows (the running job: the seed's
+    # first 40), rounded to 1 decimal as the snapshot carries it
+    assert j["prefill_tps"] == pytest.approx(round(_seed_prefill_tps(seed._load(FX).job_requests[:40]), 1))
     assert isinstance(j["last_tool"], str)
     assert j["compactions"] == 0
     assert isinstance(j["files"], int)
@@ -372,7 +392,7 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
     assert set(j) == {
         "id", "name", "model", "endpoint", "status", "started_at", "finished_at", "elapsed_s",
         "num_turns", "tool_calls", "errors", "last_tool", "last_activity", "ctx_pct", "ctx_tokens",
-        "context", "gen_tps", "compactions", "files", "owner", "server_live",
+        "context", "gen_tps", "prefill_tps", "compactions", "files", "owner", "server_live",
     }
 
 
@@ -437,9 +457,10 @@ def _add_finished(conn, n):
 
 def test_finished_rows_derive_once_across_pushes(world):
     """Story 3.7-fold-4s (the review's P1 world): 12 hand-inserted finished rows plus the live
-    one; the SECOND overview's statement count equals the first's minus 6 per finished row
-    shown — the six derive statements each row costs come from the cache, only the SELECTs
-    re-run. (Pre-fix the two calls are equal: 86 and 86 measured; the review's world: 92.)"""
+    one; the SECOND overview's statement count equals the first's minus 7 per finished row
+    shown — the seven derive statements each row costs come from the cache, only the SELECTs
+    re-run. (Pre-fix the two calls are equal: 86 and 86 measured; the review's world: 92.
+    3.10a added prefill_tps: six became seven.)"""
     conn, reg = world
     _add_finished(conn, 12)
     stmts = []
@@ -452,7 +473,7 @@ def test_finished_rows_derive_once_across_pushes(world):
     conn.set_trace_callback(None)
     shown = [j for j in ov["jobs"] if j["status"] not in read.LIVE_STATUSES]
     assert len(shown) == 10  # the tail cap: 12 in, plus the seeded finished one, 10 shown
-    assert first - second == 6 * len(shown)
+    assert first - second == 7 * len(shown)
 
 
 def test_a_job_finishing_between_pushes_enters_the_cache_with_its_figures(world):
@@ -468,7 +489,8 @@ def test_a_job_finishing_between_pushes_enters_the_cache_with_its_figures(world)
                      " WHERE id = ?", (NOW - 1.0, NOW - 1.0, running_id))
     after = next(j for j in read.overview(conn, reg, NOW + 60.0, WINDOW_S)["jobs"] if j["id"] == running_id)
     assert after["status"] == "succeeded"
-    for key in ("num_turns", "tool_calls", "errors", "last_tool", "files", "ctx_tokens", "gen_tps"):
+    for key in ("num_turns", "tool_calls", "errors", "last_tool", "files", "ctx_tokens", "gen_tps",
+                "prefill_tps"):
         assert after[key] == before[key], key
     assert after["elapsed_s"] == pytest.approx((NOW - 1.0) - before["started_at"], abs=0.05)
     third = next(j for j in read.overview(conn, reg, NOW + 120.0, WINDOW_S)["jobs"] if j["id"] == running_id)

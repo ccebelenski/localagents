@@ -68,6 +68,37 @@ def test_gen_tps_none_when_no_usable_rows(monkeypatch, tmp_path):
     assert derive.gen_tps(job._conn, job.id) is None
 
 
+def test_prefill_tps_ratios_processed_prompt_over_prefill_span(monkeypatch, tmp_path):
+    """Story 3.10a: a plain ratio over the job — every processed prompt token
+    (input + cache_creation) over every second of prefill (ms − gen_ms) — with the page's own
+    row rule (prefillRate): all four fields numbers, ms > gen_ms, processed tokens > 0."""
+    job = _job(tmp_path, monkeypatch)
+    t = time.time()
+    # two qualifying rows: (1000 + 200) processed over 3 s of prefill, (500 + 0) over 1 s
+    _req(job, t, ms=5000, gen_ms=2000,
+         usage={"input_tokens": 1000, "cache_creation_input_tokens": 200})
+    _req(job, t + 1, ms=4000, gen_ms=3000,
+         usage={"input_tokens": 500, "cache_creation_input_tokens": 0})
+    # rows the rule skips: gen_ms reaches ms; a null token number (no usage at all); a null
+    # gen_ms (a non-stream request: no prefill span); zero processed tokens
+    _req(job, t + 2, ms=800, gen_ms=800, usage={"input_tokens": 5000})
+    _req(job, t + 3, ms=2000, gen_ms=1000)
+    _req(job, t + 4, ms=3000, usage={"input_tokens": 4000})
+    _req(job, t + 5, ms=3000, gen_ms=1000,
+         usage={"input_tokens": 0, "cache_creation_input_tokens": 0})
+    # a count_tokens call is not a /v1/messages row (the same fragment gen_tps reads)
+    _req(job, t + 6, path="/v1/messages/count_tokens", ms=9000, gen_ms=1000,
+         usage={"input_tokens": 9999, "cache_creation_input_tokens": 9999})
+    assert derive.prefill_tps(job._conn, job.id) == pytest.approx(1700.0 / 4.0)  # 425.0
+
+
+def test_prefill_tps_none_when_no_usable_rows(monkeypatch, tmp_path):
+    job = _job(tmp_path, monkeypatch)
+    # a non-stream request: ms but no gen_ms, so no prefill span and no ratio
+    _req(job, time.time(), ms=2000, usage={"input_tokens": 1000, "cache_creation_input_tokens": 0})
+    assert derive.prefill_tps(job._conn, job.id) is None
+
+
 def test_files_touched_first_seen_order_dedup(monkeypatch, tmp_path):
     job = _job(tmp_path, monkeypatch)
     t = time.time()

@@ -267,6 +267,38 @@ def test_the_field_walk_sees_literal_bracket_keys_and_holder_chains():
     assert var_keys == {"fleet.endpoints[name]", "hist.state[i]"}
 
 
+# --- story 3.10a: the Recent jobs table answers "when", says "lost", splits the speed ----------
+
+# the operator (EPICS 3.10): "Recent jobs doesn't have a timestamp - so answering 'when' is not
+# possible from the screen. The server gone tag on the job id field - what is the purpose and use
+# of that? ... Also it shows 'speed' but really that's decode - where's prefill speed?"
+
+def test_the_jobs_table_columns_answer_when_and_show_both_speeds():
+    """JOB_COLUMNS names a day-stamped "started" column, drops the "speed" column for a
+    "prefill tok/s" and a "decode tok/s" pair, and both new columns are right-aligned."""
+    js = _app_js()
+    cols_src = re.search(r"var JOB_COLUMNS = \[([^\]]*)\]", js)
+    cols = re.findall(r'"([^"]+)"', cols_src.group(1))
+    assert cols == ["job", "status", "started", "model", "endpoint", "elapsed", "turns",
+                    "tool calls", "tool errors", "context", "prefill tok/s", "decode tok/s",
+                    "last activity"]
+    assert "speed" not in cols
+    numeric_src = re.search(r"var NUMERIC = \{([^}]*)\}", js)
+    assert '"prefill tok/s": 1' in numeric_src.group(1)
+    assert '"decode tok/s": 1' in numeric_src.group(1)
+
+
+def test_the_server_gone_badge_is_gone_and_a_lost_server_inks_the_pill():
+    """The badge carried no information on a finished row (every finished job's server is gone)
+    and duplicated the lost state on a live one; the status pill now says "lost" when a live
+    row's server stopped beating (the job page's word, spec §6)."""
+    js = _app_js()
+    assert "server gone" not in js
+    row_src = js[js.index("function jobRow("):js.index("function oneLine(")]
+    assert re.search(r"var lost = job\.server_live === false", row_src)
+    assert re.search(r'statusPill\(lost \? "lost" : job\.status\)', row_src)
+
+
 # --- story 3.7u: no ellipsis on the cards ---------------------------------------------------------
 
 # every `text-overflow: ellipsis` rule the stylesheet may hold, by its exact selector, each naming

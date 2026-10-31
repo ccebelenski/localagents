@@ -300,6 +300,7 @@ class Job:
             d["files_touched"] = derive.files_touched(conn, self.id)
             d["ctx_tokens"] = derive.ctx_tokens(conn, self.id)
             d["gen_tps"] = derive.gen_tps(conn, self.id)
+            d["prefill_tps"] = derive.prefill_tps(conn, self.id)
         else:
             d["usage"] = None
             d["tool_calls"] = 0
@@ -309,6 +310,7 @@ class Job:
             d["files_touched"] = []
             d["ctx_tokens"] = None
             d["gen_tps"] = None
+            d["prefill_tps"] = None
         return d
 
     # ----- logging -----
