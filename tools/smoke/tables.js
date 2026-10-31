@@ -1,5 +1,7 @@
 // 3.10c: every table pages, sorts and filters, client-side, and keeps the operator's view
-// across pushes. Runs over the seeded world on the overview (empty hash): the seeded snapshot
+// across pushes. 3.12a extended the filters by column kind (the status pick is a select, turns
+// and started read ranges and comparators, and a "clear filters" link ends the pager line) —
+// step (c) exercises those, (d) the link and the push, (f) keeps the F1 title-needle witnesses. Runs over the seeded world on the overview (empty hash): the seeded snapshot
 // holds two jobs, so a snapshot COPY with 120 jobs (varied status/started/elapsed/turns) is
 // hand-rendered into #jobs-body — the same table the push draws. Reads (a)-(e) into
 // window.__d1; nothing awaits between the renders and the reads, so a real SSE push cannot
@@ -48,6 +50,19 @@
   };
   const filterInput = (name) => box().querySelector('.table-filters input[data-filter="' + name + '"]');
   const typeIn = (input, v) => { input.value = v; input.dispatchEvent(new Event("input")); };
+  // 3.12a §4: pick columns draw a native select; §7: "clear filters" ends the pager line
+  const filterSel = (name) => box().querySelector('.table-filters select[data-filter="' + name + '"]');
+  const setSel = (sel, v) => { sel.value = v; sel.dispatchEvent(new Event("change")); };
+  const clearBtn = () => Array.from(box().querySelectorAll(".pager-btn")).find((b) => b.textContent === "clear filters");
+  const optLabels = (name) => Array.from(filterSel(name).options).map((o) => o.textContent);
+  // the matched count is the pager's total ("1–50 of 120"), never the page's 50
+  const matched = () => {
+    const p = pagerText() || "";
+    let m = / of (\d+)/.exec(p);
+    if (m) return +m[1];
+    m = /^(\d+) rows?$/.exec(p);
+    return m ? +m[1] : 0;
+  };
   const stateOf = () => JSON.parse(JSON.stringify(L.TABLE_STATE));
   const nextBtn = () => Array.from(box().querySelectorAll(".pager-btn")).find((b) => b.textContent === "next");
   const prevBtn = () => Array.from(box().querySelectorAll(".pager-btn")).find((b) => b.textContent === "previous");
@@ -67,20 +82,40 @@
   const b2 = { first: desc[0], last: desc[desc.length - 1],
     thClass: head("turns").className, ariaSort: head("turns").getAttribute("aria-sort") };
 
-  // (c) "done" in the status filter: only done pills, the count drops, page back to 1;
-  //     then ">100" in turns: only rows over 100 turns
-  typeIn(filterInput("status"), "done");
+  // (c) 3.12a §10: status is the pick — the option reads "done (40)"; setting it leaves only
+  //     done pills, "1–40 of 40", page back to 1. ">100" in turns is unchanged (7 rows: the
+  //     done rows with turns 101..119), and the status counts facet to "done (7)". Then
+  //     "101-119" — §5's inclusive range — selects the SAME 7 rows. Then the started box
+  //     (a time column): "11:00-11:30" (§6, inside the hand-made day) keeps the rows whose
+  //     started_at falls in [11:00:00, 11:30:59] — the hand rows are noon - 60 i, so the
+  //     expected count is computed from them, not hard-coded.
+  const c0 = { options: optLabels("status") };
+  setSel(filterSel("status"), "done");
   const c1 = { pills: Array.from(new Set(bodyRows().map((r) => r.querySelector(".pill").textContent))),
     pager: pagerText(), page: L.TABLE_STATE.jobs.page };
   typeIn(filterInput("turns"), ">100");
   const over = colText("turns").map(Number);
   const c2 = { turns: over, allOver100: over.length > 0 && over.every((v) => v > 100),
-    pager: pagerText(), page: L.TABLE_STATE.jobs.page };
+    pager: pagerText(), page: L.TABLE_STATE.jobs.page, statusOptions: optLabels("status") };
+  typeIn(filterInput("turns"), "101-119");
+  const ranged = colText("turns").map(Number);
+  const c2b = { turns: ranged, sameSeven: JSON.stringify(ranged) === JSON.stringify(over),
+    pager: pagerText() };
+  typeIn(filterInput("turns"), ""); // a blank box deletes the key (3.12a §7)
+  setSel(filterSel("status"), ""); // "any" deletes the key
+  const winStart = new Date(NOW * 1000); winStart.setHours(11, 0, 0, 0);
+  const winEnd = new Date(NOW * 1000); winEnd.setHours(11, 30, 59, 999);
+  const windowRows = copy.jobs.filter((j) => j.started_at >= winStart.getTime() / 1000 &&
+    j.started_at <= winEnd.getTime() / 1000).length;
+  typeIn(filterInput("started"), "11:00-11:30");
+  const c3 = { window: windowRows, matched: matched(), pager: pagerText(),
+    filters: Object.assign({}, L.TABLE_STATE.jobs.filters) };
 
-  // (d) clear the filters, click next -> "51–100 of 120"; then a PUSH (a new rows array):
-  //     the same sort, filters and page survive — they live in TABLE_STATE.jobs, not the DOM
-  typeIn(filterInput("status"), "");
-  typeIn(filterInput("turns"), "");
+  // (d) 3.12a §7: "clear filters" wipes the window — the line reads "1–50 of 120" and carries
+  //     no link any more; then a PUSH (a new rows array): the same sort and page survive —
+  //     they live in TABLE_STATE.jobs, not the DOM
+  clearBtn().click();
+  const d0 = { pager: pagerText(), filters: Object.keys(L.TABLE_STATE.jobs.filters) };
   Array.from(box().querySelectorAll(".pager-btn")).find((b) => b.textContent === "next").click();
   const d1 = { pager: pagerText(), page: L.TABLE_STATE.jobs.page };
   const copy2 = JSON.parse(JSON.stringify(real));
@@ -100,14 +135,6 @@
   const cellAttr = (col, attr) => {
     const idx = colIdx(col), row = bodyRows()[0];
     return row && row.cells[idx] ? row.cells[idx].getAttribute(attr) : null;
-  };
-  // the matched count is the pager's total ("1–50 of 120"), never the page's 50
-  const matched = () => {
-    const p = pagerText() || "";
-    let m = / of (\d+)/.exec(p);
-    if (m) return +m[1];
-    m = /^(\d+) rows?$/.exec(p);
-    return m ? +m[1] : 0;
   };
   const startedDate = (cellAttr("started", "title") || "").split(",")[0];
   typeIn(filterInput("started"), startedDate);
@@ -183,6 +210,8 @@
     const vals = rows.map((r) => { const v = durMs(r.cells[idx].textContent.trim()); return v == null ? Infinity : v; });
     return {
       filterInputs: block.querySelectorAll(".table-filters input").length,
+      // 3.12a: the pick columns (status, path) draw selects in the same row
+      filterSelects: block.querySelectorAll(".table-filters select").length,
       rows: rows.length,
       first: rows[0].cells[idx].textContent.trim(),
       last: rows[rows.length - 1].cells[idx].textContent.trim(),
@@ -208,11 +237,15 @@
     e.jobBefore = probeBlock("#detail .job-requests .table-block");
     clickDuration("#detail .job-requests .table-block");
     e.jobAfterDurationSort = probeBlock("#detail .job-requests .table-block");
-    // a filter on the job page's table (the "path" column) narrows it in place
-    const pathIn = document.querySelector('#detail .job-requests .table-filters input[data-filter="path"]');
-    pathIn.value = "/v1/";
-    pathIn.dispatchEvent(new Event("input"));
-    e.jobFiltered = probeBlock("#detail .job-requests .table-block");
+    // a filter on the job page's table narrows it in place — 3.12a §4: "path" is a pick now,
+    // so this picks one of the listed paths and keeps every row of that path
+    const blockSel = "#detail .job-requests .table-block";
+    const pathSel = document.querySelector(blockSel + ' .table-filters select[data-filter="path"]');
+    const pathValue = pathSel.options[1] ? pathSel.options[1].value : "";
+    pathSel.value = pathValue;
+    pathSel.dispatchEvent(new Event("change"));
+    e.jobFiltered = probeBlock(blockSel);
+    e.jobFiltered.pathPicked = pathValue; // the pager total ("N of M") is the narrowing witness
   } else e.jobTable = null;
   location.hash = "#/endpoint/ai1";
   if (await wait("#detail .requests .table-block")) {
@@ -221,6 +254,6 @@
     e.epAfterDurationSort = probeBlock("#detail .requests .table-block");
   } else e.epTable = null;
 
-  window.__d1 = { now: NOW, a, b1, b2, c1, c2, d1, d2, f, g, e };
+  window.__d1 = { now: NOW, a, b1, b2, c0, c1, c2, c2b, c3, d0, d1, d2, f, g, e };
   return "ok";
 })();

@@ -346,10 +346,11 @@ th.sortable { cursor: pointer; }
 th.sort-asc::after { content: "▲"; margin-left: 4px; font-size: 11px; color: var(--muted); }
 th.sort-desc::after { content: "▼"; margin-left: 4px; font-size: 11px; color: var(--muted); }
 .table-filters th { padding: 4px 8px; }
-.table-filters input { font: inherit; font-size: 13px; color: var(--muted); background: transparent;
+/* 3.12a: the pick's <select> takes the input's box exactly — the filter row never grows */
+.table-filters input, .table-filters select { font: inherit; font-size: 13px; color: var(--muted); background: transparent;
   border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; width: 100%; min-width: 3.5em;
   box-sizing: border-box; }
-.table-filters input:focus { outline: 1px solid var(--accent); color: var(--ink); }
+.table-filters input:focus, .table-filters select:focus { outline: 1px solid var(--accent); color: var(--ink); }
 .table-pager { padding: 6px 2px 0; font-size: 13px; }
 .pager-sep { color: var(--border); }
 .pager-btn { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }

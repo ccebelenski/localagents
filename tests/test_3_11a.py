@@ -526,10 +526,11 @@ def test_a_filter_keystroke_builds_each_rows_filter_text_once_per_table(tmp_path
     assert got["first"]["built"] <= 200 + 50
     assert got["second"]["built"] <= 50, got  # cache hit: only the drawn page's cells
     assert got["titled"]["built"] <= 50, got
-    assert got["second"]["pager"] == got["first"]["pager"] == "1–50 of 67 · previous · next"
+    # 3.12a §7: a set filter also carries the "clear filters" link at the end of the line
+    assert got["second"]["pager"] == got["first"]["pager"] == "1–50 of 67 · previous · next · clear filters"
     # a title-only needle still matches (81b199a's rule): the beta rows whose number starts with 1
     n_titled = sum(1 for i in range(200) if i % 3 == 0 and str(i).startswith("1"))
-    assert got["titled"]["pager"] == f"1–{n_titled} of {n_titled} · previous · next", got
+    assert got["titled"]["pager"] == f"1–{n_titled} of {n_titled} · previous · next · clear filters", got
     assert got["cleared"]["pager"] == "1–50 of 200 · previous · next"
 
 

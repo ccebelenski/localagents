@@ -618,6 +618,15 @@
     "tool errors", "context", "prefill tok/s", "decode tok/s", "last activity"];
   var NUMERIC = { elapsed: 1, turns: 1, "tool calls": 1, "tool errors": 1,
     "prefill tok/s": 1, "decode tok/s": 1 };
+  // 3.12a (spec §3): what KIND of filter each column takes — pick (a native select), number
+  // (text, then x-y, then <n / >n), time (text, then time literals), text (substring, today's
+  // search); the kind is read by dataTable, default text. UNIT is the sort key's unit, named in
+  // the box's title so a typed bound can be checked against what the column holds.
+  var FILTER_KIND = { status: "pick", started: "time", model: "pick", endpoint: "pick",
+    elapsed: "number", turns: "number", "tool calls": "number", "tool errors": "number",
+    context: "number", "prefill tok/s": "number", "decode tok/s": "number" };
+  var UNIT = { elapsed: "seconds", context: "%", turns: "count", "tool calls": "count",
+    "tool errors": "count", "prefill tok/s": "tokens/s", "decode tok/s": "tokens/s" };
   // 3.7i: the count is tool RESULTS that came back as errors, not a failing job — the header
   // says so, in the card badge's own words (the sentence epJobRow already carries), and a
   // non-zero count is a link: the job page lists them by tool
@@ -641,6 +650,44 @@
       text: t != null && now != null && now - t < 86400 ? fmt.time(t) : fmt.date(t),
       title: t == null ? null : fmt.date(t),
     });
+  }
+
+  // 3.12a §6: the time filter's literals, parsed BY HAND into a local Date (never Date.parse,
+  // whose format acceptance varies by engine). `HH:MM` (24-hour) is the clock on the day the
+  // table's `now` falls in; `YYYY-MM-DD` is a day; `YYYY-MM-DD HH:MM` both. Answers {a, b} in
+  // epoch seconds — `a` the literal's start (a lower bound), `b` its end as an upper bound:
+  // inclusive to the end of its minute (+59 s), or of its day for a bare date. Null when the
+  // text is not a literal — the box's reading 3 (substring) then, a mistyped bound made
+  // visible by the pager's count. The four-digit year is the shape-marker: `10-31` alone is
+  // never a literal and a bare date is never split into a range.
+  function parseTimeLiteral(s, now) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{1,2}):(\d{2}))?$/.exec(s);
+    if (m) {
+      var y = +m[1], mo = +m[2] - 1, d = +m[3];
+      if (mo < 0 || mo > 11 || d < 1 || d > 31) return null;
+      var first = new Date(y, mo, d);
+      if (first.getDate() !== d) return null; // a real day: no rollover (2026-02-31 parses as nothing)
+      if (m[4] === undefined) {
+        var nextDay = new Date(y, mo, d + 1);
+        return { a: first.getTime() / 1000, b: nextDay.getTime() / 1000 - 1 };
+      }
+      var h = +m[4], mi = +m[5];
+      if (h > 23 || mi > 59) return null;
+      var both = new Date(y, mo, d, h, mi);
+      if (both.getDate() !== d) return null;
+      var tStart = both.getTime() / 1000;
+      return { a: tStart, b: tStart + 59 };
+    }
+    m = /^(\d{1,2}):(\d{2})$/.exec(s);
+    if (m) {
+      var hh = +m[1], mm = +m[2];
+      if (hh > 23 || mm > 59 || now == null || !isFinite(now)) return null;
+      var onDay = new Date(now * 1000);
+      onDay.setHours(hh, mm, 0, 0); // the day `now` falls in, DST included
+      var hhmmStart = onDay.getTime() / 1000;
+      return { a: hhmmStart, b: hhmmStart + 59 };
+    }
+    return null;
   }
 
   // one job row (3.10b): the cells are keyed by their JOB_COLUMNS name; the table helper draws
@@ -767,27 +814,128 @@
       return byCol[i];
     }
 
-    function filterRows() {
+    // 3.12a: a pick column reads the sort key of EVERY row on every draw (the option values and
+    // their counts), and requestsTable's sort keys run through rowMemo — uncached, a 120-row
+    // table rebuilt every row's cells 240 times per draw. Like the filter text, the sort key is
+    // a function of the row alone: one cache, same life (per dataTable call).
+    var keyCache = {}; // column name -> [sortKey value by row index]
+    function keyOf(col, i) {
+      var byCol = keyCache[col.name] || (keyCache[col.name] = []);
+      if (byCol[i] !== undefined) return byCol[i];
+      byCol[i] = col.sortKey(rows[i]);
+      return byCol[i];
+    }
+
+    // The rows that pass every column's filter, as row INDICES (the caches' key). `except` skips
+    // one column's own filter (3.12a §4: the pick's option counts are faceted — how many rows
+    // match the OTHER columns' filters, so a value at 0 stays listed)
+    function filterIdx(except) {
       var idx = rows.map(function (row, i) { return i; }); // filtered by index: the cache's key
       columns.forEach(function (col) {
+        if (col === except) return;
         var f = st.filters[col.name];
         if (!f) return;
         f = String(f);
-        if (col.numeric && (f.charAt(0) === ">" || f.charAt(0) === "<")) {
-          var want = parseFloat(f.slice(1));
-          if (!isNaN(want)) {
-            var gt = f.charAt(0) === ">";
+        if (col.filter === "pick") {
+          // 3.12a §4: one value, matched exactly on the sort key — the box's text IS the value
+          idx = idx.filter(function (i) { return String(keyOf(col, i)) === f; });
+          return;
+        }
+        if (col.filter === "number") {
+          // 3.12a §5, in order: `x-y` an INCLUSIVE range on the sort key (the operator's
+          // "absolute and inclusive endpoints"; x > y matches nothing; a row with no finite
+          // figure never matches); then 3.10c's strict `>n` / `<n`; else the substring below.
+          var numRange = /^\s*(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)\s*$/.exec(f);
+          if (numRange) {
+            var lo = parseFloat(numRange[1]), hi = parseFloat(numRange[2]);
             idx = idx.filter(function (i) {
-              var v = col.sortKey(rows[i]);
-              return typeof v === "number" && isFinite(v) && (gt ? v > want : v < want);
+              var v = keyOf(col, i);
+              return typeof v === "number" && isFinite(v) && v >= lo && v <= hi;
             });
             return;
+          }
+          if (f.charAt(0) === ">" || f.charAt(0) === "<") {
+            var want = parseFloat(f.slice(1));
+            if (!isNaN(want)) {
+              var gt = f.charAt(0) === ">";
+              idx = idx.filter(function (i) {
+                var v = keyOf(col, i);
+                return typeof v === "number" && isFinite(v) && (gt ? v > want : v < want);
+              });
+              return;
+            }
+          }
+        }
+        if (col.filter === "time") {
+          // 3.12a §6: the same three readings over time literals. A range is two literals
+          // around " - " (spaces), or two HH:MM around a bare hyphen — a bare date literal is
+          // never split (the year's own hyphens). `>a` is strict from the literal's start;
+          // `<a` and the range's `b` end inclusive at the literal's end (end of its minute,
+          // or of its day). An unparseable bound falls through to the substring below.
+          var litA = null, litB = null;
+          var dash = f.indexOf(" - ");
+          if (dash > 0 && f.indexOf(" - ", dash + 1) < 0) {
+            litA = parseTimeLiteral(f.slice(0, dash), opts.now);
+            litB = parseTimeLiteral(f.slice(dash + 3), opts.now);
+          } else {
+            var hmhm = /^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/.exec(f);
+            if (hmhm) {
+              litA = parseTimeLiteral(hmhm[1], opts.now);
+              litB = parseTimeLiteral(hmhm[2], opts.now);
+            }
+          }
+          if (litA && litB) {
+            idx = idx.filter(function (i) {
+              var v = keyOf(col, i);
+              return typeof v === "number" && isFinite(v) && v >= litA.a && v <= litB.b;
+            });
+            return;
+          }
+          if (f.charAt(0) === ">" || f.charAt(0) === "<") {
+            var litOne = parseTimeLiteral(f.slice(1), opts.now);
+            if (litOne) {
+              var tGt = f.charAt(0) === ">";
+              idx = idx.filter(function (i) {
+                var v = keyOf(col, i);
+                return typeof v === "number" && isFinite(v) && (tGt ? v > litOne.a : v <= litOne.b);
+              });
+              return;
+            }
           }
         }
         var needle = f.toLowerCase();
         idx = idx.filter(function (i) { return cellText(col, i).indexOf(needle) >= 0; });
       });
-      return idx.map(function (i) { return rows[i]; });
+      return idx;
+    }
+
+    // 3.12a §4: the pick's option values — every distinct String(sortKey) across ALL rows,
+    // sorted as the column sorts (sortRows' comparator shape: two numbers of the same shape
+    // compare numerically, everything else localeCompare). A value the state holds but the rows
+    // no longer have (a push dropped it) is appended so it stays selected, listed "(0)".
+    function pickValues(col) {
+      var seen = Object.create(null), out = [];
+      rows.forEach(function (row, i) {
+        var v = String(keyOf(col, i));
+        if (!Object.prototype.hasOwnProperty.call(seen, v)) { seen[v] = 1; out.push(v); }
+      });
+      out.sort(function (a, b) {
+        var re = /^-?\d+(?:\.\d+)?$/;
+        if (re.test(a) && re.test(b)) return parseFloat(a) - parseFloat(b);
+        return a.localeCompare(b);
+      });
+      var held = st.filters[col.name];
+      if (held != null && out.indexOf(String(held)) < 0) out.push(String(held));
+      return out;
+    }
+
+    // 3.12a §7: one write path for both controls — a kind's EMPTY value deletes its key (blank
+    // text, "any"), so the state carries a filter only when one is set; any change restarts
+    // the page, a filter changing the count
+    function setFilter(col, value) {
+      if (value == null || value === "") delete st.filters[col.name];
+      else st.filters[col.name] = value;
+      st.page = 1;
     }
 
     function sortRows(list) {
@@ -837,18 +985,49 @@
         return th;
       }));
       var filterRow = h("tr", { class: "table-filters" }, columns.map(function (col) {
+        // 3.12a: the column's filter KIND (pick / number / time / text, spec §3); the steps fill
+        // in the controls, and the cell carries the kind (data-filter-kind) so the drawn row
+        // pins it. A spec without the field is text — every old caller keeps its filters.
+        var kind = col.filter || "text";
+        if (kind === "pick") {
+          // 3.12a §4: a native select, styled as the box is — "any" (value ""), then each
+          // distinct value labelled "value (count)": the count is the rows the OTHER columns'
+          // filters leave (filterRows minus this column, once per draw), so "done (40)" reads
+          // "done (7)" as another filter narrows and a value at 0 stays listed. No free-text
+          // search (the operator: "the bounded choices aren't a big list").
+          var sel = h("select", { "data-filter": col.name, title: col.name });
+          sel.appendChild(h("option", { value: "", text: "any" }));
+          var counts = Object.create(null); // data values as keys: no __proto__ trap
+          filterIdx(col).forEach(function (i) {
+            var cv = String(keyOf(col, i));
+            counts[cv] = (counts[cv] || 0) + 1;
+          });
+          pickValues(col).forEach(function (v) {
+            sel.appendChild(h("option", { value: v, text: v + " (" + (counts[v] || 0) + ")" }));
+          });
+          sel.value = st.filters[col.name] || "";
+          sel.addEventListener("change", function () { // "any" (empty) deletes the key
+            setFilter(col, sel.value);
+            draw();
+          });
+          return h("th", { "data-filter-kind": kind }, [sel]);
+        }
+        // the title names the grammar the box reads (§5; §6 lands with the time box) so a
+        // typed bound can be checked; the unit is the sort key's
+        var boxTitle = kind === "number"
+          ? col.name + (col.unit ? ", " + col.unit : "") + " — text, x-y, <n, >n"
+          : kind === "time" ? col.name + " — text, HH:MM, YYYY-MM-DD, a - b, <a, >a"
+          : col.name;
         var input = h("input", { type: "text", placeholder: col.name, "data-filter": col.name,
-          title: col.numeric ? col.name + " — text, or >n / <n" : col.name,
-          value: st.filters[col.name] || "" });
+          title: boxTitle, value: st.filters[col.name] || "" });
         input.addEventListener("input", function () {
-          st.filters[col.name] = input.value;
-          st.page = 1; // a filter changes the count; the page starts over
+          setFilter(col, input.value); // a blank box deletes the key (3.12a §7)
           draw();
         });
-        return h("th", null, [input]);
+        return h("th", { "data-filter-kind": kind }, [input]);
       }));
 
-      var filtered = sortRows(filterRows());
+      var filtered = sortRows(filterIdx().map(function (i) { return rows[i]; }));
       var pages = Math.max(1, Math.ceil(filtered.length / pageSize));
       if (st.page > pages) st.page = pages; // a push shrank the table; clamp to the last page
       if (st.page < 1) st.page = 1;
@@ -865,8 +1044,8 @@
       // the pager line: "1–50 of 889 · previous · next"; "N rows" alone when a filter-free
       // table fits one page; a filter always shows how many match out of how many fetched
       var pager = h("div", { class: "table-pager muted" });
-      var anyFilter = false;
-      columns.forEach(function (col) { if (st.filters[col.name]) anyFilter = true; });
+      // 3.12a §7: empty values are deleted from the state, so a key IS a set filter
+      var anyFilter = Object.keys(st.filters).length > 0;
       if (filtered.length === 0) {
         pager.appendChild(h("span", { text: "no rows match the filters" }));
       } else if (filtered.length <= pageSize && !anyFilter) {
@@ -877,6 +1056,16 @@
         pager.appendChild(pagerButton("previous", st.page <= 1, function () { st.page -= 1; draw(); }));
         pager.appendChild(h("span", { class: "pager-sep", text: " · " }));
         pager.appendChild(pagerButton("next", st.page >= pages, function () { st.page += 1; draw(); }));
+      }
+      // 3.12a §7: one link wipes every filter — at the end of the line whenever a filter is
+      // set, also after the "no rows match" sentence (it is the way out of that state)
+      if (anyFilter) {
+        pager.appendChild(h("span", { class: "pager-sep", text: " · " }));
+        pager.appendChild(pagerButton("clear filters", false, function () {
+          Object.keys(st.filters).forEach(function (k) { delete st.filters[k]; });
+          st.page = 1; // a filter changes the count; the page starts over
+          draw();
+        }));
       }
 
       // the note only when there is one: replaceChildren prints a null argument as the text
@@ -948,6 +1137,7 @@
     var specs = columns.map(function (c) {
       return {
         name: c, numeric: !!NUMERIC[c], title: COLUMN_TITLES[c] || null,
+        filter: FILTER_KIND[c] || "text", unit: UNIT[c] || null, // 3.12a (spec §3)
         cell: function (job) { return memo.cell(job, c)[c]; },
         sortKey: function (job) { return jobSortKey(c, job); },
       };
@@ -957,6 +1147,7 @@
     return dataTable(opts.id || "jobs", specs, rows, {
       empty: opts.empty || "no jobs yet",
       note: opts.note,
+      now: opts.now, // 3.12a §6: the started box's HH:MM literals need the day
       rowAttrs: function (job) { return { "data-job": job.id }; },
     });
   }
@@ -1711,6 +1902,12 @@
   // prefilled: input + cache_creation here. The brief's literal subtraction was corrected on
   // the data model, not as a display choice (2026-10-30).
   var REQ_NUMERIC = { prompt: 1, new: 1, reused: 1, output: 1, "prefill t/s": 1, "decode t/s": 1, duration: 1 };
+  // 3.12a (spec §3): the requests table's filter kinds and units, same shapes as the jobs
+  // table's FILTER_KIND / UNIT beside NUMERIC (the names follow REQ_NUMERIC/REQ_TITLES)
+  var REQ_FILTER_KIND = { time: "time", status: "pick", path: "pick", prompt: "number", new: "number",
+    reused: "number", output: "number", "prefill t/s": "number", "decode t/s": "number", duration: "number" };
+  var REQ_UNIT = { duration: "ms", prompt: "tokens", new: "tokens", reused: "tokens", output: "tokens",
+    "prefill t/s": "tokens/s", "decode t/s": "tokens/s" };
   // 3.10h(b): the two headers whose column names a derivation, not a stored field, explain
   // themselves (the operator: "Weird - prompt = 1?" — it was `tokens.input`, the uncached tail)
   var REQ_TITLES = { prompt: "the whole prompt: input + reused + cache creation",
@@ -1903,6 +2100,7 @@
     var specs = columns.map(function (c) {
       return {
         name: c, numeric: !!REQ_NUMERIC[c], title: REQ_TITLES[c] || null,
+        filter: REQ_FILTER_KIND[c] || "text", unit: REQ_UNIT[c] || null, // 3.12a (spec §3)
         cell: function (req) { return memo.cell(req, c).cells[c]; },
         sortKey: function (req) {
           if (c === "time") return req.t;
@@ -1923,6 +2121,7 @@
     return dataTable("requests-" + (opts.job === false ? "job" : "endpoint"), specs, rows, {
       empty: opts.empty || "no requests",
       class: "requests-table",
+      now: opts.now, // 3.12a §6: the time box's HH:MM literals need the day
       rowAttrs: function (req) {
         var cls = memo.row(req).cls;
         return { class: cls.length ? cls.join(" ") : null };

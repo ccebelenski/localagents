@@ -87,6 +87,9 @@ def test_the_sort_is_a_click_on_the_header_with_aria_sort_and_a_reversible_direc
 
 
 def test_the_filter_grammar_substring_and_the_numeric_comparators():
+    """3.10c's grammar as extended by 3.12a §5: substring stays the base, the numeric
+    comparators stay, and the INCLUSIVE range `x-y` joins them on number columns (the
+    operator: "absolute and inclusive endpoints")."""
     js = _app_js()
     body = _js_function(js, "dataTable")
     # substring, case-insensitive (indexOf on the lower-cased text)
@@ -94,12 +97,21 @@ def test_the_filter_grammar_substring_and_the_numeric_comparators():
     # a leading > or < on a numeric column compares the sort key as a number
     assert 'f.charAt(0) === ">" || f.charAt(0) === "<"' in body
     assert "parseFloat(f.slice(1))" in body
+    # 3.12a: the number box reads x-y first — two decimals around a hyphen, spaces allowed,
+    # inclusive on both ends (>= and <= in the filter)
+    assert r"(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)" in body
+    assert re.search(r"v >= \w+ && v <= \w+", body)
 
 
 def test_the_filter_row_is_inputs_one_per_column_built_from_the_state():
+    """3.10c: one control per column, built from TABLE_STATE's filters. 3.12a §4 widened the
+    control: a pick column draws a native <select data-filter> (no free-text search), the rest
+    keep the text input."""
     js = _app_js()
     body = _js_function(js, "dataTable")
     assert 'h("input", { type: "text"' in body
+    assert 'h("select", { "data-filter"' in body  # 3.12a: the pick
+    assert 'addEventListener("change"' in body  # the select redraws on change
     assert "placeholder:" in body
     # typing updates the state and redraws THIS table in place through the container it owns
     assert 'addEventListener("input"' in body
