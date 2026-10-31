@@ -495,11 +495,14 @@ such. Then come the state strip, the jobs that ran on the endpoint in the range,
 and outage events, and the request table: our own jobs' requests to it (time, job, path,
 status, milliseconds, tokens in, out and from cache, streaming, error), newest first, under a
 totals line. (True now, 3.7k/3.7-fold-4: both request tables — this one and the job page's —
-draw through one renderer with one look: time, a status pill, job, path, prompt, reused,
+draw through one renderer with one look: time, a status pill, job, path, prompt, new, reused,
 output, prefill t/s, decode t/s, duration (whole ms under a second, tenths above) and error;
 the stream flag and the raw gen_ms are gone, the two rates are the per-request derivations
 Strata derives from the same facts, and the time cell reads clock time inside 24 h and the
-date past it.) (True now, 3.10b: the endpoint page has no tables of its own anymore — the
+date past it.) (True now, 3.10h(b), 2026-10-30: the prompt column is the whole prompt the
+request carried (input + reused + cache creation), next to the new tokens (input +
+cache_creation — the prefill numerator) and the reused share; the API's bare `input_tokens`,
+1 on a hot prefix cache, is no longer shown as "prompt".) (True now, 3.10b: the endpoint page has no tables of its own anymore — the
 jobs table is the Recent-jobs table filtered to the endpoint, one renderer with the endpoint
 column dropped and every row a full snapshot job row; events are the collector's up/down
 transitions and are drawn only when the range holds one, as "Restarts and outages"; and every

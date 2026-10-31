@@ -1442,7 +1442,9 @@
   // Both detail pages draw their request log through this: the endpoint page's requests across
   // jobs (endpoint.js) and a job page's own requests (job.js). The columns are the operator's
   // log look with the two rates Strata derives from the same facts: time, a status pill, job
-  // (omitted on a job page, where every row is the one job), path, prompt (tokens.input),
+  // (omitted on a job page, where every row is the one job), path, prompt (the whole prompt:
+  // input + cache_read + cache_creation — 3.10h(b), the API's bare input_tokens is 1 on a hot
+  // prefix cache), new (input + cache_creation, what the engine processed),
   // reused (tokens.cache_read), output, prefill t/s, decode t/s, duration, error. The rows are
   // the endpoint route's (newest first, with job_id) or the job detail's (time order,
   // no job fields); neither is re-sorted here. `opts.job === false` drops the job column;
@@ -1459,7 +1461,11 @@
   // `prompt_tokens − cached` (registry.py:589), i.e. the tokens this request actually
   // prefilled: input + cache_creation here. The brief's literal subtraction was corrected on
   // the data model, not as a display choice (2026-10-30).
-  var REQ_NUMERIC = { prompt: 1, reused: 1, output: 1, "prefill t/s": 1, "decode t/s": 1, duration: 1 };
+  var REQ_NUMERIC = { prompt: 1, new: 1, reused: 1, output: 1, "prefill t/s": 1, "decode t/s": 1, duration: 1 };
+  // 3.10h(b): the two headers whose column names a derivation, not a stored field, explain
+  // themselves (the operator: "Weird - prompt = 1?" — it was `tokens.input`, the uncached tail)
+  var REQ_TITLES = { prompt: "the whole prompt: input + reused + cache creation",
+                     new: "tokens the engine processed: input + cache creation" };
   var ERROR_CUT = 60; // the error cell's chars; the full sentence rides in its title
 
   // the reads are spelled `req.tokens.<field>` so the §5a walk sees every field name (an
@@ -1478,6 +1484,28 @@
     if (typeof req.tokens.output !== "number" || typeof req.gen_ms !== "number") return null;
     if (req.gen_ms <= 0 || req.tokens.output <= 0) return null;
     return req.tokens.output / (req.gen_ms / 1000);
+  }
+
+  // 3.10h(b) (the operator's "prompt = 1", not transient): the API's input_tokens is only the
+  // uncached, un-created tail of the prompt — 1 on every row when the prefix cache is hot (the
+  // engine re-evaluates the last token). The "prompt" cell is the whole prompt the request
+  // carried: input + cache_read + cache_creation (derive._PROMPT_SUM's shape). A part that is
+  // not a number counts as 0 when at least one part is one; none of them a number answers null
+  // (the blank cell, never a 0 claiming an empty prompt).
+  function promptTotal(req) {
+    if (!req.tokens) return null;
+    if (typeof req.tokens.input !== "number" && typeof req.tokens.cache_read !== "number"
+        && typeof req.tokens.cache_creation !== "number") return null;
+    return (req.tokens.input || 0) + (req.tokens.cache_read || 0) + (req.tokens.cache_creation || 0);
+  }
+
+  // "new": the tokens the engine actually processed this request — input + cache_creation, the
+  // prefillRate numerator, shown so the prompt cell's total can be read against its rates;
+  // blank (null) when neither number is present
+  function newTokens(req) {
+    if (!req.tokens) return null;
+    if (typeof req.tokens.input !== "number" && typeof req.tokens.cache_creation !== "number") return null;
+    return (req.tokens.input || 0) + (req.tokens.cache_creation || 0);
   }
 
   // the error cell's sentence: the error, else "context exceeded" when the request overran
@@ -1503,9 +1531,9 @@
     var withJob = opts.job !== false;
     var columns = ["time", "status"];
     if (withJob) columns.push("job");
-    columns = columns.concat(["path", "prompt", "reused", "output", "prefill t/s", "decode t/s", "duration", "error"]);
+    columns = columns.concat(["path", "prompt", "new", "reused", "output", "prefill t/s", "decode t/s", "duration", "error"]);
     var head = h("tr", null, columns.map(function (c) {
-      return h("th", { class: REQ_NUMERIC[c] ? "n" : null, text: c });
+      return h("th", { class: REQ_NUMERIC[c] ? "n" : null, title: REQ_TITLES[c] || null, text: c });
     }));
     var body = rows.map(function (req) {
       var tokens = req.tokens || {};
@@ -1529,6 +1557,8 @@
       if (req.context_exceeded) cls.push("req-ctx"); // the same truthy read: a non-empty string or true
       var prefill = prefillRate(req);
       var decode = decodeRate(req);
+      var prompt = promptTotal(req);
+      var newTok = newTokens(req);
       // the time cell: the shared day-stamped timeTd (3.7-fold-4's rule; factored for the
       // jobs log's "started" in 3.10a)
       // the reused cell's title names both cache figures; a missing one drops its half of the
@@ -1539,6 +1569,14 @@
       if (fmt.int(cacheRead) !== "") cacheHalves.push("cache read " + fmt.int(cacheRead));
       if (fmt.int(cacheCreation) !== "") cacheHalves.push("cache creation " + fmt.int(cacheCreation));
       var reusedTitle = cacheHalves.join(", ");
+      // 3.10h(b): the prompt cell's title names the three parts its total adds
+      // ("input 1, cache read 16,384, cache creation 3,012"); a missing part drops its half,
+      // the reused title's rule
+      var promptParts = [];
+      if (fmt.int(tokens.input) !== "") promptParts.push("input " + fmt.int(tokens.input));
+      if (fmt.int(cacheRead) !== "") promptParts.push("cache read " + fmt.int(cacheRead));
+      if (fmt.int(cacheCreation) !== "") promptParts.push("cache creation " + fmt.int(cacheCreation));
+      var promptTitle = promptParts.join(", ");
       var cells = [timeTd(req.t, opts.now)];
       if (handshake) {
         cells.push(h("td", null, [h("span", { class: "pill pill-muted",
@@ -1556,7 +1594,8 @@
       }
       cells.push(
         h("td", { class: "cut", title: req.path || "", text: req.path || "" }),
-        h("td", { class: "n", text: fmt.int(tokens.input) }),
+        h("td", { class: "n", title: promptTitle || null, text: fmt.int(prompt) }),
+        h("td", { class: "n", text: fmt.int(newTok) }),
         // the reused cell's title names both cache figures; a missing one drops its half of
         // the sentence rather than trailing a blank (fold-3 review NOTICED)
         h("td", { class: "n", title: reusedTitle, text: fmt.int(cacheRead) }),

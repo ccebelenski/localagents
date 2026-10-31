@@ -501,10 +501,11 @@ the schema allows it) reports `elapsed_s` null — a finished row never shows a 
 The endpoint page's requests table and the job page's requests table (below) are drawn through
 one renderer, `app.js`'s exported `requestsTable`: the endpoint's with a job column (its rows
 span jobs), the job page's without (every row is that job). The columns are time · status · job
-· path · prompt · reused · output · prefill t/s · decode t/s · duration · error. Status is a
-pill with the word (`ok` for a 2xx, `error` otherwise; the HTTP code in its title; a null status
-reads "–"); prompt is `tokens.input`, reused is `tokens.cache_read`, output is
-`tokens.output`; error is the row's error, cut to 60 characters with the full sentence in its
+· path · prompt · new · reused · output · prefill t/s · decode t/s · duration · error. Status is
+a pill with the word (`ok` for a 2xx, `error` otherwise; the HTTP code in its title; a null status
+reads "–"); prompt is the whole prompt the request carried (input + cache_read + cache_creation —
+the 3.10h(b) note below), new is input + cache_creation (the prefill numerator), reused is
+`tokens.cache_read`, output is `tokens.output`; error is the row's error, cut to 60 characters with the full sentence in its
 title, or "context exceeded" when `context_exceeded` is true and the error is null (True-now,
 3.7-fold-4: the stored type is TEXT — the backend's own sentence, shim.py — never a boolean; the
 cell reads the row's error first, then falls back to "context exceeded" when the column holds a
@@ -521,7 +522,10 @@ whole prompt; our `tokens.input` excludes cache reads (§5a's prompt is input + 
 cache_creation, `derive._PROMPT_SUM`), so the tokens a request actually prefilled are input +
 cache_creation — the analogue of Strata's processed count (`prompt_tokens − cached`,
 `registry.py:589`). Strata's VRAM hit rate is its own figure and has no counterpart here; it is
-not invented. True now (3.7v, 2026-10-30): the job page's header says "N tool errors" (tool
+not invented. True now (3.10h(b), 2026-10-30): the request tables show the whole prompt (input +
+reused + cache creation), the new tokens (input + cache creation — the prefill numerator) and the
+reused share as three columns; the API's bare `input_tokens`, 1 on a hot cache, is no longer
+shown as "prompt". True now (3.7v, 2026-10-30): the job page's header says "N tool errors" (tool
 results flagged is_error) and "N request errors" (requests outside 2xx or with an error text)
 side by side; a `/api/hello` handshake row is labelled "handshake" and counted as neither.
 

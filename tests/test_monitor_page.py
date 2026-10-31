@@ -601,8 +601,10 @@ def test_requests_tables_share_one_renderer():
     assert "requestsTable: requestsTable," in app_js  # exported on window.localagentsMonitor
     order = re.search(r'var columns = \["time", "status"\];.*?columns\.concat\(\[(.*?)\]\);', app_js, re.S)
     assert order is not None
-    assert re.findall(r'"([^"]+)"', order.group(1)) == ["path", "prompt", "reused", "output", "prefill t/s",
-                                                         "decode t/s", "duration", "error"]
+    # 3.10h(b): "new" (input + cache_creation) sits between "prompt" (the whole prompt) and
+    # "reused"; test_3_10hb.py pins the full list and the helpers' arithmetic
+    assert re.findall(r'"([^"]+)"', order.group(1)) == ["path", "prompt", "new", "reused", "output", "prefill t/s",
+                                                        "decode t/s", "duration", "error"]
     assert "if (withJob) columns.push(\"job\");" in app_js
     assert "var withJob = opts.job !== false;" in app_js
     assert "(req.ms - req.gen_ms) / 1000" in app_js  # prefill t/s
