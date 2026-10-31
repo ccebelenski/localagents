@@ -33,12 +33,13 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-30 ~22:50).** 3.10 usability pass in flight: 3.10a (39936f1) and
-3.10d (9c41b21) and 1.14 the build stamp (94fc11b, Opus) landed; the 3.10a+d batch review runs on the local dense Qwen (llamacpp); 3.10f-1 (the
-job name dropped, package side) runs on DeepSeek/dgx1-a, 90-min cap. Queue, in order: 3.10f-2
-(monitor side: JSON keys and pages show the short id), 3.10b (one jobs table, one requests
-table), 3.10c (client-side paging, sorting, column filters — decided). EPICS 3.10 has the
-operator's words, answers and the split; ruling (n) is inked.
+**Lanes at the last note (2026-10-30 ~23:00).** Landed tonight: 3.10a, 3.10d, 1.14 (reviews clean),
+3.10f-1 the job name dropped (c768dfd + 8ad16e6; schema v9 with directory renames — ITS REVIEW IS
+NEXT, Qwen/ai2; until it is clean, no restart of the operator's monitor or MCP server, because the
+first process on this code migrates the real database and renames the real job directories).
+Queue: 3.10f-2 (monitor side: the JSON keys and pages show the short id), 3.10g (the one-column
+stretch: cap the card width; the job lines out of the floor awaits the operator), 3.10b, 3.10c.
+Suite 746.
 
 **Awaiting the operator.**
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is

@@ -288,6 +288,16 @@ the duplicates go), then docs.
 
 ## Epic 2: monitor core (collector and storage, no page)
 
+  Review: Qwen/ai1 job 20261030-223744-42be9bb2, 75 turns, 8 min, three probes with a REAL fake
+  `git` on PATH: NO defect — `9.9.9+abc1234` with a `.git` dir or file, a 5 s git answers the
+  version alone in 2.00 s, whitespace trimmed, an inner space rejected, the default call names
+  the worktree's own HEAD; each record names ITS server's stamp, a deleted server row → None; a
+  pre-1.14 row (`version='0.1.0'`) draws the figure and the note from a real snapshot; a null
+  stamp draws no figure and no note (ruled right: unknown never claims staleness). Possible: P-1
+  `build_stamp(foreign_root)` takes that root's sha with the package's metadata version
+  (unreachable from production; a vendored layout would stamp the host repo's HEAD — cheap guard
+  if wanted); P-2 the note is the same muted colour as the figure (the whole job header inherits
+  `--muted`, app.css:166 — for the next page story). Chain closed.
 - ☑ **2.1 Fixtures.** (a1c3693, Qwen/ai2 job 20261029-112904-212f6c31, 66 turns: 26 verbatim
   captures + 1 error row (vLLM `/health` answers 200 with no body) from Strata ai1/ai2, vLLM
   dgx1-a and llama.cpp local, two passes 2 min 19 s apart (ai2's pair carries the lane's own
@@ -1642,6 +1652,21 @@ Coordinator's answers from the code (2026-10-30):
   UUID as directory and branch name, `name` kept on old rows and shown when present else
   `id[:8]` with the started column, prune ageing both shapes by mtime, `dropped_job`/`job_name`
   → ids, seed and specs; DeepSeek, after the table stories; its own review (schema-shaped).
+  **3.10f-1 LANDED c768dfd (+8ad16e6):** DeepSeek/dgx1-a job 20261030-221127-469b4b83, 220 turns,
+  32 min, 25 files; 746 tests on main after one fix (a hand-built `Job(name=…)` in
+  tests/test_1_14.py, landed in between). `_v9` is the first filesystem migration step (the
+  runner already took callables — `_v6` was one): renames terminal rows' `jobs/<name>` →
+  `jobs/<id>` (a live job's directory is left to its server and logged; OSError logged, never
+  raised; SQLite ≥ 3.35 guarded), then drops the index and the column. `Job` loses `name`;
+  worktrees and branches are `local-agent/<id>`; prune ages UUID-named and old-stamp
+  directories alike by the newest mtime of the directory and its children; `state_dir` lives in
+  db (derive and read import it there; jobs re-exports). read.py keeps the JSON keys `name`,
+  `dropped_job`, `job_name` carrying the id and `job_detail`'s `name` — 3.10f-2 removes them
+  (read.py:245, 334, 632-634, 734, 755, 820). Lane's notes: `_v9` renames while holding BEGIN
+  IMMEDIATE (a slow state dir lengthens the write lock); kept worktrees under the old names are
+  not renamed (the row's `worktree` JSON holds the path). **Until its review is clean, do not
+  restart the operator's monitor or MCP server: the first process on this code migrates the real
+  database and renames the real job directories.**
   Operator: "I don't think I'm wrong on this one - and it saves one DB column too and some logic.
   … my experience says this is exactly the kind of thing that matters later - data integrity and
   clarity." (And ruling (n) above.) SCHEDULED, and FIRST — before 3.10b/c, so the first column
