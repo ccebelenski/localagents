@@ -879,7 +879,12 @@
         pager.appendChild(pagerButton("next", st.page >= pages, function () { st.page += 1; draw(); }));
       }
 
-      container.replaceChildren(table, pager, opts.note ? h("div", { class: "jobs-note muted", text: opts.note }) : null);
+      // the note only when there is one: replaceChildren prints a null argument as the text
+      // "null" (endpoint.js filters its lists for the same reason; the operator saw the word
+      // under every requests table, whose callers pass no note)
+      var parts = [table, pager];
+      if (opts.note) parts.push(h("div", { class: "jobs-note muted", text: opts.note }));
+      container.replaceChildren.apply(container, parts);
       if (caretCol) {
         var again = container.querySelector('[data-filter="' + caretCol.replace(/["\\]/g, "\\$&") + '"]');
         if (again) {

@@ -1914,7 +1914,15 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   page passes "jobs-endpoint". Lane's notes: `cellText` builds a td per row per column per
   filter keystroke (O(rows × cols) DOM work — fine at 1000 rows, a 3.11a candidate); cdp.mjs's
   header reads are safe only because the arrow is CSS `::after`; `renders.full` counts card
-  rebuilds only.
+  rebuilds only. F3 (operator, 2026-10-31 morning, the job page: "every job says 'null' below
+  the requests table and row count"): `draw()` handed `opts.note ? h(...) : null` to
+  `replaceChildren`, which prints a null argument as the text "null" — every table whose caller
+  passes no note (both requests tables, the endpoint page's jobs table) drew it since f817d6e;
+  endpoint.js had filtered its own lists for exactly this. Coordinator fold: the note appended
+  only when present; tests/fakedom.js's `replaceChildren` now prints a null as the browser does
+  (it had skipped one, kinder than the browser, so no node test — 3.11a's review included —
+  could see it); the test walks every text node of a drawn block (tests/test_3_10c_fold.py F3).
+  No smoke read a stray text node either. 835 tests.
 - ☑ **3.10d Endpoint page labels.** (Landed 9c41b21: Qwen/ai2 job 20261030-215334-3293e876, 93 turns, 20 min, one compaction; 723 tests. Tiers kept as order and border colours, headings plain nouns with none over the first group; the state/node tiles gone, the port-22 answer in the header's host clause; tiles a flex-wrap row with `flex: 1 0 auto; min-width: 170px`, `.tile-value` nowrap without ellipsis — a 120-char served model widened its tile to 1118 px, overflow 0, 17 sparklines drawn. Lane's corrections: cdp.mjs's `tiles`/`tileLabels` read the OVERVIEW's hidden cards, not the endpoint page (the brief was wrong; its own `t/fit.js` read the tiles); the page-test literal scan reads quoted prose in comments too, so a quoted phrase in a comment is de facto pinned.) The tier headings and classes go; "endpoint"/"node" tiles
   go (the header carries both and the fallback note); tiles grouped under "speeds",
   "occupancy", "hardware" with no numbering; "served model" and every tile value follow the

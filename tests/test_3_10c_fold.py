@@ -70,3 +70,70 @@ def test_f2_missing_sorts_last_in_both_directions():
     # the present test treats a text column's null/blank as missing too
     assert '(x != null && x !== "")' in body, body
     assert '(y != null && y !== "")' in body, body
+
+
+# --- F3 (operator, 2026-10-31): "every job says 'null' below the requests table" ----------------
+
+import json
+import shutil
+import subprocess
+
+NODE = shutil.which("node") or "/home/linuxbrew/.linuxbrew/bin/node"
+ROOT = Path(__file__).resolve().parent.parent
+
+_PROLOGUE = """
+const path = require("path"), fs = require("fs");
+require(%(fakedom)s).install();
+for (const f of ["app.js", "job.js", "endpoint.js"]) (0, eval)(fs.readFileSync(path.join(%(static)s, f), "utf8"));
+const M = window.localagentsMonitor;
+const out = (function () {
+%(body)s
+})();
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _page_js(tmp_path, body: str):
+    script = tmp_path / "page_probe.js"
+    script.write_text(_PROLOGUE % {"fakedom": json.dumps(str(ROOT / "tests" / "fakedom.js")),
+                                   "static": json.dumps(str(STATIC)), "body": body})
+    p = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout)
+
+
+def test_f3_a_table_without_a_note_draws_no_null_text(tmp_path):
+    """The operator (2026-10-31, the job page): "every job says 'null' below the requests table
+    and row count." dataTable handed ``opts.note ? h(...) : null`` to ``replaceChildren``, and the
+    browser inserts a non-Node argument as the text of its string — "null". Every table whose
+    caller passes no note drew it (both requests tables; the endpoint page's jobs table). The
+    stand-in used to skip a null, kinder than the browser, so no node test could see it; it now
+    prints "null" as the browser does, and this test walks every text node of a drawn table block
+    for the word. The overview's jobs table, which always carries a note, is the control: its note
+    is the last child and the only text outside the table and the pager."""
+    got = _page_js(tmp_path, """
+  function texts(el, acc) {
+    el.childNodes.forEach(function (n) {
+      if (n.nodeType === 3) acc.push(n.data); else texts(n, acc);
+    });
+    return acc;
+  }
+  var req = { t: 1, path: "/v1/messages", http_status: 200, error: "", ms: 800, job_id: null,
+    tokens: { input: 100, output: 10, cache_read: 0, cache_creation: 0 } };
+  var job = { id: "00000000-1111-2222-3333-444444444444", status: "succeeded", server_live: false,
+    started_at: 1, model: "m", endpoint: "e", elapsed_s: 5, num_turns: 1, tool_calls: 0, errors: 0,
+    compactions: 0, ctx_pct: null, prefill_tps: null, gen_tps: null, last_activity: null };
+  var noNote = M.requestsTable([req], { job: false, now: 100 });
+  var withNote = M.jobsTable([job], { now: 100, note: "newest first" });
+  var last = withNote.childNodes[withNote.childNodes.length - 1];
+  return {
+    requestsNull: texts(noNote, []).indexOf("null") >= 0,
+    requestsTopChildren: noNote.childNodes.map(function (n) { return n.nodeType === 3 ? "#text:" + n.data : n.tagName + "." + n.className; }),
+    jobsNull: texts(withNote, []).indexOf("null") >= 0,
+    jobsLast: last.nodeType === 3 ? "#text:" + last.data : last.className,
+  };
+""")
+    assert got["requestsNull"] is False, got["requestsTopChildren"]
+    assert got["requestsTopChildren"] == ["DIV.table-wrap", "DIV.table-pager muted"]
+    assert got["jobsNull"] is False
+    assert got["jobsLast"] == "jobs-note muted"

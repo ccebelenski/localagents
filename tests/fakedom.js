@@ -58,8 +58,9 @@ El.prototype.replaceChildren = function () {
   this.childNodes.forEach((n) => { n.parentNode = null; });
   this.childNodes = [];
   for (const n of arguments) {
-    if (n == null) continue;
-    this.appendChild(typeof n === "string" ? new Text(n) : n);
+    // as the browser: a non-Node argument is converted to a string and inserted as text, so a
+    // null prints "null" (the 3.10c fold the operator saw under every requests table)
+    this.appendChild(n != null && n.nodeType ? n : new Text(String(n)));
   }
 };
 El.prototype.remove = function () { if (this.parentNode) this.parentNode.childNodes = this.parentNode.childNodes.filter((c) => c !== this); this.parentNode = null; };
