@@ -2034,6 +2034,24 @@ Sequence: after 3.10c and the review of the page batch land, before the retro.
   too narrow / dead / sound), the usage pattern it misses, the replacement's shape — then the
   replacements built test-first by the reviewer, cross-model reviewed.
 
+### 3.12 Typed column filters (operator 2026-10-31 morning)
+
+> For the morning - some of the table filters don't make sense, some are not useful. Examples:
+> Jobs table, status colume is limited values, should be dropdown picker for filter. Same with
+> model, endpoint. Started is a time so a text search isn't the perfect way to do that filter
+> either. elapsed could be a range. turns, tool calls, errors are all values so range picker
+> would be appropriate with absolute and inclusive endpoints. Filters that don't fit nicely into
+> the colum size can be pop-out elements, activated on a click on the filter row/column. Do a
+> design on that before any build since there are multiple aspects to this request and a bad
+> choice can ruin the page.
+
+- ☐ **3.12 Design: filters by column type.** Design first, no build: the design is
+  docs/superpowers/specs/2026-10-31-table-filters-design.md (the filter kinds per column, the
+  pop-out, the state, the semantics, the risks, what moves in the tests and the smoke, the build
+  plan, and the questions the operator decides). Build stories are cut when the operator
+  approves the design. Sequence: after 3.11a's review (the design builds on its `cellText`
+  cache and `rowMemo`).
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
