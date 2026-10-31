@@ -1013,6 +1013,8 @@ The 3.7 chain's reviews are closed: no open defect.
   forwarded", schema spec line 69); the page labels the hello rows already in history as the
   handshake. One story; operator decides.
 
+- **Operator, 2026-10-30 late evening, during the usability pass (for the retro):** "Making good
+  progress, reviews are holding up - including the human one."
 - **Operator, 2026-10-30, after the first live jobs on the landed page (for the retro):** "Much
   improved UI experience, I like the timeline now." "The cards sizing is better, but could still
   be improved."
