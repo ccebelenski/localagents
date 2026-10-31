@@ -374,8 +374,10 @@ def _v9(conn: sqlite3.Connection) -> None:
         raise SchemaError(
             f"schema version 9 drops jobs.name and needs SQLite >= 3.35; this is {sqlite3.sqlite_version}"
         )
+    root: Path | None = None  # 1.15: the jobs root only when a row needs renaming (a fresh or empty file never touches it)
     for jid, name, status in conn.execute("SELECT id, name, status FROM jobs WHERE name IS NOT NULL").fetchall():
-        root = state_dir() / "jobs"  # 1.15: the jobs root only when a row needs renaming (a fresh or empty file never touches it)
+        if root is None:
+            root = state_dir() / "jobs"
         old, new = root / name, root / jid
         try:
             if not old.is_dir():

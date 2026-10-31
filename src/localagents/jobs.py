@@ -22,7 +22,7 @@ from .db import state_dir  # re-exported: jobs.state_dir is the long-standing im
 # ``<YYYYMMDD>-<HHMMSS>-<hex>`` stamp (4 hex under the very old ids, 8 under the retired name);
 # prune touches nothing else.
 _JOB_DIR = re.compile(r"^(\d{8}-\d{6})-[0-9a-f]{4,}$")
-_UUID_DIR = re.compile(r"^[0-9a-f-]{36}$")
+_UUID_DIR = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")  # a structural uuid4, not any 36 hex-or-dash chars (review of 3.10f-1, O4)
 
 
 def _newest_mtime(p: Path) -> float:
