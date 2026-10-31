@@ -95,12 +95,14 @@ def test_the_filter_grammar_substring_and_the_numeric_comparators():
     body = _js_function(js, "dataTable")
     # substring, case-insensitive (indexOf on the lower-cased text)
     assert re.search(r"\.indexOf\(", body) and ".toLowerCase()" in body
-    # a leading > or < on a numeric column compares the sort key as a number
-    assert 'f.charAt(0) === ">" || f.charAt(0) === "<"' in body
-    assert "parseFloat(f.slice(1))" in body
-    # 3.12a: the number box reads x-y first — two decimals around a hyphen, spaces allowed,
+    # a leading > or < on a numeric column compares the sort key as a number (3.12d: the
+    # operand goes through readNum, the cell's own unit; the shape is the comparator regex)
+    assert r"([<>])\s*(\S+)" in body
+    assert "readNum(col.unit," in body
+    # 3.12a: the number box reads x-y first — two tokens around a hyphen, spaces allowed
+    # (3.12d: the tokens carry the unit — "5m-10m" — and each end goes through readNum),
     # inclusive on both ends (>= and <= in the filter)
-    assert r"(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)" in body
+    assert r"(-?[^\s-]+)\s*-\s*(-?[^\s-]+)" in body
     assert re.search(r"v >= \w+ && v <= \w+", body)
 
 

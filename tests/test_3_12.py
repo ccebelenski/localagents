@@ -259,7 +259,7 @@ def test_the_number_box_reads_a_range_then_the_comparators_then_the_substring(tm
     assert got["spacesInRange"] == 2, got  # 10 and 12.5
     assert got["substring12"] == 2, got  # 12.5 and 723, by their cell text
     assert got["rangeNotSubstring"] == 1, got  # the 1.5 row, not the text-holding 99 row
-    assert got["titleWithUnit"] == "elapsed, seconds — text, x-y, <n, >n", got
+    assert got["titleWithUnit"] == "elapsed, seconds — text, x-y, <n, >n; n as 4m12s, 2h03m or seconds", got  # 3.12d
     assert got["titleNoUnit"] == "elapsed — text, x-y, <n, >n", got
 
 

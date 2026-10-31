@@ -690,6 +690,36 @@
     return null;
   }
 
+  // 3.12d (the operator: "the columns display format 00m00s but filter is text search, so I
+  // can't do (for example) <10m for a filter"): read a bound typed in the unit the column
+  // holds — the unit is the sort key's, the same one the box's title names. Commas the cells
+  // print go first (3.12a fold F2's line, moved in here). Then by unit: "seconds" reads the
+  // duration grammar fmt.dur prints ("10m" 600, "1h30m" 5400, "90s" 90, "2h" 7200, "1d4h"
+  // 100800; even a whole cell like "2h03m"); "ms" reads "800ms", "1.2 s", "2m", "1h" to
+  // milliseconds; "%" strips one trailing percent. AFTER the unit reading, a bare number is
+  // read only when the WHOLE remainder is one — so ">10x" no longer reads 10 the way today's
+  // parseFloat did; it answers NaN and the box falls to the substring, the better reading of
+  // a typo. A bare number keeps the sort key's unit: "<600" on elapsed is still seconds.
+  function readNum(unit, s) {
+    var t = String(s).replace(/,/g, "");
+    var m;
+    if (unit === "seconds") {
+      m = /^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(t);
+      if (m && (m[1] !== undefined || m[2] !== undefined || m[3] !== undefined || m[4] !== undefined)) {
+        return (+(m[1] || 0)) * 86400 + (+(m[2] || 0)) * 3600 + (+(m[3] || 0)) * 60 + (+(m[4] || 0));
+      }
+    } else if (unit === "ms") {
+      m = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h)$/.exec(t);
+      if (m) {
+        var mult = m[2] === "ms" ? 1 : m[2] === "s" ? 1000 : m[2] === "m" ? 60000 : 3600000;
+        return +m[1] * mult;
+      }
+    } else if (unit === "%") {
+      t = t.replace(/%$/, "");
+    }
+    return /^-?\d+(?:\.\d+)?$/.test(t) ? +t : NaN;
+  }
+
   // one job row (3.10b): the cells are keyed by their JOB_COLUMNS name; the table helper draws
   // them in column order minus `omit` (the column list it is given is already filtered), so a
   // column left out leaves no empty cell behind. 3.10c: the row element itself (and its
@@ -857,22 +887,27 @@
           // 3.12a §5, in order: `x-y` an INCLUSIVE range on the sort key (the operator's
           // "absolute and inclusive endpoints"; x > y matches nothing; a row with no finite
           // figure never matches); then 3.10c's strict `>n` / `<n`; else the substring below.
-          // 3.12a fold F2: the range and comparator readings strip the separators the cells
-          // print; an unreadable number still falls through to the typed substring below
-          f = f.replace(/,/g, "");
-          var numRange = /^\s*(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)\s*$/.exec(f);
+          // 3.12a fold F2 (comma stripping) and 3.12d (the cell's own unit) now live in
+          // readNum, which every bound goes through: the range is two tokens around the
+          // hyphen, each end read by the unit ("5m-10m", "800ms-1.2s", "50%-80%"); an end
+          // that reads NaN falls through, as an unparseable range always did, to the
+          // comparator and then the typed substring
+          var numRange = /^\s*(-?[^\s-]+)\s*-\s*(-?[^\s-]+)\s*$/.exec(f);
           if (numRange) {
-            var lo = parseFloat(numRange[1]), hi = parseFloat(numRange[2]);
-            idx = idx.filter(function (i) {
-              var v = keyOf(col, i);
-              return typeof v === "number" && isFinite(v) && v >= lo && v <= hi;
-            });
-            return;
+            var lo = readNum(col.unit, numRange[1]), hi = readNum(col.unit, numRange[2]);
+            if (!isNaN(lo) && !isNaN(hi)) {
+              idx = idx.filter(function (i) {
+                var v = keyOf(col, i);
+                return typeof v === "number" && isFinite(v) && v >= lo && v <= hi;
+              });
+              return;
+            }
           }
-          if (f.charAt(0) === ">" || f.charAt(0) === "<") {
-            var want = parseFloat(f.slice(1));
+          var numCmp = /^\s*([<>])\s*(\S+)\s*$/.exec(f);
+          if (numCmp) {
+            var want = readNum(col.unit, numCmp[2]);
             if (!isNaN(want)) {
-              var gt = f.charAt(0) === ">";
+              var gt = numCmp[1] === ">";
               idx = idx.filter(function (i) {
                 var v = keyOf(col, i);
                 return typeof v === "number" && isFinite(v) && (gt ? v > want : v < want);
@@ -1040,9 +1075,16 @@
           return h("th", { "data-filter-kind": kind }, [sel]);
         }
         // the title names the grammar the box reads (§5; §6 lands with the time box) so a
-        // typed bound can be checked; the unit is the sort key's
+        // typed bound can be checked; the unit is the sort key's. 3.12d: the units the number
+        // box now reads with their own grammar show that grammar AS THE CELL PRINTS IT — a
+        // seconds column reads "n as 4m12s, 2h03m or seconds" because its cells print
+        // "4m12s" and "2h03m"; any other unit (count, tokens/s) and no unit stay as 3.12a
+        // wrote them, the bare numbers needing no shape
+        var unitHint = col.unit === "seconds" ? "; n as 4m12s, 2h03m or seconds"
+          : col.unit === "ms" ? "; n as 800ms, 1.2s or ms"
+          : col.unit === "%" ? "; n as 50%" : "";
         var boxTitle = kind === "number"
-          ? col.name + (col.unit ? ", " + col.unit : "") + " — text, x-y, <n, >n"
+          ? col.name + (col.unit ? ", " + col.unit : "") + " — text, x-y, <n, >n" + unitHint
           : kind === "time" ? col.name + " — text, HH:MM, YYYY-MM-DD, a - b, <a, >a"
           : col.name;
         var input = h("input", { type: "text", placeholder: col.name, "data-filter": col.name,

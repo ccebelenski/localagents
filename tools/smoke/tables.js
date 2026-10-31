@@ -103,6 +103,14 @@
     pager: pagerText() };
   typeIn(filterInput("turns"), ""); // a blank box deletes the key (3.12a §7)
   setSel(filterSel("status"), ""); // "any" deletes the key
+  // 3.12d: the elapsed box reads the unit its CELLS print — "<10m" is ten MINUTES, not ten
+  // seconds. The expected count is computed from the hand rows' elapsed_s under 600, as (c)
+  // computes its own expectations (not hard-coded); the box is cleared after, leaving the
+  // started-window step the only filter again.
+  const underTenM = copy.jobs.filter((j) => j.elapsed_s < 600).length;
+  typeIn(filterInput("elapsed"), "<10m");
+  const c2c = { under: underTenM, matched: matched(), pager: pagerText() };
+  typeIn(filterInput("elapsed"), "");
   const winStart = new Date(NOW * 1000); winStart.setHours(11, 0, 0, 0);
   const winEnd = new Date(NOW * 1000); winEnd.setHours(11, 30, 59, 999);
   const windowRows = copy.jobs.filter((j) => j.started_at >= winStart.getTime() / 1000 &&
@@ -264,7 +272,7 @@
     e.epAfterDurationSort = probeBlock("#detail .requests .table-block");
   } else e.epTable = null;
 
-  window.__d1 = { now: NOW, a, b1, b2, c0, c1, c2, c2b, c3, d0, d1, d2, f, g, e };
+  window.__d1 = { now: NOW, a, b1, b2, c0, c1, c2, c2b, c2c, c3, d0, d1, d2, f, g, e };
   // F4: the witness is asserted. d1 lands before the throw, so a failed run still hands back
   // the JSON (dom.js prints SCRIPT_THREW; cdp.mjs's d1 carries f.ok false).
   if (!f.ok) throw new Error("f.jobFullId.title " + JSON.stringify(f.jobFullId.title) + " is not the full id");
