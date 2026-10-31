@@ -2253,6 +2253,21 @@ under ten SECONDS (app.js:872-874), while the cell prints `fmt.dur` ("4m12s", "2
   meaning (the sort key's unit). The substring reading is unchanged. The box title names the grammar
   as the cell prints it.
 
+Operator (2026-10-31, dgx1-a stopped to add vLLM's `--enable-prompt-tokens-details`; a screenshot of
+its card: "dgx1-a vllm last seen 57s ago" over the red line "10.0.0.70 is reachable but nothing is
+listening on 10.0.0.70:8000 (nothing started there, or the port in models.yaml is wrong)"): "Add this
+to the list - dgx1-a is down to add that serve line - but the display is too verbose - I don't need
+a paragaph and explantion line. Just 10.0.0.70 reachable, port 8000 no response." Where the sentence
+comes from: `classify_connect_failure` (registry.py:102-126) writes four sentences, one per failure
+class, and the card prints `ep.error` verbatim as its `.ep-error` line (app.js:551); the same
+sentence is the MCP's `model_unavailable` text and the seeded world's (seed.py:132-136). The 3.10g
+lane noted this line is the floor-bearer on the seeded world (898 → 946 px), so a short line also
+lowers that floor.
+- ☐ **3.12e Short failure sentences.** Design proposed in chat, awaiting the operator's reading and
+  "go" (ruling (p)): the four sentences get short at the source, the operator's own form for the
+  refused case ("10.0.0.70 reachable, port 8000 no response"); the explanation moves to a second
+  field the card shows only on hover.
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
