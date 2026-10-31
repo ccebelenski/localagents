@@ -2271,7 +2271,29 @@ the plan the operator agreed to.
   right now." The after reading is the same page and tab once 3.12b lands; if the flash outlives
   the wrapper's identity, the spec's risk row names the next suspect (the document scrollbar on a
   height change).
-- ☐ **3.12c The started picker.** Design APPROVED:
+- ☑ **3.12c The started picker.** (Landed 2646b28: Qwen/ai1 job 01aa6724, 122 turns, 22 min, six
+  commits squashed; 893 tests. Built as the spec says: `localDay(v)` and `timeFilterMatch(f, v)`
+  replace `parseTimeLiteral` and the time branch (whole-string match, NO fall-through: a state in
+  any other shape matches nothing); `button.filter-pick` in the cell with `pickSummary` read at
+  build and every draw; the panel (`openTimePanel`/`closeTimePanel`/`toggleTimePanel`/
+  `patchTimePanelSelects`/`timePanelState`) a child of `rec.container`, positioned from the rects
+  after append, Escape and outside-mousedown on `document` while open; one hour bound alone takes
+  the day's edge ("HH-23" / "00-HH"); the date list is every day the ROWS hold (a faceted zero
+  stays listed, the spec's own sentence), the counts and hours faceted; a push keeps an open panel
+  and rebuilds its selects by the pick's focus rule; an emptied list closes the panel. The lane's
+  smoke caught its own first build: the persistent button had captured the BUILDING call's toggle,
+  so a panel opened after a push listed "today (2)" (the first draw's seeded jobs) while the table
+  showed 120 — fixed by the 3.12b slot rule (`rec.toggleTimePanel`), regression test
+  `test_a_panel_opened_after_a_push_fills_from_the_current_draw`. Smoke c3: today (120) → 11 to 11
+  → 60 rows (computed), clear → 120, key gone; the panel's parent is the block, its rect inside the
+  block's, the wrapper gains no scroll; the brief's "top at or below the wrap's bottom" cannot hold
+  (the panel hangs under the header cell, inside the wrapper's vertical span) and the lane
+  witnessed the real risk instead — disclosed; the filter cell 99.7 → 118.1 px set, the summary
+  unclipped. fakedom's `document` gained real add/removeEventListener (the old stub was a no-op).
+  NOTICED by the lane: any listener added in `buildHeadAndFilterRow` captures the building call's
+  closures (the cells persist until `colsKey` changes) — safe only through the TABLE_DOM slot or
+  shared `st`; a rule for every future per-column control. The DeepSeek review and the operator's
+  hands on the live picker are open.) Design APPROVED:
   docs/superpowers/specs/2026-10-31-started-picker-design.md. The `time` kind's text box and its
   typed grammar are retired for a two-level picker: a control in the filter cell opening a panel with
   a date select (any, today, yesterday, the dates present, with counts) and two hour-bound selects
