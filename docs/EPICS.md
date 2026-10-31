@@ -1888,7 +1888,7 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   reader, filtered by `endpoint_id`), so the rows are the same shape. `requestsTable` stays the
   one renderer; the endpoint page's title loses "our jobs only" chatter for "Requests · ai1 ·
   last 24h". Events: drawn only when non-empty, titled "Restarts and outages".
-- ☐ **3.10c Table paging, sorting, column filters.** One ES5 table helper used by both
+- ☑ **3.10c Table paging, sorting, column filters.** (Ticked by the operator 2026-10-31 afternoon: "3.10c also closed.") One ES5 table helper used by both
   renderers: client-side over the rows already fetched (the endpoint route's 1000-row cap stays;
   the summary line keeps counting the whole range), page size 50 with a pager line ("1–50 of
   889"), click-to-sort on every column header (numeric columns numeric, the current sort shown
@@ -1929,7 +1929,7 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   3.7u rule (no ellipsis: the tile grows, the grid floors on it) — app.css:193 `.tile-value`
   loses `text-overflow: ellipsis`; "Jobs on it" → 3.10b's title; "Don't be chatty": every
   heading on the page is a noun phrase with the filter, no parentheses of explanation.
-- ☐ **3.10e Job page tables.** Its requests table is already the shared renderer; its per-tool
+- ☑ **3.10e Job page tables.** (Ticked by the operator 2026-10-31 afternoon, nothing built under this number: "3.10e closed also based on preliminary check.") Its requests table is already the shared renderer; its per-tool
   breakdown stays (it is a different thing); the helper of 3.10c applies to its requests table
   with the job as the fixed filter; the "errors" header word pair from 3.7v stays.
 
@@ -2098,7 +2098,7 @@ second draft builds as 3.12a; dates typed first, the pop-out the fallback; the s
   number boxes read text first, then `x-y` (inclusive), then `<n`/`>n` (strict); time boxes the
   same three readings over `HH:MM` / `YYYY-MM-DD` / `YYYY-MM-DD HH:MM`; the state shape unchanged;
   "clear filters" on the pager line. Approved (above).
-- ☑ **3.12a Build: typed filters in the filter row.** (Landed 1938d98: Qwen/ai1 job
+- ☑ **3.12a Build: typed filters in the filter row.** (Closed by the operator on the live page 2026-10-31 afternoon: "3.12a closed per my observation." — the two findings of that read are 3.12c and 3.12d. Landed 1938d98: Qwen/ai1 job
   29d26496-2ca1-415b-9b6f-3d4f6f129557, 156 turns, 26 min, no compaction; 842 tests. Seven
   steps, each its own WIP commit and gate: `FILTER_KIND`/`UNIT` beside each column map (the
   requests pair REQ-prefixed: one scope), `filter`/`unit` on both specs, `data-filter-kind` on
@@ -2278,6 +2278,13 @@ lowers that floor.
   "go" (ruling (p)): the four sentences get short at the source, the operator's own form for the
   refused case ("10.0.0.70 reachable, port 8000 no response"); the explanation moves to a second
   field the card shows only on hover.
+
+Operator (2026-10-31 afternoon, every lane back): "3.12a closed per my observation. 3.10e closed also
+based on preliminary check. 3.10c also closed. I say go on the open build work now that all lanes
+are back." Coordinator's reading: the go covers the four open builds listed on their word — 3.12d,
+3.12e, 3.12b, 3.12c in that order; 3.12d and 3.12e to Qwen/ai1 and Qwen/ai2 in parallel (3.12d's and
+3.12b's edits meet in app.js's filter cell, so 3.12b follows 3.12d on ai1); reviews on dgx1-a as each
+lands; 3.12c after 3.12b.
 
 ## Epic 4: operations (V2, not scheduled)
 
