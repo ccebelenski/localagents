@@ -1813,7 +1813,21 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   emitted `content_block_start` eagerly before generating would move the clock back toward the
   first byte (none does today); `head` is capped at 64 KiB; tests/test_shim.py's `_relay_and_row`
   never consumed the stream, so streaming rows were recorded only when something drained it.
-  Review: dense Qwen on llamacpp, next. (b) after 3.10b.
+  Review by the dense Qwen3.8-27B on llamacpp, job 4675bbc6-b869-4aee-b215-b82aa61459f6, 65 turns,
+  23 min, 19 probe tests: the oracle holds everywhere — a marker split across reads starts the
+  clock one read late (the gap charged to TTFT, conservative), a marker in a `data:` line only is
+  caught, a batched message_start+content_block_start chunk starts the clock on arrival (right:
+  the batch is the observable TTFT); 0-vs-None reads the accumulated head; the real `prefillRate`
+  and `decodeRate` run over the rows behave as specified; `gen_tps` rises to the honest decode
+  rate; `prefill_tps` counts a gen_ms-0 row's whole span. F1 (pre-existing, real):
+  `_usage_from_sse_tail` scans only the LAST chunk (shim.py:328 `last = chunk`; :392-399), so a
+  backend whose `message_stop` lands as its own read makes the row record `output_tokens = 1`
+  (the message_start placeholder) — reproduced: decoded 57, recorded 1 — feeding usage totals,
+  decode t/s and `derive.gen_tps` (a no-content row's placeholder drags the EMA). P2
+  (pre-existing): a backend that dies mid-stream is recorded as a clean 200 with no error (the
+  exception reaches the client; the row says nothing). P1 the split marker (disclosed). P3 a
+  sub-millisecond decode reads 0. Disposition: F1 and P2 folded by the reviewer (ruling (a));
+  P1/P3 accepted boundaries. (b) after 3.10b.
 - ☑ **3.10b One jobs table, one requests table.** (Landed f0d423d: Qwen/ai1 job 7956ea64-5fc3-44c8-bbdb-42117d1a44cb, 115 turns, 16 min; 776 tests. `endpoint_history`'s jobs are the §5a rows of this endpoint's jobs overlapping the range — the overlap predicate factored out of `jobs_overlapping` (`_OVERLAP_WHERE`), so a queued never-started job no longer appears (consistent with "jobs that ran"; pinned); not joined to `_FINISHED_CACHE` (its eviction is keyed to the overview's tail); plans SEARCH `jobs_endpoint_id`. `jobsTable(rows, opts)` with empty/note/omit/now, cells built by column name; endpoint.js's own list gone; headings "Jobs · ai1 · last 1h" / "Requests · …" / "Restarts and outages · …" only when the range holds an event (the seed has three events; at 15m the section is absent). Lane's notes: `fleet_history` calls `endpoint_history` per endpoint and now pays ~7 derive statements per overlapping job for a `jobs` list it never reads — a `jobs=False` option is the fix — coordinator's check: the batched overview route and the endpoint page share one cached body per endpoint and span (app.py:319-323, 423), so the rows are derived once per endpoint per refresh, not twice; measured on the seeded world: 2 jobs → 23 statements, ~10 ms at every range; ~7 statements per overlapping job, all by `job_id` index. Left as is; the flag if a profile ever shows it; the seeded running job wears "lost" in every `--no-collect` smoke (the seed's heartbeat is stale against the live clock); the R1 oracle's jobs half compares two empty lists.) `jobsTable(rows, opts)` becomes the renderer
   for every jobs list: the overview (as now), the endpoint page (`opts.filter` = the endpoint;
   the title "Jobs" with the filter and range stated once: "Jobs · ai1 · last 24h"), and later
