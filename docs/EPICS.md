@@ -1983,8 +1983,18 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   width, floorIsText, no horizontal scroll. Noticed: `wide.js`/`keep.js` still set `job.name` and
   `lines.js` sets `ep.dropped_job` — fields the page no longer reads (stale smokes); the seeded
   running job reads "lost" in every `--no-collect` smoke. Disposition: F1-F4 folded by the
-  reviewer (ruling (a)); P1-a to 3.11a; the stale smokes to 3.11b.
-
+  reviewer (ruling (a)); P1-a to 3.11a; the stale smokes to 3.11b. **FOLD LANDED 81b199a**
+  (DeepSeek job 5d7d6d48-ce64-4d06-97e7-8d3c9d53a640, 95 turns, 30 min; 811 tests): F1's
+  diagnosis was half right — the guard was inverted AND `cellText` read only the td's own title
+  while `jobLink` and the status pill put theirs on child elements; now every title in the cell
+  joins the haystack (a date matches 120 rows, a full UUID its one row, "ok" its code). F2: a
+  value is present when it is a finite number or non-empty text, the sentinel carries no `dir`
+  (prefill descending / last activity ascending: no blank in the first 50, ten in the last ten).
+  F3 pinned in test_3_10f2.py with a 36-char smoke read. F4: test_3_10g.py parses app.css into
+  top-level rules and the 760 block; floor.js/floor.mjs gain `cardWidth` and fail above the cap
+  (2200 → 1078, 1712 → 1419, 1400 → 1353, 1000 → 953; RED proven with a planted override). Lane's
+  note: `cellText` now runs `querySelectorAll("[title]")` per cell per keystroke — P1-a's 131 ms
+  may have grown; 3.11a measures and caches. Review of the fold: Qwen/ai2, next.
 ### 3.11 Pre-close passes (operator 2026-10-31 00:15)
 
 > Two passes to schedule pre-close for this sequence - one pass by opus over the codebase, code
