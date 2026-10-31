@@ -2321,8 +2321,8 @@ the plan the operator agreed to.
   unclipped. fakedom's `document` gained real add/removeEventListener (the old stub was a no-op).
   NOTICED by the lane: any listener added in `buildHeadAndFilterRow` captures the building call's
   closures (the cells persist until `colsKey` changes) — safe only through the TABLE_DOM slot or
-  shared `st`; a rule for every future per-column control. The DeepSeek review and the operator's
-  hands on the live picker are open.) Design APPROVED:
+  shared `st`; a rule for every future per-column control. The operator's hands on the live picker
+  are open.) Design APPROVED:
   docs/superpowers/specs/2026-10-31-started-picker-design.md. The `time` kind's text box and its
   typed grammar are retired for a two-level picker: a control in the filter cell opening a panel with
   a date select (any, today, yesterday, the dates present, with counts) and two hour-bound selects
@@ -2428,6 +2428,36 @@ are back." Coordinator's reading: the go covers the four open builds listed on t
 3.12e, 3.12b, 3.12c in that order; 3.12d and 3.12e to Qwen/ai1 and Qwen/ai2 in parallel (3.12d's and
 3.12b's edits meet in app.js's filter cell, so 3.12b follows 3.12d on ai1); reviews on dgx1-a as each
 lands; 3.12c after 3.12b.
+- ☑ **Review of 3.12c (+ the 3.12b fold as P4)** (DeepSeek/dgx1-a job e04f55b1, 86 turns, 32 min,
+  four probes, read-only; probes under t/ not landed). P1 the match rule at the bounds (09:00:00
+  in, 08:59:59 out, 11:59:59 in, 12:00:00 out; the bare day; 00-23; 23-23; 11-09 nothing; every
+  bad shape nothing), the DST doors (2026-11-01 spans 25 h and "01-01" matches both 01:30 EDT and
+  01:30 EST; 2026-03-08 spans 23 h), the summary per state ("today", "yesterday 13 to 14",
+  "10/28/2026", the date never "today" without a clock, a garbage state the raw string) — CLEAN.
+  P2 the panel doors: two tables hold two panels (Escape closes both; a mousedown inside the other
+  panel closes the first — a real click serialises them); a focused date select holds across
+  pushes and reads the last push's counts on focusout; a dropped date stays "(0)" and "any"
+  deletes; a zero-row push removes the panel and its listeners and the returning rows get a new
+  button; "clear filters" re-reads the panel; ten toggles never leave a detached panel; the smoke
+  `c3` as landed; the endpoint page's requests picker (152 rows, "today (152)", a direct child of
+  the block, Escape closes) — CLEAN. **DEFECT (P3):** the persistent time button passes the
+  BUILDING call's `col` object (app.js:1099) and `filterIdx(except)` excludes by object identity
+  (app.js:891 `col === except`), so after a push a reopened picker facets its own date counts and
+  hour list by its own filter — live: state 11-11, reopen reads "today (60)" with hours any/11:00,
+  a header click in that panel "today (120)" with 10/11/12; the operator cannot widen the window
+  from a reopened panel until something redraws it; no test covered it. The rest of the listener
+  table is safe (done/clear/Escape bound by the opening call stay correct across pushes; a later
+  open always closes first). P4 the 3.12b fold — CLEAN (same events over three draws: zero
+  replaceChildren on the box, the wrap identical; changed events: same section, new wrap; events
+  gone: one re-insert, which live resets the jobs wrapper's scrollLeft 40 → 0 — the accepted cost
+  of appearance/disappearance; the note and empty hashes right; the first draw before history
+  builds once). **DEFECT (minor, P4):** the hash excludes `opts.now`, so a push crossing midnight
+  over unchanged rows is skipped and the button keeps saying "today" for yesterday's date (the
+  state string itself is right). NOTICED: events returning to the same list after `[]` reuse the
+  cached body (stale day-stamps one step longer); a page change leaves an open panel's document
+  listeners until the next click; the synthetic two-panel state. **Fold dispatched to the reviewer
+  (ruling (a))**: F1 faceting by NAME and the button passes the name; F2 the hash carries the local
+  day of the clock; F3 the events cache forgets its body when the events go.
 
 ## Epic 4: operations (V2, not scheduled)
 
