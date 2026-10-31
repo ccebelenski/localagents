@@ -1584,6 +1584,12 @@ Coordinator's answers from the code (2026-10-30):
   job-level figure; one is derived the same way (sum of processed prompt tokens over the summed
   prefill span, rows without both skipped) and the two columns read "prefill tok/s" and
   "decode tok/s".
+- **On "when" and the job id** (operator, after 3.10a was cut): "you intended the job-id to
+  have the date/time embded, and I argued against that. I wanted a pure GUID, but you wanted
+  something sortable." Both exist: `jobs.id` is the UUID (every link and row keys on it) and
+  `jobs.name` is `YYYYMMDD-HHMMSS-<hex8>`, the sortable one the table and the directory show.
+  The name carries the start time in compressed form; 3.10a's "started" column makes it
+  readable without the convention. No change to the scheme.
 - **"tier 0: every endpoint"** (endpoint.js:240 `TIER_NAME`): the spec's tiers (§5 line 185)
   group the tiles by which BACKENDS provide them — tier 0 "every backend provides these", tier 1
   counters, tier 2 occupancy, tier 3 hardware. A taxonomy of data sources leaked onto the page as
