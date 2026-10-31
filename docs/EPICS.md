@@ -1786,6 +1786,19 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   page share the renderer so both follow; the schema spec's derived-columns prose (monitor
   spec ~:477, which already explains "input − reused") gets its True-now. Lanes: (a) DeepSeek now
   (shim only); (b) after 3.10f-2 lands (it edits `requestsTable`'s job column).
+  **(a) LANDED a70e08b** (DeepSeek/dgx1-a job 18518895-ba79-422f-8d0f-c20a53532c7a, 36 turns,
+  11 min; 766 tests on main): `t_first` on the first chunk containing `content_block_start` or
+  `content_block_delta`; a stream with events but no content records `gen_ms = 0` (its whole
+  span is queue + prefill — the 0-output cache-miss row's case; decode t/s stays blank because
+  its rule needs gen_ms > 0); a stream with no chunks keeps None. Consequence the lane named:
+  `derive.gen_tps` reads gen_ms as the decode span, so the status line's decode rate rises to
+  the honest figure too (it used to include prefill). Lane's notes: the byte search is
+  per-chunk — a marker split across two reads sets the clock one chunk late (the usage parsing
+  carries the same assumption; SSE events arrive whole from these backends); a backend that
+  emitted `content_block_start` eagerly before generating would move the clock back toward the
+  first byte (none does today); `head` is capped at 64 KiB; tests/test_shim.py's `_relay_and_row`
+  never consumed the stream, so streaming rows were recorded only when something drained it.
+  Review: dense Qwen on llamacpp, next. (b) after 3.10b.
 - ☐ **3.10b One jobs table, one requests table.** `jobsTable(rows, opts)` becomes the renderer
   for every jobs list: the overview (as now), the endpoint page (`opts.filter` = the endpoint;
   the title "Jobs" with the filter and range stated once: "Jobs · ai1 · last 24h"), and later
