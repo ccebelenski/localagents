@@ -33,19 +33,15 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-30 ~23:00).** Landed tonight: 3.10a, 3.10d, 1.14 (reviews clean),
-3.10f-1 the job name dropped (c768dfd + 8ad16e6; schema v9 with directory renames — ITS REVIEW IS
-NEXT, Qwen/ai2; until it is clean, no restart of the operator's monitor or MCP server, because the
-first process on this code migrates the real database and renames the real job directories).
-INCIDENT 22:44: the real database was migrated to v9 from the lane's worktree code before the
-landing (EPICS 3.10f-1 incident); the operator reconnected the MCP server (~23:15) and must restart
-the monitor the same way. 1.15 (a4252ce) now makes a worktree refuse the default state directory.
-3.10f-2 landed (e86190b, 762 tests). Running: the 3.10f-1 + 1.15 review (Qwen/ai2), 3.10h(a) the
-shim's generation clock (DeepSeek), 3.10b one jobs table / one requests table (Qwen/ai1). Queue:
-3.10h(b) the request table's prompt/new columns (after 3.10b), 3.10c paging/sorting/filters,
-3.10g (cap the card width now; the job lines out of the floor awaits the operator's word),
-folds: a reverse §5a gate, endpoint.js header's dead `hist`, wide.js/keep.js re-measured. Every lane brief from now
-exports XDG_STATE_HOME and LOCALAGENTS_DB together (the smoke README recipe does).
+**Lanes at the last note (2026-10-31 ~00:10).** Landed since the 22:44 incident: 1.15 (the worktree
+guard), 3.10f-2 (short ids on the pages), 3.10h(a) (the shim's clock), 3.10b (one jobs table), the
+3.10f-1 + 1.15 review clean (O1/O4 folded). Running: the 3.10h(a) review (dense Qwen/llamacpp),
+3.10h(b) prompt/new/reused columns (Qwen/ai1), 3.10g the card-width cap (Qwen/ai2). Queue: 3.10c
+paging/sorting/filters (after 3.10h(b): both edit `requestsTable`), the review of the page batch
+(3.10f-2, 3.10b, 3.10h(b), 3.10g), folds: a reverse §5a gate, endpoint.js header's dead `hist`,
+wide.js/keep.js re-measured. The MCP server (reconnected 23:15) predates 3.10h(a): its jobs carry
+the first-byte prefill figure until the next `/mcp` reconnect at a quiet moment — never while
+jobs run (operator). The floor half of 3.10g awaits the operator's word. Suite 776.
 
 **Awaiting the operator.**
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is
