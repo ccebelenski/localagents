@@ -2188,8 +2188,17 @@ Operator, closing the design (2026-10-31): "That seems worth doing - you agree?"
 - let it fly." Read as: the design is done and the fold flies; each build below goes on its own word,
 the plan the operator agreed to.
 
-- ☐ **3.12a-fold: four fixes from the 3.12a review** (DeepSeek/dgx1-a, the reviewer fixing its own
-  verified findings, ruling (a); the brief at the session scratchpad `brief-3.12a-fold.md`). F1 the
+- ☑ **3.12a-fold: four fixes from the 3.12a review** (Landed 7cbe1e2: DeepSeek/dgx1-a job
+  0dec0465…, 113 turns, 26 min, 0.979 cache hit; `tests/test_3_12a_fold.py` eight tests, each red
+  first — F1's RED showed the two empty-valued options verbatim, F2's showed `gt: 7` for `>1,300`;
+  suite 850; the smoke run's `f.jobFullId.title` is the full uuid, `f.ok` true, the old td read kept
+  as `tdTitle: null` for the record. Lane decisions: `tests/test_monitor_page.py:621` pinned the whole
+  requestsTable call and had to change (the brief's file list missed it); the number branch
+  reassigns `f` and keeps a `typed` copy for the substring. Lane noticed: `TABLE_STATE` gains one
+  entry per endpoint page visited, never evicted; the `∅` sentinel collides with a value literally
+  `∅`, theoretical; the smoke scripts have no general assertion helper (`d1.ok` is the convention and
+  `cdp.mjs` does not surface a throwing script). Brief: the session scratchpad `brief-3.12a-fold.md`;
+  the reviewer fixing its own verified findings, ruling (a).) F1 the
   blank pick value gets a sentinel (`PICK_BLANK`, labelled "(blank)") so it no longer collides with
   "any"; F2 commas stripped before the number box's range and comparator readings (the substring
   reading keeps the text as typed); F3 the endpoint page's tables keyed per endpoint
