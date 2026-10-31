@@ -1674,7 +1674,21 @@ Coordinator's answers from the code (2026-10-30):
   hand-render a 200-char job NAME the page no longer draws, so their README floor numbers (946)
   are stale — re-measure with 3.10g. Lane's notes: `_v9` renames while holding BEGIN
   IMMEDIATE (a slow state dir lengthens the write lock); kept worktrees under the old names are
-  not renamed (the row's `worktree` JSON holds the path). **Until its review is clean, do not
+  not renamed (the row's `worktree` JSON holds the path). Review of c768dfd + 8ad16e6 + a4252ce
+  (1.15) by Qwen/ai2 job f3e11207-6cee-4208-9272-f9fa18dac5d0, 85 turns, 20 min, four probes,
+  eleven probe tests: NO finding. Reproduced: renames byte-identical with nested files; the
+  running row left with its stderr line; a gone directory skipped; a COLLISION logs and leaves
+  both directories (the old one an orphan prune ages by shape), the column still drops; a second
+  open changes nothing; a read-only `jobs/` logs EACCES and the column drops; 1.15 by the
+  migration route — a fresh file opens at 9 without naming the state dir, a v8 row needing a
+  rename refuses and ROLLS THE FILE BACK WHOLE to 8 (repeatable; a later redirected open
+  completes); the guard raises on state_dir/db_path/open_db/prune(1)/JobStore.new, merely returns
+  for prune(0) and for db_path with LOCALAGENTS_DB set; prune ages both shapes, keeps a
+  today-child, leaves `notes` and a UUID-named FILE, the CLI prints the same two; branch and
+  tree are the uuid; no `.name` read on a Job survives in src/. Observations folded by the
+  coordinator (999881d): O1 `_v9` called `state_dir()` per row (now once, lazily); O4 `_UUID_DIR`
+  admitted any 36 hex-or-dash characters (now a structural uuid). O5 cosmetic: server.py:813's
+  `if log_dir else None` unreachable. Chain closed. **Until its review is clean, do not
   restart the operator's monitor or MCP server: the first process on this code migrates the real
   database and renames the real job directories.** — OVERTAKEN, see the incident below.
   **Incident, 2026-10-30 22:44 (the second of the day, same family as 3.9B's):** the REAL database
