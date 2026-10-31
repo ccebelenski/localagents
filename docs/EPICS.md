@@ -1949,6 +1949,16 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   getting vllm running is a bit of production since it's almost fully utilizing all three DGX
   spark nodes." The flag waits for vLLM's next natural restart; our fix carries the lane
   meanwhile.
+  **Our side LANDED 9902f8c** (Qwen/ai1 job 4e055788-dac7-405b-abba-f3e0f84f16f4, 72 turns,
+  12 min; 805 tests): `prefill_tps` and `prefillRate` count a missing cache_creation as 0 when
+  input is a number; the prefill cell's title names the bound ("cache not reported by this
+  backend: the rate counts the whole input") or the numerator ("3,001 new tokens over 500 ms",
+  the duration cell's sub-second form — the brief's "0.5 s" would have read "0.0 s" for the
+  seed's 22-39 ms prefills); the brief's "51,519.7" misdivided (62750 / 1.218 = 51,518.9 — the
+  lane pinned the expression); the read-side seed oracle that named the old rule folded. Lane's
+  note: the ES5 gate is regex over text — a stray `}` that made app.js dead JS passed the suite →
+  the coordinator added a `node --check` parse gate over every static script
+  (tests/test_monitor_es5.py, proved to catch a planted brace; 808 tests).
 
 ### 3.11 Pre-close passes (operator 2026-10-31 00:15)
 

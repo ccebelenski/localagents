@@ -80,3 +80,20 @@ def test_the_gate_reads_through_string_literals(src, caught):
     # a backtick inside a double-quoted string is text, not a template string
     if caught == "let/const":
         assert "template string" not in hits, (src, code, hits)
+
+
+# 3.10i's lane shipped a stray `}` mid-step that made app.js dead JavaScript, and this gate — regex
+# over text — stayed green. A syntax check is the floor under every page story: `node --check`
+# parses each static script (node is on the workstation and in the lanes; the test is skipped,
+# never silently green, where it is not).
+import shutil
+import subprocess
+
+NODE = shutil.which("node") or "/home/linuxbrew/.linuxbrew/bin/node"
+
+
+@pytest.mark.skipif(not Path(NODE).exists(), reason="node is not installed here")
+@pytest.mark.parametrize("js", sorted(p.name for p in STATIC.glob("*.js")))
+def test_the_page_script_parses(js):
+    r = subprocess.run([NODE, "--check", str(STATIC / js)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
