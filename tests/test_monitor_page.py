@@ -308,7 +308,7 @@ def test_the_server_gone_badge_is_gone_and_a_lost_server_inks_the_pill():
 ELLIPSIS_OUTSIDE_CARDS = {
     "#meta .db",      # the header's database path (elided from the left; the title holds it)
     "td.cut",         # the jobs and requests tables' long cells (the title holds the text)
-    ".tile-value",    # the endpoint page's tiles (#detail, never the overview's #hosts)
+    # .tile-value (the endpoint page's tiles) held a permit until 3.10d cut the ellipsis there too
     ".tl-label a",    # the timeline's endpoint labels (section.fleet, after the cards)
     ".tl-job",        # the timeline's job bars
 }
@@ -956,3 +956,45 @@ def test_an_unknown_node_is_an_alert_like_a_down_node():
     assert re.search(r"downEndpoint\(snap, ep, alert\)", head), head
     assert "var said = nodeDown" not in head, head
     assert "downEndpoint(snap, ep, nodeDown)" not in head, head
+
+
+# --- story 3.10d: the endpoint tiles (no tier headings, no state tiles, no cut values) ------------
+
+
+def test_endpoint_page_draws_no_tier_numbered_headings():
+    """3.10d (operator 2026-10-30: "I think also drop the 'tier x' - nobody cares - go with
+    better groupings and labels. Don't be chatty."): no ``tier N: …`` heading string survives
+    in endpoint.js, and the groups the grid labels speak plain nouns — none above the first
+    group (the snapshot's own figures), then speeds, occupancy, hardware. The ``tier-N``
+    CLASSES stay on the tiles (the stylesheet's border colours read them; ENDPOINT_CLASSES
+    pins them); the taxonomy of data sources is the spec's, not the page's prose."""
+    js = _endpoint_js()
+    literals = {lit for lit in re.findall(r'"([^"\n]*)"', js)}
+    assert [lit for lit in sorted(literals) if "tier " in lit] == []
+    for noun in ("speeds", "occupancy", "hardware"):
+        assert noun in literals, noun
+
+
+def test_tilesFor_draws_no_endpoint_or_node_tile():
+    """3.10d A (operator: "Endpoint overview - 'endpoint': Up, 'node': Up. … Redundant."):
+    tilesFor pushes no endpoint-state tile and no node tile — the header says both, and now
+    carries the port-22 fallback clause the node tile's note used to hold. The served-model
+    and context-window tiles stay."""
+    body = _js_function(_endpoint_js(), "tilesFor")
+    assert 'key: "state"' not in body
+    assert 'key: "node"' not in body
+    assert 'label: "endpoint"' not in body and 'label: "node"' not in body
+    assert 'key: "model"' in body and 'key: "context"' in body  # the survivors
+
+
+def test_a_tile_value_is_never_cut():
+    """3.10d C (the 3.7u rule, same words as the cards: "I don't like the '...' convention
+    because it hides information"): ``.tile-value`` clips nothing — no text-overflow, no
+    overflow — and keeps the one line; the tile grows to its value (app.css:193's old rule
+    ellipsised a long served-model id "when the card could just be wider")."""
+    css = (STATIC / "app.css").read_text()
+    bodies = [body for sel, body in _css_rules(css) if sel.strip() == ".tile-value"]
+    assert bodies, "the .tile-value rule is gone entirely"
+    for body in bodies:
+        assert not re.search(r"overflow", body), body
+        assert "white-space: nowrap" in body, body

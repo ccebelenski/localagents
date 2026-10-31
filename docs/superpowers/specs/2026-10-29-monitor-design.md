@@ -196,6 +196,11 @@ link-out dependency on any endpoint's UI.
 | 2 | llama.cpp `--slots`, vLLM, Strata | slots busy / requests running and waiting / KV fill |
 | 3 | Strata today; V2 node access for others | GPU util, VRAM, temperature, power, PCIe, CPU, RAM, disk; per-request list; conversation cache |
 
+True now (3.10d, 2026-10-30): the tiers are the spec's grouping of data sources, not page
+headings — the page draws the tiles in that order under plain labels (speeds, occupancy,
+hardware) with no numbering; the endpoint/node state tiles are gone (the header says it, with
+the port-22 note); tile values are never cut, the tile grows (the 3.7u rule).
+
 The per-request table for non-Strata endpoints is built from the `requests` table (our jobs'
 traffic only).
 

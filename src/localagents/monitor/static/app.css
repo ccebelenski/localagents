@@ -183,14 +183,23 @@ td.cut { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .ep-detail-head .ep-error, .endpoint-detail > div > .ep-error { color: var(--ink); margin-top: 4px; overflow-wrap: anywhere; }
 .ep-dropped { font-size: 14.5px; margin-top: 4px; }
 .tier-group h3 { font-size: 13px; font-weight: 500; color: var(--muted); margin: 14px 0 6px; }
-.tiles { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
-.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+/* 3.10d (the 3.7u rule on this page): a tile sizes to its content — a flex-wrap row whose
+   tiles take their max-content width and grow to fill the line but never shrink (shrink 0
+   and no overflow clip together mean a long value — a full served-model id — widens the
+   tile instead of cutting the text; the old grid clipped it in its track). min-width keeps
+   the old grid's 170px floor, so sparkline tiles look as they did (the 160px spark plus
+   the tile's own chrome sat just above it). */
+.tiles { display: flex; flex-wrap: wrap; gap: 8px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  flex: 1 0 auto; min-width: 170px; }
 .tile.tier-0 { border-left: 3px solid var(--muted); }
 .tile.tier-1 { border-left: 3px solid var(--accent); }
 .tile.tier-2 { border-left: 3px solid var(--good); }
 .tile.tier-3 { border-left: 3px solid var(--warning); }
 .tile-label { font-size: 13px; color: var(--muted); }
-.tile-value { font-size: 17.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 3.10d: never cut (3.7u's words: the ellipsis "hides information") — one line, and the
+   tile grows to it; the title attribute still carries the whole text for a11y anyway */
+.tile-value { font-size: 17.5px; white-space: nowrap; }
 .tile .spark { display: block; width: 100%; height: 32px; margin-top: 4px; }
 .tile-note { font-size: 12px; }
 .ep-strip { margin-top: 14px; }
@@ -254,7 +263,7 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 
 @media (max-width: 760px) {
   .hosts { grid-template-columns: 1fr; }
-  .tiles { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .tile { min-width: 140px; } /* 3.10d: the flex tiles' narrow-screen floor (was the grid's) */
   .top { align-items: flex-start; }
 }
 

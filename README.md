@@ -479,7 +479,11 @@ decode speed, cache hit ratio); tier 2 when it reports occupancy (llama.cpp with
 vLLM, Strata: slots busy, requests running and waiting, KV-cache fill); tier 3 when it reports
 hardware (Strata today: GPU use, VRAM, temperature, power, PCIe traffic, CPU, RAM, disk; the
 PCIe and disk figures read `MB`, not a rate: Strata reports megabytes per sample and does not
-document the sample window, which each of those tiles' tooltip says). A
+document the sample window, which each of those tiles' tooltip says). (True now, 3.10d: the
+tiers order the tiles but the page draws no tier headings — the groups after the first carry a
+plain noun, speeds, occupancy, hardware; up/down and node state are not tiles, the header says
+them with the port-22 fallback note; and a value is never cut with an ellipsis — the tile grows
+to fit it.) A
 tile whose source reported nothing in the range is left out rather than drawn empty, and a
 figure the newest probe lacks (a down endpoint) shows the newest value in the range, marked as
 such. Then come the state strip, the jobs that ran on the endpoint in the range, its up, down

@@ -6,8 +6,10 @@
  *
  *   - a header: name, backend, host, base_url, state, last seen, the down sentence and the job
  *     that was running when it dropped, a link back to the overview;
- *   - the tier table (spec §5) as stat tiles, each a current figure and a sparkline over the
- *     range. A tile with no source is ABSENT: a tile drawn from a history series exists only
+ *   - stat tiles, each a current figure and a sparkline over the range (spec §5's tier table;
+ *     3.10d: the tiers stay as the tiles' ordering and the stylesheet's border colours, but
+ *     the page draws no tier-N heading — the groups after the first carry a plain noun).
+ *     A tile with no source is ABSENT: a tile drawn from a history series exists only
  *     when the history response carries that series (§5a: absent keys mean no source);
  *   - the state strip over the range (the history's `state` series);
  *   - the request table with its totals line (/api/endpoints/<name>/requests);
@@ -65,7 +67,8 @@
   // the tile's presence: the tile exists only when hist carries that key. `now(ep, hw, rates)`:
   // the current figure from the snapshot (null when the snapshot has none, then the series'
   // newest value stands in, marked as such). `show(v, ep, hw)`: the figure as text. Tiles with
-  // no series (state, node, model, context) exist when their snapshot value does.
+  // no series (model, context) exist when their snapshot value does (3.10d dropped the
+  // state and node tiles: the header already says both, port-22 fallback note included).
 
   function cacheHitNow(rates) {
     if (!rates || rates.cached_tps == null || rates.prompt_tps == null) return null;
@@ -154,25 +157,17 @@
     return null;
   }
 
-  // tilesFor(ep, hist, host) -> [{tier, key, label, value, series, note, hint}]: the tiles whose source
+  // tilesFor(ep, hist) -> [{tier, key, label, value, series, note, hint}]: the tiles whose source
   // is present, in tier order. `ep` is the snapshot's endpoint (or null before the first
-  // snapshot), `hist` the endpoint history (or null before it arrives), `host` the snapshot host
-  // holding `ep` (optional: the node state tile needs it). `series` is {t, y} for the sparkline,
-  // or null for a figure with no history series. `note` says where a figure came from when it is
-  // not the current snapshot's; `hint` (the tile's title) qualifies its unit, or is null.
-  function tilesFor(ep, hist, host) {
+  // snapshot), `hist` the endpoint history (or null before it arrives). `series` is {t, y} for
+  // the sparkline, or null for a figure with no history series. `note` says where a figure came
+  // from when it is not the current snapshot's; `hint` (the tile's title) qualifies its unit,
+  // or is null. 3.10d: no endpoint-state and no node tile — the header says both.
+  function tilesFor(ep, hist) {
     var out = [];
     var hw = ep ? ep.hardware : null;
     var rates = ep ? ep.rates : null;
-    // tier 0's figures with no history series: present when the snapshot has them
-    if (ep) {
-      out.push({ tier: 0, key: "state", label: "endpoint", value: ep.state === "live" ? "up" : ep.state, series: null,
-        note: ep.state === "live" ? null : ep.last_seen != null ? "last up " + fmt.date(ep.last_seen) : "never seen up" });
-    }
-    if (host && host.state) {
-      out.push({ tier: 0, key: "node", label: "node", value: host.state, series: null,
-        note: host.fallback ? "port 22: " + host.fallback : null });
-    }
+    // the snapshot's own figures with no history series: present when the snapshot has them
     if (ep && ep.model) out.push({ tier: 0, key: "model", label: "served model", value: ep.model, series: null, note: null });
     if (ep && ep.context != null) {
       out.push({ tier: 0, key: "context", label: "context window", value: fmt.int(ep.context) + " tokens", series: null, note: null });
@@ -236,8 +231,11 @@
     return svg;
   }
 
+  // the tier-N classes stay on the tiles for the stylesheet's border colours (the class test
+  // pins them); the HEADINGS are plain nouns since 3.10d — the tiers are the
+  // spec's data-source grouping, not page prose. The first group carries no heading at all.
   var TIER_CLASS = ["tier-0", "tier-1", "tier-2", "tier-3"];
-  var TIER_NAME = ["tier 0: every endpoint", "tier 1: speeds", "tier 2: occupancy", "tier 3: hardware"];
+  var GROUP_HEAD = [null, "speeds", "occupancy", "hardware"];
 
   function tileEl(tile, t0, span, range) {
     return h("div", { class: "tile " + TIER_CLASS[tile.tier], "data-tile": tile.key, title: tile.hint || null }, [
@@ -390,7 +388,8 @@
     }
     // the card the endpoint sits under: the endpoint's own `host` (a page that re-sorts needs
     // it beside the endpoint), the containing host object as the fallback; the object's node
-    // state goes in the parentheses when it is present
+    // state goes in the parentheses when it is present, and the port-22 fallback answer rides
+    // along when there is one (3.10d: the node tile is gone — this is its note, one muted clause)
     var hostName = ep.host != null ? ep.host : host ? host.name : null;
     // what the engine last served here, while the live pair (model/context) is null
     var lastServed = null;
@@ -404,7 +403,9 @@
         h("h2", { class: "ep-title", text: ep.name }),
         h("span", { class: "tag", text: ep.backend }),
         h("span", { class: "ep-state", text: ep.state }),
-        hostName != null ? h("span", { class: "muted", text: "host " + hostName + (host && host.state ? " (" + host.state + ")" : "") }) : null,
+        hostName != null ? h("span", { class: "muted", text: "host " + hostName + (host && (host.state || host.fallback)
+          ? " (" + [host.state, host.fallback ? "port 22: " + host.fallback : null].filter(Boolean).join(" · ") + ")"
+          : "") }) : null,
         h("span", { class: "ep-url", text: ep.base_url }),
       ]),
       h("div", { class: "ep-seen muted", text: seen + (ep.state === "live" && ep.jobs_running ? "; " + fmt.int(ep.jobs_running) + " job" + (ep.jobs_running === 1 ? "" : "s") + " running" : "") }),
@@ -463,12 +464,13 @@
       var span = rangeSeconds(range);
       var now = nowOf();
       var t0 = now - span;
-      var tiles = tilesFor(found.ep, page.hist, found.host);
+      var tiles = tilesFor(found.ep, page.hist);
       var groups = [];
       [0, 1, 2, 3].forEach(function (tier) {
         var mine = tiles.filter(function (tile) { return tile.tier === tier; });
         if (!mine.length) return;
-        groups.push(h("div", { class: "tier-group" }, [h("h3", { text: TIER_NAME[tier] }),
+        // 3.10d: no heading above the first group, a plain noun above the rest
+        groups.push(h("div", { class: "tier-group" }, [tier === 0 ? null : h("h3", { text: GROUP_HEAD[tier] }),
           h("div", { class: "tiles" }, mine.map(function (tile) { return tileEl(tile, t0, span, range); }))]));
       });
       var parts = [
