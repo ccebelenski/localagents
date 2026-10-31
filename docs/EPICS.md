@@ -1666,7 +1666,29 @@ Coordinator's answers from the code (2026-10-30):
   IMMEDIATE (a slow state dir lengthens the write lock); kept worktrees under the old names are
   not renamed (the row's `worktree` JSON holds the path). **Until its review is clean, do not
   restart the operator's monitor or MCP server: the first process on this code migrates the real
-  database and renames the real job directories.**
+  database and renames the real job directories.** — OVERTAKEN, see the incident below.
+  **Incident, 2026-10-30 22:44 (the second of the day, same family as 3.9B's):** the REAL database
+  was migrated to v9 and 78 real job directories renamed at 22:44:16 — eleven minutes before
+  3.10f-1 landed on main (c768dfd ~22:55) and 29 s after the DeepSeek lane's job ended (22:43:47).
+  The only code with `_v9` then was that lane's worktree; both running processes (the MCP server
+  21:29, the monitor 21:31) are older code and could not have done it. The lane's tool_calls show
+  nothing aimed at the real path (last call 22:42:49), so the route is most likely a test or probe
+  SUBPROCESS that lost the redirect in its environment — unidentified from the record. Operator:
+  "Known hazard - multiple worktrees, but one database." Effects: the migration did what it was
+  designed to do (the running job's directory and three orphans untouched; nothing lost); the two
+  running processes now fail against v9 — `run_agent` answers "table jobs has no column named
+  name" (two dispatches refused at 23:05) and the old-code monitor cannot read jobs — both need a
+  restart onto main, which reads v9. Lesson for a ruling: the state-dir redirect in conftests is a
+  convention a subprocess can drop; the guard belongs in the code — see 1.15.
+- ☐ **1.15 A worktree never opens the real state directory.** From the 22:44 incident and 3.9B:
+  `db.open_db()`/`state_dir()` with the DEFAULT path (no `LOCALAGENTS_DB`, no `XDG_STATE_HOME`)
+  refuse with a clear error when the running package's own checkout is under a `worktrees`
+  directory (`Path(__file__)` contains `/worktrees/`, the lanes' and `.claude/worktrees/`'s
+  shape) — a lane can only ever touch a redirected state dir, whatever its environment; the
+  operator's install (the main checkout) is unaffected. Plus: a filesystem migration step
+  (`_v9` and any later one) logs the state dir it is about to touch and refuses the default path
+  from a worktree by the same rule. Tests: the guard under a fake `__file__`; the real suite's
+  conftests still redirect. Small; Qwen; before any other lane runs. Review with the batch.
   Operator: "I don't think I'm wrong on this one - and it saves one DB column too and some logic.
   … my experience says this is exactly the kind of thing that matters later - data integrity and
   clarity." (And ruling (n) above.) SCHEDULED, and FIRST — before 3.10b/c, so the first column
