@@ -1892,7 +1892,22 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   predates the clock fix). So decode t/s is blank because output is 0 and prefill t/s is blank
   because `prefillRate` demands a numeric `cache_creation` (app.js); "new" = input because the
   cache fields are absent — honest about the API's silence, wrong about the engine. Coordinator's
-  live probe of the backend's stream shape below.
+  live probe of the backend (an 8-token streamed request to dgx1-a, 00:50): nine chunks —
+  `message_start` (usage: input_tokens 38, output_tokens 0; NO cache fields), content events,
+  then `message_delta` with `usage: {input_tokens: 38, output_tokens: 8}` as chunk 8 and
+  `message_stop` ALONE as chunk 9. Two causes, two answers: (1) output 0 is the F1 case the shim
+  fold (17b3278) fixed — the running server (85344a5) reads only the last chunk, finds no usage
+  in `message_stop`, keeps the placeholder; after the next `/mcp` reconnect vLLM rows carry their
+  output and decode t/s appears. (2) vLLM's Anthropic shape reports no prefix-cache fields at
+  all (its OpenAI shape has `prompt_tokens_details.cached_tokens`; Claude Code speaks Anthropic),
+  so cache_read/cache_creation are NULL for every vLLM row: "reused" blank is honest; "new" =
+  input is the API's whole truth; but `prefillRate` (app.js) and `derive.prefill_tps` demand a
+  numeric `cache_creation` and so compute nothing. Fix (a story after 3.10c lands — it wraps
+  `requestsTable`): a missing cache_creation counts as 0 when input is a number, in both the page
+  rule and `derive.prefill_tps`, so vLLM rows and jobs get prefill t/s = input / TTFT (an upper
+  bound on the processed tokens, since the engine's own prefix cache is invisible — the cell's
+  title says "cache not reported by this backend"); the endpoint-level cache-hit tile already
+  comes from vLLM's /metrics (registry.py:585), which is the only place vLLM tells us.
 
 ### 3.11 Pre-close passes (operator 2026-10-31 00:15)
 
