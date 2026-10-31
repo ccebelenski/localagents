@@ -142,3 +142,20 @@ sub-block swapped in place, the jobs table rebuilt), the three paths that detach
 pushes → orphan 0.0 MB, dom 0.2 MB, js 2.4 MB throughout; resident-unique 21 → 55 MB (Firefox's
 own warm-up, flattening). The operator's tab held 278 MB of orphan nodes with LastPass, uBlock
 Origin and Download Manager (S3) content scripts in the same process.
+
+## jobsrows.js and tiles.js: the 3.10a / 3.10d witnesses (from the dense-Qwen review, 2026-10-30)
+
+The review of 39936f1 and 9c41b21 found every regex pin for those stories satisfiable by a wrong
+implementation and no committed smoke reading the Recent-jobs cells or the endpoint page's tiles;
+its two hand-renders are kept here as the witnesses. `jobsrows.js` (overview, empty hash) renders a
+snapshot copy whose jobs cover running/queued/done with a dead server (lost, lost, done), a started
+2 days and 2 h back (date vs clock form, compared cell-for-cell with the request table's time cell
+at the same instant), a null and a 1234.5 prefill; `tiles.js` (`#/endpoint/ai1`, run at 1400×900
+and at 760×900) reads every tile label, heading and value overflow before and after a 200-character
+served model with `host.fallback: "refused"`. Both store into `window.__d1`; read it in AFTER_JSON.
+A 200-character model widens its tile past the viewport (the grow-never-cut rule; realistic ids
+do not).
+```bash
+node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/j.png '' "js:$(cat tools/smoke/jobsrows.js)"
+node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/t.png '#/endpoint/ai1' "js:$(cat tools/smoke/tiles.js)"
+```

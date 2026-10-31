@@ -1684,6 +1684,18 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   two columns "prefill tok/s" and "decode tok/s", the first from a new `derive.prefill_tps`
   (read.py adds `prefill_tps` to the snapshot row and the job detail; spec §5a). The compaction
   badge stays (it carries what the pill cannot).
+- **Review of 3.10a + 3.10d** (dense Qwen3.8-27B on llamacpp, job 20261030-221551-e4442830, 96
+  turns, 22 min, four probes): NO correctness or contract defect — `prefill_tps` 509.09 = the hand
+  ratio with all five skip rules; lost/lost/done/running pills right; the started cell equals the
+  request table's time cell at the same instant; 19 tile labels, headings speeds/occupancy/
+  hardware, port-22 clause in the header, no overflow at 1400 and 760. Possible: a value that
+  rounds to 0.0 is treated as present (unreachable, same as gen_tps); a 200-character served
+  model widens its tile to 3,175 px and the page scrolls sideways — the grow-never-cut rule the
+  operator chose; realistic ids do not reach it (operator may cap). Tests: all five new pins pass
+  under a plausible wrong implementation and no committed smoke read those cells/tiles — the
+  review's P2/P3 hand-renders are committed as `tools/smoke/jobsrows.js` and `tiles.js` (the
+  fold-F3 pattern). Noticed: cdp.mjs's `tiles`/`tileLabels` read the hidden overview cards (a
+  footgun, twice now); `fmt.speed` vs `fmt.compact` easy to conflate. Chain closed.
 - ☐ **3.10b One jobs table, one requests table.** `jobsTable(rows, opts)` becomes the renderer
   for every jobs list: the overview (as now), the endpoint page (`opts.filter` = the endpoint;
   the title "Jobs" with the filter and range stated once: "Jobs · ai1 · last 24h"), and later
