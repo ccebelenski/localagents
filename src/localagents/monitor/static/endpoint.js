@@ -369,17 +369,34 @@
   // empty table with an explaining sentence. Before the history arrives there is no event to
   // show either, so it stays absent until one lands. With events, the heading says what they
   // are, and the draw (drawTables) tolerates the null.
-  function eventsSection(hist, range, name, now) {
+  // 3.12b fold (the review): this section PERSISTS like the other two — a new element every
+  // call made drawTables' mount see a difference on every push while an event was in range, so
+  // it replaced all three sections and the persistent tables lost their sideways scroll (60 -> 0
+  // measured live). The body (a small table, no filters) is rebuilt only when the events
+  // themselves change; the heading text is set every call; `when(ev.t, now)`'s day-stamp
+  // waits for the next real change, as the started cell does under level 1.
+  function eventsSection(cache, hist, range, name, now) {
     var evs = hist && Array.isArray(hist.events) && hist.events.length ? hist.events.slice().reverse() : null; // newest first
     if (!evs) return null;
-    var body = h("div", { class: "table-wrap" }, [table(["time", "kind", "detail"], evs.map(function (ev) {
-      return h("tr", { class: "ev-" + (ev.kind || "") }, [
-        h("td", { text: when(ev.t, now) }),
-        h("td", { text: ev.kind || "" }),
-        h("td", { class: "wrap", text: ev.detail || "" }),
-      ]);
-    }), {})]);
-    return h("section", { class: "events" }, [h("h2", { text: "Restarts and outages · " + name + " · last " + range }), body]);
+    if (!cache.section) {
+      cache.h2 = h("h2");
+      cache.bodySlot = h("div");
+      cache.section = h("section", { class: "events" }, [cache.h2, cache.bodySlot]);
+      cache.sig = null;
+    }
+    cache.h2.textContent = "Restarts and outages · " + name + " · last " + range;
+    var sig = JSON.stringify(evs);
+    if (sig !== cache.sig) {
+      cache.sig = sig;
+      M.mount(cache.bodySlot, [h("div", { class: "table-wrap" }, [table(["time", "kind", "detail"], evs.map(function (ev) {
+        return h("tr", { class: "ev-" + (ev.kind || "") }, [
+          h("td", { text: when(ev.t, now) }),
+          h("td", { text: ev.kind || "" }),
+          h("td", { class: "wrap", text: ev.detail || "" }),
+        ]);
+      }), {})])]);
+    }
+    return cache.section;
   }
 
   // the snapshot's endpoint called `name`, with its host; nulls when there is no snapshot yet or
@@ -466,7 +483,7 @@
       off: null, // 3.9D D4: the snapshot hook's remover, called in teardown
       // 3.12b (spec §5): the two table sections persist across draws; these cache objects hold
       // their elements (built on the first calls of jobsSection/requestsSection below)
-      secJobs: {}, secReqs: {},
+      secJobs: {}, secReqs: {}, secEvents: {}, // (secEvents: the 3.12b fold)
     };
     var root = h("div", { class: "endpoint-detail" });
     var headBox = h("div");
@@ -527,7 +544,7 @@
       M.mount(tablesBox, [
         // the short lists first: the request table can run to 1000 rows
         jobsSection(page.secJobs, page.hist, range, name, now),
-        eventsSection(page.hist, range, name, now),
+        eventsSection(page.secEvents, page.hist, range, name, now),
         requestsSection(page.secReqs, page.reqs, range, name, now),
       ].filter(Boolean));
     }

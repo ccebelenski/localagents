@@ -126,3 +126,32 @@ def test_f2_a_decimal_hour_or_minute_reads_as_a_duration(tmp_path):
     assert got["gt1p5h"] == 1, got
     assert got["still10m"] == 2, got
     assert got["noSpaceInSeconds"] == 0, got
+
+
+# --- F3: the shapes the 3.12b review found unpinned (its P4 over the fold) --------------------
+
+
+def test_f3_the_unchanged_readings_stay_pinned(tmp_path):
+    """A negative lower bound, a spaced comparator, a bare sign, a bare hyphen and a NaN range all
+    read as before the fold: the first two as numbers, the rest as the typed substring."""
+    got = _page_js(tmp_path, _COUNT + """
+  var rows = [-500, 0, 5, 300, 1300].map(function (v) { return { v: v }; });
+  var cols = [{ name: "turns", filter: "number", unit: "count", title: null,
+    cell: function (r) { return M.h("td", { text: M.fmt.int(r.v) }); },
+    sortKey: function (r) { return r.v; } }];
+  var el = M.dataTable("t312dfold-count", cols, rows, {});
+  return {
+    negRange: typeIn(el, "-1,000-1,000"), // -500, 0, 5, 300
+    spacedLt: typeIn(el, "< 10"), // -500, 0, 5
+    bareLt: typeIn(el, "<"), // the substring: no cell holds "<"
+    bareHyphen: typeIn(el, "-"), // the substring: "-500"
+    nanRange: typeIn(el, "a-b"), // the substring: nothing
+    junk: typeIn(el, ">10x"), // the substring: nothing
+  };
+""")
+    assert got["negRange"] == 4, got
+    assert got["spacedLt"] == 3, got
+    assert got["bareLt"] == 0, got
+    assert got["bareHyphen"] == 1, got
+    assert got["nanRange"] == 0, got
+    assert got["junk"] == 0, got

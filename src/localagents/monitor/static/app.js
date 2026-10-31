@@ -825,7 +825,10 @@
     // accepts that a running job's row changes every push (its elapsed, turns and last activity
     // arrive in the row); the started cell's clock-to-date day switch waits for the next real
     // change in the table, hashed-in-hour notwithstanding.
-    var hash = JSON.stringify(rows) + "\n" + columns.map(function (c) { return c.name; }).join(",");
+    // 3.12b fold (the review): the caller's note and empty text are drawn from opts, so they are
+    // part of what a skip would leave stale (the endpoint page's note names the range)
+    var hash = JSON.stringify(rows) + "\n" + columns.map(function (c) { return c.name; }).join(",")
+      + "\n" + (opts.note || "") + "\n" + (opts.empty || "");
     var prev = TABLE_DOM[id];
     if (prev && prev.container.isConnected && prev.hash === hash) {
       renders.tableSkipped++;
