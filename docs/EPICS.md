@@ -2236,6 +2236,23 @@ the plan the operator agreed to.
   the state string `YYYY-MM-DD` or `YYYY-MM-DD HH-HH`. The requests table's time column takes the
   same control. Builds after 3.12b (the panel lives in the filter row). Waits for "go".
 
+The operator's first read of the live 3.12a page (2026-10-31, after the fold): "Reviewed - two initial
+findings. First is no popout for the time-based columns - started, time (under requests table).
+Second is the filter on elapsed column - not intuitive for me - the columns display format 00m00s but
+filter is text search, so I can't do (for example) <10m for a filter." Coordinator's reading: the
+first is 3.12c, designed and unbuilt (it builds after 3.12b), so the typed time box is what the page
+still shows; the second is a new finding of the F2 kind — the box must read what the cell prints:
+elapsed is a `number` column keyed in seconds (app.js:1192, UNIT "seconds" app.js:628, the unit named
+only in the box's hover title app.js:1045), so `<10m` reads `parseFloat("10m")` = 10 and matches jobs
+under ten SECONDS (app.js:872-874), while the cell prints `fmt.dur` ("4m12s", "2h03m", app.js:81-89).
+- ☐ **3.12d The number box reads the cell's own unit.** Design proposed in chat, awaiting the
+  operator's reading and "go" (ruling (p)). A bound or range end on a `number` column is read through
+  the column's unit: seconds (elapsed) accept the duration grammar the cell prints (`[Nd][Nh][Nm][Ns]`,
+  any subset: `10m`, `1h30m`, `90s`, `2h`); ms (requests duration, cells "8 ms" / "1.2 s") accept
+  `800ms`, `1.2s`, `2s`, `1m`; `%` (context) accepts a trailing `%`; a bare number keeps today's
+  meaning (the sort key's unit). The substring reading is unchanged. The box title names the grammar
+  as the cell prints it.
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
