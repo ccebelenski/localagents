@@ -136,18 +136,28 @@
     const idx = colIdx(col), row = bodyRows()[0];
     return row && row.cells[idx] ? row.cells[idx].getAttribute(attr) : null;
   };
+  // F4 (3.12a fold): the id cell is a td holding the jobLink `a`; the full uuid is that
+  // CHILD's title, not the td's (the old read was null in every d1)
+  const childTitle = (col, row) => {
+    const idx = colIdx(col), cell = row ? row.cells[idx] : null;
+    const a = cell ? cell.querySelector("a") : null;
+    return a ? a.getAttribute("title") : null;
+  };
   const startedDate = (cellAttr("started", "title") || "").split(",")[0];
   typeIn(filterInput("started"), startedDate);
   const fStarted = { date: startedDate, matched: matched(), rows: bodyRows().length, pager: pagerText() };
   typeIn(filterInput("started"), "");
   const fullId = copy2.jobs[0].id;
   typeIn(filterInput("job"), fullId);
+  const jobRow = bodyRows()[0];
   const fJob = { id: fullId, idLength: fullId.length, matched: matched(), rows: bodyRows().length,
     pager: pagerText(),
-    text: bodyRows()[0] ? bodyRows()[0].cells[colIdx("job")].textContent.trim() : null,
-    title: cellAttr("job", "title") };
+    text: jobRow ? jobRow.cells[colIdx("job")].textContent.trim() : null,
+    title: childTitle("job", jobRow),
+    tdTitle: cellAttr("job", "title") }; // the old read: null, the witness's whole defect
+  fJob.ok = fJob.title === fullId; // F4: the witness must BE the full id, never null
   typeIn(filterInput("job"), "");
-  const f = { started: fStarted, jobFullId: fJob };
+  const f = { started: fStarted, jobFullId: fJob, ok: fJob.ok };
 
   // (g) F2 (fold of the page-batch review 2026-10-30): a missing value sorts LAST in both
   //     directions. prefill tok/s (numeric; every fourth row NULL) descending and last
@@ -255,5 +265,8 @@
   } else e.epTable = null;
 
   window.__d1 = { now: NOW, a, b1, b2, c0, c1, c2, c2b, c3, d0, d1, d2, f, g, e };
+  // F4: the witness is asserted. d1 lands before the throw, so a failed run still hands back
+  // the JSON (dom.js prints SCRIPT_THREW; cdp.mjs's d1 carries f.ok false).
+  if (!f.ok) throw new Error("f.jobFullId.title " + JSON.stringify(f.jobFullId.title) + " is not the full id");
   return "ok";
 })();

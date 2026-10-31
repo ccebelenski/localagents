@@ -618,7 +618,10 @@ def test_requests_tables_share_one_renderer():
     # each page calls it, with the job column dropped on the job page; 3.7-fold-4 adds each
     # page's clock as `now` for the day-stamped time column (the snapshot's now via nowOf on
     # the endpoint page, the detail clock via nowClock on the job page)
-    assert "M.requestsTable(reqs.requests, { empty: \"no requests in this range\", now: now })" in _endpoint_js()
+    # 3.12a-fold F3: the id carries the endpoint name, so a filter typed on one endpoint's
+    # page is not in force on another's
+    assert 'M.requestsTable(reqs.requests, { id: "requests-endpoint-" + name,' in _endpoint_js()
+    assert 'empty: "no requests in this range", now: now })' in _endpoint_js()
     assert "M.requestsTable(reqs, { job: false, now: nowClock() })" in (STATIC / "job.js").read_text()
     # the endpoint page's old column list and local numeric map are gone; the generic table()
     # stays for its events section (3.10b: the jobs table moved to app.js's shared renderer,

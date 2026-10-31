@@ -68,12 +68,13 @@ def test_the_renderers_draw_through_the_helper_with_stable_ids():
     opts.job === false; the endpoint page's opts.job is undefined — the brief's
     `opts.job ? "job" : "endpoint"` reads inverted against the code and is corrected)."""
     js = _app_js()
-    # the overview's table is "jobs"; a caller may pass its own id (the endpoint page: "jobs-endpoint"),
-    # so a filter typed on one page never filters the other (coordinator fold of the 3.10c landing)
+    # the overview's table is "jobs"; a caller may pass its own id (the endpoint page:
+    # "jobs-endpoint-" + name, 3.12a-fold F3), so a filter typed on one page never filters the
+    # other (coordinator fold of the 3.10c landing; the requests table gained the same opt in F3)
     assert 'dataTable(opts.id || "jobs"' in _js_function(js, "jobsTable")
-    assert 'id: "jobs-endpoint"' in (STATIC / "endpoint.js").read_text()
+    assert 'id: "jobs-endpoint-" + name' in (STATIC / "endpoint.js").read_text()
     rbody = _js_function(js, "requestsTable")
-    assert 'dataTable("requests-"' in rbody
+    assert 'dataTable(opts.id || "requests-"' in rbody
     assert 'opts.job === false ? "job" : "endpoint"' in rbody
 
 

@@ -303,7 +303,10 @@
     if (!reqs) {
       body = h("div", { class: "empty", text: "loading" });
     } else {
-      body = M.requestsTable(reqs.requests, { empty: "no requests in this range", now: now });
+      // 3.12a fold F3: the view is per endpoint — the id carries the page's name, so a filter
+      // typed on one endpoint's requests table is not in force on the next endpoint's page
+      body = M.requestsTable(reqs.requests, { id: "requests-endpoint-" + name,
+        empty: "no requests in this range", now: now });
     }
     var totalsLine = null;
     if (reqs && reqs.totals) {
@@ -330,7 +333,8 @@
   // No slice/reverse: the server's order is the log's contract (3.7g).
   function jobsSection(hist, range, name, now) {
     var body = hist && Array.isArray(hist.jobs)
-      ? M.jobsTable(hist.jobs, { id: "jobs-endpoint", omit: ["endpoint"], now: now,
+      // 3.12a fold F3: the same table on every endpoint's page — the id carries the name
+      ? M.jobsTable(hist.jobs, { id: "jobs-endpoint-" + name, omit: ["endpoint"], now: now,
         empty: "no jobs ran on it in this range",
         note: "jobs that ran on " + name + " in the last " + range })
       : h("div", { class: "empty", text: "loading" });

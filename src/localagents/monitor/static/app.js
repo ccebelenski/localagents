@@ -778,6 +778,10 @@
   // the container the helper owns, and puts the caret back in the box that took it.
   var TABLE_PAGE_SIZE = 50;
   var TABLE_STATE = {}; // table id -> {sort: null | {col, dir}, filters: {col: text}, page: n}
+  // 3.12a fold F1: the pick's value for a row whose sort key is "" — "any" already owns ""
+  // (and setFilter deletes on it), so the blank key needs a value of its own (the empty-set
+  // sign, like the page's "⌀ cancelled" pill; a non-ASCII glyph in a value is no new thing)
+  var PICK_BLANK = "∅";
 
   function dataTable(id, columns, rows, opts) {
     opts = opts || {};
@@ -836,15 +840,26 @@
         var f = st.filters[col.name];
         if (!f) return;
         f = String(f);
+        // 3.12a fold F2: the substring reading at the bottom matches the box AS TYPED — the
+        // cells print fmt.int's thousands separators ("1,300"), so "1,3" is a real text needle
+        var typed = f;
         if (col.filter === "pick") {
-          // 3.12a §4: one value, matched exactly on the sort key — the box's text IS the value
-          idx = idx.filter(function (i) { return String(keyOf(col, i)) === f; });
+          // 3.12a §4: one value, matched exactly on the sort key — the box's text IS the value.
+          // 3.12a fold F1: the blank key ("") is pickable under PICK_BLANK, because "any"
+          // already owns "" (and setFilter deletes on it)
+          idx = idx.filter(function (i) {
+            var k = String(keyOf(col, i));
+            return f === PICK_BLANK ? k === "" : k === f;
+          });
           return;
         }
         if (col.filter === "number") {
           // 3.12a §5, in order: `x-y` an INCLUSIVE range on the sort key (the operator's
           // "absolute and inclusive endpoints"; x > y matches nothing; a row with no finite
           // figure never matches); then 3.10c's strict `>n` / `<n`; else the substring below.
+          // 3.12a fold F2: the range and comparator readings strip the separators the cells
+          // print; an unreadable number still falls through to the typed substring below
+          f = f.replace(/,/g, "");
           var numRange = /^\s*(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)\s*$/.exec(f);
           if (numRange) {
             var lo = parseFloat(numRange[1]), hi = parseFloat(numRange[2]);
@@ -906,7 +921,7 @@
             }
           }
         }
-        var needle = f.toLowerCase();
+        var needle = typed.toLowerCase();
         idx = idx.filter(function (i) { return cellText(col, i).indexOf(needle) >= 0; });
       });
       return idx;
@@ -923,13 +938,18 @@
         if (!Object.prototype.hasOwnProperty.call(seen, v)) { seen[v] = 1; out.push(v); }
       });
       out.sort(function (a, b) {
+        // 3.12a fold F1: the blank key sorts first after "any" (it is the "none" value)
+        if (a === "" || b === "") return a === b ? 0 : (a === "" ? -1 : 1);
         var re = /^-?\d+(?:\.\d+)?$/;
         if (re.test(a) && re.test(b)) return parseFloat(a) - parseFloat(b);
         return a.localeCompare(b);
       });
+      // 3.12a fold F1: the state holds the UI value, the rows the data key — a held blank is ""
       var held = st.filters[col.name];
-      if (held != null && out.indexOf(String(held)) < 0) out.push(String(held));
-      return out;
+      var heldKey = held === PICK_BLANK ? "" : held;
+      if (held != null && out.indexOf(String(heldKey)) < 0) out.push(String(heldKey));
+      // the option values are the UI values: "" (the blank key) reads as PICK_BLANK
+      return out.map(function (v) { return v === "" ? PICK_BLANK : v; });
     }
 
     // 3.12a §7: one write path for both controls — a kind's EMPTY value deletes its key (blank
@@ -1000,13 +1020,17 @@
           // search (the operator: "the bounded choices aren't a big list").
           var sel = h("select", { "data-filter": col.name, title: col.name });
           sel.appendChild(h("option", { value: "", text: "any" }));
-          var counts = Object.create(null); // data values as keys: no __proto__ trap
+          var counts = Object.create(null); // option values as keys: no __proto__ trap
           filterIdx(col).forEach(function (i) {
             var cv = String(keyOf(col, i));
+            // 3.12a fold F1: the count is keyed by the OPTION value, so the blank key ("")
+            // counts under PICK_BLANK and its option's figure is right
+            cv = cv === "" ? PICK_BLANK : cv;
             counts[cv] = (counts[cv] || 0) + 1;
           });
           pickValues(col).forEach(function (v) {
-            sel.appendChild(h("option", { value: v, text: v + " (" + (counts[v] || 0) + ")" }));
+            sel.appendChild(h("option", { value: v, text: (v === PICK_BLANK ? "(blank)" : v)
+              + " (" + (counts[v] || 0) + ")" }));
           });
           sel.value = st.filters[col.name] || "";
           sel.addEventListener("change", function () { // "any" (empty) deletes the key
@@ -2121,7 +2145,10 @@
         },
       };
     });
-    return dataTable("requests-" + (opts.job === false ? "job" : "endpoint"), specs, rows, {
+    // 3.12a fold F3: a caller may pass its own id (the endpoint page keys it by the endpoint
+    // name), so a filter typed on one endpoint's page never filters another's; the job page
+    // passes no id and keeps "requests-job" (one table there)
+    return dataTable(opts.id || "requests-" + (opts.job === false ? "job" : "endpoint"), specs, rows, {
       empty: opts.empty || "no requests",
       class: "requests-table",
       now: opts.now, // 3.12a §6: the time box's HH:MM literals need the day
@@ -2152,6 +2179,7 @@
     jobLink: jobLink, // 3.10f-2: the short id as a link, full id in the title
     dataTable: dataTable, // 3.10c: the one table helper (page, sort, filter)
     TABLE_STATE: TABLE_STATE, // 3.10c: the per-table view, keyed by id — exported for the smoke
+    PICK_BLANK: PICK_BLANK, // 3.12a fold F1: the pick's blank value — exported for the tests
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
