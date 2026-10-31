@@ -1779,6 +1779,15 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   floor (`max-width` on `.host`, the grid packing left), so a lone column leaves space instead of
   spreading fixed tiles. Operator decides the first (it changes the 3.7u trade "fewer cards, more
   complete information": the two job lines would show complete on hover/scroll, not at rest).
+  **(2) LANDED bc7b46e** (Qwen/ai2 job 0e0de45b-899f-4c86-b9d2-92469a796bdd, 46 turns, 11 min;
+  784 tests): `.host { max-width: calc(var(--card-floor) * 1.5) }`, released under the narrow
+  query; the 1fr track and the 3.7u pin stand (a clamped grid item packs left on its own).
+  Smoke: 2200 → 2 columns at 1078; 1712 → 1 at 1419 (the cap); 1400 → 1353; 1000 → 953; 760 →
+  the window; 1940/1990 → 2 (the cap never steals the second); `floorIsText` at every step.
+  Lane's note for (1): on the SEEDED world the floor-bearer is the down endpoint's `.ep-error`
+  line (898 → 946), the job lines second (786) — the "~900 → ~600 if the job lines leave the
+  floor" estimate is live-page-specific; headless Chromium's 15-px scrollbar shifts exact-width
+  maths. (1) still awaits the operator.
 - ☐ **3.10h "prompt = 1": the request table's prompt column, and the shim's first-byte clock.**
   Operator (2026-10-30 23:00, a job page's request table, screenshot): "Weird - prompt = 1? I hope
   that's due to transient state?" Not transient. Two things: (1) the column shows the API's
