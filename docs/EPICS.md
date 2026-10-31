@@ -2157,6 +2157,14 @@ with its design when the operator settles it: the page is already pushed (EventS
 each push (`byId("jobs-body").replaceChildren(jobsTable(…))` app.js:1516; endpoint.js:493; the
 requests table on the job page), and `.table-wrap` (app.css:159, `overflow-x: auto`) is a new
 scroll container every time.
+Operator, adding to the table-refresh design: "I would add a bit more to the table refresh - a
+table that hasn't changed content needs no refresh - can we cache a quick hash over the content and
+not do a refresh if the hash doesn't change? No cached hash value forces the full refresh. And then
+we do your patch in place idea on top. This gives us two levels of content control." Facts at the
+note: the page already skips a whole render when the snapshot without `now` is unchanged (`snapSig`,
+app.js:1429); a table is still rebuilt when anything else on the page changed. `elapsed_s` arrives in
+each row (a running job's row changes every push, so the hash sees it); the started cell reads `now`
+only to switch from clock to date at a day old (app.js:650).
 
 ## Epic 4: operations (V2, not scheduled)
 
