@@ -2109,7 +2109,31 @@ second draft builds as 3.12a; dates typed first, the pop-out the fallback; the s
   the end of its minute"; the lane built the second sentence, so `<11:30` and `>11:30` shared
   the 11:30 minute and `<2026-10-30`/`>2026-10-30` a whole day. Now strict over the literal's
   whole span (`>a` after its end, `<a` before its start; the minute itself in neither — a
-  partition pinned: 30 + 89 + 1 = 120); the spec corrected with a True-now sentence.) The spec's
+  partition pinned: 30 + 89 + 1 = 120); the spec corrected with a True-now sentence.
+  REVIEW (DeepSeek/dgx1-a job c9d50338-674e-4f72-84d6-857290d846e6, 121 turns, 38 min; four
+  construct-it probes under node+fakedom and over the live seeded page by CDP; 17/17 old filter
+  cases identical to 7a5662e; the CSS measured: the select does not widen the row). ONE DEFECT,
+  latent, verbatim: "With a job whose `endpoint` is null (sort key ""), the endpoint pick draws a
+  second, empty-valued option labelled verbatim " (1)" beside any; choosing it deletes every
+  filter instead of matching those rows, so the operator can never pick the empty value —
+  app.js:1001-1011 puts pickValues' "" in the value list, and :939 deletes the key for "". It is
+  latent: the schema allows NULL endpoint_id/model_id and read.py maps it, but no shipped writer
+  produces one … Same `|| ""` fallback on model and requests path." POSSIBLES, verbatim: (1) "A
+  bare ISO date typed alone (2026-11-01) matches 0 rows, not the 25-hour day — §6 has no
+  lone-literal reading (a lone literal is reading 3/substring) … Needs a ruling: if a typed date
+  should show its day, that test is the one passing on the wrong implementation." (2) "A real
+  push drops keyboard focus (activeElement → BODY) — pre-existing at 7a5662e … but the new native
+  select suffers it more (open dropdown destroyed every refresh_s)." (3) duration reads ms while
+  its cells print seconds — §5 covers it. (4) "The cells' thousands separators are not in the
+  grammar (>1,300 → >1 → all rows; 1,000-20,000 → substring → 0) — spec-silent." (5) a reversed
+  time window (23:00-01:00) matches nothing — §6 silent. (6) the repeated 01:30 on the DST day
+  resolves to the first occurrence. NOTICED: "TABLE_STATE ids are shared across endpoint pages (a
+  filter follows you from ai1 to dgx1-a)"; "empty rows remove the clear link" (an empty list
+  draws the `empty` sentence, no pager); `draw()`'s `caret` never assigned (the lane said it too);
+  `sortRows` bypasses the new key cache; the smoke's `f.jobFullId.title` is null (it reads the
+  td; the id's title is on the child a). Brief corrections: the seven WIP subjects are not in the
+  squash message (the EPICS list is); the brief's bare-date expectation conflicted with §6.
+  Dispositions: the operator's (below).) The spec's
   §3–§7 and §10 verbatim: the
   `FILTER_KIND` maps, the native select with faceted counts, the number box's three readings
   (`x-y` inclusive, `<n`/`>n` strict, substring), the time box's three readings over `HH:MM` /
