@@ -1869,6 +1869,14 @@ attach read it live under WAL without touching the writers (that is how these nu
 read); a `localagents export` to CSV/Parquet is the next shape if a tool wants files. The
 per-job aggregates (`jobs` + `tool_calls` + `requests`) are the analytics rows; P2 keeps them.
 
+- **Idea, not a story (operator 2026-10-30 23:50): jobs that survive an MCP server restart.**
+  "Would be an interesting feature if it could be architected to survive that - that would
+  require multi-process work I think - not for now, maybe never as it's a geeky feature." Shape
+  if ever: the data already survives (rows, heartbeats, transcripts, the v8 copy at completion);
+  what dies with the server process is the shim port the job's Claude Code session talks to and
+  the SDK session itself. Surviving means a detached runner — a small daemon owning the jobs and
+  the shim, the MCP server a thin client over the database and a local socket; a reconnect then
+  re-attaches instead of orphaning. Not scheduled.
 - ☐ **4.1 Guided SSH setup script.** Walks the operator through key placement per host; no
   secrets stored by localagents; verifies with one `ssh host true`.
 - ☐ **4.2 Start/stop/restart recipes** per host in the `monitor:` section; actions from the
