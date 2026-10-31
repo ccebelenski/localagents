@@ -2256,8 +2256,7 @@ the plan the operator agreed to.
   witness); (i): `tableSkipped` +1 across an identical push (the copy changes `window_s` so
   render's own snapSig skip does not swallow it). NOTICED by the lane: the job page's requests
   table never shows requests recorded after the page opened (pre-existing); fakedom has no `#id`
-  or `:first-child` selectors. The DeepSeek review and the operator's after reading on Firefox
-  are open.) Design APPROVED:
+  or `:first-child` selectors.) Design APPROVED:
   docs/superpowers/specs/2026-10-31-table-refresh-design.md. Level 1: a table whose rows hash the
   same as its last draw is not touched (no stored hash, or a container no longer in the document,
   forces a full build). Level 2: on a change, or an operator action, the wrapper, header and filter
@@ -2271,6 +2270,36 @@ the plan the operator agreed to.
   right now." The after reading is the same page and tab once 3.12b lands; if the flash outlives
   the wrapper's identity, the spec's risk row names the next suspect (the document scrollbar on a
   height change).
+- ☑ **Review of 3.12b (+ the 3.12d fold as P4)** (DeepSeek/dgx1-a job 89548938, 128 turns, 47 min,
+  four probes, read-only; probes under t/ not landed). P1 the reconciliation over a 51-job table:
+  a new job on top with the bottom row dropping off the page keeps 49 of 49 survivors as the same
+  elements one position down, no duplicates, the dropped tr detached; a changed-and-moved row is
+  a new tr with the old detached; a sort then a push keeps the order and moves kept trs; page 2
+  then a 10-row push clamps to page 1 with no leftovers; the positional requests table rebuilds
+  6/6 on an insert at the top, 1/6 on an append, 1/5 on a changed middle (the spec's accepted
+  worst case); one row object in two tables shares no td. P2 the focus deferral: a focused select
+  across two pushes keeps its options and `__stale`, blur reads the LAST push's counts; a change
+  while focused applies over the new rows; the held "(0)" survivor; a typed bound through three
+  pushes keeps the input, the caret owner and the state; the empty list's clear link; `TABLE_STATE`
+  keys exactly {filters, page, sort}; one `TABLE_DOM` entry per id — all CLEAN. P3 the callers: the
+  endpoint page with events 0/1/0 keeps the sections and wraps (children 2, 3, 2); job.js has
+  exactly one `draw()` call — the record holds; the started cell across a day boundary stays a
+  clock under level 1 until a real change (the accepted exception, "indefinitely on an idle
+  overview"); the smoke h and i blocks as landed; five live pushes with a running job: one
+  `.table-wrap` ever. **DEFECT:** `eventsSection` returned a NEW `<section>` every call, so
+  `mount(tablesBox, …)` replaced the children on every draw while an event was in range,
+  re-inserting the persistent sections — live at 760 px a push reset the jobs wrapper's
+  `scrollLeft` 60 → 0 with events present and kept 60 without. **DEFECT (minor):** level 1 hashed
+  rows and column names only, so the endpoint note kept "last 1h" after a 1h → 6h switch over a
+  static row set. P4 the 3.12d fold: every reading as expected, every unchanged shape identical old
+  to new; NOTICED no test pinned the negative lower bound, "a-b", "< 10", a bare "<" or "-".
+  NOTICED: the overview renders the table twice per push (the history re-render) so `tableSkipped`
+  grows by one per push there; `TABLE_DOM`/`TABLE_STATE` keep one detached subtree per page id
+  after teardown (bounded). **Fold LANDED 3aa52c4** (coordinator, whole diff read, both tests red
+  on the pre-fold sources via scratchpad copies, rides the 3.12c review as its P4): the events
+  section persists (`page.secEvents`, body rebuilt only on a change of the events' JSON), the hash
+  carries `opts.note` and `opts.empty`, the five unpinned readings pinned in tests/test_3_12d_fold.py.
+  Suite 896. The operator's after reading on Firefox is the one open item on 3.12b.)
 - ☑ **3.12c The started picker.** (Landed 2646b28: Qwen/ai1 job 01aa6724, 122 turns, 22 min, six
   commits squashed; 893 tests. Built as the spec says: `localDay(v)` and `timeFilterMatch(f, v)`
   replace `parseTimeLiteral` and the time branch (whole-string match, NO fall-through: a state in
