@@ -33,7 +33,17 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-31 ~04:10, the operator asleep).** Landed overnight: the page-batch
+**Lanes at the last note (2026-10-31 ~06:30, the operator asleep).** 3.11a LANDED (1f1bfe9: 17 folds,
+834 tests; the audit at docs/audits/2026-10-31-codebase-audit.md; EPICS 3.11a holds the listed-not-folded
+rows and row 37, which wants a ruling). Running: the cross-model review of 3.11a's folds, Qwen/ai1
+(five construct-it probes: the shim's usage readers and head cap, finish_worktree's git failures,
+_probe_context's odd shapes, the page's rowMemo/cellText cache, _log_safe and seed --force); when
+it reports: verify each finding at its line, a fold job by the reviewer for the verified ones
+(ruling (a)), land, record, tick. The operator's morning request — typed table filters (3.12) — is a
+DESIGN awaiting approval at docs/superpowers/specs/2026-10-31-table-filters-design.md (its §14 lists
+the five questions); no build until the operator answers. Earlier note follows.
+
+**Lanes at the earlier note (2026-10-31 ~04:10).** Landed overnight: the page-batch
 fold (81b199a; its review clean), 3.11b the test-suite audit (27faf06; the table at
 docs/audits/2026-10-31-test-suite-audit.md). Running: 3.11a, the Opus codebase audit + folds
 (the brief at the session scratchpad `brief-3.11a.md`); when it lands: accept, read every fold's
