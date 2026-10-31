@@ -88,6 +88,10 @@ requests                            -- one row per backend request the shim forw
   messages, tools, bytes   INTEGER  -- request body: message count, tool count, size
   moved_system, folded_text   INTEGER   -- shim normalisation counts
   context_exceeded, error   TEXT    -- backend's original overflow message; first 800 bytes of a 4xx/5xx body
+                                    -- True now (3.10h fold, 2026-10-31): the stream's usage is read from its last
+                                    --   8 KiB, not its last read, so a message_stop delivered alone no longer hides
+                                    --   the output count; a stream that ends before message_stop records `error`
+                                    --   'stream ended early: …' with the header's status.
   -- the request's model is not stored: it is the job's model (dropped deliberately)
   -- True now (3.7t, 2026-10-30): Claude Code's startup `/api/hello` handshake (a connection
   --   warm-up) is answered by the shim itself with 200 and writes no row; rows with that path
@@ -281,7 +285,10 @@ at completion its text is copied into `transcripts`, and readers take the row fi
 The shim's SSE usage capture reads the first 64 KB and the last chunk of a stream; a
 `message_start` pushed past the head buffer or a `message_delta` not in the last chunk leaves
 null tokens on that request row. It was the same in `requests.jsonl`; the table is now the
-only copy. Tracked as a follow-up, not fixed here.
+only copy. Tracked as a follow-up, not fixed here. True now (3.10h fold, 2026-10-31): the
+stream's usage is read from its last 8 KiB, not its last read, so a message_stop delivered
+alone no longer hides the output count; a stream that ends before message_stop records
+`error` 'stream ended early: …' with the header's status.
 
 ## Review disposition (job 20261029-031617-adf7)
 

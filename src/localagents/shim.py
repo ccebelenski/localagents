@@ -45,6 +45,13 @@ if TYPE_CHECKING:
     from .registry import Endpoint
 
 HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding", "accept-encoding"}
+# SSE usage capture bounds (3.10h fold): message_start arrives first (input and cache
+# counts) and is read from the head of the stream; message_delta arrives near the end
+# (the final output count) and is read from the stream's tail — the last 8 KiB of its
+# bytes, not its last read, so a message_stop delivered as its own read no longer hides
+# the delta, and a delta split across two reads is still seen whole.
+HEAD_BYTES = 65536
+TAIL_BYTES = 8192
 
 
 def _text_of(content: Any) -> str:
@@ -310,27 +317,40 @@ class Shim:
 
         async def gen():
             head = b""  # message_start carries input/cache token counts
-            last = b""  # message_delta carries output_tokens
+            tail = b""  # the stream's last TAIL_BYTES; message_delta carries output_tokens
             t_first: float | None = None  # first chunk carrying generated content, not first byte
+            stream_error: str | None = None
             try:
-                async for chunk in resp.aiter_bytes():
-                    # message_start precedes prompt processing on llama.cpp, Strata and vLLM, so
-                    # starting the clock at the first byte made ms − gen_ms network and queue
-                    # latency, not prefill (a page showing 3,000 tokens "in 19 ms", story
-                    # 3.10h(a)). The clock starts at the first content event instead: then
-                    # ms − gen_ms is time-to-first-token (queue + prefill), and the prefill rate
-                    # derived from it is honest.
-                    if t_first is None and (b"content_block_start" in chunk
-                                            or b"content_block_delta" in chunk):
-                        t_first = time.monotonic()
-                    if len(head) < 65536:
-                        head += chunk
-                    last = chunk
-                    yield chunk
+                try:
+                    async for chunk in resp.aiter_bytes():
+                        # message_start precedes prompt processing on llama.cpp, Strata and vLLM, so
+                        # starting the clock at the first byte made ms − gen_ms network and queue
+                        # latency, not prefill (a page showing 3,000 tokens "in 19 ms", story
+                        # 3.10h(a)). The clock starts at the first content event instead: then
+                        # ms − gen_ms is time-to-first-token (queue + prefill), and the prefill rate
+                        # derived from it is honest.
+                        if t_first is None and (b"content_block_start" in chunk
+                                                or b"content_block_delta" in chunk):
+                            t_first = time.monotonic()
+                        if len(head) < HEAD_BYTES:
+                            head += chunk
+                        # the tail is the stream's own last 8 KiB of bytes, not the final read:
+                        # a message_stop delivered as its own read no longer hides the
+                        # message_delta that carries the final output_tokens
+                        tail = (tail + chunk)[-TAIL_BYTES:]
+                        yield chunk
+                except Exception as e:
+                    # the backend died mid-stream (a closed connection — aiter_bytes raises
+                    # httpx's ReadError and friends) or the client's disconnect raised:
+                    # record the row as an error — the header's status, which was already
+                    # sent, and the page's request rule (status outside 2xx OR a non-empty
+                    # error) marks it — then re-raise so the client still sees the failure.
+                    stream_error = f"stream ended early: {type(e).__name__}: {e}"[:300]
+                    raise
             finally:
                 await resp.aclose()
                 t_end = time.monotonic()
-                usage = _merge_usage(_usage_from_sse_head(head), _usage_from_sse_tail(last))
+                usage = _merge_usage(_usage_from_sse_head(head), _usage_from_sse_tail(tail))
                 # a stream that sent events but no content decoded nothing: gen_ms 0 makes
                 # ms − gen_ms the whole queue+prefill span (the 0-output row in the screenshot
                 # is the case that matters). No chunk at all is no evidence the backend ever
@@ -340,7 +360,7 @@ class Shim:
                 else:
                     gen_ms = 0 if head else None
                 self._log(job, path, body, note, status=resp.status_code, ms=int((t_end - t0) * 1000),
-                          gen_ms=gen_ms, usage=usage)
+                          gen_ms=gen_ms, usage=usage, error=stream_error)
 
         return StreamingResponse(gen(), status_code=resp.status_code, headers=resp_headers)
 
@@ -389,11 +409,18 @@ def _merge_usage(head: dict[str, Any] | None, tail: dict[str, Any] | None) -> di
     return {**(head or {}), **{k: v for k, v in (tail or {}).items() if v is not None}}
 
 
-def _usage_from_sse_tail(chunk: bytes) -> dict[str, Any] | None:
-    for line in chunk.decode(errors="replace").splitlines():
+def _usage_from_sse_tail(bytes_: bytes) -> dict[str, Any] | None:
+    """The final usage of a stream: the LAST ``message_delta`` event's usage in the bytes
+    (the stream's tail, not its last read). A backend that sends usage twice — a mid-stream
+    count and the final one — reports the later figure; a ``message_delta`` carrying no
+    ``usage`` (a stop_reason-only event) is skipped, not the final one's."""
+    usage: dict[str, Any] | None = None
+    for line in bytes_.decode(errors="replace").splitlines():
         if line.startswith("data:") and '"message_delta"' in line:
             try:
-                return json.loads(line[5:]).get("usage")
+                parsed = json.loads(line[5:]).get("usage")
             except Exception:  # noqa: BLE001
-                pass
-    return None
+                continue
+            if parsed is not None:
+                usage = parsed
+    return usage
