@@ -64,7 +64,12 @@ briefs passed by path (c).
   "we can see how that works", or the operator being present is not it: the coordinator says the
   build is ready and waits. (Same morning: a lane dispatched on the first draft's answers was
   cancelled when the design was overdone; 3.12a was dispatched on "go with your new
-  understanding" — allowed this once.)
+  understanding" — allowed this once.) The operator on why the signal was wrong: "you inferred
+  the design was finalized … I often work in pieces and circles, so a design isn't done until I
+  say I'm good with the whole thing - just because I added something to a part doesn't imply
+  'complete and final'. The human here needs thinking time - those spaces between the prompts
+  that you can't perceive." So two explicit words, in order: the design is DONE ("I'm good with
+  the whole thing"), then "go". An answer to one part is work on the design, never closure.
 
 Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before any parser;
 2.4 before any page story; 3.5 last.
