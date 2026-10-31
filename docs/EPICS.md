@@ -1908,6 +1908,16 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   bound on the processed tokens, since the engine's own prefix cache is invisible — the cell's
   title says "cache not reported by this backend"); the endpoint-level cache-hit tile already
   comes from vLLM's /metrics (registry.py:585), which is the only place vLLM tells us.
+  Operator: "I know for llama.cpp I add --metrics and --slots to enrich the data it provides -
+  something similar I can add to vllm later?" Yes: `vllm serve … --enable-prompt-tokens-details`.
+  vLLM's Anthropic serving (`_build_anthropic_usage`, docs.vllm.ai api/vllm/entrypoints/anthropic/
+  serving) derives `cache_read_input_tokens` from `prompt_tokens_details.cached_tokens` and
+  OMITS the cache fields when that detail is off — the default; with it on, `input_tokens`
+  becomes prompt minus the cached part, the Anthropic way. Open upstream issues #33923 and #45079
+  (vLLM 0.22.1rc1) say the fields are still missing in some builds even so — verify after the
+  flag with the same 8-token probe. /metrics (prefix-cache hit counters, the tile) is on by
+  default. Our side stays: a missing cache field counts as 0 for the prefill rate, for any
+  backend that stays silent.
 
 ### 3.11 Pre-close passes (operator 2026-10-31 00:15)
 
