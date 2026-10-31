@@ -193,3 +193,24 @@ AFTER_JSON.
 export XDG_STATE_HOME="$PWD/t/state" LOCALAGENTS_DB="$PWD/t/seed.db"
 node tools/smoke/cdp.mjs 9255 http://127.0.0.1:8795/ 1400 900 t/tables.png "js:$(cat tools/smoke/tables.js)"
 ```
+
+## dom.js: the robust CDP driver (3.11b)
+
+`cdp.mjs` uses a fixed 4000 ms settle after its navigate, so a slow first render (the page's
+card or timeline still drawing) throws in its initial probe. `dom.js` polls for the real
+readiness (app.js has loaded `localagentsMonitor` and the overview has drawn an endpoint card)
+instead, then evaluates a committed smoke script (which may switch the hash and await its own
+witnesses) and prints `window.__d1` as JSON. Use it where cdp.mjs's fixed settle is not enough
+(a pytest-driven run, a slow box):
+
+```bash
+node tools/smoke/dom.js <devtools-port> <url> <script-file>   # prints "D1 {…}" on the last line
+```
+
+A committed `__d1`-setting smoke script is the witness (see handshake.js / jobsrows.js for the
+convention); `dom.js` is the driver. The 3.11b audit's sycophant findings (the endpoint page's
+jobs table drawn through the shared renderer, the job header's request-errors count, the
+request-table and prefill cells) are the next lane's `dom.js`-over-seeded-world tests — deferred
+by the seeded world's clock: the page's `snap.now` is the wall clock, so a seeded world (a fixed
+past `NOW`) renders its endpoints dormant and its jobs out of the page's range (the operator's
+"the seed grows the states the operator has seen live" finding).

@@ -803,11 +803,15 @@ def test_downsampled_rates_are_null_when_a_reset_lies_inside_the_interval(world)
 
 
 def _endpoint_history_before_r1(conn, endpoint_id, since_t, now, max_points=600):
-    """``read.endpoint_history`` verbatim at HEAD 5499c35: it loads every probe row in the range
-    and downsamples in Python. Kept here as the oracle for the bounded read."""
+    """``read.endpoint_history``'s BODY verbatim at HEAD 5499c35: it loads every probe row in
+    the range and downsamples in Python. Kept here as the oracle for the bounded read's body
+    (the ``t``/``step``/series/events the R1 probe read answers). The jobs half is excluded:
+    3.10b made the history jobs full §5a rows (``_job_entry``), a shape this pre-3.10b oracle
+    cannot produce — the bounded read's jobs are tested on the seeded world by
+    ``test_ai1_history_jobs_are_the_two_seeded``."""
     out: dict = {"t": [], "step": 1}
     if endpoint_id is None:
-        out.update(events=[], jobs=[])
+        out.update(events=[])
         return out
     b = conn.execute("SELECT backend FROM endpoints WHERE id = ?", (endpoint_id,)).fetchone()
     kind = read.backend_kind(b[0]) if b is not None else "other"
@@ -852,16 +856,6 @@ def _endpoint_history_before_r1(conn, endpoint_id, since_t, now, max_points=600)
         for r in conn.execute(
             "SELECT t, kind, detail FROM endpoint_events WHERE endpoint_id = ? AND t >= ? AND t <= ?"
             " ORDER BY t, id", (endpoint_id, since_t, now))
-    ]
-    out["jobs"] = [
-        {"name": r["id"], "id": r["id"], "status": r["status"], "started_at": r["started_at"],
-         "finished_at": r["finished_at"], "model": r["served_id"]}
-        for r in conn.execute(
-            "SELECT j.id, j.status, j.started_at, j.finished_at, m.served_id FROM jobs j"
-            " LEFT JOIN models m ON m.id = j.model_id"
-            " WHERE j.endpoint_id = ? AND COALESCE(j.started_at, j.created_at) <= ?"
-            " AND (j.finished_at IS NULL OR j.finished_at >= ?)"
-            " ORDER BY COALESCE(j.started_at, j.created_at), j.rowid", (endpoint_id, now, since_t))
     ]
     return out
 
@@ -915,17 +909,15 @@ def test_a_seven_day_history_reads_only_the_points_it_answers(tmp_path):
     t0 = time.monotonic()
     old = _endpoint_history_before_r1(conn, eid, since, NOW)
     old_ms = (time.monotonic() - t0) * 1000
-    # 3.10f-2 dropped the history jobs' name key (the algorithm half of the oracle is verbatim
-    # at 5499c35; the jobs block is the fixed SELECT it copied, and the shape half tracks now).
-    # 3.10b made the history jobs full §5a rows; the seven-day world holds no jobs, so the
-    # shape half of this oracle only ever compares two empty lists.
-    for _j in old["jobs"]:
-        _j.pop("name")
+    # the oracle is the bounded probe read's BODY: the bounded read's jobs half is full §5a rows
+    # (3.10b, _job_entry), a shape this pre-3.10b oracle cannot produce — the jobs half is
+    # tested on the seeded world by test_ai1_history_jobs_are_the_two_seeded, not here.
     stmts: list[str] = []
     conn.set_trace_callback(stmts.append)
     t0 = time.monotonic()
     new = read.endpoint_history(conn, eid, since, NOW)
     new_ms = (time.monotonic() - t0) * 1000
+    new.pop("jobs")  # the body comparison (below) is R1's change; the jobs half is tested elsewhere
     conn.set_trace_callback(None)
     print(f"\nR1 seven-day history: old {old_ms:.0f} ms, new {new_ms:.0f} ms,"
           f" {len(old['t'])} points, step {old['step']}")
