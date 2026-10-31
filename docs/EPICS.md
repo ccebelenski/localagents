@@ -2141,6 +2141,23 @@ second draft builds as 3.12a; dates typed first, the pop-out the fallback; the s
   pins extended; `tools/smoke/tables.js` step (c). Qwen/ai1, one lane; then a cross-model
   construct-it review. The operator reads the live page before the tick.
 
+Operator, on the 3.12a review (2026-10-31): "One fold agreed - and yes the page filters
+shouldn't 'bleed' to other unrelated content. And we do need the hold, the refresh makes using a
+filter very difficult. Text search filter: fine. Status filter: fine. Started: hard to use or
+figure out, not intuitive as implemented. And yes, we need to not include commas. Another render
+quirk is that on a refresh the scoll bars appear on the screen briefly in firefox, then go back
+dormant. Visually annoying. We might need to break the screen into individually refreshed areas or
+use websockets for live updates. Opinions there?" Read at the note: the fold's content is agreed
+(the blank-pick sentinel, commas stripped, the table state keyed per endpoint page, the hold) and
+awaits the word "go" (ruling (p)); the lone-literal reading of the time box is held back — the
+started filter's shape is open ("hard to use"), and a different control would retire the typed
+grammar with it. The refresh flash is a design question, answered in the conversation and recorded
+with its design when the operator settles it: the page is already pushed (EventSource on
+`/events`, app.js:1787); the cards are patched in place (3.7m); every table is rebuilt wholesale on
+each push (`byId("jobs-body").replaceChildren(jobsTable(…))` app.js:1516; endpoint.js:493; the
+requests table on the job page), and `.table-wrap` (app.css:159, `overflow-x: auto`) is a new
+scroll container every time.
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
