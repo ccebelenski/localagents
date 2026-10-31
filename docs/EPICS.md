@@ -2301,8 +2301,22 @@ class, and the card prints `ep.error` verbatim as its `.ep-error` line (app.js:5
 sentence is the MCP's `model_unavailable` text and the seeded world's (seed.py:132-136). The 3.10g
 lane noted this line is the floor-bearer on the seeded world (898 → 946 px), so a short line also
 lowers that floor.
-- ☐ **3.12e Short failure sentences.** Design proposed in chat, awaiting the operator's reading and
-  "go" (ruling (p)): the four sentences get short at the source, the operator's own form for the
+- ☑ **3.12e Short failure sentences.** (Landed 746de21: Qwen/ai2 job 452ff15d, 64 turns, 15 min,
+  three WIP commits squashed; 865 tests. `classify_connect_failure` writes "10.0.0.70 reachable,
+  port 8000 no response" (refused; "<host> reachable, no response" with no port), "<host:port>
+  connected, no reply in time" (read/write timeout), "<host:port> timed out" (connect timeout),
+  the unreachable sentence kept as it was — the lane's decision, disclosed: the brief said
+  "unchanged shape" and wrote a form without "is", and the pin at tests/test_monitor_rows.py:170
+  settles it; each classified case carries a `hint` with the old explanation, absent on the
+  fallback; the hint rides the probe dict into `list_models` and `ModelUnavailable` and never into
+  the probes row (PROBE_COLUMNS picks the fields) or the page. Pins moved by the minimum edit in
+  five named files plus tests/test_monitor_read.py:283, which the brief missed. NOTICED by the
+  lane: `_TIMEOUT` at tests/test_monitor_collect.py:600 and the fixture row at
+  tests/test_monitor_read.py:114 still carry the old parenthesised timeout wording as canned
+  passthrough text; the docstring at tests/test_monitor_smoke.py:267 says "nothing-is-listening";
+  app.js:590's comment justifies a width by the old ~120-char sentence; a port-less or odd base_url
+  prints "None" in the sentence (pre-existing). Design as proposed in chat — the hint does not
+  reach the page (no column for it) — under the go of this afternoon.) The four sentences get short at the source, the operator's own form for the
   refused case ("10.0.0.70 reachable, port 8000 no response"); the explanation moves to a second
   field the card shows only on hover.
 
