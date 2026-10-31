@@ -33,7 +33,28 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-31 morning, the operator present).** Landed since 06:30: the 3.11a
+**Lanes at the last note (2026-10-31 late afternoon, the operator present).** The operator ticked
+3.12a, 3.10c and 3.10e on the live page and gave the go on "the open build work now that all lanes
+are back" (EPICS 3.12, verbatim). Landed since, in order: 3.12d the number box reads the cell's own
+unit (5d5479b, Qwen/ai1), 3.12e short failure sentences with a `hint` for list_models/ModelUnavailable
+(746de21, Qwen/ai2), 3.12b the two-level table refresh (86204ad, Qwen/ai1; the spec's job.js item
+was wrong and is not built), 3.12c the started picker (2646b28, Qwen/ai1; its smoke caught its own
+captured-closure bug), the DeepSeek review of 3.12d+e and its coordinator fold (8051db5: the ms
+cells' space, decimal durations, two pins), the DeepSeek review of 3.12b and its coordinator fold
+(3aa52c4: the events section persists, the hash carries note/empty), the DeepSeek review of 3.12c
+and ITS fold by the reviewer (a5b62dc: faceting by name, the clock's day in the hash, the events
+cache). Suite 901 at a5b62dc. Running: the Qwen/ai1 review of the 3.12c fold (brief at the session
+scratchpad `brief-3.12c-fold-review.md`); when it reports: record it in EPICS, remove its worktree;
+a defect means another fold, none closes the chain and the round's builds are done. vLLM on dgx1-a
+runs with `--enable-prompt-tokens-details` and the cache fields populate (EPICS 3.10i). Open on the
+operator's side: the AFTER reading of the Firefox scrollbars (their before reading is under 3.12b),
+their hands on the live picker, and 3.10g(1) narrowed to the activity line (a design under 3.10g,
+builds on its own "go"). Then the retro (the DRAFT at docs/retros/ takes the 3.11a and 3.12 numbers;
+one process observation to carry: three builds in a row edited a test pin the brief did not name,
+each disclosed and right — "ONLY the pins named" is the wrong letter when the gate breaks a pin).
+Morning note follows.
+
+**Lanes at the morning note (2026-10-31 morning, the operator present).** Landed since 06:30: the 3.11a
 review (clean; EPICS 3.11a), the 3.10c F3 fold (a3207a5, the "null" under tables), 3.12a the typed
 filters (1938d98 + the coordinator fold 318c39c) and its DeepSeek review (EPICS 3.12, one latent
 defect, six possibles, four noticed). The operator's dispositions are in EPICS 3.12 verbatim. Running:
