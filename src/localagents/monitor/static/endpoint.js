@@ -377,7 +377,14 @@
   // waits for the next real change, as the started cell does under level 1.
   function eventsSection(cache, hist, range, name, now) {
     var evs = hist && Array.isArray(hist.events) && hist.events.length ? hist.events.slice().reverse() : null; // newest first
-    if (!evs) return null;
+    // 3.12c fold F3 (the review): the events going to [] take the section out of the box, but a
+    // cached `sig` would let the SAME events returning later reuse the old body — and its
+    // when() day-stamps. Forgetting the sig makes the next events rebuild the body; the section
+    // element itself persists for their return.
+    if (!evs) {
+      if (cache.section) cache.sig = null;
+      return null;
+    }
     if (!cache.section) {
       cache.h2 = h("h2");
       cache.bodySlot = h("div");

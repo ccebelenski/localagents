@@ -823,12 +823,17 @@
     // order (a different column set is a different table). The page already pays this string
     // for the whole snapshot (render's snapSig) and 120 rows is under a millisecond. The design
     // accepts that a running job's row changes every push (its elapsed, turns and last activity
-    // arrive in the row); the started cell's clock-to-date day switch waits for the next real
-    // change in the table, hashed-in-hour notwithstanding.
+    // arrive in the row).
     // 3.12b fold (the review): the caller's note and empty text are drawn from opts, so they are
     // part of what a skip would leave stale (the endpoint page's note names the range)
+    // 3.12c fold F2 (the review): the table's CLOCK is drawn from opts too — the picker's
+    // summary says "today"/"yesterday" by opts.now's local day, and the started cells day-stamp
+    // against it. The hash carries that local DAY, so the first push of a new local day is a
+    // real change and redraws once (the started cell's clock-to-date switch rides the same
+    // redraw); a push inside the same day is still skipped.
     var hash = JSON.stringify(rows) + "\n" + columns.map(function (c) { return c.name; }).join(",")
-      + "\n" + (opts.note || "") + "\n" + (opts.empty || "");
+      + "\n" + (opts.note || "") + "\n" + (opts.empty || "")
+      + "\n" + (opts.now != null && isFinite(opts.now) ? localDay(opts.now) : "");
     var prev = TABLE_DOM[id];
     if (prev && prev.container.isConnected && prev.hash === hash) {
       renders.tableSkipped++;
@@ -884,11 +889,14 @@
 
     // The rows that pass every column's filter, as row INDICES (the caches' key). `except` skips
     // one column's own filter (3.12a §4: the pick's option counts are faceted — how many rows
-    // match the OTHER columns' filters, so a value at 0 stays listed)
+    // match the OTHER columns' filters, so a value at 0 stays listed). 3.12c fold F1: the skip
+    // is by NAME, not object identity — the persistent time button outlives a push, and after
+    // one the current call's columns are new objects, so an identity check let the reopened
+    // panel facet its date counts and hours by its own time filter
     function filterIdx(except) {
       var idx = rows.map(function (row, i) { return i; }); // filtered by index: the cache's key
       columns.forEach(function (col) {
-        if (col === except) return;
+        if (except && col.name === except.name) return;
         var f = st.filters[col.name];
         if (!f) return;
         f = String(f);
@@ -1094,9 +1102,12 @@
           // the slot rule again (3.12b B2 (a)): this button persists across pushes, so the
           // click reads the CURRENT call's toggle through TABLE_DOM — a captured toggle would
           // open the panel over the BUILDING call's rows (the smoke caught the first draw's
-          // 2 seeded jobs listing "today (2)" while the table showed 120)
+          // 2 seeded jobs listing "today (2)" while the table showed 120). 3.12c fold F1: the
+          // NAME goes, not this call's `col` object — the toggle resolves the current call's
+          // column by it (a build-time object is not the current call's, and a push rebuilds
+          // the columns)
           btn.addEventListener("click", function () {
-            TABLE_DOM[id].toggleTimePanel(col, btn);
+            TABLE_DOM[id].toggleTimePanel(col.name, btn);
           });
           return h("th", { "data-filter-kind": kind }, [btn]);
         }
@@ -1265,12 +1276,18 @@
       else btn.classList.remove("set");
     }
 
-    function toggleTimePanel(col, btn) {
+    // 3.12c fold F1: the button hands its column's NAME (it persists across pushes, so its
+    // own `col` object may be a dead call's); the column resolved here is THIS call's, the
+    // way rec.onFocusOut resolves one. rec.panelCol stays the name.
+    function toggleTimePanel(name, btn) {
       if (rec.panel) {
         var wasBtn = rec.panelBtn;
         closeTimePanel();
         if (wasBtn === btn) return; // a second click on the same control closes (spec §4)
       }
+      var col = null;
+      columns.forEach(function (c) { if (c.name === name) col = c; });
+      if (!col) return;
       openTimePanel(col, btn);
     }
 

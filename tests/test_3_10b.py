@@ -208,7 +208,10 @@ def test_endpoint_page_headings_are_noun_phrases_with_the_filter():
 
 def test_events_section_is_absent_when_the_range_holds_none():
     """The events section returns null when the range holds no event (and the page's draw
-    tolerates the null); the old "no events in this range" sentence is gone."""
+    tolerates the null); the old "no events in this range" sentence is gone. 3.12c fold F3
+    (the review): the absent branch also forgets the cached body signature when a section
+    exists, so the same events returning later rebuild the body instead of reusing its old
+    when() day-stamps."""
     js = _endpoint_js()
     assert "no events in this range" not in js
-    assert "if (!evs) return null;" in js
+    assert "if (!evs) {\n      if (cache.section) cache.sig = null;\n      return null;\n    }" in js
