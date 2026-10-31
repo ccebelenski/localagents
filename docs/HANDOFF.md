@@ -43,9 +43,8 @@ captured-closure bug), the DeepSeek review of 3.12d+e and its coordinator fold (
 cells' space, decimal durations, two pins), the DeepSeek review of 3.12b and its coordinator fold
 (3aa52c4: the events section persists, the hash carries note/empty), the DeepSeek review of 3.12c
 and ITS fold by the reviewer (a5b62dc: faceting by name, the clock's day in the hash, the events
-cache). Suite 901 at a5b62dc. Running: the Qwen/ai1 review of the 3.12c fold (brief at the session
-scratchpad `brief-3.12c-fold-review.md`); when it reports: record it in EPICS, remove its worktree;
-a defect means another fold, none closes the chain and the round's builds are done. vLLM on dgx1-a
+cache). Suite 901 at a5b62dc. The Qwen/ai1 review of the 3.12c fold found no code defect (one false comment,
+corrected at dc6dbc0): every chain of the round is closed and no lane is running. vLLM on dgx1-a
 runs with `--enable-prompt-tokens-details` and the cache fields populate (EPICS 3.10i). Open on the
 operator's side: the AFTER reading of the Firefox scrollbars (their before reading is under 3.12b),
 their hands on the live picker, and 3.10g(1) narrowed to the activity line (a design under 3.10g,
