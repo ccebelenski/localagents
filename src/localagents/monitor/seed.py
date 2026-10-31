@@ -136,7 +136,6 @@ def _refused_sentence(url: str) -> str:
     return classify_connect_failure(ConnectionRefusedError(errno.ECONNREFUSED, "refused"), url)["error"]
 
 
-
 def default_fixtures_dir() -> Path:
     """The story-2.1 captures under the repo's ``tests/fixtures/monitor``: the seed is a
     dev/testing tool that runs from the repo, where the fixtures live (an installed package has

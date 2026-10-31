@@ -188,7 +188,7 @@ def test_a_job_whose_server_row_is_gone_has_no_server_version(monkeypatch, tmp_p
     row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job.id,)).fetchone()
     assert derive.summary_from_row(store.conn, row)["server_version"] is None
     assert job.summary()["server_version"] is None
-    hand_built = jobs.Job(id="x", name="n", task="t", model="m", endpoint="e", base_url="b", cwd="c",
+    hand_built = jobs.Job(id="x", task="t", model="m", endpoint="e", base_url="b", cwd="c",
                           run_cwd="c", isolation="none")
     assert hand_built.summary()["server_version"] is None
 
