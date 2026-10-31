@@ -2180,6 +2180,10 @@ the endpoint page's jobs list is already bounded by the page's range selector (e
 "jobs that ran on <name> in the last <range>"; 15m … 7d, app.js:28); the overview's is running and
 queued, then the last 10 finished; the started cell prints a clock inside 24 h and a date beyond
 (app.js:650).
+Operator, on the hour-or-day bucket pick: "I think if you make it too fine grained the picker gets
+too long - maybe a two-level picker, the first being a date (today, yesterday, list of dates) + a
+clock filter (graphical or digital clock bounding hours? Digital would be two hours choices, analog
+would be two hands on a clock face representing the bounds)."
 
 ## Epic 4: operations (V2, not scheduled)
 
