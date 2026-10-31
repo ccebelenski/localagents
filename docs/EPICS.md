@@ -1165,7 +1165,33 @@ The 3.7 chain's reviews are closed: no open defect.
   need 946 → 946, title the 300 chars, no `.ep-error`); the gate blanks string literals first
   (eleven cases); the three pins now fail the described wrong implementations (checked by the
   lane against them); `tools/smoke/handshake.js`, `unknown.js`, `neverseen.js` case (d) committed
-  with README paragraphs. Review of the fold: next (Qwen).
+  with README paragraphs. Review of the fold by Qwen/ai1 job 20261030-204439-d37cfc03, 57 turns,
+  9 min, three probes: NO product defect (unknown.js need 946 with the 300-char title; neverseen.js
+  all four cases; an up node's down endpoint keeps its `.ep-error` and may raise the need; a
+  dormant-only unknown node has a card, note "unknown", no title — ruled correct, no sentence
+  exists; every review-described wrong implementation rejected by its pin). Four test findings,
+  verbatim: R1 (tests) `_STR` pairs quotes with no notion of regex literals, so `var r = /"/;
+  const a = 1; var s = "x";` hides the const (app.js:723 holds one such literal; the shifts
+  cancel there). R2 (tests) a line-continuation string hides a following const, and `x = "a"//
+  const y = 1` fires on comment text (the pre-F2 lookbehind, redundant once strings are blanked).
+  R3 (tests) the F3/F4 pins pin the row rule's SHAPE as substrings: `bad` rewritten to
+  `>= 400`, or the header's `else if` made `if`, passes both pins and handshake.js. R4 (tests)
+  the F1 pin's regexes are unanchored, so `… || host.state === "dormant"` passes every pin and
+  smoke. Possible: `_LINE` on a `//` inside an unescaped regex literal (none in the files);
+  `said` first-vs-last endpoint on a multi-endpoint node. Noticed: `requestsTable` and
+  `requestErrors` hand-copy the outside-2xx rule in two files. Disposition: R2 folded by the
+  coordinator (0a04720: the escape class admits a backslash-newline, `_LINE` strips every `//`,
+  two cases added, 716 tests); R1 documented in the gate's docstring as a known limit (a parser
+  is the next step if the scripts grow regex literals with quotes); R3 and R4 are the ceiling of
+  regex pins over source — the honest gate for page behaviour is the DOM smoke, which today lives
+  in `tools/smoke/` and is run at acceptance, not by pytest. **Chain closed**: this round found no
+  defect in the product and each round was smaller; the open question for the operator is below.
+- **Proposal for the operator (from R3/R4): a pytest-driven DOM smoke.** One test module that,
+  when the Playwright chromium shell and node are present (skipped otherwise), seeds a world,
+  starts a `--no-collect` monitor on a free port, drives headless Chromium through
+  `tools/smoke/cdp.mjs` and asserts the `d1` cases of `neverseen.js`, `unknown.js`, `handshake.js`
+  and `nodes.js` — the hand-renders become the suite's gate instead of regex pins over source.
+  Cost: ~10-15 s per run, two external binaries the suite tolerates being absent. Not built.
 - ☑ **3.7w The monitor tab's memory.** (Probe landed: `tools/smoke/mem.mjs`, Haiku worktree
   agent, 31 tool uses, 11 min. Measured at ~3 render passes a second over the seeded world:
   overview 908 passes, DOM nodes 200 → a plateau of 1443–1568 → 200 after a forced GC, heap
