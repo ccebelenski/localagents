@@ -1680,7 +1680,7 @@ Coordinator's answers from the code (2026-10-30):
   name" (two dispatches refused at 23:05) and the old-code monitor cannot read jobs — both need a
   restart onto main, which reads v9. Lesson for a ruling: the state-dir redirect in conftests is a
   convention a subprocess can drop; the guard belongs in the code — see 1.15.
-- ☐ **1.15 A worktree never opens the real state directory.** From the 22:44 incident and 3.9B:
+- ☑ **1.15 A worktree never opens the real state directory.** (Coordinator, a4252ce, 752 tests, built while no lane could run — the MCP server was down on the old code until the operator reconnected it at ~23:15. `db.state_dir()` with no `XDG_STATE_HOME` raises when `db.PACKAGE_FILE` has a `worktrees` path component (a whole component, not a substring); `_v9` computes the jobs root only when a row needs renaming, so a fresh file from a lane never reaches it; tools/smoke/README.md's recipe exports both variables. Security-shaped coordinator code: rides the next cross-model review (the 3.10f-1 review brief names it).) From the 22:44 incident and 3.9B:
   `db.open_db()`/`state_dir()` with the DEFAULT path (no `LOCALAGENTS_DB`, no `XDG_STATE_HOME`)
   refuse with a clear error when the running package's own checkout is under a `worktrees`
   directory (`Path(__file__)` contains `/worktrees/`, the lanes' and `.claude/worktrees/`'s

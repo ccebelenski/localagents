@@ -37,9 +37,13 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
 3.10f-1 the job name dropped (c768dfd + 8ad16e6; schema v9 with directory renames — ITS REVIEW IS
 NEXT, Qwen/ai2; until it is clean, no restart of the operator's monitor or MCP server, because the
 first process on this code migrates the real database and renames the real job directories).
-Queue: 3.10f-2 (monitor side: the JSON keys and pages show the short id), 3.10g (the one-column
-stretch: cap the card width; the job lines out of the floor awaits the operator), 3.10b, 3.10c.
-Suite 746.
+INCIDENT 22:44: the real database was migrated to v9 from the lane's worktree code before the
+landing (EPICS 3.10f-1 incident); the operator reconnected the MCP server (~23:15) and must restart
+the monitor the same way. 1.15 (a4252ce) now makes a worktree refuse the default state directory.
+Queue: the 3.10f-1 review (Qwen/ai2, with 1.15 in its brief), 3.10f-2 (monitor side: the JSON
+keys and pages show the short id), 3.10g (the one-column stretch: cap the card width; the job
+lines out of the floor awaits the operator), 3.10b, 3.10c. Suite 752. Every lane brief from now
+exports XDG_STATE_HOME and LOCALAGENTS_DB together (the smoke README recipe does).
 
 **Awaiting the operator.**
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is
