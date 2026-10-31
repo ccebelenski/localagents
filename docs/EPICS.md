@@ -2165,6 +2165,10 @@ note: the page already skips a whole render when the snapshot without `now` is u
 app.js:1429); a table is still rebuilt when anything else on the page changed. `elapsed_s` arrives in
 each row (a running job's row changes every push, so the hash sees it); the started cell reads `now`
 only to switch from clock to date at a day old (app.js:650).
+Operator: "So, a running job would essentially force a refresh, but an idle endpoint would show no
+updates when no job was running? If so, that seems okay" — yes, with the refinement that a running
+job's push changes one row, and level 2 swaps that row's element alone; the table's box is never
+rebuilt on a push under this design.
 
 ## Epic 4: operations (V2, not scheduled)
 
