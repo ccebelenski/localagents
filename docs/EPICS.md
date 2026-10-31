@@ -1917,7 +1917,10 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   (vLLM 0.22.1rc1) say the fields are still missing in some builds even so — verify after the
   flag with the same 8-token probe. /metrics (prefix-cache hit counters, the tile) is on by
   default. Our side stays: a missing cache field counts as 0 for the prefill rate, for any
-  backend that stays silent.
+  backend that stays silent. Operator: "something I won't change immediately on the server side -
+  getting vllm running is a bit of production since it's almost fully utilizing all three DGX
+  spark nodes." The flag waits for vLLM's next natural restart; our fix carries the lane
+  meanwhile.
 
 ### 3.11 Pre-close passes (operator 2026-10-31 00:15)
 
