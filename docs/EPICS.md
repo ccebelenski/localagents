@@ -2469,8 +2469,26 @@ lands; 3.12c after 3.12b.
   docstring (app.js:807-809) still lists `{container, hash, draw}` and the entry now holds the
   parts, the panel fields and the slots (stale doc); the panel's keyboard/a11y costs the reviewer
   flagged stay open (no focus move on open, span words not labels, no aria-expanded); the hash
-  still omits `opts.page` and `opts.class` (no caller varies them today). The Qwen review of the
-  fold is next.)
+  still omits `opts.page` and `opts.class` (no caller varies them today).) **Review of the fold**
+  (Qwen/ai1 job d4b5a5fe, 93 turns, 12 min, three probes, read-only): P1 three level-2 pushes
+  under a held window and a status pick — the reopened picker reads the other filters' facet
+  only ("today (2)", hours 10/11; under a turns bound "today (1)", hours 11), the status select
+  ignores its own filter throughout, the column-set change (omit → no omit) keeps the state
+  byte-identical and the reopened panel right, every `toggleTimePanel`/`panelCol`/`except` use is
+  a name, the pre-fold copies show the defect — CLEAN. P2 pushes at 23:59:50 / 00:00:10 / 00:00:20:
+  skips 0, 0, +1; the summary today → yesterday; the DST same-local-day push (EDT 01:30 → EST
+  01:30) skipped, right by the rule. **DEFECT (a sentence):** the fold's comment said the started
+  cell's clock-to-date switch rides the midnight redraw; it does not — an unchanged row's tr is
+  kept by its signature (patchBody) and the cell's `now` is the old call's; the pre-fold code was
+  the same, so no regression, and the behaviour is the spec's accepted exception. Corrected in the
+  comment at dc6dbc0 (no code change; the hash gain still serves the summary and the panel).
+  P3 events A → [] → A rebuilds the body in the same section, A,A,A touches nothing, A,[],B shows
+  B; the moved pin still pins its behaviour; the five fold tests assert their names — CLEAN. No
+  code defect: **the 3.12c chain closes.** NOTICED: an open panel over a column a push removes
+  idles stale (unreachable today); `timeTd`/`when()`'s 24 h is absolute epoch, so the spring-forward
+  day stamps an hour early by the wall clock; the `except &&` guard in filterIdx is load-bearing
+  for the no-argument call. The round's builds are complete; the operator's eyes on Firefox and the
+  picker are the open items.
 
 ## Epic 4: operations (V2, not scheduled)
 
