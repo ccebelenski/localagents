@@ -82,8 +82,13 @@ covers inclusive; add them if wanted, two lines.)
 
 ## 6. The time box: the same three readings over time literals
 
-1. `a-b`: inclusive from `a` to `b`.
-2. `<a` / `>a`: strict.
+1. `a-b`: inclusive from `a`'s start to `b`'s end (each literal's whole span: the end of its
+   minute, or of its day).
+2. `<a` / `>a`: strict over the literal's whole span — `>a` is after `a`'s end, `<a` before
+   `a`'s start; the literal's own minute (or day) is in neither, and the two never share a row.
+   (True now, the fold at 3.12a's landing: the first text below said `<a` reached the end of
+   its minute, which made `<12:30` and `>12:30` overlap by a minute and `<2026-10-30` and
+   `>2026-10-30` by a day; the lane built that sentence faithfully.)
 3. Else: substring over the cell's text and its title — the title holds the full local
    date-time (`fmt.date`: the browser's `toLocaleString()`, e.g. "10/30/2026, 2:15:03 PM"), so
    "10/30" and "2:15" already work today and keep working.
@@ -91,7 +96,7 @@ covers inclusive; add them if wanted, two lines.)
 A time literal is one of: `HH:MM` (24-hour, the clock on the day the table's `now` falls in),
 `YYYY-MM-DD` (a date: the start of that day as a bound; as the `b` of a range or under `<`, the
 end of that day), `YYYY-MM-DD HH:MM` (both). Parsed by hand into a local `Date` (never
-`Date.parse`). `to` ends are inclusive to the end of their minute (`+59 s`). A literal that does
+`Date.parse`). A range's `b` end is inclusive to the end of its minute (`+59 s`) or day. A literal that does
 not parse is read as substring (reading 3), so a mistyped bound silently becomes a text search:
 the box's title names the three forms, and the pager's count makes a wrong reading visible.
 (The hyphen in `YYYY-MM-DD` and the range hyphen are told apart by shape: a range is two

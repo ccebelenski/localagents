@@ -869,9 +869,12 @@
         if (col.filter === "time") {
           // 3.12a §6: the same three readings over time literals. A range is two literals
           // around " - " (spaces), or two HH:MM around a bare hyphen — a bare date literal is
-          // never split (the year's own hyphens). `>a` is strict from the literal's start;
-          // `<a` and the range's `b` end inclusive at the literal's end (end of its minute,
-          // or of its day). An unparseable bound falls through to the substring below.
+          // never split (the year's own hyphens). A range's ends are inclusive over each
+          // literal's whole span (`b` to the end of its minute or day); `>a` and `<a` are
+          // STRICT over the whole span — after the literal's end, before its start — so the
+          // two never share a row and the literal's own minute (or day) is in neither (the
+          // fold at landing: `<a` had reached the end of its minute and overlapped `>a`).
+          // An unparseable bound falls through to the substring below.
           var litA = null, litB = null;
           var dash = f.indexOf(" - ");
           if (dash > 0 && f.indexOf(" - ", dash + 1) < 0) {
@@ -897,7 +900,7 @@
               var tGt = f.charAt(0) === ">";
               idx = idx.filter(function (i) {
                 var v = keyOf(col, i);
-                return typeof v === "number" && isFinite(v) && (tGt ? v > litOne.a : v <= litOne.b);
+                return typeof v === "number" && isFinite(v) && (tGt ? v > litOne.b : v < litOne.a);
               });
               return;
             }

@@ -2087,7 +2087,30 @@ second draft builds as 3.12a; dates typed first, the pop-out the fallback; the s
   number boxes read text first, then `x-y` (inclusive), then `<n`/`>n` (strict); time boxes the
   same three readings over `HH:MM` / `YYYY-MM-DD` / `YYYY-MM-DD HH:MM`; the state shape unchanged;
   "clear filters" on the pager line. Approved (above).
-- ☐ **3.12a Build: typed filters in the filter row.** The spec's §3–§7 and §10 verbatim: the
+- ☑ **3.12a Build: typed filters in the filter row.** (Landed 1938d98: Qwen/ai1 job
+  29d26496-2ca1-415b-9b6f-3d4f6f129557, 156 turns, 26 min, no compaction; 842 tests. Seven
+  steps, each its own WIP commit and gate: `FILTER_KIND`/`UNIT` beside each column map (the
+  requests pair REQ-prefixed: one scope), `filter`/`unit` on both specs, `data-filter-kind` on
+  the filter cell; the select with "any" + `value (count)` over the other columns' survivors
+  and the "(0)" holdover; the number box's three readings; `parseTimeLiteral` by hand (rejects
+  2026-02-31 and 25:00; a bare date's end by next-day-minus-1 s so DST is honest); `setFilter`
+  (empty deletes) and "clear filters". Lane's finds and decisions: the pick's draw read every
+  row's sort key through `rowMemo` and tripped 3.11a's row-39 pin (3,480 tds > 600) — a
+  `keyOf` sort-key cache beside `cellText`'s, `filterRows` → `filterIdx` (indices; an `except`
+  column for the faceted counts); 3.11a's row-38 pager text pin gained " · clear filters" (the
+  brief's file list missed it; spec §7 wins); fakedom needed no extension; app.css's select rule
+  added at step 6 (missed at 2, disclosed). Smoke d1: options `any / done (40) / failed (40) /
+  running (40)`; "done" → 40 with "clear filters" on the pager; ">100" → 7, "101-119" the same
+  seven; "11:00-11:30" → 31 (computed from the hand rows); the job page's path pick "/api/hello"
+  → 1; timings over real Chromium at 120 rows: select change 6.0 ms, number keystroke 3.5 ms.
+  Noticed: `draw()`'s `caret` is never assigned, so a push puts the caret at the END of the box
+  (the 3.10c comment "remember the caret" outlived the code — a one-liner when it matters).
+  COORDINATOR FOLD at landing: the spec's §6 said `<a`/`>a` "strict" and then "`<a` inclusive to
+  the end of its minute"; the lane built the second sentence, so `<11:30` and `>11:30` shared
+  the 11:30 minute and `<2026-10-30`/`>2026-10-30` a whole day. Now strict over the literal's
+  whole span (`>a` after its end, `<a` before its start; the minute itself in neither — a
+  partition pinned: 30 + 89 + 1 = 120); the spec corrected with a True-now sentence.) The spec's
+  §3–§7 and §10 verbatim: the
   `FILTER_KIND` maps, the native select with faceted counts, the number box's three readings
   (`x-y` inclusive, `<n`/`>n` strict, substring), the time box's three readings over `HH:MM` /
   `YYYY-MM-DD` / both, "clear filters"; `tests/test_3_12.py` under node + fakedom; the two 3.10c

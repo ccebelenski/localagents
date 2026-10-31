@@ -174,12 +174,16 @@ reads the one table's full contract into `__d1`,
 synchronously (a real push would otherwise overwrite the hand-edited DOM mid-sequence):
 (a) the pager reads "1–50 of 120" with 50 body rows; (b) clicking the "turns" header sorts
 ascending (first cell 0, last 49; the header carries the arrow class and `aria-sort:
-ascending`), the second click reverses (119…70); (c) typing "done" into the status filter
-leaves only done pills and "1–40 of 40", then ">100" in turns leaves only 119…101 ("1–7 of
-7", page 1); (d) after clearing the filters, "next" reads "51–100 of 120", and a PUSH (a new
-rows array through `render`) keeps the sort, the (empty) filters and page 2 — the state is
-`TABLE_STATE.jobs`, not the DOM; (e) the job page's requests table (11 filter boxes, no job
-column) and the endpoint page's (12, 152 rows paged 50) both sort by "duration" numerically.
+ascending`), the second click reverses (119…70); (c) 3.12a: the status SELECT lists `any /
+done (40) / failed (40) / running (40)`; set to "done" it leaves only done pills and "1–40 of
+40 · … · clear filters"; then ">100" in turns leaves only 119…101 ("1–7 of 7", page 1) and
+"101-119" the same seven; "11:00-11:30" in started leaves the 31 rows of that window (the
+count computed from the hand rows); "clear filters" on the pager restores "1–50 of 120";
+(d) "next" reads "51–100 of 120", and a PUSH (a new rows array through `render`) keeps the
+sort, the (empty) filters and page 2 — the state is `TABLE_STATE.jobs`, not the DOM; (e) the
+job page's requests table (9 filter boxes + 2 selects, no job column) and the endpoint page's
+(10 + 2, 152 rows paged 50) both sort by "duration" numerically, and the job page's path pick
+set to "/api/hello" leaves one row.
 (f) F1 (fold of the page-batch review 2026-10-30): a filter matches the cell's title too — the
 started cell's date string ("10/31/2026", behind the clock) leaves all 120 rows, and one row's
 full 36-character UUID (behind its 8-character short id) leaves that one row. (g) F2: a missing
