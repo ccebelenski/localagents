@@ -1696,6 +1696,18 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   review's P2/P3 hand-renders are committed as `tools/smoke/jobsrows.js` and `tiles.js` (the
   fold-F3 pattern). Noticed: cdp.mjs's `tiles`/`tileLabels` read the hidden overview cards (a
   footgun, twice now); `fmt.speed` vs `fmt.compact` easy to conflate. Chain closed.
+- ☐ **3.10g The one-column stretch.** Operator (2026-10-30 22:40, a 1712-px window, screenshot):
+  "Hmm. A window that is just not quite wide enough degrades the render in an interesting and bad
+  way." What the screenshot shows: one column (the floor × 2 plus the gap exceeds the window), every
+  card stretched to ~1680 px, the twelve fixed tiles spread across it with the sparklines stretched
+  between, the state strip full width. Two causes, two fixes: (1) the floor counts the job lines
+  (`.ep-act` activity, `.ep-job-figs`), the longest and least structural texts on the card — if
+  those scroll barless when wider than the card (the 3.7u-fix mechanism already in place for
+  capped lines) and only the head and the tile grid set the floor, the floor on the live page
+  drops from ~900 to ~600 and two columns fit at 1400; (2) a card never stretches past ~1.5× the
+  floor (`max-width` on `.host`, the grid packing left), so a lone column leaves space instead of
+  spreading fixed tiles. Operator decides the first (it changes the 3.7u trade "fewer cards, more
+  complete information": the two job lines would show complete on hover/scroll, not at rest).
 - ☐ **3.10b One jobs table, one requests table.** `jobsTable(rows, opts)` becomes the renderer
   for every jobs list: the overview (as now), the endpoint page (`opts.filter` = the endpoint;
   the title "Jobs" with the filter and range stated once: "Jobs · ai1 · last 24h"), and later
