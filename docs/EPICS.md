@@ -1599,6 +1599,17 @@ Coordinator's answers from the code (2026-10-30):
   shell, and prune reading the database — a cross-cutting change for a cosmetic gain. On screen
   the smaller move is available: show the 8-hex tail (the UUID's first 8, the same as the name's
   tail) with the started column, full name and id in the title. Operator decides; not scheduled.
+  Operator: "Not entirely - the files have actual timestamps for created, so using the name as a
+  proxy for a timestamp is a anti-pattern. No human is going to rummage into those directories I
+  think - good luck to them under any naming pattern. What you've created is essentially two
+  PK's. Prune doesn't need the database because it has the file create times. I argue it's not
+  a cosmetic change, it's a 'load bearing' change as you would put it. Thoughts?" Coordinator:
+  conceded — two unique keys on one row, the stamp a proxy for data the row and the filesystem
+  carry; prune by the directory's newest mtime is "nothing written for N days", the age prune
+  wants (trap: an outside touch rejuvenates a directory — docstring). If scheduled: 3.10f, the
+  UUID as directory and branch name, `name` kept on old rows and shown when present else
+  `id[:8]` with the started column, prune ageing both shapes by mtime, `dropped_job`/`job_name`
+  → ids, seed and specs; DeepSeek, after the table stories; its own review (schema-shaped).
 - **"tier 0: every endpoint"** (endpoint.js:240 `TIER_NAME`): the spec's tiers (§5 line 185)
   group the tiles by which BACKENDS provide them — tier 0 "every backend provides these", tier 1
   counters, tier 2 occupancy, tier 3 hardware. A taxonomy of data sources leaked onto the page as
