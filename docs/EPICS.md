@@ -1874,7 +1874,23 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   Operator asked "Pagination with local column filters and sorting?" — recommended as above;
   operator (2026-10-30): "3.10c - yes, client side filter." Decided: client-side over the
   fetched rows, as written. Sequence: after 3.10a (columns) and 3.10b (one renderer each), so
-  the helper is built once under both tables.
+  the helper is built once under both tables. **LANDED f817d6e (+18efad4)** (Qwen/ai1 job
+  f5930fda-bb5c-4d99-8c7f-571c21267928, 81 turns, 18 min; 798 tests): `dataTable(id, columns,
+  rows, opts)`, `TABLE_STATE` keyed by table id, `TABLE_PAGE_SIZE` 50; both renderers are callers
+  with their cells unchanged (no earlier pin moved). Lane's decisions: the brief's requests id
+  test was inverted (`opts.job === false` is the job page — caught); filter text is the cell's
+  text plus its title (a pasted UUID matches the short-id cell; "ok" matches its numeric code);
+  the sort is type-driven (two finite numbers compare numerically, so the context percent sorts
+  numerically; missing figures sort last); the caret survives the redraw; a filter resets the
+  page, a sort does not, a push clamps. Smoke `tools/smoke/tables.js`: "1–50 of 120", turns
+  asc/desc with aria-sort, "done" → 40, ">100" → 7, next → "51–100", a push keeps
+  `{sort: turns desc, filters, page 2}`; both detail pages' request tables sort and filter.
+  Coordinator fold at landing (18efad4): the lane keyed both pages' jobs tables to one id "jobs"
+  (a filter on the endpoint page would have filtered the overview); `opts.id`, the endpoint
+  page passes "jobs-endpoint". Lane's notes: `cellText` builds a td per row per column per
+  filter keystroke (O(rows × cols) DOM work — fine at 1000 rows, a 3.11a candidate); cdp.mjs's
+  header reads are safe only because the arrow is CSS `::after`; `renders.full` counts card
+  rebuilds only.
 - ☑ **3.10d Endpoint page labels.** (Landed 9c41b21: Qwen/ai2 job 20261030-215334-3293e876, 93 turns, 20 min, one compaction; 723 tests. Tiers kept as order and border colours, headings plain nouns with none over the first group; the state/node tiles gone, the port-22 answer in the header's host clause; tiles a flex-wrap row with `flex: 1 0 auto; min-width: 170px`, `.tile-value` nowrap without ellipsis — a 120-char served model widened its tile to 1118 px, overflow 0, 17 sparklines drawn. Lane's corrections: cdp.mjs's `tiles`/`tileLabels` read the OVERVIEW's hidden cards, not the endpoint page (the brief was wrong; its own `t/fit.js` read the tiles); the page-test literal scan reads quoted prose in comments too, so a quoted phrase in a comment is de facto pinned.) The tier headings and classes go; "endpoint"/"node" tiles
   go (the header carries both and the fallback note); tiles grouped under "speeds",
   "occupancy", "hardware" with no numbering; "served model" and every tile value follow the
