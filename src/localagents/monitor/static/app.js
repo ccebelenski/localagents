@@ -1651,6 +1651,9 @@
   // The rates are blank, never a placeholder number, when their inputs are missing:
   //   prefill t/s = (input + cache_creation) / ((ms − gen_ms) / 1000), when ms > gen_ms and
   //                 input + cache_creation > 0 (a non-stream request may have no gen_ms);
+  //                 a missing cache_creation counts as 0 when input is a number (3.10i: a
+  //                 backend with no cache fields at all, vLLM, still gets a rate — an upper
+  //                 bound, and the cell's title names it);
   //   decode t/s  = output / (gen_ms / 1000), when gen_ms > 0 and output > 0.
   // The brief wrote Strata's prefill as "input − cache_read", but that is Strata's model, where
   // its input is the WHOLE prompt: our `tokens.input` excludes cache reads (derive._PROMPT_SUM
@@ -1670,9 +1673,13 @@
   // alias would hide them from the gate)
   function prefillRate(req) {
     if (!req.tokens) return null;
-    if (typeof req.tokens.input !== "number" || typeof req.tokens.cache_creation !== "number") return null;
+    if (typeof req.tokens.input !== "number") return null;
     if (typeof req.ms !== "number" || typeof req.gen_ms !== "number") return null;
-    var prefill = req.tokens.input + req.tokens.cache_creation; // the tokens actually processed
+    // 3.10i (the vLLM lane: no cache fields in its usage at all): a missing cache_creation
+    // counts as 0 when input is a number — the processed tokens are input alone, an UPPER
+    // bound (the engine's own prefix cache is invisible); the cell's title says so
+    var cc = typeof req.tokens.cache_creation === "number" ? req.tokens.cache_creation : 0;
+    var prefill = req.tokens.input + cc; // the tokens actually processed
     if (req.ms <= req.gen_ms || prefill <= 0) return null;
     return prefill / ((req.ms - req.gen_ms) / 1000);
   }
@@ -1779,6 +1786,21 @@
       if (fmt.int(cacheRead) !== "") promptParts.push("cache read " + fmt.int(cacheRead));
       if (fmt.int(cacheCreation) !== "") promptParts.push("cache creation " + fmt.int(cacheCreation));
       var promptTitle = promptParts.join(", ");
+      // 3.10i: the prefill cell's title. A backend that reports NEITHER cache field (vLLM's
+      // Anthropic shape, until --enable-prompt-tokens-details) gets a rate with cache
+      // counted as 0 — the whole input over time-to-first-token — so the title names the
+      // upper bound rather than a numerator the backend never confirmed. A backend that does
+      // report cache gets the numerator sentence ("3,001 new tokens over 0.5 s").
+      var prefillTitle = null;
+      if (prefill != null) {
+        var spanMs = req.ms - req.gen_ms;
+        prefillTitle = typeof cacheCreation !== "number" && typeof cacheRead !== "number"
+          ? "cache not reported by this backend: the rate counts the whole input"
+          : fmt.int(req.tokens.input + (typeof cacheCreation === "number" ? cacheCreation : 0))
+            // the duration cell's own sub-second rule, so a 39 ms window never reads "0.0 s"
+            + " new tokens over " + (spanMs < 1000 ? fmt.int(spanMs) + " ms"
+              : fmt.speed(spanMs / 1000) + " s");
+      }
       var statusCell;
       if (handshake) {
         statusCell = h("td", null, [h("span", { class: "pill pill-muted",
@@ -1800,7 +1822,7 @@
         // the sentence rather than trailing a blank (fold-3 review NOTICED)
         reused: h("td", { class: "n", title: reusedTitle, text: fmt.int(cacheRead) }),
         output: h("td", { class: "n", text: fmt.int(tokens.output) }),
-        "prefill t/s": h("td", { class: "n", text: prefill == null ? "" : fmt.speed(prefill) }),
+        "prefill t/s": h("td", { class: "n", title: prefillTitle, text: prefill == null ? "" : fmt.speed(prefill) }),
         "decode t/s": h("td", { class: "n", text: decode == null ? "" : fmt.speed(decode) }),
         // duration (3.7-fold-4): under a second in whole ms ("8 ms" — the old rule read every
         // sub-10 ms request "0.0 s"), else tenths of a second

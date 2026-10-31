@@ -48,18 +48,19 @@ def _ep(ov, name):
 
 
 def _seed_prefill_tps(reqs):
-    """derive.prefill_tps's rule re-applied to the export's request rows (story 3.10a): the
-    processed prompt tokens (input + cache_creation) summed over the prefill spans ((ms − gen_ms)
-    / 1000) of the ``/v1/messages`` rows where every one of the four fields is a number,
-    ms > gen_ms and the processed tokens > 0 — the page's own rule (app.js prefillRate)."""
+    """derive.prefill_tps's rule re-applied to the export's request rows (story 3.10a, relaxed
+    for 3.10i): the processed prompt tokens (input + cache_creation, a NULL cache_creation
+    counting 0) summed over the prefill spans ((ms − gen_ms) / 1000) of the ``/v1/messages``
+    rows where input, ms and gen_ms are numbers, ms > gen_ms and the processed tokens > 0 —
+    the page's own rule (app.js prefillRate)."""
     tokens = seconds = 0.0
     for r in reqs:
         if r["path"] != "/v1/messages":
             continue
         inp, cc, ms, gen = r["input_tokens"], r["cache_creation_tokens"], r["ms"], r["gen_ms"]
-        if inp is None or cc is None or ms is None or gen is None or ms <= gen or inp + cc <= 0:
+        if inp is None or ms is None or gen is None or ms <= gen or inp + (cc or 0) <= 0:
             continue
-        tokens += inp + cc
+        tokens += inp + (cc or 0)
         seconds += (ms - gen) / 1000
     return tokens / seconds if seconds else None
 

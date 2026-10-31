@@ -508,7 +508,11 @@ Strata derives from the same facts, and the time cell reads clock time inside 24
 date past it.) (True now, 3.10h(b), 2026-10-30: the prompt column is the whole prompt the
 request carried (input + reused + cache creation), next to the new tokens (input +
 cache_creation — the prefill numerator) and the reused share; the API's bare `input_tokens`,
-1 on a hot prefix cache, is no longer shown as "prompt".) (True now, 3.10b: the endpoint page has no tables of its own anymore — the
+1 on a hot prefix cache, is no longer shown as "prompt".) (True now, 3.10i, 2026-10-31: a
+backend that reports no cache fields — vLLM's Anthropic shape, until
+`--enable-prompt-tokens-details` — still gets a prefill t/s: a missing cache_creation counts
+as 0, the whole input over time-to-first-token, an upper bound the cell's title names.)
+(True now, 3.10b: the endpoint page has no tables of its own anymore — the
 jobs table is the Recent-jobs table filtered to the endpoint, one renderer with the endpoint
 column dropped and every row a full snapshot job row; events are the collector's up/down
 transitions and are drawn only when the range holds one, as "Restarts and outages"; and every

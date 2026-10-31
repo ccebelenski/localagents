@@ -529,7 +529,10 @@ cache_creation — the analogue of Strata's processed count (`prompt_tokens − 
 not invented. True now (3.10h(b), 2026-10-30): the request tables show the whole prompt (input +
 reused + cache creation), the new tokens (input + cache creation — the prefill numerator) and the
 reused share as three columns; the API's bare `input_tokens`, 1 on a hot cache, is no longer
-shown as "prompt". True now (3.7v, 2026-10-30): the job page's header says "N tool errors" (tool
+shown as "prompt". True now (3.10i, 2026-10-31): a backend that reports no cache fields (vLLM's
+Anthropic shape, until `--enable-prompt-tokens-details`) still gets a prefill rate — a missing
+cache_creation counts as 0, the whole input over time-to-first-token, an upper bound the cell's
+title names. True now (3.7v, 2026-10-30): the job page's header says "N tool errors" (tool
 results flagged is_error) and "N request errors" (requests outside 2xx or with an error text)
 side by side; a `/api/hello` handshake row is labelled "handshake" and counted as neither.
 True now (3.10c, 2026-10-31): every table pages at 50 with a pager line, sorts by any header (numeric columns numerically, a second click reverses) and filters per column (substring; `>n`/`<n` on numeric columns), client-side over the fetched rows; sort, filters and page survive the pushes (state keyed by table, not in the DOM); the endpoint requests route's 1000-row cap and whole-range totals are unchanged.

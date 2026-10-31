@@ -609,8 +609,11 @@ def test_requests_tables_share_one_renderer():
     assert "var withJob = opts.job !== false;" in app_js
     assert "(req.ms - req.gen_ms) / 1000" in app_js  # prefill t/s
     # the brief's "input − cache_read" is Strata's total-input model; ours excludes cache reads,
-    # so the processed count is input + cache_creation (Strata's processed = prompt − cached)
-    assert "req.tokens.input + req.tokens.cache_creation" in app_js
+    # so the processed count is input + cache_creation (Strata's processed = prompt − cached).
+    # 3.10i: a missing cache_creation counts as 0 when input is a number (vLLM reports no cache
+    # fields at all), so prefillRate reads the figure through `cc` — the old bare-sum pin named
+    # the superseded rule
+    assert "req.tokens.input + cc" in app_js
     assert "req.tokens.output / (req.gen_ms / 1000)" in app_js  # decode t/s
     # each page calls it, with the job column dropped on the job page; 3.7-fold-4 adds each
     # page's clock as `now` for the day-stamped time column (the snapshot's now via nowOf on

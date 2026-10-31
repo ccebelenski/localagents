@@ -111,20 +111,24 @@ def gen_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
 
 def prefill_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
     """Processed prompt tokens (input + cache_creation) per second of prefill (ms − gen_ms),
-    summed over the job's ``/v1/messages`` rows — a plain ratio over the job. Rows join only
-    when all four fields are numbers, ms > gen_ms and the processed tokens > 0: the page's own
-    rule (app.js prefillRate, story 3.9k). Not an EMA replay like gen_tps: decode's EMA is a
-    replay of the status line's note_usage history, and prefill has no such history to match —
-    a ratio is what "tokens processed per second of prefill" means (story 3.10a)."""
+    summed over the job's ``/v1/messages`` rows — a plain ratio over the job. Rows join when
+    ``input_tokens``, ``ms`` and ``gen_ms`` are numbers, ms > gen_ms and the processed tokens
+    (input + cache_creation, a NULL cache_creation counting 0) are > 0: the page's own rule
+    (app.js prefillRate). A missing cache_creation counts as 0 since story 3.10i — a backend
+    with no cache fields in its usage (vLLM's Anthropic shape, until --enable-prompt-tokens-
+    details) otherwise computes no figure at all — and the figure is then an UPPER bound: the
+    engine's own prefix cache is invisible to us. Not an EMA replay like gen_tps: decode's EMA
+    is a replay of the status line's note_usage history, and prefill has no such history to
+    match — a ratio is what "tokens processed per second of prefill" means (story 3.10a)."""
     tokens = seconds = 0.0
     for r in conn.execute(
         f"SELECT r.ms, r.gen_ms, r.input_tokens, r.cache_creation_tokens {_MESSAGES} ORDER BY r.t",
         (job_id,),
     ).fetchall():
         inp, cc, ms, gen = r["input_tokens"], r["cache_creation_tokens"], r["ms"], r["gen_ms"]
-        if inp is None or cc is None or ms is None or gen is None or ms <= gen or inp + cc <= 0:
+        if inp is None or ms is None or gen is None or ms <= gen or inp + (cc or 0) <= 0:
             continue
-        tokens += inp + cc
+        tokens += inp + (cc or 0)
         seconds += (ms - gen) / 1000
     return tokens / seconds if seconds else None
 
