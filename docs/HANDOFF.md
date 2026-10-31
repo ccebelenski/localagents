@@ -33,15 +33,13 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**Lanes at the last note (2026-10-31 ~02:00, the operator asleep).** The 3.10 pass is landed (a-i,
-f-1/f-2, the shim fold); 3.10i landed; a `node --check` parse gate added. DeepSeek's page-batch
-review found F1/F2 in the table helper (the title guard inverted; blanks flip with the sort
-direction) and two pin gaps — the fold runs in the review worktree (DeepSeek). 3.11b, the test-suite
-audit, runs on the dense Qwen (llamacpp) with a no-edit rule on the test_3_10*.py files the fold
-touches. Next, in order: land the fold (a Qwen review of it), dispatch 3.11a (Opus, the brief at the
-session scratchpad `brief-3.11a.md`) once the fold is in, land 3.11b's replacements, update
-EPICS/HANDOFF/memory, draft the retro's counts (the retro itself is the operator's call). No push,
-no MCP reconnect, no touch of port 8765. Suite 808.
+**Lanes at the last note (2026-10-31 ~04:10, the operator asleep).** Landed overnight: the page-batch
+fold (81b199a; its review clean), 3.11b the test-suite audit (27faf06; the table at
+docs/audits/2026-10-31-test-suite-audit.md). Running: 3.11a, the Opus codebase audit + folds
+(the brief at the session scratchpad `brief-3.11a.md`); when it lands: accept, read every fold's
+diff, land, a cross-model review of its folds (Qwen/ai1 or ai2), record. A retro DRAFT is at
+docs/retros/2026-10-31-presentation-review-usability-DRAFT.md (counts at ~04:00; the operator
+closes the arc). Suite 813. No push, no MCP reconnect, no touch of port 8765.
 
 **Awaiting the operator.**
 - 3.7t: the shim answers `/api/hello` itself (Claude Code's connection warm-up; today it is
