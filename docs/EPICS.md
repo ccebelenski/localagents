@@ -2534,6 +2534,42 @@ lands; 3.12c after 3.12b.
   ellipses added" was wrong (one in the README line; replaced before the squash); the F3
   test's `keyGone` variable is named backwards (it holds "key present"; the assertion is
   right). Spec §3/§5 carry True-now lines. The construct-it review next.
+- ☑ **Review of 3.12f** (DeepSeek/dgx1-a job 8b6381e0, 57 turns, 19 min, three probes, read-only,
+  no tracked file changed). P1 the match rule, three local days, current vs the pre-story copy:
+  "09-11" 6/0 (the bounds in, 08:59:59 and 12:00:00 out), "11-09" 0/0, "9-11" and the padded
+  forms 0/0, "2026-10-31" 4/4, "2026-10-31 09-11" 2/2 — CLEAN. DST under America/New_York: the
+  fall-back day's hour 1 holds 7200 s, so "01-01" matches both 01:xx instances (2) and "01-02" 5;
+  the spring day's "02-02" matches 0; the dated reading is identical since 3.12c — a NOTE, the
+  local-hour reading the rule states. P2 the focus rule: with "09-11", focus `from` and choose
+  "any" → state "00-11", the select shows "any" (`__stale`), the summary "00 to 11", on focusout
+  the select reads "00"; the dated sequence does the same on the pre-story copy — CLEAN, 3.12c's
+  rule as written. **DEFECT (1), reproduced:** there is NO escape hatch — `from`→any then
+  `to`→any gives "00-11" then "00-23", and every further "any" is a no-op, because the draw's
+  read-back materialises the edge into the cleared handle (app.js:1480); R3's "both hours any
+  empties the state" is true of `timePanelState` but unreachable from the selects (the F3 pin
+  reaches it only by a direct `.value` write, test_3_12f.py:214-217); the only ways back are the
+  panel's clear or the pager's "clear filters". Inherited from 3.12c on the dated shape
+  ("<date> 00-23"), newly visible dayless. P3 the live smoke on 8798/9258: `c4` pasted verbatim,
+  `c4.ok` true, dayless matched 60 = want 60; the broken witness ("11-12") surfaces as
+  `daylessOk:false`/`c4.ok:false` in the JSON but cdp.mjs exits 0 and prints no SCRIPT_THREW (it
+  ignores `Runtime.evaluate`'s `exceptionDetails`; dom.js:53 does print it) — NOTICED, the known
+  "smoke drivers never exit non-zero" item; a push with the panel open keeps the panel, the three
+  select elements, the state and the summary, and a row moved 12:00 → 13:00 refreshes the hour
+  list in place — CLEAN. Other notices: the smoke's hand rows all sit on NOW's day, so c4 cannot
+  tell "every day" from "today" except by the state string; the shape grammar lives in three
+  functions (675, 1252, 1321); "any" does double duty (unset vs the day's edge), the root of the
+  trap; "HH-HH" accepts 24-99 silently. Suite 907 in the worktree.
+  **Disposition:** the defect is the rule's, not the lane's (the coordinator had filed it as a
+  usability item for the operator's hands; the reviewer's evidence makes it a defect: a clause of
+  R3 no operator can reach). The fold, by the reviewer (ruling (a)), under the 3.12f go as the
+  round's other chains: the READ-BACK changes, never the grammar — a held `from` of "00" reads
+  back as "any" and a held `to` of "23" reads back as "any" (a single handle means the day's
+  edge, so "00" from and "any" from are the same bound; the state string is unchanged), which
+  makes `from`→any, `to`→any reach "" dayless and the date alone dated; an explicit 00:00 or
+  23:59 pick writes the same state and reads back the same way (documented, not hidden). The
+  summary still prints the edges ("00 to 11"). Pins: test_3_12f.py:231 (`reread`) moves to
+  `{"from": "", "to": "11"}`; the write pins ("HH-23", "00-HH") stay. The cdp.mjs exit code is
+  not folded here (a smoke-driver item, open since the 3.12a fold).
 
 ## Epic 4: operations (V2, not scheduled)
 
