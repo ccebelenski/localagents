@@ -2570,6 +2570,22 @@ lands; 3.12c after 3.12b.
   summary still prints the edges ("00 to 11"). Pins: test_3_12f.py:231 (`reread`) moves to
   `{"from": "", "to": "11"}`; the write pins ("HH-23", "00-HH") stay. The cdp.mjs exit code is
   not folded here (a smoke-driver item, open since the 3.12a fold).
+- ☑ **3.12f-fold** (Landed ebc9706: DeepSeek/dgx1-a job e96c9009, 58 turns, 18 min, four WIP
+  commits squashed; suite 911). RED first: 3 failed, 1 passed (F4 the guard green by design);
+  the reproduction read worse than filed — after "09-11", from→any wrote "00-11" and the next
+  to→any RE-WIDENED the state to "00-23" (the read-back "00" taken as a from handle). The fix is
+  the read-back only (app.js `hourOptions`: `heldHour` of "00" for from / "23" for to becomes
+  ""); writes, grammar and summary untouched. Pins moved in test_3_12f.py: the `reread` pin and
+  its docstring, and the direct `.value` write became the ordinary change (the path is reachable
+  now). Live: c3/c4 unchanged (`c4.ok` true); a scratch probe on the seeded page: "21-21" →
+  from any → "00-21" read back {"", "21"} → to any → key gone, all three selects "any". The
+  lane's notices: the panel cannot show "whole day" — "00-23" reads back as two "any" selects
+  and only the summary ("00 to 23") tells it from an empty filter (the one-bound rule as
+  specified; a spec sentence if the panel's display is ever described); 3.12f's own F3 had
+  pinned the defect as correct — the hole was a missing read-back witness, not a wrong
+  assertion; tests/fakedom.js selects accept any string, so a page test can drive a pick no real
+  select allows (the fold's fixture added real 00/23 rows); `hourList` still offers a held bound
+  the faceted rows lack (state-is-truth since 3.12c). The Qwen review of the fold next.
 
 ## Epic 4: operations (V2, not scheduled)
 
