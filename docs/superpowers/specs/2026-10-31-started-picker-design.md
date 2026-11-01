@@ -44,6 +44,10 @@ display, the value is the date, so a filter set before midnight still means the 
 row matches when its sort key (epoch seconds; null never matches) falls in the span, computed with
 local `Date` components (the cells print local time).
 
+  True now (3.12f, 2026-10-31 evening): a THIRD shape, `"HH-HH"` (every day, the same inclusive
+  whole-hour span and from > to rule). The operator's hands on the live page: "when the date is
+  not selected ("any") none of the other parts function"; "there's no point in limiting it".
+
 ## 4. The control in the cell
 
 - `<button type="button" class="filter-pick" data-filter="<col>" data-filter-kind="time">` in the
@@ -68,6 +72,8 @@ local `Date` components (the cells print local time).
   "from" `<select>` and "to" `<select>` (any, then the hours present among the rows on the chosen
   date, "09:00" for from and "09:59" for to; disabled until a date is chosen) · "clear" (a
   `pager-btn`, empties the state) · "done" (closes).
+  True now (3.12f): the hour selects are NEVER disabled; with the date "any" they list the hours
+  present among the faceted rows on every day, and a chosen hour writes the dayless shape.
 - Every change writes the state string (§3) through `setFilter` and redraws (level 2 of 3.12b: the
   panel and its selects persist, being part of the filter row's cell state — the panel is rebuilt
   only when closed; while open, its option counts update in place by the same focus rule as the

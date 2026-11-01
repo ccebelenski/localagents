@@ -2515,6 +2515,25 @@ lands; 3.12c after 3.12b.
   since when there are multiple days available the time picker makes a little less sense in that
   mode. But it was doing it even with only a single day available too, so we should just fix it
   and there's no point in limiting it. Go for it." — GO (2026-10-31 evening); no limiting rule.
+  **Landed 9866bb1** (Qwen/ai1 job f7b47f6f, 72 turns, 11.5 min, four WIP commits squashed;
+  suite 907). RED first: 5 failed, 1 passed on main's code (dayless "09-11" matched 0, the
+  selects `disabled`, no state written, the summary raw). `timeFilterMatch` takes the dayless
+  alternative through the same inclusive/from>to code; `timeSummaryParts` → `{day: "", from,
+  to}`; `timePanelState`'s day prefix conditional; `patchTimePanelSelects` collects hours over
+  every faceted day when `held.day` is empty and never sets `disabled`; `pickSummary` prints
+  "09 to 11" alone. Pins moved: test_3_12c.py:367 (named) and the clear test's `fromDisabled is
+  True` (~:438, the gate broke it; disclosed, right). Smoke (c4) on 8797/9257: dayless "11-11"
+  → 60 = want 60, "today 11 to 11" → 60, clear → 120 key gone, `c4.ok` true. The lane's
+  decisions: steps 2+3 committed together (a step-2 commit would have committed red 3.12c
+  pins); the brief's "from any, to any → key gone" is unreachable one select at a time —
+  clearing `from` lands on the edge "00-11" and the rebuild materialises "00" back, so the
+  lane pinned the edge, the read-back, then both "any" in one change. That trap is
+  PRE-EXISTING since 3.12c with a date (clearing both hours leaves "<date> 00-23", never the
+  date alone; "clear" is the exit) and newly reachable dayless — an open usability item for
+  the operator's hands, not a defect of this story. Coordinator at acceptance: the lane's "0
+  ellipses added" was wrong (one in the README line; replaced before the squash); the F3
+  test's `keyGone` variable is named backwards (it holds "key present"; the assertion is
+  right). Spec §3/§5 carry True-now lines. The construct-it review next.
 
 ## Epic 4: operations (V2, not scheduled)
 
