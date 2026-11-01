@@ -2510,7 +2510,11 @@ lands; 3.12c after 3.12b.
   (enabled before a date, the all-days hour list), tests/test_3_12f.py pins the three shapes at the
   bounds and the summary, tools/smoke/tables.js gets a c4 step (hours 11 to 11 under "any" →
   the 11:xx rows of every day, then today → today's 11:xx). One lane, Qwen/ai1, worktree, then the
-  construct-it review. Builds on its own "go" (ruling (p)).
+  construct-it review. Builds on its own "go" (ruling (p)). Operator: "Ah, the old "linear left to right"
+  picker trick, huh? Seriously, not a big deal, and not hard to fix. I can almost see it actually,
+  since when there are multiple days available the time picker makes a little less sense in that
+  mode. But it was doing it even with only a single day available too, so we should just fix it
+  and there's no point in limiting it. Go for it." — GO (2026-10-31 evening); no limiting rule.
 
 ## Epic 4: operations (V2, not scheduled)
 
