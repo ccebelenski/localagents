@@ -1476,8 +1476,19 @@
           sel.appendChild(h("option", { value: hh, text: hh + ":" + suffix }));
         });
         // the held bound reads back whichever day the state holds (3.12f: the dayless shape
-        // has empty day and set hours); the selects are never disabled
-        sel.value = suffix === "00" ? held.from : held.to;
+        // has empty day and set hours); the selects are never disabled. The fold of 3.12f: the
+        // edge hours read back as "any" — a held from of "00" and a held to of "23". A single
+        // handle already means the day's edge (timePanelState: from alone writes "HH-23", to
+        // alone "00-HH"), so "00" from and "any" from are the same bound (likewise "23" and
+        // "any" for to) and the state string is unchanged. Without that there is no escape from
+        // the panel's own writes: from→any puts "00" in the state, the read-back showed it as a
+        // handle, and the next to→any re-composed "00-23" instead of emptying the state. An
+        // explicit 00:00 from or 23:59 to pick is one bound with "any": it writes the same
+        // state it always did and reads back "any" the same way (the summary, which reads the
+        // state, still prints "00 to 11").
+        var heldHour = suffix === "00" ? held.from : held.to;
+        if (heldHour === (suffix === "00" ? "00" : "23")) heldHour = ""; // the edge IS "any"
+        sel.value = heldHour;
       };
       rebuild(fs, function (sel) { hourOptions(sel, "00"); });
       rebuild(ts, function (sel) { hourOptions(sel, "59"); });

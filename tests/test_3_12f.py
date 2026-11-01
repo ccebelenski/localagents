@@ -200,9 +200,10 @@ def test_the_writes_compose_the_dayless_shape_and_the_date_edges_hold(tmp_path):
     one-handle rule without a day); to 11 completes "09-11"; choosing TODAY keeps the hours
     ("2026-10-31 09-11"); choosing "any" again keeps them ("09-11" — the operator: no
     limiting); then the hours go back to "any": clearing from alone lands on the to-alone
-    edge "00-11" (and the read-back materializes "00" into the select, 3.12c's rule kept —
-    the same behaviour the dated shape has had since 3.12c), and with BOTH selects at "any"
-    the state empties and the key goes (R3's last clause)."""
+    edge "00-11" and reads back from "any" (the 3.12f fold: an edge hour is the handle's own
+    bound — from "00" alone writes "00-23" — so "00" from and "any" from are one bound, and
+    the summary still prints "00 to 11"), and with BOTH selects at "any" the state empties
+    and the key goes (R3's last clause, now reachable from the panel)."""
     got = _page_js(tmp_path, _JOBS + _PANEL_ROWS + """
   setOpt(fromSel(), "09");
   var fromAlone = state();
@@ -215,8 +216,10 @@ def test_the_writes_compose_the_dayless_shape_and_the_date_edges_hold(tmp_path):
   setOpt(fromSel(), "");
   var toAloneEdge = state();
   var reread = { from: fromSel().value, to: toSel().value };
-  // both selects at "any", one change: the state empties, setFilter deletes the key
-  fromSel().value = "";
+  // both selects at "any" (the fold: the read-back above already shows from "any"); the
+  // ordinary change on from re-writes the same "00-11" (one bound), then to→any empties the
+  // state and setFilter deletes the key
+  setOpt(fromSel(), "");
   setOpt(toSel(), "");
   var keyGone = ("started" in M.TABLE_STATE["t312f-panel"].filters);
   var afterGone = { from: fromSel().value, to: toSel().value, date: dateSel().value };
@@ -228,7 +231,7 @@ def test_the_writes_compose_the_dayless_shape_and_the_date_edges_hold(tmp_path):
     assert got["withDate"] == "2026-10-31 09-11", got  # the date joins, the hours stay
     assert got["daylessAgain"] == "09-11", got  # "any" after a date keeps the hours
     assert got["toAloneEdge"] == "00-11", got  # clearing from lands on the to-alone edge
-    assert got["reread"] == {"from": "00", "to": "11"}, got  # the read-back materializes it
+    assert got["reread"] == {"from": "", "to": "11"}, got  # the edge hour reads back "any"
     assert got["keyGone"] is False, got  # both "any": the state empties, setFilter deletes
     assert got["afterGone"] == {"from": "", "to": "", "date": ""}, got  # the panel stands by
 
