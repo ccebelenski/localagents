@@ -78,7 +78,11 @@ briefs passed by path (c).
   coordinator's to adopt or drop on evidence, without a ruling here; a RECORDED ruling or rule
   that has stopped helping is brought to the operator with the evidence for a final check
   before it is removed. Rulings that bind lanes, the operator's own decisions and anything
-  touching the real data stay the operator's.
+  touching the real data stay the operator's. And: "when recording your own process improvement
+  make sure the entries are compatible with existing entries or you'll get into circular logic
+  on those. Consider them in the full set. And also remember if you get too many rules then
+  things get missed too - you're not any more perfect than I am on process rules that get too
+  deep or complicated. Simple wins." 
 
 Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before any parser;
 2.4 before any page story; 3.5 last.
