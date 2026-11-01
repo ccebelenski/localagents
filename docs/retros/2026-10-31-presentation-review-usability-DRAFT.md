@@ -79,6 +79,9 @@ sentences are verbatim from EPICS.
 - "Known hazard - multiple worktrees, but one database." (the 22:44 incident) → 1.15.
 - "Achievement unlocks: All endpoints active!"
 - "Certainly not going to reset the MCP while jobs running."
+- "Human reviews still important as last line of defense." (2026-10-31 evening, the operator's
+  own retro comment, after their hands found 3.12f — a spec sentence every model review had
+  cleared.)
 
 ## Ruling proposals (done repeatedly, with results; the operator inks or declines)
 

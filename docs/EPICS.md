@@ -2605,6 +2605,18 @@ lands; 3.12c after 3.12b.
   edges were unescapable (3.12c's to→any materialised "23" too); (3) cosmetic: the shared
   `hourList` puts a held bound in BOTH selects' lists (under "00-21" the to select offers
   "00:59"), each pick still writes a legal state.
+  Operator (2026-10-31 evening, after the chain closed): "I noticed some hands-on quirky
+  behavior on the picker too - sometime for example it will show the end-time (23) twice. So far
+  I can always get to a pick that works, so it's cosmetic I believe. I would let it go for now."
+  — DEFERRED on the operator's word; the coordinator could not derive the duplicate from the
+  code by reading (`hourList` de-duplicates the held bounds at app.js:1468-1470; the nearest
+  known shape is the fold review's notice (3), a held bound listed in the other select); a live
+  reproduction is the next step if it ever matters. "The activity line - no activity for me to
+  judge now, so I'll watch later when we have legit work to do. Same with scrollbars - it's quiet
+  right now." — 3.10g(1) and the 3.12b after reading wait for real work. "My retro additional
+  comment would be: "Human reviews still important as last line of defense"" — in the retro
+  DRAFT's verdicts section. The operator reconnected the MCP server (`/mcp`) at this note: the
+  server process now runs today's package (3.12e's sentences, the shim fold).
 
 ## Epic 4: operations (V2, not scheduled)
 
