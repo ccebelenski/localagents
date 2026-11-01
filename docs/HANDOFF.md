@@ -39,14 +39,16 @@ function" — the spec's own §5 sentence ("disabled until a date is chosen"), b
 3.12c; the operator: "there's no point in limiting it. Go for it." Landed 9866bb1 (Qwen/ai1, 72
 turns): a third state shape "HH-HH" (every day, hours inclusive), the hour selects never disabled,
 the all-days hour list under "any", the summary "09 to 11" alone, two 3.12c pins moved, smoke (c4),
-suite 907; the spec's §3/§5 carry True-now lines. RUNNING at this note: the DeepSeek/dgx1-a
-construct-it review of 3.12f (three probes: the match rule across days and the DST edge, the
-focus rule against the hour-edge materialisation, the live smoke + broken-witness check; brief at
-the session scratchpad `brief-review-3.12f.md`); accept with `tools/accept.sh`, dispositions into
-EPICS 3.12f, the fold by the reviewer or a coordinator fold riding nothing (a new door). One open
-usability item the lane surfaced, pre-existing since 3.12c: once both hours are set, clearing one
-select lands on the day's edge and the read-back materialises it ("00-11"), so "clear" is the only
-way back to "any" — for the operator's hands, not a defect. The late-afternoon note follows.
+suite 907; the spec's §3/§5 carry True-now lines. The DeepSeek review of 3.12f (EPICS 3.12f)
+found one defect, inherited from 3.12c: no sequence of the hour selects could empty the state
+once both hours were set (the read-back put the day's edge into a cleared select and the next
+"any" re-composed "00-23"). The reviewer's own fold landed ebc9706 (the read-back only: a held
+from of "00" and a held to of "23" show as "any"; grammar, writes and summary unchanged; suite
+911). RUNNING at this note: the Qwen/ai1 review of that fold (three probes: every escape order
+current vs pre-fold, the focus rule against the new read-back, the live page; brief at the
+session scratchpad `brief-3.12f-fold-review.md`); when it reports, dispositions into EPICS 3.12f,
+a fold only if it finds a defect, then the chain closes. After that: the operator's eyes on the
+picker again, and the retro on their word. The late-afternoon note follows.
 
 **Lanes at the last note (2026-10-31 late afternoon, the operator present).** The operator ticked
 3.12a, 3.10c and 3.10e on the live page and gave the go on "the open build work now that all lanes
