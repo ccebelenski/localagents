@@ -46,7 +46,10 @@ once both hours were set (the read-back put the day's edge into a cleared select
 from of "00" and a held to of "23" show as "any"; grammar, writes and summary unchanged; suite
 911). The Qwen/ai1 review of that fold found no defect (every escape order, the focus rule,
 the live page; EPICS 3.12f): the 3.12f chain is closed, no lane is running, suite 911 at
-ebc9706, nothing pushed, `git worktree list` is one line. Open on the operator's side: their
+ebc9706, nothing pushed, `git worktree list` is one line. The operator closed the arc ("Yes, let's close the
+arc"): the retro is filed at docs/retros/2026-10-31-presentation-review-usability.md (the DRAFT
+is gone) with five ruling proposals (q)–(u) for the operator to ink or decline, the open items
+read out, and the EPICS-history closing step proposed. 3.12f is ticked. Open on the operator's side: their
 hands on the picker again (the fold's notice: a "00 to 23" state reads back as two "any"
 selects; only the summary tells it from an empty filter), the AFTER reading of the Firefox
 scrollbars, 3.10g(1) on its own go. Then the retro on their word. The late-afternoon note follows.

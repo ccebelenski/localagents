@@ -2617,6 +2617,13 @@ lands; 3.12c after 3.12b.
   comment would be: "Human reviews still important as last line of defense"" — in the retro
   DRAFT's verdicts section. The operator reconnected the MCP server (`/mcp`) at this note: the
   server process now runs today's package (3.12e's sentences, the shim fold).
+  Operator: "Yes, let's close the arc" (2026-10-31 evening). **Arc closed.** The retrospective
+  is filed at docs/retros/2026-10-31-presentation-review-usability.md: counts from the records,
+  finds by finder, the verdicts verbatim, five ruling proposals (q) the state-dir guard is code,
+  (r) a reviewer's unpinned probe is lifted into the suite, (s) a brief's "a test pins X" is
+  grepped before dispatch, (t) the seed grows the states seen live, (u) a pin the gate breaks may
+  move, disclosed — each for the operator to ink here or decline; the open items; the
+  EPICS-history closing step, proposed, nothing moved.
 
 ## Epic 4: operations (V2, not scheduled)
 
