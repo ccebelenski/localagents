@@ -115,7 +115,8 @@ Under (q) the three habit-shaped proposals are withdrawn to the coordinator's hi
 already live: the state-dir guard as code (a fact since 1.15, not a rule), the grep of a
 brief's "a test pins X" before dispatch, and the unnamed-pin letter ("ONLY the pins named,
 unless the gate breaks another: then move it to what the rule says and name it in the report
-with the reason" — four builds, 3.12b/d/e/f, each right). Two remain for the operator:
+with the reason" — four builds, 3.12b/d/e/f, each right). Two remained for the operator; decided in the 2026-11-01 interview: the lifted probe DECLINED
+("it's a habit"), the seed INKED as ruling (r) with the seed story cut at once (EPICS 3.13):
 
 - **(r) A reviewer's unpinned probe is lifted into the suite at landing.** Three times on the
   night of the 30th (the dense Qwen's P2/P3 hand-renders as jobsrows.js/tiles.js; Qwen/ai2's

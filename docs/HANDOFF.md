@@ -48,7 +48,7 @@ from of "00" and a held to of "23" show as "any"; grammar, writes and summary un
 the live page; EPICS 3.12f): the 3.12f chain is closed, no lane is running, suite 911 at
 ebc9706, nothing pushed, `git worktree list` is one line. The operator closed the arc ("Yes, let's close the
 arc"): the retro is filed at docs/retros/2026-10-31-presentation-review-usability.md (the DRAFT
-is gone) with two ruling proposals (r), (s) for the operator to ink or decline (three habit-shaped ones withdrawn to the hints under the new ruling (q): the coordinator owns its working habits), the open items
+is gone) its two proposals decided 2026-11-01: the seed inked as ruling (r) and cut as story 3.13 (design in EPICS, awaiting go), the lifted probe declined as a habit (three habit-shaped ones withdrawn to the hints under the new ruling (q): the coordinator owns its working habits), the open items
 read out, and the EPICS-history closing step proposed. 3.12f is ticked. Open on the operator's side: their
 hands on the picker again (the fold's notice: a "00 to 23" state reads back as two "any"
 selects; only the summary tells it from an empty filter), the AFTER reading of the Firefox

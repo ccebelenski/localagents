@@ -84,6 +84,16 @@ briefs passed by path (c).
   on those. Consider them in the full set. And also remember if you get too many rules then
   things get missed too - you're not any more perfect than I am on process rules that get too
   deep or complicated. Simple wins." 
+- **(r)** 2026-11-01, the retro interview (the operator: "Interview me about the proposals";
+  inked "and cut the seed story now"): a smoke's witness is trusted only for states the seed
+  holds; a state the operator has seen live that the seed lacks is a seed story before the smoke
+  is cited for it. Rationale, the operator's own: "The risk of the smoke test is that it runs
+  against renders, not truth." (Evidence: the seeded running job reads "lost" by accident, the
+  floor-bearer is a down endpoint the live page lacks, no seeded request is cache-silent or a
+  handshake, every seeded job sits on one local day, so the 3.12f review could not drive the
+  picker's 00:00 pick or tell "every day" from "today".) The retro's other proposal — a
+  reviewer's unpinned probe lifted into the suite at landing — DECLINED as a ruling ("it's a
+  habit"); it is a line in the coordinator's hints under (q).
 
 Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before any parser;
 2.4 before any page story; 3.5 last.
@@ -2640,6 +2650,35 @@ lands; 3.12c after 3.12b.
   important?"), ruling (q) inked and the three habit-shaped ones withdrawn to the hints; the
   retro now carries (r) the lifted probe and (s) the seed, for the operator to ink or decline; the open items; the
   EPICS-history closing step, proposed, nothing moved.
+
+### 3.13 The seed grows the states seen live (ruling (r), 2026-11-01)
+
+- ☐ **3.13 Seed states.** Design, awaiting the operator's "go" (ruling (p)). The seed
+  (src/localagents/monitor/seed.py: a pure function of `now` and the fixture bytes; three
+  endpoints, two jobs — one succeeded 10 min ago, one running 5 min on ai1) gains the states the
+  operator has seen on the live page and the smokes could not witness: (1) job statuses — a
+  FAILED job on dgx1-a finished 15 min ago (its error sentence, two tool errors and one request
+  error so 3.7v's "N tool errors"/"N request errors" lines have rows), a CANCELLED job, and a
+  deliberate LOST job (a second server row whose heartbeat stopped an hour ago, the job's
+  `status='lost'`; today's running job reads "lost" only because the seed's server pid is not
+  live — that accident becomes a named state and the running job gets a live-looking server);
+  (2) the down endpoint carries jobs (the failed job is dgx1-a's), so the down card is a
+  floor-bearer with history, as the live dgx1-a card was; (3) requests — one cache-silent
+  request (3.10i's rule: the engine reported no cache fields) and one handshake request (3.7t/v's
+  rule: the pill, outside the error counts) on the running job; (4) time — jobs across the 7-day
+  range: one yesterday, one three days ago, placed so one STARTS at local 00:xx and one at
+  23:xx (the picker's edge picks become real options; the date select lists today, yesterday
+  and an older date with counts; the dayless window differs from today's). Local-day placement
+  uses the process's zone (`datetime.fromtimestamp(now).astimezone()`), so `seed` stays pure in
+  `now` plus `TZ`; the tests set `TZ`. (5) a never-seen endpoint in the seeded models.yaml
+  (tests/monitor_seeded.py names the three; a fourth with no rows draws the hidden "never seen"
+  count line the live page shows). Not added: an unknown host (nodes.js hand-renders it; the
+  seed has no config for it). The cost is the pins: tests/test_monitor_seed.py's counts
+  (`jobs == 2` at :99, `EXPECTED_COUNTS`), the seeded route and page tests (sixteen files
+  reference the seed), tools/smoke/tables.js's hand-row arithmetic (120 rows on NOW's day) and
+  the README's figures — each moved to the new world, the smokes re-run live, the picker's
+  (c3)/(c4) steps gaining the edge pick and the every-day-vs-today witness. One lane (Qwen/ai1,
+  the seed is one file plus pins), then the DeepSeek review with the smokes run.
 
 ## Epic 4: operations (V2, not scheduled)
 
