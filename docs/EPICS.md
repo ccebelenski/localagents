@@ -2489,7 +2489,7 @@ lands; 3.12c after 3.12b.
   day stamps an hour early by the wall clock; the `except &&` guard in filterIdx is load-bearing
   for the no-argument call. The round's builds are complete; the operator's eyes on Firefox and the
   picker are the open items.
-- ☐ **3.12f The picker's hour bounds without a date.** Operator (2026-10-31, hands on the live
+- ☑ **3.12f The picker's hour bounds without a date.** Operator (2026-10-31, hands on the live
   picker): "Small bug on the date/time picker - when the date is not selected ("any") none of the
   other parts function - you cannot select a from or to." Root cause (coordinator, read before any
   fix): the behaviour is the spec's own sentence, built faithfully — the picker design §5 says the
