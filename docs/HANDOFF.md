@@ -33,6 +33,18 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
+**Paused for the night 2026-11-01 (the operator: "I'll refresh you in the morning").** Main
+246dbd1, suite 911, clean, nothing pushed, no worktree, no lane. The arc is closed and the retro
+filed (docs/retros/2026-10-31-presentation-review-usability.md); its proposals are decided.
+Rulings now (a)(d)(e)(f)(g)(h)(j)(m)(n)(o)(p)(q)(r): (i)(k) merged into (f), (l) retired, (q)
+the coordinator owns its habits (the operator flags the ones to think harder about), (r) the seed
+holds the states seen live. The coordinator's rule set was reviewed 2026-11-01 (the delegation
+hints cut from 351 to 196 lines, a dated backup beside the file; memory merged to 14 files).
+NEXT, on the operator's "go": story 3.13 the seed states (design under EPICS 3.13; Qwen/ai1 for
+the seed and its pins, then a DeepSeek review with the smokes run live). Waiting for real work on
+the page: the 3.12b scrollbar after-reading, 3.10g(1), the picker's doubled end-time (deferred).
+The evening note follows.
+
 **Lanes at the last note (2026-10-31 evening, the operator present).** The operator's hands on
 the live picker found 3.12f: "when the date is not selected ("any") none of the other parts
 function" — the spec's own §5 sentence ("disabled until a date is chosen"), built faithfully by
