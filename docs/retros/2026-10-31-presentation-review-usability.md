@@ -108,42 +108,28 @@ folded in at the close. The operator's sentences are verbatim from EPICS.
 
 ## Ruling proposals (done repeatedly, with results; the operator inks or declines)
 
-The letters (q)–(u) are the next free ones after (p); the first cut of this file used (p)–(s)
-before (p) was inked for "go is explicit".
+The operator's read of the first list (five proposals): three were the coordinator's own habits.
+Inked at once as **(q)**: the coordinator owns its working habits (adopt or drop on evidence);
+a recorded rule that has stopped helping goes to the operator for a final check before removal.
+Under (q) the three habit-shaped proposals are withdrawn to the coordinator's hints, where they
+already live: the state-dir guard as code (a fact since 1.15, not a rule), the grep of a
+brief's "a test pins X" before dispatch, and the unnamed-pin letter ("ONLY the pins named,
+unless the gate breaks another: then move it to what the rule says and name it in the report
+with the reason" — four builds, 3.12b/d/e/f, each right). Two remain for the operator:
 
-- **(q) The state-dir guard is code, not convention.** Two incidents in one day reached the
-  real state directory from a lane (3.9B's prune of 66 directories; 22:44's migration from a
-  worktree's code). Since 1.15 a worktree checkout refuses the default state directory by
-  construction, the smoke recipe exports both variables, and 3.11b's test drives the guard
-  through a real child interpreter. Proposed as a ruling because it replaced a brief-level rule
-  that failed twice. Results since: every lane of 2026-10-31 (twenty jobs) ran under the guard;
-  no third incident.
 - **(r) A reviewer's unpinned probe is lifted into the suite at landing.** Three times on the
   night of the 30th (the dense Qwen's P2/P3 hand-renders as jobsrows.js/tiles.js; Qwen/ai2's
   p1c2; DeepSeek's table witnesses in tables.js) a review found a behaviour no test pinned and
-  its own probe was the test; the coordinator or the folding reviewer committed it. Since: the
-  3.12c fold re-ran the reviewer's probes first and its F1 became the RED test; the 3.12f fold
-  did the same; the 3.12d fold lifted the review's six unpinned readings into
-  tests/test_3_12d_fold.py.
-- **(s) A brief's claim "a test pins X" is grepped before dispatch.** Two false claims in one
-  evening cost two lanes a correction each; the gate that did not exist was then built (ES5,
-  then `node --check`). Cite-check is in the hints already; this names the one claim shape
-  that slipped. Since: no brief of the 31st carried a false pin claim; two carried a false
-  claim about what a line DOES (the 3.12c geometry, the 3.12c-fold reproduction) — the hints'
-  "quote the line, never paraphrase" rule, not a new one.
-- **(t) The seed grows the states the operator has seen live** before a smoke is trusted on
+  its own probe was the test. Since: the 3.12c and 3.12f folds re-ran the reviewer's probes
+  first and the reproducing probe became the RED test; the 3.12d fold lifted six unpinned
+  readings into tests/test_3_12d_fold.py. A nod keeps it the default.
+- **(s) The seed grows the states the operator has seen live** before a smoke is trusted on
   it. Three lanes noted the seeded running job reads "lost", the floor-bearer is a down endpoint
-  the live page lacks, and no seeded request is cache-silent or a handshake. Since: the 3.12f
-  review could not drive the picker's explicit 00:00 pick live because no seeded row has one,
-  and its smoke could not tell "every day" from "today" because every hand row sits on NOW's
-  day. The operator's own caution ("renders, not truth") is the rationale.
-- **(u) A pin the gate itself breaks may be moved to what the new rule says, disclosed with the
-  reason, without being named in the brief.** The brief's letter all day was "ONLY the pins
-  named"; four builds in a row (3.12b, 3.12d, 3.12e, 3.12f) hit a pin the brief had not named,
-  each moved it to the new rule, each disclosed it, and each was right at acceptance. The
-  letter that works: "ONLY the pins named, unless the gate breaks another: then move it to what
-  the rule says and name it in the report with the reason" (the 3.12f brief carried it; the
-  lane used it once, correctly). The coordinator reads every moved pin at acceptance as before.
+  the live page lacks, and no seeded request is cache-silent or a handshake; the 3.12f review
+  could not drive the picker's explicit 00:00 pick live (no seeded row has one) and its smoke
+  could not tell "every day" from "today" (every hand row sits on NOW's day). The operator's
+  own caution ("renders, not truth") is the rationale. The one proposal worth the operator's
+  ink.
 
 ## What cost
 
@@ -152,7 +138,7 @@ before (p) was inked for "go is explicit".
   structural by 1.15 after the second incident.
 - The 22:44 incident: the real database migrated to v9 from a lane's worktree code before the
   landing. The migration behaved as designed; both running processes then needed a restart;
-  the exact subprocess was never identified from the record. An event; the ruling is (q).
+  the exact subprocess was never identified from the record. An event; the guard is code since 1.15.
 - The Firefox memory hunt: about an hour of operator attention on something that was not ours.
   The tool that proves it now takes four minutes.
 - The MCP server on yesterday's code for a whole day, unnoticed until the transcripts table
@@ -181,7 +167,7 @@ before (p) was inked for "go is explicit".
   now, so I'll watch later when we have legit work to do").
 - The AFTER reading of the Firefox scrollbars under 3.12b ("it's quiet right now").
 - The picker's end-time shown twice (cosmetic, deferred: "I would let it go for now").
-- The pytest-driven DOM smoke: proposed, then held by the operator's "renders, not truth"; (t)
+- The pytest-driven DOM smoke: proposed, then held by the operator's "renders, not truth"; (s)
   is the precondition if it is ever built.
 - The 3.11a audit's row 37: the operator's ruling.
 - Database purge and the analytics path: facts and three shapes under Epic 4, not scheduled.

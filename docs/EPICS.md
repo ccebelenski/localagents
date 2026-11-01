@@ -70,6 +70,15 @@ briefs passed by path (c).
   'complete and final'. The human here needs thinking time - those spaces between the prompts
   that you can't perceive." So two explicit words, in order: the design is DONE ("I'm good with
   the whole thing"), then "go". An answer to one part is work on the design, never closure.
+- **(q)** Operator, 2026-10-31 evening (on the retro's proposals, three of which were the
+  coordinator's own habits): "from now on you can review your own working habbits - things that
+  have shown to be valuable are yours to adopt or drop. Likewise things we have recorded before
+  that are no longer helping can be brought to me for a final check to remove. Fair?" The
+  coordinator's working habits (brief shapes, acceptance checks, cite-checks, the hints) are the
+  coordinator's to adopt or drop on evidence, without a ruling here; a RECORDED ruling or rule
+  that has stopped helping is brought to the operator with the evidence for a final check
+  before it is removed. Rulings that bind lanes, the operator's own decisions and anything
+  touching the real data stay the operator's.
 
 Order: Epic 1 before anything else (the monitor assumes its tables); 2.1 before any parser;
 2.4 before any page story; 3.5 last.
@@ -2622,7 +2631,9 @@ lands; 3.12c after 3.12b.
   finds by finder, the verdicts verbatim, five ruling proposals (q) the state-dir guard is code,
   (r) a reviewer's unpinned probe is lifted into the suite, (s) a brief's "a test pins X" is
   grepped before dispatch, (t) the seed grows the states seen live, (u) a pin the gate breaks may
-  move, disclosed — each for the operator to ink here or decline; the open items; the
+  move, disclosed — then, on the operator's read ("do you think I will think they are
+  important?"), ruling (q) inked and the three habit-shaped ones withdrawn to the hints; the
+  retro now carries (r) the lifted probe and (s) the seed, for the operator to ink or decline; the open items; the
   EPICS-history closing step, proposed, nothing moved.
 
 ## Epic 4: operations (V2, not scheduled)
