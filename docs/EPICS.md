@@ -2656,7 +2656,7 @@ lands; 3.12c after 3.12b.
 
 ### 3.13 The seed grows the states seen live (ruling (r), 2026-11-01)
 
-- ☐ **3.13 Seed states.** Design, awaiting the operator's "go" (ruling (p)). The seed
+- ☐ **3.13 Seed states.** DEFERRED 2026-11-01 (see the True-now line at the end). Design, awaiting the operator's "go" (ruling (p)). The seed
   (src/localagents/monitor/seed.py: a pure function of `now` and the fixture bytes; three
   endpoints, two jobs — one succeeded 10 min ago, one running 5 min on ai1) gains the states the
   operator has seen on the live page and the smokes could not witness: (1) job statuses — a
@@ -2682,6 +2682,15 @@ lands; 3.12c after 3.12b.
   the README's figures — each moved to the new world, the smokes re-run live, the picker's
   (c3)/(c4) steps gaining the edge pick and the every-day-vs-today witness. One lane (Qwen/ai1,
   the seed is one file plus pins), then the DeepSeek review with the smokes run.
+  **True now (2026-11-01 morning).** Not built. The coordinator's read, given to the operator:
+  the story ships no behaviour a user of the monitor sees; it raises the smokes' witness and the
+  demo at the price of moving sixteen test files' pins, the tables smoke's arithmetic and the
+  README's figures, and is worth that only if more page work is coming. The operator: "I think
+  the page work is done - The saying that comes to mind is 'perfect is the enemy of good
+  enough'." Disposition: deferred, not declined. Ruling (r) stands as written: the next page
+  story that cites a smoke for a state the seed lacks grows the seed by that state first, cut
+  to what the story touches, not to this whole design. The design above is the shopping list
+  for that day.
 
 ## Epic 4: operations (V2, not scheduled)
 

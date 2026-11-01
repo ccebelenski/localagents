@@ -33,6 +33,17 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
+**2026-11-01 morning (the operator present).** Main f676d0e + this note, suite 911 (`uv run
+pytest -q`), clean, nothing pushed, no worktree, no lane; ai1, ai2 (Qwen3.8-Flash-Next), dgx1-a
+(DeepSeek) and the local llama.cpp (Qwen3.8-27B) were up and idle at 08:xx. Story 3.13 (the
+seed states) is DEFERRED, not built: the coordinator read it to the operator as coverage, not
+product; the operator: "I think the page work is done - The saying that comes to mind is
+'perfect is the enemy of good enough'." Ruling (r) stands; the next page story that needs a
+seeded state grows the seed by that state (EPICS 3.13 True-now). The page arc is finished on the
+operator's word. Nothing is queued: the open items are Epic 4 (database purge, shapes P1-P3; an
+analytics path), the operator's own readings (the Firefox scrollbar after-reading, the picker's
+"00 to 23" notice, 3.10g(1)), and 3.7t/3.7v under "Awaiting the operator". The night note follows.
+
 **Paused for the night 2026-11-01 (the operator: "I'll refresh you in the morning").** Main
 246dbd1, suite 911, clean, nothing pushed, no worktree, no lane. The arc is closed and the retro
 filed (docs/retros/2026-10-31-presentation-review-usability.md); its proposals are decided.
@@ -40,7 +51,7 @@ Rulings now (a)(d)(e)(f)(g)(h)(j)(m)(n)(o)(p)(q)(r): (i)(k) merged into (f), (l)
 the coordinator owns its habits (the operator flags the ones to think harder about), (r) the seed
 holds the states seen live. The coordinator's rule set was reviewed 2026-11-01 (the delegation
 hints cut from 351 to 196 lines, a dated backup beside the file; memory merged to 14 files).
-NEXT, on the operator's "go": story 3.13 the seed states (design under EPICS 3.13; Qwen/ai1 for
+NEXT (superseded the next morning: 3.13 deferred, see above), on the operator's "go": story 3.13 the seed states (design under EPICS 3.13; Qwen/ai1 for
 the seed and its pins, then a DeepSeek review with the smokes run live). Waiting for real work on
 the page: the 3.12b scrollbar after-reading, 3.10g(1), the picker's doubled end-time (deferred).
 The evening note follows.
