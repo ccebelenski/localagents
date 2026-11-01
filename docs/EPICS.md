@@ -20,8 +20,13 @@ fights the work in hand is raised and reworded, not obeyed literally.
   not deferred to a later story; a big perturbation (a contract or schema change) is discussed
   with the operator first. (Operator 2026-10-29: "keep it clean as we go".)
 - **(f)** Acceptance takes files by path; a file main moved since the lane's base is three-way
-  patched; the suite runs on main before the commit, every time. (Epic 2 retro: twelve merges
-  over a moved main, two cross-lane breaks caught only by the suite on main.)
+  patched, which is also how two lanes writing the same module in parallel are merged (never
+  serialised; two page stories in parallel each own one file and register through a hook, the
+  shared files composed by hand); the suite runs on main before the commit, every time. (Epic 2
+  retro: twelve merges over a moved main, two cross-lane breaks caught only by the suite on main;
+  fourteen parallel pairs, zero lost hunks. Epic 3 retro: 3.3 and 3.4, four conflicts composed.
+  Absorbed the former (i) and (k) 2026-11-01 at the operator's "Merge away"; tools/accept.sh and
+  land.sh do the work.)
 - **(g)** A fold chain closes when a review finds no defect; after each pass the coordinator
   judges whether another is needed from what the pass found, never from a count. (Epic 2
   retro: every chain closed inside three, each round smaller than the last; the operator:
@@ -29,16 +34,12 @@ fights the work in hand is raised and reworded, not obeyed literally.
 - **(h)** A contract between stories is written into the spec as the shapes the code emits,
   with a test that fails when the code emits a key the spec does not name. (Epic 2 retro: §5a
   and its spec-vs-code test; the 3.1 review used it as the oracle.)
-- **(i)** Two lanes writing the same module in parallel are three-way patched at acceptance,
-  not serialised. (Epic 2 retro: fourteen parallel pairs, zero lost hunks.)
 - **(j)** A page story's acceptance is a browser smoke driven over the DevTools protocol, DOM
   dumps and JSON only, never a screenshot read by a lane. (Epic 3 retro: seven page lanes and
   six page reviews; the one lane that read a second image died.)
-- **(k)** Two page stories in parallel each own one file and register through a hook; the
-  merge composes the shared files by hand. (Epic 3 retro: 3.3 and 3.4, four conflicts composed,
-  both smokes held.)
-- **(l)** A brief's "not provided by the contract" list is the next story's input, not a
-  blocker. (Epic 3 retro: every page lane built without the missing fields; nothing faked.)
+- **(i)**, **(k)** merged into (f); **(l)** ("a brief's 'not provided by the contract' list is the
+  next story's input, not a blocker") retired 2026-11-01 — used in Epic 3, not since; the
+  practice is a line in the coordinator's hints. (The operator: "Merge away".)
 - **(m)** A fold whose whole diff the coordinator read may fold into the next review of the
   same door instead of its own review; the coordinator decides per fold, and a fold touching
   cancellation, a contract or a schema always gets its own. (Epic 3 retro: seven folds of
