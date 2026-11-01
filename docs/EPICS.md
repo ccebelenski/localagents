@@ -2585,7 +2585,26 @@ lands; 3.12c after 3.12b.
   pinned the defect as correct — the hole was a missing read-back witness, not a wrong
   assertion; tests/fakedom.js selects accept any string, so a page test can drive a pick no real
   select allows (the fold's fixture added real 00/23 rows); `hourList` still offers a held bound
-  the faceted rows lack (state-is-truth since 3.12c). The Qwen review of the fold next.
+  the faceted rows lack (state-is-truth since 3.12c). **Review of the fold** (Qwen/ai1
+  job 6d0b1344, 58 turns, 8 min, three probes, read-only): P1 every escape order from "09-11"
+  dayless and dated, current vs the pre-fold copy (`diff` shows one hunk, `hourOptions` only):
+  from→any then to→any → key gone (pre: "00-23"); the other order the same; from→any then
+  from→09 returns to "09-11"; from→any, to→any, from→10 ends "10-23"; dated lands on the date
+  alone (pre: "<date> 00-23"); the writes byte-identical until the step after a materialised
+  edge, where the divergence IS the defect — CLEAN. P2 the focus rule: focused from shows "" and
+  to "11" with `__stale`; a push leaves the focused select untouched (value and old labels) while
+  to gets the new list; at focusout from reads "" (pre "00"); a push that drops every 00:xx row
+  under "00-11" keeps the read-back "any" and lists "00:00" the rows lack — the state-is-truth
+  rule, not a finding — CLEAN. P3 the live page on 8797/9257: the committed smoke exit 0,
+  `c4.ok` true; the reviewer's own probe on the real two-row seeded table: from 21 → "21-23" (to
+  reads "any"), to 21 → "21-21" one row, from→any → "00-21", to→any → key gone, all selects
+  "any", summary "started" — CLEAN (no 00:xx row seeded, so the explicit edge pick was not
+  reachable live). **No defect: the 3.12f chain closes.** NOTICED: (1) an explicit dated "00-23"
+  reads back as two "any" selects, so a later date change writes the date alone — the hours
+  drop in the state string, the rows matched are the same (the whole day); (2) pre-fold BOTH
+  edges were unescapable (3.12c's to→any materialised "23" too); (3) cosmetic: the shared
+  `hourList` puts a held bound in BOTH selects' lists (under "00-21" the to select offers
+  "00:59"), each pick still writes a legal state.
 
 ## Epic 4: operations (V2, not scheduled)
 

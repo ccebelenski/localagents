@@ -44,11 +44,12 @@ found one defect, inherited from 3.12c: no sequence of the hour selects could em
 once both hours were set (the read-back put the day's edge into a cleared select and the next
 "any" re-composed "00-23"). The reviewer's own fold landed ebc9706 (the read-back only: a held
 from of "00" and a held to of "23" show as "any"; grammar, writes and summary unchanged; suite
-911). RUNNING at this note: the Qwen/ai1 review of that fold (three probes: every escape order
-current vs pre-fold, the focus rule against the new read-back, the live page; brief at the
-session scratchpad `brief-3.12f-fold-review.md`); when it reports, dispositions into EPICS 3.12f,
-a fold only if it finds a defect, then the chain closes. After that: the operator's eyes on the
-picker again, and the retro on their word. The late-afternoon note follows.
+911). The Qwen/ai1 review of that fold found no defect (every escape order, the focus rule,
+the live page; EPICS 3.12f): the 3.12f chain is closed, no lane is running, suite 911 at
+ebc9706, nothing pushed, `git worktree list` is one line. Open on the operator's side: their
+hands on the picker again (the fold's notice: a "00 to 23" state reads back as two "any"
+selects; only the summary tells it from an empty filter), the AFTER reading of the Firefox
+scrollbars, 3.10g(1) on its own go. Then the retro on their word. The late-afternoon note follows.
 
 **Lanes at the last note (2026-10-31 late afternoon, the operator present).** The operator ticked
 3.12a, 3.10c and 3.10e on the live page and gave the go on "the open build work now that all lanes
