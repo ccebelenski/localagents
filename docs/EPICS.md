@@ -2489,6 +2489,28 @@ lands; 3.12c after 3.12b.
   day stamps an hour early by the wall clock; the `except &&` guard in filterIdx is load-bearing
   for the no-argument call. The round's builds are complete; the operator's eyes on Firefox and the
   picker are the open items.
+- ☐ **3.12f The picker's hour bounds without a date.** Operator (2026-10-31, hands on the live
+  picker): "Small bug on the date/time picker - when the date is not selected ("any") none of the
+  other parts function - you cannot select a from or to." Root cause (coordinator, read before any
+  fix): the behaviour is the spec's own sentence, built faithfully — the picker design §5 says the
+  hour selects are "disabled until a date is chosen", app.js:1457-1458 sets `disabled` whenever
+  `held.day` is empty, and tests/test_3_12c.py:367-399 pins exactly that; the §3 state grammar has
+  no shape for hours without a day, so an enabled hour select would have had nothing to write.
+  The spec sentence was the coordinator's call and the live page shows it wrong: hours without a
+  date is the natural reading "any day, between these hours". Design (bounded, no spec rewrite —
+  the §3/§5 sentences get a True-now line at the landing): the state string gains a third shape,
+  `"HH-HH"` (every day, hours inclusive, the same whole-hour span and from > to rule); the one-handle
+  edges hold ("HH-23", "00-HH"); `timeFilterMatch` reads it (app.js:673: the day group becomes
+  optional, an empty string still matches nothing); `timePanelState` (app.js:1302) writes it when
+  the date is "any" and an hour is set; `patchTimePanelSelects` (app.js:1388) never disables the
+  hour selects — without a day their list is the hours present among the faceted rows on ANY day;
+  `timeSummaryParts`/`pickSummary` (app.js:1254) print "09 to 11" alone for the dayless shape;
+  choosing a date afterwards keeps the hours (the state becomes "YYYY-MM-DD HH-HH"; a held hour
+  the day lacks stays selectable, as today). The pin at test_3_12c.py:367 moves to the new rule
+  (enabled before a date, the all-days hour list), tests/test_3_12f.py pins the three shapes at the
+  bounds and the summary, tools/smoke/tables.js gets a c4 step (hours 11 to 11 under "any" →
+  the 11:xx rows of every day, then today → today's 11:xx). One lane, Qwen/ai1, worktree, then the
+  construct-it review. Builds on its own "go" (ruling (p)).
 
 ## Epic 4: operations (V2, not scheduled)
 
