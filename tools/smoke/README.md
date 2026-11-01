@@ -185,7 +185,9 @@ and the fix is the TABLE_DOM slot) leaves all 120; hour bounds 11-to-11 leave th
 that hour (the count computed from the hand rows) and the summary reads "today 11 to 11"; the
 panel's "clear" restores 120 and deletes the key; the filter cell/button widths read before
 and after (99.7 → 118.1 px) with the summary unclipped (`btnScroll` == `btnClient`, no
-ellipsis);
+ellipsis); (c4) 3.12f reopens the picker with the date left "any" — the hour selects stand
+enabled, and 11-to-11 writes the dayless "11-11" matching every day's 11:xx, then "today"
+joins the date ("YYYY-MM-DD 11-11", the (c) count) and "clear"/"done" end it (`c4.ok`).
 (d) "next" reads "51–100 of 120", and a PUSH (a new rows array through `render`) keeps the
 sort, the (empty) filters and page 2 — the state is `TABLE_STATE.jobs`, not the DOM; (e) the
 job page's requests table (8 filter boxes + 2 selects + 1 time picker button, no job column)

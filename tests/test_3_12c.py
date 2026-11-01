@@ -364,11 +364,14 @@ def test_the_date_options_are_today_yesterday_then_older_newest_first_with_facet
     assert got["afterDrop"]["panelKept"] is True, got["afterDrop"]
 
 
-def test_the_hour_selects_wait_for_a_date_and_list_that_dates_hours(tmp_path):
-    """§5: from/to are disabled with no date chosen ("any" only); choosing today enables them
-    and lists exactly today's hours — "09:00" labels for from, "09:59" for to, values the two
-    digits; the writes compose the state: date alone "YYYY-MM-DD", both hours "YYYY-MM-DD
-    HH-HH", from alone takes the day's end ("HH-23"), to alone its start ("00-HH")."""
+def test_the_hour_selects_are_enabled_before_a_date_and_list_the_faceted_days_hours(tmp_path):
+    """3.12f moved this test's first half (it pinned §5's "disabled until a date is chosen",
+    the sentence the operator's hands showed wrong): from/to carry no `disabled` at all, and
+    with the date "any" they list the hours of the faceted rows on EVERY day — this fixture's
+    three days give 09/10/11/14. Choosing today narrows the list to exactly today's hours —
+    "09:00" labels for from, "09:59" for to, values the two digits; the writes compose the
+    state as before: date alone "YYYY-MM-DD", both hours "YYYY-MM-DD HH-HH", from alone takes
+    the day's end ("HH-23"), to alone its start ("00-HH")."""
     got = _page_js(tmp_path, _JOBS + _PANEL_ROWS + """
   var before = { fromDisabled: fromSel().hasAttribute("disabled"),
     toDisabled: toSel().hasAttribute("disabled"),
@@ -386,8 +389,9 @@ def test_the_hour_selects_wait_for_a_date_and_list_that_dates_hours(tmp_path):
   return { before: before, afterDate: afterDate, fromAlone: fromAlone, both: both, toAlone: toAlone };
 """)
     before = got["before"]
-    assert before["fromDisabled"] is True and before["toDisabled"] is True, got
-    assert before["fromLabels"] == ["any"] and before["toLabels"] == ["any"], got
+    assert before["fromDisabled"] is False and before["toDisabled"] is False, got
+    assert before["fromLabels"] == ["any", "09:00", "10:00", "11:00", "14:00"], before
+    assert before["toLabels"] == ["any", "09:59", "10:59", "11:59", "14:59"], before
     assert got["afterDate"]["state"] == "2026-10-31", got["afterDate"]
     assert got["afterDate"]["fromDisabled"] is False, got["afterDate"]
     assert got["afterDate"]["fromLabels"] == ["any", "09:00", "10:00", "11:00"], got["afterDate"]
@@ -435,7 +439,8 @@ def test_clear_empties_the_state_and_the_close_paths_hold(tmp_path):
     assert got["set"] == "2026-10-31 09-11", got
     # JSON drops an undefined property: its absence IS the deletion
     assert "state" not in got["cleared"] and got["cleared"]["date"] == "", got["cleared"]
-    assert got["cleared"]["fromDisabled"] is True, got["cleared"]
+    # 3.12f moved this one too: the hour selects are never disabled, cleared state or not
+    assert got["cleared"]["fromDisabled"] is False, got["cleared"]
     assert got["cleared"]["open"] is True, got["cleared"]  # clear does not close the panel
     assert got["cleared"]["btnSet"] is False and got["cleared"]["btnText"] == "started", got["cleared"]
     assert got["afterDown"]["panel"] is None and got["afterDown"]["docKey"] == 0, got["afterDown"]

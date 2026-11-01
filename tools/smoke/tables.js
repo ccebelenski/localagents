@@ -2,7 +2,8 @@
 // across pushes. 3.12a extended the filters by column kind (the status pick is a select, turns
 // reads ranges and comparators, and a "clear filters" link ends the pager line); 3.12c gave the
 // started column a two-level picker (button + panel of date/hour selects) — step (c) exercises
-// those, (d) the link and the push, (f) keeps the F1 title-needle witness (the full job id). 3.12b adds (h): one field changed across a push — the wrap, the sideways scroll and the unchanged rows' elements all survive the patch — and (i): the identical rows again — level 1 skips the table without render skipping the snapshot. Runs over the seeded world on the overview (empty hash): the seeded snapshot
+// those and (c4) 3.12f's dayless hour bounds (hours set under a "any" date), (d) the link and
+// the push, (f) keeps the F1 title-needle witness (the full job id). 3.12b adds (h): one field changed across a push — the wrap, the sideways scroll and the unchanged rows' elements all survive the patch — and (i): the identical rows again — level 1 skips the table without render skipping the snapshot. Runs over the seeded world on the overview (empty hash): the seeded snapshot
 // holds two jobs, so a snapshot COPY with 120 jobs (varied status/started/elapsed/turns) is
 // hand-rendered into #jobs-body — the same table the push draws. Reads (a)-(e), (h) and (i)
 // into window.__d1; nothing awaits between the renders and the reads, so a real SSE push cannot
@@ -170,6 +171,42 @@
     summary: startedBtn.textContent };
   Array.from(panel.querySelectorAll(".pager-btn")).find((b) => b.textContent === "done").click();
   c3.closed = box().querySelector(".filter-panel") === null;
+
+  // (c4) 3.12f: the hour bounds WITHOUT a date. Reopen the picker; leave the date "any" —
+  //     the from/to selects stand enabled (the 3.12c defect the operator reported) — and set
+  //     11 to 11: the state is the dayless "11-11" and matched is the hand rows whose LOCAL
+  //     HOUR is 11 on ANY day (computed from copy.jobs as (c) computes its own, without the
+  //     day); the summary reads "11 to 11" alone. Then choose "today": the state gains the
+  //     date ("YYYY-MM-DD 11-11") and matched is today's 11:xx — the (c) number, same here
+  //     because every hand row sits on NOW's local day. Then "clear" (120, key gone) and
+  //     "done" (closed).
+  startedBtn.click(); // reopen (the state is empty from (c)'s clear)
+  const panel4 = box().querySelector(".filter-panel");
+  const dateSel4 = panel4.querySelector("select.fp-date");
+  const from4 = panel4.querySelector("select.fp-from");
+  const to4 = panel4.querySelector("select.fp-to");
+  const hourRowsAnyDay = copy.jobs.filter((j) => new Date(j.started_at * 1000).getHours() === 11).length;
+  const c4 = { enabledNoDate: !from4.hasAttribute("disabled") && !to4.hasAttribute("disabled"),
+    dateValue: dateSel4.value,
+    fromLabels: Array.from(from4.options).map((o) => o.textContent) };
+  setSel(from4, "11");
+  setSel(to4, "11");
+  c4.dayless = { state: L.TABLE_STATE.jobs.filters.started, matched: matched(),
+    pager: pagerText(), summary: startedBtn.textContent, want: hourRowsAnyDay };
+  c4.daylessOk = c4.dayless.state === "11-11" && c4.dayless.matched === hourRowsAnyDay;
+  const todayOpt4 = Array.from(dateSel4.options).find((o) => o.textContent.indexOf("today") === 0);
+  setSel(dateSel4, todayOpt4.value);
+  c4.withDate = { state: L.TABLE_STATE.jobs.filters.started, matched: matched(),
+    summary: startedBtn.textContent, want: hourRows, wantState: todayOpt4.value + " 11-11" };
+  c4.withDateOk = c4.withDate.state === c4.withDate.wantState &&
+    c4.withDate.matched === hourRows;
+  Array.from(panel4.querySelectorAll(".pager-btn")).find((b) => b.textContent === "clear").click();
+  c4.afterClear = { matched: matched(), keyGone: !("started" in L.TABLE_STATE.jobs.filters),
+    summary: startedBtn.textContent };
+  Array.from(panel4.querySelectorAll(".pager-btn")).find((b) => b.textContent === "done").click();
+  c4.closed = box().querySelector(".filter-panel") === null;
+  c4.ok = c4.enabledNoDate && c4.daylessOk && c4.withDateOk && c4.afterClear.keyGone &&
+    c4.afterClear.matched === 120 && c4.closed;
 
   // (d) 3.12a §7: "clear filters" ends the pager line whenever a filter is set — the picker's
   //     own clear already emptied the state in (c), so the link is guarded; then a PUSH (a new
@@ -376,12 +413,14 @@
     e.epAfterDurationSort = probeBlock("#detail .requests .table-block");
   } else e.epTable = null;
 
-  window.__d1 = { now: NOW, a, b1, b2, c0, c1, c2, c2b, c2c, c3, d0, d1, d2, h, i, f, g, e };
+  window.__d1 = { now: NOW, a, b1, b2, c0, c1, c2, c2b, c2c, c3, c4, d0, d1, d2, h, i, f, g, e };
   // F4: the witness is asserted. d1 lands before the throw, so a failed run still hands back
   // the JSON (dom.js prints SCRIPT_THREW; cdp.mjs's d1 carries f.ok false). 3.12b: h and i
-  // assert the patch identity and the level-1 skip the same way.
+  // assert the patch identity and the level-1 skip the same way. 3.12f: c4 asserts the
+  // dayless hour bounds.
   if (!f.ok) throw new Error("f.jobFullId.title " + JSON.stringify(f.jobFullId.title) + " is not the full id");
   if (!h.ok) throw new Error("3.12b h witness failed: " + JSON.stringify(h));
   if (!i.ok) throw new Error("3.12b i witness failed: " + JSON.stringify(i));
+  if (!c4.ok) throw new Error("3.12f c4 witness failed: " + JSON.stringify(c4));
   return "ok";
 })();

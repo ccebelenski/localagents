@@ -663,20 +663,28 @@
     return d.getFullYear() + "-" + (mo < 10 ? "0" + mo : mo) + "-" + (day < 10 ? "0" + day : day);
   }
 
-  // 3.12c (spec §3): the time filter's whole grammar, narrowed to the picker's two shapes —
-  // "YYYY-MM-DD" (that local day) or "YYYY-MM-DD HH-HH" (that day, hours INCLUSIVE over whole
+  // 3.12c (spec §3): the time filter's whole grammar, narrowed to the picker's shapes —
+  // "YYYY-MM-DD" (that local day), "YYYY-MM-DD HH-HH" (that day, hours INCLUSIVE over whole
   // hours: 09-11 is 09:00:00 through 11:59:59; from > to matches nothing, as a number range
-  // does). A null or non-finite key never matches; any other shape matches nothing — the typed
-  // literals of 3.12a §6 (HH:MM, a - b, <a, >a, and the substring reading) are retired with
-  // the box, and the panel is the state's only writer. The state stays a plain string, so the
-  // smoke (or a hand-set view) can still write one.
+  // does) or, 3.12f (the operator: hours with no date is "any day, between these hours"),
+  // "HH-HH" (EVERY day, the same inclusive whole-hour span and from > to rule; two digits
+  // each). A null or non-finite key never matches; any other shape matches nothing — the
+  // typed literals of 3.12a §6 (HH:MM, a - b, <a, >a, and the substring reading) are retired
+  // with the box, and the panel is the state's only writer. The state stays a plain string,
+  // so the smoke (or a hand-set view) can still write one.
   function timeFilterMatch(f, v) {
     if (typeof v !== "number" || !isFinite(v)) return false;
+    var from, to;
     var m = /^(\d{4}-\d{2}-\d{2})(?: (\d{2})-(\d{2}))?$/.exec(f);
-    if (!m) return false;
-    if (localDay(v) !== m[1]) return false;
-    if (m[2] === undefined) return true;
-    var from = +m[2], to = +m[3];
+    if (m) {
+      if (localDay(v) !== m[1]) return false;
+      if (m[2] === undefined) return true;
+      from = +m[2]; to = +m[3];
+    } else {
+      m = /^(\d{2})-(\d{2})$/.exec(f); // 3.12f: the dayless shape — every day, hours only
+      if (!m) return false;
+      from = +m[1]; to = +m[2];
+    }
     if (from > to) return false;
     var hour = new Date(v * 1000).getHours();
     return hour >= from && hour <= to;
@@ -1226,10 +1234,11 @@
     // today; yesterday; each older date present, newest first; every option labelled
     // "label (count)", the count over the rows the OTHER columns' filters leave, the pick's
     // faceting) and two HOUR bounds (the hours present among the faceted rows on the chosen
-    // date; "09:00" labels for from, "09:59" for to; disabled until a date is chosen) — plus
-    // clear and done. Every change writes the §3 state string through setFilter and redraws
-    // through the TABLE_DOM slot (3.12b: never a captured draw — a captured closure would pin
-    // dead rows and caches).
+    // date, or, 3.12f, among the faceted rows on EVERY day with the date "any" — the selects
+    // are never disabled; "09:00" labels for from, "09:59" for to) — plus clear and done.
+    // Every change writes the §3 state string through setFilter and redraws through the
+    // TABLE_DOM slot (3.12b: never a captured draw — a captured closure would pin dead rows
+    // and caches).
     //
     // The panel is ONE per table, a child of rec.container (the .table-block, position:
     // relative) and NEVER of rec.wrap: the wrapper's overflow-x: auto would clip an
@@ -1238,19 +1247,24 @@
     // listeners ride on document while it is open and come off when it closes. A push while
     // it is open keeps the panel element (3.12b's rule) and refreshes the counts in place.
 
-    // the §3 state string split (or null when the state holds another shape)
+    // the §3 state string split (or null when the state holds another shape); 3.12f's dayless
+    // shape "HH-HH" reads with an empty day and the hours set
     function timeSummaryParts(f) {
       var m = /^(\d{4}-\d{2}-\d{2})(?: (\d{2})-(\d{2}))?$/.exec(f || "");
-      return m ? { day: m[1], from: m[2] || "", to: m[3] || "" } : null;
+      if (m) return { day: m[1], from: m[2] || "", to: m[3] || "" };
+      m = /^(\d{2})-(\d{2})$/.exec(f || "");
+      return m ? { day: "", from: m[1], to: m[2] } : null;
     }
 
     // the time button's face (spec §4): the column name when unset; set, the summary —
     // "today"/"yesterday" judged against opts.now's local day (the clock the started cells
     // day-stamp against), else the date as the cells' own short date (toLocaleDateString of
     // the state's day: the date half of what fmt.date prints), then " 09 to 11" when hours
-    // are bound. The `set` class rides with a set state (ink, not muted, as a typed
-    // filter's text is). One function, read at build and by patchFilterRow every draw. A
-    // state outside the §3 shape (a hand-set view) reads as the raw string, never a crash.
+    // are bound — and 3.12f, for the dayless shape "HH-HH", exactly that "09 to 11" alone:
+    // no day word and no leading space. The `set` class rides with a set state (ink, not
+    // muted, as a typed filter's text is). One function, read at build and by patchFilterRow
+    // every draw. A state outside the §3 shape (a hand-set view) reads as the raw string,
+    // never a crash.
     function pickSummary(col, btn) {
       var f = st.filters[col.name];
       var set = f != null && f !== "";
@@ -1259,17 +1273,19 @@
         var parts = timeSummaryParts(f);
         if (parts) {
           text = "";
-          if (opts.now != null && isFinite(opts.now)) {
-            var nd = new Date(opts.now * 1000);
-            if (parts.day === localDay(opts.now)) text = "today";
-            else if (parts.day === localDay(new Date(nd.getFullYear(), nd.getMonth(),
-              nd.getDate() - 1).getTime() / 1000)) text = "yesterday";
+          if (parts.day) {
+            if (opts.now != null && isFinite(opts.now)) {
+              var nd = new Date(opts.now * 1000);
+              if (parts.day === localDay(opts.now)) text = "today";
+              else if (parts.day === localDay(new Date(nd.getFullYear(), nd.getMonth(),
+                nd.getDate() - 1).getTime() / 1000)) text = "yesterday";
+            }
+            if (!text) {
+              var p = parts.day.split("-");
+              text = new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString();
+            }
           }
-          if (!text) {
-            var p = parts.day.split("-");
-            text = new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString();
-          }
-          if (parts.from) text += " " + parts.from + " to " + parts.to;
+          if (parts.from) text += (text ? " " : "") + parts.from + " to " + parts.to;
         } else {
           text = String(f);
         }
@@ -1298,13 +1314,15 @@
     // hours "YYYY-MM-DD HH-HH"; ONE hour bound takes the day's edge for the missing side —
     // from alone reads "HH-23", to alone "00-HH" (a single handle means "from that hour to
     // the end of the day" / "the day's start to that hour", the inclusive span's other half);
-    // "any" date empties the state (setFilter deletes the key).
+    // "any" date empties the state (setFilter deletes the key). 3.12f: the hour edges hold
+    // WITHOUT a date too — with the date "any" and hours set the state is the dayless shape
+    // "HH-HH"; choosing a date after the hours joins it ("YYYY-MM-DD HH-HH"), choosing "any"
+    // after a date keeps the hours (the operator: no limiting).
     function timePanelState(ds, fs, ts) {
       var day = ds.value;
-      if (!day) return "";
-      if (fs.value && ts.value) return day + " " + fs.value + "-" + ts.value;
-      if (fs.value) return day + " " + fs.value + "-23";
-      if (ts.value) return day + " 00-" + ts.value;
+      if (fs.value && ts.value) return (day ? day + " " : "") + fs.value + "-" + ts.value;
+      if (fs.value) return (day ? day + " " : "") + fs.value + "-23";
+      if (ts.value) return (day ? day + " " : "") + "00-" + ts.value;
       return day;
     }
 
@@ -1382,7 +1400,8 @@
     }
 
     // rebuild the panel's three selects from THIS call's rows and caches: labels and counts
-    // per spec §5, values from the state, from/to disabled until a date is chosen. The pick's
+    // per spec §5, values from the state, from/to NEVER disabled (3.12f — with the date "any"
+    // their list is the hours of the faceted rows on every day). The pick's
     // focus rule (B2 (c)): a focused select is marked __stale instead — its rebuild lands at
     // the panel's focusout, never yanking an open dropdown.
     function patchTimePanelSelects(col) {
@@ -1405,7 +1424,9 @@
         if (typeof v !== "number" || !isFinite(v)) return;
         var d = localDay(v);
         counts[d] = (counts[d] || 0) + 1;
-        if (d === held.day) {
+        // 3.12f: with the date "any" the hours collect over EVERY faceted day; with one,
+        // that day only, as before
+        if (!held.day || d === held.day) {
           var hh = new Date(v * 1000).getHours();
           hours[(hh < 10 ? "0" : "") + hh] = 1;
         }
@@ -1441,8 +1462,9 @@
         });
         sel.value = held.day;
       });
-      // the hours present on the chosen date (faceted), zero-padded and ascending; a held
-      // bound the rows no longer carry stays selectable (the state is the truth)
+      // the hours present (faceted) on the chosen date — or on every day, 3.12f, with the
+      // date "any" — zero-padded and ascending; a held bound the rows no longer carry stays
+      // selectable (the state is the truth)
       var hourList = Object.keys(hours).sort();
       if (held.from && hourList.indexOf(held.from) < 0) hourList.push(held.from);
       if (held.to && hourList.indexOf(held.to) < 0) hourList.push(held.to);
@@ -1453,9 +1475,9 @@
         hourList.forEach(function (hh) {
           sel.appendChild(h("option", { value: hh, text: hh + ":" + suffix }));
         });
-        sel.value = held.day ? (suffix === "00" ? held.from : held.to) : "";
-        if (held.day) sel.removeAttribute("disabled");
-        else sel.setAttribute("disabled", "");
+        // the held bound reads back whichever day the state holds (3.12f: the dayless shape
+        // has empty day and set hours); the selects are never disabled
+        sel.value = suffix === "00" ? held.from : held.to;
       };
       rebuild(fs, function (sel) { hourOptions(sel, "00"); });
       rebuild(ts, function (sel) { hourOptions(sel, "59"); });
