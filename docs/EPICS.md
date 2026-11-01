@@ -83,7 +83,10 @@ briefs passed by path (c).
   make sure the entries are compatible with existing entries or you'll get into circular logic
   on those. Consider them in the full set. And also remember if you get too many rules then
   things get missed too - you're not any more perfect than I am on process rules that get too
-  deep or complicated. Simple wins." 
+  deep or complicated. Simple wins." 2026-11-01, after the coordinator put a habit-shaped proposal on the
+  operator's list anyway: "my side of the contract is to watch for those and flag when I think
+  you should consider harder." The coordinator decides its own habits and says so; the operator
+  flags the ones to think harder about. 
 - **(r)** 2026-11-01, the retro interview (the operator: "Interview me about the proposals";
   inked "and cut the seed story now"): a smoke's witness is trusted only for states the seed
   holds; a state the operator has seen live that the seed lacks is a seed story before the smoke
