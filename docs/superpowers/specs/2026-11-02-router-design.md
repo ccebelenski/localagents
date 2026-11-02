@@ -432,10 +432,11 @@ Nothing on this surface dispatches work. Endpoint monitoring stays with the exis
 endpoints:
   auto:
     backend: router
-    decision_url: http://127.0.0.1:8765     # localagents d3 serve
+    decision_url: http://127.0.0.1:8766     # localagents d3 serve (the monitor has 8765)
     decision_model: vllm-sr/d3-mini         # optional; checked against the server's /health
     decision_timeout_s: 20                  # optional; slower is model_unavailable
-    decision_max_tokens: 24000              # optional; longer briefs are scored truncated
+    decision_max_tokens: 12000              # optional; longer briefs are scored truncated (the
+                                            # live d3-mini answers 500 above ~60k characters)
     tolerance: 0.5                          # optional; shortfall distance for "acceptable"
     divert_after_min: 10                    # optional; normal priority waits this long before diverting
 ```
@@ -451,7 +452,10 @@ would admit; `exclude:` (§5).
 previous package raises on `decision_url` the next time it reads the file, and that read happens
 on every request through the shim. The router entry is added only after every Claude session has
 reconnected to the new package; `docs/router.md` says so, and the new `Endpoint` ignores unknown
-keys with a warning so the next such change does not repeat this.
+keys with a warning so the next such change does not repeat this. **A bad entry never raises
+from `load`** (the phase-1 final review: a router typo would otherwise fail every running job's
+requests): it is marked invalid, named once on stderr, probes as down with the problem, and is
+skipped by resolution.
 
 ## 13. Tables (same database, own names)
 
@@ -481,7 +485,10 @@ NOT NULL, rows TEXT NOT NULL, chosen_row INTEGER REFERENCES scorecard_rows, dive
 NULL, divert_at REAL, est_wait_s REAL, admitted REAL, flags TEXT); `verdicts` (job_id TEXT PK NOT
 NULL REFERENCES jobs, accepted INTEGER NOT NULL, dimensions TEXT, at REAL NOT NULL);
 `category_corrections` (id INTEGER PK, job_id TEXT NOT NULL REFERENCES jobs, brief TEXT NOT NULL,
-scored TEXT NOT NULL, corrected TEXT NOT NULL, defs_version INTEGER NOT NULL, at REAL NOT NULL);
+scored TEXT NOT NULL, corrected TEXT NOT NULL, defs_version INTEGER NOT NULL REFERENCES
+dimension_definitions, at REAL NOT NULL); `router_tickets.pass_id` REFERENCES scorecard_passes and
+every `defs_version` REFERENCES dimension_definitions (added as a v11 rebuild after the phase-1
+final review; the operator's file had already reached v10);
 `calibration_runs` (id TEXT PK, row_id INTEGER NOT NULL REFERENCES scorecard_rows, tier TEXT NOT
 NULL, set_version TEXT NOT NULL, plan TEXT NOT NULL, estimate_s REAL, actual_s REAL, started REAL
 NOT NULL, finished REAL, status TEXT NOT NULL CHECK (running|complete|incomplete|stopped));
