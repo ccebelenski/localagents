@@ -73,3 +73,9 @@ True now (2026-11-02): the recommendation above was written for the operator's h
 router design (docs/superpowers/specs/2026-11-02-router-design.md) targets a fleet with a d3 model
 always available, so d3 is the categorizer, full stop; the prompted one-shot is not a fallback
 in the design. The CPU result stands: no CPU path.
+
+True now (2026-11-02, design review): the difficulty figure above is not evidence of anything. The
+labels are 90 twos and 29 threes of 135, so a constant answer of 3 is within one band 96% of the
+time and a constant 2 is 90%; d3-mini's exact-band accuracy is 42%. The within-one-band column
+should be read against those baselines, and the complexity axis counts as unmeasured until the
+calibration set measures it against constants. The category result stands.
