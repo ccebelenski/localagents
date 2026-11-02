@@ -248,9 +248,12 @@ that spec must satisfy:
   the toolchain or container it needs.
 - **Tiers:** core (small; Aider Polyglot, recent LiveCodeBench, a few HumanEval as a floor, our
   judgement and review probes; needs only what Claude Code needs plus git, Python and whichever
-  language toolchains are present) runs on an empty row or a reset. Medium (SWE-bench Verified,
-  Terminal-Bench; Docker) and Large (ProgramBench; Docker, linux/amd64, hours; the inference
-  container's network allows the model endpoint and nothing else) are opt-in.
+  language toolchains are present) is what `calibrate` runs when no tier is named. Medium
+  (SWE-bench Verified, Terminal-Bench; Docker) and Large (ProgramBench; Docker, linux/amd64,
+  hours; the inference container's network allows the model endpoint and nothing else) are named
+  explicitly. The router never starts a calibration on its own: an empty or reset row is routed
+  on priors and marked `uncalibrated` in every ticket (§6) until someone calls `calibrate`.
+  Results are used whenever they exist; nothing enables or disables a tier after the fact.
 - **Distribution:** instances fetched from the source at a pinned revision at run time, not
   vendored; a source enters the set only after its licence is checked and recorded. The set is
   versioned; a row records the set version it was calibrated on.
@@ -290,14 +293,15 @@ endpoints:
     backend: router
     decision_url: http://127.0.0.1:8765     # localagents d3 serve
     decision_model: vllm-sr/d3-mini         # pinned revision in the package
-    tolerance: 1.0                          # shortfall distance for "acceptable"; example value,
-                                            # the calibration spec sets the shipped default
-    divert_after_min: 10                    # normal priority waits this long before diverting
-    tiers: [core]                           # calibration tiers enabled
+    tolerance: 1.0                          # optional; shortfall distance for "acceptable"
+    divert_after_min: 10                    # optional; normal priority waits this long before diverting
 ```
 
-Real endpoints gain nothing mandatory. Optional: `max_concurrent` to cap below what the capacity
-model would admit.
+`decision_url` is the only required key. The two policy knobs have shipped defaults (the
+calibration spec sets `tolerance` from the probe spread). Nothing in config says which calibration
+results to use: whatever exists for a row is used, and the tier is an argument to `calibrate` when
+it runs (core when none is named). Real endpoints gain nothing mandatory. Optional:
+`max_concurrent` to cap below what the capacity model would admit.
 
 ## 13. Tables (same database, own names)
 
