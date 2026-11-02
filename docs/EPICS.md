@@ -2692,6 +2692,26 @@ lands; 3.12c after 3.12b.
   to what the story touches, not to this whole design. The design above is the shopping list
   for that day.
 
+### 3.14 README for the push (2026-11-01)
+
+- ☐ **3.14 README solid before the push.** The operator, after declaring the page work done:
+  "I think we're going to push - but before then I want to make the README.md solid - how to set
+  up the MCP, how to run the monitor, the requirements for the various backend settings (e.g.
+  --slots --mertrics for llama.cpp)." The coordinator's audit of the old README: the llama.cpp
+  flags were stale (`llama-server --help` at b11913 and upstream: `--jinja` and `--slots` are
+  "default: enabled", only `--metrics` is "default: disabled"); the vLLM requirements were in
+  three places, `--enable-prompt-tokens-details` only inside a 3.10i True-now parenthesis; no
+  single setup path; the Monitor section was a 200-line changelog of True-now parentheses.
+  Shape agreed by the operator ("That sounds fine - it's certainly better than what we have
+  now."): Quick start 1-7, a Backends section with a table of what each backend gives and the
+  flag defaults quoted from the current help text, Using it tightened, the Monitor described as
+  it is today (the history stays here and in the specs), Config/shim/context/development kept.
+  Written by the coordinator (every sentence checked against the code: registry.py probe,
+  runner.py build_env, serve.py parse_args, config.py, __init__.py, the static pages' labels)
+  and landed fd47ee3 with CONTRIBUTING's flag line; suite 911. Review: a Qwen/ai1 read-only
+  docs-versus-code audit (five probes, closed class list WRONG / UNVERIFIABLE / MISSING / CLEAN,
+  both sides cited per row, the report at t/REVIEW-readme.md in its worktree), running.
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
