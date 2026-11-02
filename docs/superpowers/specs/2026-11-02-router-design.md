@@ -469,7 +469,9 @@ scored TEXT NOT NULL, corrected TEXT NOT NULL, defs_version INTEGER NOT NULL, at
 `calibration_runs` (id TEXT PK, row_id INTEGER NOT NULL REFERENCES scorecard_rows, tier TEXT NOT
 NULL, set_version TEXT NOT NULL, plan TEXT NOT NULL, estimate_s REAL, actual_s REAL, started REAL
 NOT NULL, finished REAL, status TEXT NOT NULL CHECK (running|complete|incomplete|stopped));
-`calibration_results` (run_id TEXT NOT NULL REFERENCES calibration_runs, probe_id TEXT NOT NULL,
+`speed_samples` (job_id TEXT PK NOT NULL REFERENCES jobs, endpoint_id INTEGER NOT NULL REFERENCES
+endpoints, sessions INTEGER NOT NULL, generate_tps REAL NOT NULL, at REAL NOT NULL: the curve's
+refinement evidence, §7); `calibration_results` (run_id TEXT NOT NULL REFERENCES calibration_runs, probe_id TEXT NOT NULL,
 job_id TEXT REFERENCES jobs, status TEXT NOT NULL CHECK (pass|fail|skipped|unreliable), seconds
 REAL, reason TEXT, PRIMARY KEY (run_id, probe_id)); `scorecard_events` is replaced by the pass
 generations. `jobs` gains `priority TEXT NOT NULL DEFAULT 'normal' CHECK (urgent|normal|background)`,
