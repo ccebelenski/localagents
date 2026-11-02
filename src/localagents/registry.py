@@ -148,7 +148,7 @@ class Endpoint:
     # router entries (backend: router): no /v1/messages of their own — the d3 decision
     # server behind decision_url picks a real endpoint for each job (docs/router.md).
     decision_url: str | None = None  # the only key a router entry must carry
-    decision_model: str = "vllm-sr/d3-mini"  # checked against the decision server's /health
+    decision_model: str = "vllm-sr/d3-mini"  # reported by the server; a mismatch is flagged on the probe
     decision_timeout_s: float = 20.0  # slower than this is model_unavailable
     decision_max_tokens: int = 24_000  # longer briefs are scored truncated
     tolerance: float = 0.5  # shortfall distance for "acceptable" (the calibration spec's spread)
@@ -314,7 +314,7 @@ class Registry:
         except ValueError:
             body = None
         reported = body.get("model") if isinstance(body, dict) else None
-        return {
+        out = {
             "up": True,
             "models": [ep.name],
             "router": True,
@@ -322,6 +322,10 @@ class Registry:
             "context": {},
             "latency_ms": int((time.monotonic() - t0) * 1000),
         }
+        if reported and reported != ep.decision_model:
+            out["decision_model_mismatch"] = True
+            out["hint"] = f"the d3 server reports {reported}; the entry says {ep.decision_model}"
+        return out
 
     @staticmethod
     async def _probe_context(

@@ -142,12 +142,13 @@ def test_cli_branches_d3_router_calibrate_come_before_the_server_fallthrough(mon
 
     monkeypatch.setattr(localagents.server, "main", fallthrough_reached)
 
-    monkeypatch.setattr(sys, "argv", ["localagents", "router"])
+    # router 5 built the router's MCP surface: --help answers usage and exit 0, and the stdio
+    # server it would otherwise start never runs (the fallthrough stays the assertion)
+    monkeypatch.setattr(sys, "argv", ["localagents", "router", "--help"])
     with pytest.raises(SystemExit) as e:
         localagents.main()
-    assert e.value.code == 2
-    err = capsys.readouterr().err
-    assert "not built yet" in err and "phase 1 task 5" in err
+    assert e.value.code == 0
+    assert "usage" in capsys.readouterr().out.lower()
 
     monkeypatch.setattr(sys, "argv", ["localagents", "calibrate"])
     with pytest.raises(SystemExit) as e:

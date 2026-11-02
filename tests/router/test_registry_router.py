@@ -96,6 +96,25 @@ def test_router_probe_reports_health_as_served_id(monkeypatch):
     assert out["models"] == ["auto"]
     assert out["decision_model"] == "vllm-sr/d3-mini"
     assert out["context"] == {}
+    assert "decision_model_mismatch" not in out  # the entry says the same model
+
+
+def test_router_probe_flags_a_decision_model_mismatch(monkeypatch):
+    """The probe's ``decision_model`` is what the server reports; when that disagrees with
+    the entry, the probe says so (still up) rather than every job scoring another model."""
+    async def fake_get(self, url, **kw):
+        return httpx.Response(200, json={"ok": True, "model": "someone-elses/d3-large"},
+                              request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    reg = Registry(path=None, endpoints={}, defaults=Defaults(), raw={}, local={})
+    ep = _router()
+    ep.decision_model = "vllm-sr/d3-mini"
+    out = asyncio.run(reg.probe(ep))
+    assert out["up"] is True  # the server answers; only the identity disagrees
+    assert out["decision_model"] == "someone-elses/d3-large"  # the reported one wins the field
+    assert out["decision_model_mismatch"] is True
+    assert out["hint"] == "the d3 server reports someone-elses/d3-large; the entry says vllm-sr/d3-mini"
 
 
 def test_router_probe_down_when_health_fails(monkeypatch):
