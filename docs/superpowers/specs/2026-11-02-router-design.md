@@ -83,7 +83,12 @@ entry's served id (the operator names it). New arguments, both optional on every
 5. **Enqueue** on the chosen endpoint (§7). The job record is created at this point with the
    real `endpoint_id` and `model_id`, `status = queued` meaning queued in our queue, and a
    `router_tickets` row.
-6. From admission on, the job is exactly what a directly named job is.
+6. From admission on, the job is exactly what a directly named job is. **Only the initial brief
+   is routed.** The headless Claude Code session's requests go through the shim straight to the
+   chosen endpoint for the life of the job; no request is re-scored or re-routed, because the
+   session's prefix cache lives on that server and a switch would discard it. The row is fixed at
+   admission, and `resume_job` of a routed job resumes on the same row without consulting the
+   router (if that row is gone, the resume refuses as it does today).
 
 `list_models` shows the router entry with the fleet's window range in the context column (the
 real window is the chosen row's and is checked at dispatch). The router entry's probe is the d3
