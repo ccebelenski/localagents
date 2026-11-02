@@ -50,10 +50,9 @@ Three things make this more than an environment variable:
    and translates overflow errors into the form Claude Code knows how to recover
    from. See [What the shim does](#what-the-shim-does).
 
-3. **Every job is a record.** Each job's requests, tool calls, usage and
-   transcript go into one SQLite database, so Claude can read a job after the
-   server that ran it is gone, the status line shows what is running, and the
-   monitor draws the fleet.
+3. **One database.** Each job's requests, tool calls, usage and transcript go into
+   one SQLite file, so Claude can read a job after the server that ran it has exited,
+   the status line can show what is running, and the monitor has something to draw.
 
 ## Quick start
 
@@ -64,16 +63,16 @@ model has to be able to drive Claude Code — solid native tool calling and a co
 window of 128k or more per request. Qwen3.8-27B works well. Smaller windows work but
 compact constantly; see [Context windows](#context-windows).
 
-1. **Install the package.** Editable, so repo edits apply:
+1. **Install it.** Editable, so edits in the checkout take effect:
 
    ```bash
    git clone https://github.com/ccebelenski/localagents.git && cd localagents
    uv tool install -e .          # puts `localagents` on PATH
    ```
 
-2. **Describe your servers.** Copy the example and edit it; the file is gitignored.
-   It lists where your servers are and what kind they are, never which models — see
-   [Backends](#backends) for how to start each kind and
+2. **Tell it where your servers are.** Copy the example and edit it (the file is
+   gitignored). It says where each server is and what kind it is, never which model is
+   loaded — see [Backends](#backends) for starting each kind and
    [Config](#config-modelsyaml) for the file:
 
    ```bash
@@ -98,30 +97,27 @@ compact constantly; see [Context windows](#context-windows).
    same applies after every `git pull` of this repo — a running server keeps the
    code it started with until you reconnect.
 
-4. **Let long calls go to the background quickly.** `run_agent` blocks until the
-   job ends. Claude Code moves a blocking MCP call to a background task after
-   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS` milliseconds (default two minutes, and calls
-   run one after another, so that is two minutes per agent launched). Set it to ten
-   seconds in the `env` block of `~/.claude/settings.json`; `list_models` and the
-   other quick calls stay inline:
+4. **Shorten the auto-background delay.** `run_agent` blocks until the job ends, and
+   Claude Code only moves a blocking MCP call to a background task after
+   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS` milliseconds — two minutes by default, and since
+   MCP calls run one at a time that is two minutes per agent you launch. Ten seconds is
+   about right; `list_models` and the other quick calls still return inline:
 
    ```json
    {"env": {"CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "10000"}}
    ```
 
-5. **Install the `local-agent` subagent** so jobs appear as agents, which also
-   covers the cases where auto-backgrounding is off (see
-   [below](#the-local-agent-subagent)):
+5. **Install the `local-agent` subagent.** Jobs then show up as agents, and it covers
+   the cases where auto-backgrounding is off (see [below](#the-local-agent-subagent)):
 
    ```bash
    mkdir -p ~/.claude/agents && ln -s "$PWD/agents/local-agent.md" ~/.claude/agents/
    ```
 
-   The file names the server's tools as `mcp__local__*`; if you registered the
-   server under another name than `local`, copy the file instead and change its
-   `tools:` line.
+   It names the server's tools as `mcp__local__*`; if you registered the server under
+   a name other than `local`, copy the file instead and fix its `tools:` line.
 
-6. **Optional: the status line.** `localagents statusline` prints the running jobs
+6. **Optionally, the status line.** `localagents statusline` prints the running jobs
    for your status line script; see [Status line](#status-line).
 
 7. **Run a job.** Start a model on one of your servers, then ask Claude:
@@ -131,8 +127,8 @@ compact constantly; see [Context windows](#context-windows).
    Claude calls `list_models`, picks a served model, and runs `run_agent` with the
    brief. If nothing suitable is up it asks you to start something.
 
-Then, when you want to watch the fleet: `localagents monitor` opens the
-[Monitor](#monitor) at <http://127.0.0.1:8765/>.
+`localagents monitor` opens the [Monitor](#monitor) at <http://127.0.0.1:8765/> when you
+want to watch.
 
 ## Backends
 
@@ -150,8 +146,9 @@ declared, never guessed.
 | cache fields in each response's `usage` (the request tables' reused and prefill columns) | always | always | **needs `--enable-prompt-tokens-details`** |
 | GPU, VRAM, temperature, power | — | `/metrics` | — |
 
-A missing figure never breaks a job: `list_models` leaves the field out, the status
-line and monitor show a dash. The two flags in bold are the ones people forget.
+Nothing here is required for a job to run; a figure the server doesn't expose is left
+out of `list_models` and shows as a dash in the status line and the monitor. The two
+flags in bold are the ones that get forgotten.
 
 ### llama.cpp
 
@@ -504,78 +501,45 @@ monitor:
 
 ### The page
 
-**Overview.** One card per host, in `models.yaml` order; a card never moves when its
-state changes. A live endpoint's card is a fixed grid of twelve tiles in the same slots
-on every card — load, KV, decode tok/s with a sparkline, prompt tok/s, cache hit, ctx,
-probe ms, and Strata's GPU, VRAM, temperature and power — with a dash for a figure the
-backend does not report. The head line carries a state dot, the served model and the
-last-active phrase ("active 4m12s ago"); the foot lists the jobs running on the
-endpoint in the status line's form, "no jobs", or "busy, no local job" when the engine
-is occupied without one of ours. An endpoint that was up within the attention window
-and is down now is drawn in the alert colour with the probe's sentence and when it was
-last seen; an older one is a single muted "last seen" line; endpoints never seen are
-not drawn, and one muted line under the cards counts them. When the node itself is
-unreachable the card carries the probe's sentence once and its endpoints are greyed.
+The overview is one card per host, in `models.yaml` order, and a card never moves when
+its state changes. A live endpoint gets a fixed grid of tiles — load, KV fill, decode and
+prompt speed, cache hit, context window, probe latency, and on Strata the GPU, VRAM,
+temperature and power — with a dash where the backend reports nothing. The head line
+has the served model and when the endpoint was last active; the foot lists the jobs
+running on it. An endpoint that was up within the attention window and is down now is
+drawn in the alert colour with the probe's sentence; an older one is a muted "last
+seen" line; endpoints never seen aren't drawn, just counted in one line under the cards.
 
-**Recent jobs.** Every running and queued job by start, then the last 10 finished,
-newest first: job (the first eight characters of its uuid, the full id in the title),
-started, a status pill (`queued`, `running`, `succeeded`, `failed`, `timeout`,
-`cancelled`, `lost` — a live job whose MCP server stopped beating), model, endpoint,
-elapsed (frozen at the run's length once finished), turns, tool calls, tool errors (a
-link to the job page's list when non-zero), context, prefill tok/s, decode tok/s and
-last activity.
+Under the cards, **Recent jobs** lists every running and queued job and the last ten
+finished ones, with a status pill (`queued`, `running`, `succeeded`, `failed`,
+`timeout`, `cancelled`, or `lost` for a live job whose MCP server stopped beating), the
+model and endpoint, elapsed, turns, tool calls, tool errors, context fill, prefill and
+decode speed and the last activity. Below that is a timeline: one row per live endpoint,
+its busy intervals as a band and its jobs as bars you can click.
 
-Every table on the site — this one, the endpoint page's jobs table and both request
-tables — pages at 50 rows, sorts by clicking a header (a second click reverses), and
-filters per column: a select for columns with a fixed set of values such as status, a
-number box in the column's own unit for numeric columns, a date-and-hour picker for
-started, substring text elsewhere. Sort, filters and page survive every push.
+Every table pages at 50 rows, sorts by clicking a header, and filters per column —
+a select for columns with a fixed set of values, a number box in the column's own unit,
+a date-and-hour picker for start times, plain text elsewhere. The range buttons (`15m`
+to `7d`, default `1h`) apply to everything and are remembered by the browser. The page
+redraws when the server pushes a snapshot and never polls; the header shows when the
+last one arrived and goes red while the stream reconnects. It loads nothing from the
+internet.
 
-**Timeline.** Below the log, one row per live endpoint on a shared time axis: the
-endpoint's busy intervals as a band along the row's bottom (idle is not drawn), its
-jobs as labelled bars above it, each a link to the job page, and a "now" marker at the
-right edge.
+Clicking an endpoint's name opens its page: the state and last-seen time, what it is
+serving, a tile with a sparkline for every figure the backend reports over the range,
+the jobs that ran on it, restarts and outages when the range holds any, and its request
+table. Clicking a job opens the job page: status and times, a context gauge, the usage
+counters and `/metrics` deltas, the files touched, a tool-call timeline with errors in
+red, the breakdown by tool, the request table and the transcript tail. The job page
+also shows the build stamp of the MCP server that ran it, with a note when the
+monitor's own code is newer — handy when a server has been left running on old code.
 
-**Range and header.** The range buttons (`15m` to `7d`, default `1h`, remembered by the
-browser) apply to every strip, sparkline, table and the timeline. The page redraws on
-each snapshot the server pushes and never polls; a snapshot identical to the last one
-redraws nothing, and cards kept across pushes update their changed tiles in place. The
-header's dot is green while the stream is open and red while it reconnects, beside
-"updated HH:MM:SS" (or "connection lost, last update HH:MM:SS"), the attention window
-in hours, and the database the server opened. The page loads nothing but its own files:
-no CDN, no internet.
-
-**Endpoint page** (`#/endpoint/<name>`, from the card's name). The header gives the
-backend, the host, the base URL, the state and when it was last seen; for a down
-endpoint the probe's sentence and the job that was running when it dropped; for a down
-or dormant endpoint what the engine last served there. Then stat tiles, each with the
-current figure and a sparkline over the range, grouped by what the backend reports:
-served model, context window and probe latency for every endpoint; speeds (prompt,
-decode, cache hit) when it serves counters; occupancy (slots busy, requests running and
-waiting, KV-cache fill) when it reports it; hardware (GPU use, VRAM, temperature,
-power, PCIe traffic, CPU, RAM, disk) for Strata. A tile whose source reported nothing in
-the range is left out. Below: the state strip, the jobs that ran on the endpoint in the
-range (the Recent jobs table filtered to it), "Restarts and outages" when the range
-holds an up/down transition, and the request table under a totals line.
-
-**Job page** (`#/job/<id>`). Status, model, endpoint and times; a context gauge when the
-job reported a window; the four usage counters and the seven `/metrics` deltas the
-runner recorded (or "metrics not recorded"); the files touched, relative to the job's
-worktree or cwd; a tool-call timeline across the job's duration — one mark per call
-coloured by tool, errors red, the context fill drawn over it — and the breakdown by
-tool; the request table; and the transcript tail with the job's log directory. A
-running job's header refreshes in place. The header's "server" figure is the build
-stamp of the MCP server that ran the job (`<version>+<short git sha>`), with a note
-when the monitor's own stamp differs, so a server left running on older code is
-visible on its jobs.
-
-**Request tables** (on the endpoint and job pages) share one renderer: time, a status
-pill, job, path, prompt (the whole prompt the request carried: input, reused and cache
-creation), new (the tokens actually prefilled), reused, output, prefill tok/s, decode
-tok/s, duration and error. Claude Code's connection warm-up (`/api/hello`) is answered by
-the shim itself and labelled `handshake`, outside the error counts. A backend that
-reports no cache fields (vLLM without `--enable-prompt-tokens-details`) shows "no cache
-fields" and a prefill rate that is an upper bound.
+The request tables show each request's status, path, prompt size (split into new and
+reused tokens), output, prefill and decode speed, duration and error. Claude Code's
+connection warm-up (`/api/hello`) is answered by the shim itself and labelled
+`handshake`, outside the error counts. A backend that reports no cache fields (vLLM
+without `--enable-prompt-tokens-details`) is marked as such, and its prefill speed is
+an upper bound.
 
 ### Seeing it without a fleet
 
