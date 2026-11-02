@@ -2,6 +2,20 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
+**2026-11-02, the router design day.** Main at the commit this note rides on; nothing pushed since
+cbb026c (the operator gates the push); no worktree, no lane running. In order: the d3 categorizer
+spike (docs/spikes/2026-11-01-d3-categorizer.md, with its True-now on the complexity baseline); the
+router design brainstormed and written (docs/superpowers/specs/2026-11-02-router-design.md), reviewed
+the same day by Opus (design), Qwen/ai1 (plan) and DeepSeek/dgx1-a (schema) and FOLDED, with the
+operator's calls (sessions not requests; fail-and-resubmit, no re-route; unknown cell = zero; admit
+queue|now|force; stalled session = probe + notice); the plan in three phases
+(docs/superpowers/plans/2026-11-02-router.md: infrastructure 1-5, calibration 6-9, routing 10-14);
+the probe-as-job spike (docs/spikes/2026-11-02-probe-as-job.md); the calibration set spec
+(docs/superpowers/specs/2026-11-02-calibration-set-design.md), approved as written "until we have
+ground-truth". Execution method: subagent-driven, the lane process. **No build "go" has been given.**
+Resume: read the two specs and the plan; phase 1 starts on the operator's go; Epic 5 in EPICS is
+written by plan Task 14.
+
 ## 2026-10-30, afternoon (the 3.9 codebase review pass; the operator watching the page)
 
 **State.** Main at the commit this note rides on; suite at 690; nothing pushed (the push is the
