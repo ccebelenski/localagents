@@ -1837,6 +1837,19 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   `overflow-x: auto`, :482 `scrollbar-width: none`, the `overflows` mark) with no ellipsis, so the
   3.7u rule holds and the floor stops following tool lines. The figures line stays in the floor
   (bounded width, structural). A design for the operator's reading; builds on its own "go".
+  **(1) LANDED 825d80c** (2026-11-01, the coordinator; the operator's go was the bug report:
+  "Bug to fix before release - just ran 'localagents monitor' - screen came up with very wide
+  cards for no obvious reason", a ~1540 px window, one running job). Evidence first: the floor
+  oracle (tools/smoke/floor.js) over the LIVE page named `ai1 ep-act` at 820 px, the next line
+  `ai2 ep-head` at 639. The fix as designed: raiseCardFloor still selects and marks `.ep-act`
+  (the U1 pin holds, the line scrolls barless with its full text in the title) but skips it
+  before measuring; floor.js skips it the same way; test_3_10g.py pins the skip. After: the
+  live page's floor 645, two columns at 1538; the seeded floor sequence green at
+  2200/1712/1400/1000/2200 with `ep-job-figs` the bearer (536); wide.js: the 300-char activity
+  overflows barless, full text, no ellipsis, the floor rising only for the head and figures
+  (1179). Suite 912. Noted, not a defect of this fix: on the live page `needIsText` reads
+  false (page 645 vs oracle 640 for a flex-row head) — the two methods differ by 5 px on a
+  flex row at this font; the seeded gates agree to the pixel.
 - ☐ **3.10h "prompt = 1": the request table's prompt column, and the shim's first-byte clock.**
   Operator (2026-10-30 23:00, a job page's request table, screenshot): "Weird - prompt = 1? I hope
   that's due to transient state?" Not transient. Two things: (1) the column shows the API's
@@ -2710,7 +2723,30 @@ lands; 3.12c after 3.12b.
   runner.py build_env, serve.py parse_args, config.py, __init__.py, the static pages' labels)
   and landed fd47ee3 with CONTRIBUTING's flag line; suite 911. Review: a Qwen/ai1 read-only
   docs-versus-code audit (five probes, closed class list WRONG / UNVERIFIABLE / MISSING / CLEAN,
-  both sides cited per row, the report at t/REVIEW-readme.md in its worktree), running.
+  both sides cited per row, the report at t/REVIEW-readme.md in its worktree). The audit
+  (job f9ce371f, 83 turns, 24 min, 2 compactions; the worktree removed, no changes): WRONG 2,
+  UNVERIFIABLE 18, MISSING 2, CLEAN 125 — it also ran `llama-server --help` on this box
+  (the same b11913) and found the three quoted lines verbatim. Verified and folded by the
+  coordinator: "declared, never guessed" overclaimed (registry's `owned_by: llamacpp` fallback
+  and metrics_delta's format sniff) — the clause is gone; the request tables' headers read
+  `prefill t/s` not `tok/s` — already moot, the voice pass had dropped the column list; the
+  page shows no "no cache fields" label, only a tooltip — the sentence now says tooltip;
+  `CLAUDE_CODE_ATTRIBUTION_HEADER=0` is set on every backend, not vLLM only — said so;
+  the seed's second refusal (a live collector, `COLLECTOR_LIVE_S`) added to CONTRIBUTING.
+  Not folded: `ollama` as an accepted `backend:` value is advertised in the tool docstring but
+  not the README — Ollama is a non-goal (the README says so at the top), the docstring is the
+  odd one out; an open item, not a release blocker. The reviewer also noticed: top-level
+  `localagents --help` lists only serve/statusline (the other commands dispatch earlier) —
+  a help-text gap, open item; and the operator's local `vllm` shim is broken
+  (`ModuleNotFoundError: No module named 'vllm'`), their machine, not this repo.
+  Voice (the operator: "if it sounds like an LLM wrote it, people don't read it"): a pass by
+  the coordinator (73ff82d), then a blind DeepSeek read of the new sections with the operator's
+  own sentences as the sample ("mostly the author"; its one finding, the page section's
+  inventory sentences, fixed at 89bc222). The operator: "Not sure about all that 'seeded' stuff
+  in the monitors section" and "I notice your giving examples based on my specific set-up -
+  that's not allowed" — seeding moved to CONTRIBUTING, every host, IP, build and slot value of
+  the operator's fleet replaced by neutral examples, the example config's strata host renamed
+  (f88d58f; the rule is in the coordinator's memory).
 
 ## Epic 4: operations (V2, not scheduled)
 

@@ -134,8 +134,7 @@ want to watch.
 
 An endpoint is anything that serves Anthropic's `/v1/messages` and lists its models
 at `/v1/models`. Beyond that, what localagents can see depends on the backend and
-on how you start it. The `backend:` key in `models.yaml` picks the probe; it is
-declared, never guessed.
+on how you start it. The `backend:` key in `models.yaml` picks the probe.
 
 | localagents reads | llama.cpp | Strata | vLLM |
 |---|---|---|---|
@@ -218,8 +217,8 @@ From the vLLM CLI reference:
 The Anthropic `/v1/messages` endpoint and the Prometheus `/metrics` endpoint need no
 flag. vLLM reports a too-long prompt on the Anthropic endpoint as HTTP 500
 `internal_error`; the shim translates that too. Sessions are started with
-`CLAUDE_CODE_ATTRIBUTION_HEADER=0`, because the per-request attribution hash defeats
-prefix caching. Verified with DeepSeek-V4-Flash: thinking blocks replay with their
+`CLAUDE_CODE_ATTRIBUTION_HEADER=0` on every backend, because on vLLM the per-request
+attribution hash defeats prefix caching. Verified with DeepSeek-V4-Flash: thinking blocks replay with their
 signatures, prefix cache hits on every turn after the first.
 
 ### Other
@@ -533,8 +532,8 @@ monitor's own code is newer; that is how you notice a server left running on old
 Two rows in the request tables are not what they look like. Claude Code's connection
 warm-up (`/api/hello`) is answered by the shim itself and labelled `handshake`, outside
 the error counts. And a backend that reports no cache fields (vLLM without
-`--enable-prompt-tokens-details`) gets a prefill speed that is an upper bound, marked as
-such.
+`--enable-prompt-tokens-details`) gets a prefill speed that is an upper bound; the cell's
+tooltip says so.
 
 ### Smoke test
 

@@ -89,7 +89,9 @@ after the attention window, so re-seed to see them again. A naive ISO `--now`
 at a throwaway file. It refuses a database that already holds `jobs` or `probes` rows
 unless `--force` is given, and `--force` *replaces* (every row of every table) rather
 than appending. Even with `--force` it refuses a database a running localagents server
-owns (a heartbeat in the last 60 s and a live pid), naming the pid.
+owns (a heartbeat in the last 60 s and a live pid), naming the pid, and likewise a database a
+running `localagents monitor` is probing (a probe row fresher than two minutes): stop the
+monitor, or aim at another file.
 
 ## Pull requests
 
