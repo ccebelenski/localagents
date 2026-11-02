@@ -65,6 +65,32 @@ Backend quirks belong in the shim, not in the runner. If a new server rejects
 something Claude Code sends, the fix is a normalisation in `shim.py` with a unit test
 that uses the real error body you saw.
 
+## Seeding a database for the monitor
+
+The monitor's route tests and browser smokes (`tools/smoke/`) run against a **seeded**
+database, built offline and deterministically from the captured fixtures under
+`tests/fixtures/monitor/` with every timestamp shifted to `--now` (the current time by
+default). To see the page with data and no servers:
+
+```bash
+LOCALAGENTS_DB=/tmp/seed.db localagents seed
+LOCALAGENTS_DB=/tmp/seed.db localagents monitor --no-collect
+```
+
+The seeded world has three endpoints, named after the fixtures' sources: **ai1** (Strata, live — an hour of probes at 5 s with
+a running job on its one slot), **dgx1-a** (vLLM, down since 20 min ago — a refused
+connection: the box answers, nothing listens) and **llamacpp** (dormant — last up a week
+ago), plus one finished job with its requests and tool calls (ended 10 min ago) and one
+running job (started 5 min ago). The file is a snapshot at `--now`: its states decay
+after the attention window, so re-seed to see them again. A naive ISO `--now`
+(`2026-10-29T12:00:00`) is read in local time.
+
+`localagents seed` is for the tests and this demo, not for your live fleet: point it
+at a throwaway file. It refuses a database that already holds `jobs` or `probes` rows
+unless `--force` is given, and `--force` *replaces* (every row of every table) rather
+than appending. Even with `--force` it refuses a database a running localagents server
+owns (a heartbeat in the last 60 s and a live pid), naming the pid.
+
 ## Pull requests
 
 Keep them focused. A change that touches the request shape or the env passed to

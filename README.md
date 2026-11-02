@@ -153,11 +153,11 @@ flags in bold are the ones that get forgotten.
 ### llama.cpp
 
 ```bash
-llama-server -hf <repo>:<quant> -c 262144 --parallel 2 --metrics
+llama-server -hf <repo>:<quant> -c 131072 --metrics
 ```
 
-The flag defaults below are quoted from `llama-server --help` (build b11913); check
-yours, the defaults have moved before.
+The flag defaults below are quoted from `llama-server --help` as of build b11913
+(November 2026); check yours, the defaults have moved before.
 
 - `--jinja` — "whether to use jinja template engine for chat (default: enabled)".
   Tool calling needs it; leave it on.
@@ -260,7 +260,7 @@ while its worktree is still being finished.
 If nothing suitable is running you'll be asked to start one:
 
 > No live endpoint is serving a model matching `qwen`. Ask the user to start one.
-> Currently serving: {'dgx1': ['GLM-5.3-Flash-EXL3']}
+> Currently serving: {'gpu-server': ['GLM-5.3-Flash-EXL3']}
 
 Start whatever you like, however you normally do, say "it's up", and Claude retries.
 Which model that is, is your call; the config never names one. The flip side: anything
@@ -334,10 +334,10 @@ endpoint plus one row per job (the old one-line form is `localagents statusline
 --one-line`):
 
 ```
-local ai1 · 1/1 slots
+local llamacpp · 1/1 slots
   ⟳ Qwen3.8-27B 4m00s · 12 calls · 3 files · ctx 41% · 33 t/s · 2 compactions · Bash: uv run pytest -q
   ✓ Qwen3.8-27B 2m00s · 2 files · 3 compactions
-local dgx1-a · 1 run kv 31%
+local gpu-server · 1 run kv 31%
   ⟳ DeepSeek-V4-Flash 2m00s · 3 calls · ctx 12% · 40 t/s
 +2 jobs in other sessions
 ```
@@ -468,7 +468,8 @@ Flags:
   port, the command opens the page and exits 0 instead of failing; with `--no-open`
   the "port in use" failure stands.
 
-It prints the URL and the database path at start and stops on Ctrl-C or SIGTERM.
+It prints the URL and the database path at start and stops on Ctrl-C or SIGTERM. (To
+look at the page with no servers at all, `CONTRIBUTING.md` describes a seeded database.)
 
 To keep it running in the background from a checkout, `tools/monitor.sh` wraps it:
 
@@ -534,32 +535,6 @@ warm-up (`/api/hello`) is answered by the shim itself and labelled `handshake`, 
 the error counts. And a backend that reports no cache fields (vLLM without
 `--enable-prompt-tokens-details`) gets a prefill speed that is an upper bound, marked as
 such.
-
-### Seeing it without a fleet
-
-The monitor's route tests and browser smokes run against a **seeded** database, built
-offline and deterministically from the captured fixtures under `tests/fixtures/monitor/`
-with every timestamp shifted to `--now` (the current time by default). To see the page
-with data and no servers:
-
-```bash
-LOCALAGENTS_DB=/tmp/seed.db localagents seed
-LOCALAGENTS_DB=/tmp/seed.db localagents monitor --no-collect
-```
-
-The seeded world has three hosts: **ai1** (Strata, live — an hour of probes at 5 s with
-a running job on its one slot), **dgx1-a** (vLLM, down since 20 min ago — a refused
-connection: the box answers, nothing listens) and **llamacpp** (dormant — last up a week
-ago), plus one finished job with its requests and tool calls (ended 10 min ago) and one
-running job (started 5 min ago). The file is a snapshot at `--now`: its states decay
-after the attention window, so re-seed to see them again. A naive ISO `--now`
-(`2026-10-29T12:00:00`) is read in local time.
-
-`localagents seed` is for the tests and this demo, not for your live fleet: point it
-at a throwaway file. It refuses a database that already holds `jobs` or `probes` rows
-unless `--force` is given, and `--force` *replaces* (every row of every table) rather
-than appending. Even with `--force` it refuses a database a running localagents server
-owns (a heartbeat in the last 60 s and a live pid), naming the pid.
 
 ### Smoke test
 

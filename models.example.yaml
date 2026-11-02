@@ -31,10 +31,10 @@ endpoints:
     base_url: http://gpu-server.lan:8000   # a bigger box on the LAN running vLLM
     backend: vllm
     host: gpu-server
-  ai1:
-    base_url: http://ai1.lan:8080          # strata (llama.cpp-compatible); llama.cpp also works, minus occupancy and metrics
+  strata-box:
+    base_url: http://strata-box.lan:8080   # strata (llama.cpp-compatible); llama.cpp also works, minus occupancy and metrics
     backend: strata
-    host: ai1
+    host: strata-box
     # api_key: sk-...                      # for a server started with --api-key; sent on every call, never shown to the agent
 
 # monitor: {port: 8765, attention_hours: 24.0, retention_days: 7}   # the monitor's own section (localagents monitor); the MCP server ignores it
