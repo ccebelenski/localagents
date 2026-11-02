@@ -171,7 +171,7 @@ async def score(
     defs: Definitions,
     thresholds: dict[str, float] = THRESHOLDS,
     timeout_s: float = 20.0,
-    max_tokens: int = 24_000,
+    max_tokens: int = 12_000,  # the router entry's decision_max_tokens default (spec §12)
 ) -> BriefScores:
     """One ``POST {url}/v1/systemone`` with the document's question set and the brief as state
     (a brief longer than ``max_tokens`` tokens — approximated at four characters each — is

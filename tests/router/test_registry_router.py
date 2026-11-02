@@ -284,6 +284,23 @@ def test_run_agent_on_a_router_entry_is_refused_even_when_d3_is_down(monkeypatch
     assert server.store.jobs == {}
 
 
+def test_run_agent_with_defaults_model_naming_a_router_is_refused_even_when_d3_is_down(monkeypatch):
+    """The fix wave's re-review: `defaults: {model: auto}` and no `model` argument reached
+    resolve and, with d3 down, answered model_unavailable instead of not_routable."""
+    real = Endpoint(name="real", base_url="http://127.0.0.1:8080", backend="vllm")
+    reg = Registry(path=None, endpoints={"auto": _router(), "real": real},
+                   defaults=Defaults(model="auto"), raw={}, local={})
+
+    async def down(self, ep):
+        return {"up": False, "models": [], "error": "test: down"}
+
+    monkeypatch.setattr(Registry, "probe", down)
+    monkeypatch.setattr(server, "_reg", lambda: reg)
+    out = asyncio.run(server.run_agent(task="x"))
+    assert out["error"] == "not_routable"
+    assert server.store.jobs == {}
+
+
 def test_real_only_with_only_router_entries_names_the_cause():
     """local_complete needs an endpoint that serves /v1/messages; on a config of nothing
     but routers, "No endpoint is up. Ask the user to start a model server" would send the
