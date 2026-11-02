@@ -33,16 +33,32 @@ disposition and the fold's job record. Memory: `~/.claude/.../memory/monitor-mvp
   Fix: `t/conftest.py` committed (the `.gitignore` re-includes it), so every probe lane carries
   the redirect. The transcripts table (1.12) is the durable copy from now on.
 
-**2026-11-01 morning (the operator present).** Main f676d0e + this note, suite 911 (`uv run
-pytest -q`), clean, nothing pushed, no worktree, no lane; ai1, ai2 (Qwen3.8-Flash-Next), dgx1-a
-(DeepSeek) and the local llama.cpp (Qwen3.8-27B) were up and idle at 08:xx. Story 3.13 (the
-seed states) is DEFERRED, not built: the coordinator read it to the operator as coverage, not
-product; the operator: "I think the page work is done - The saying that comes to mind is
-'perfect is the enemy of good enough'." Ruling (r) stands; the next page story that needs a
-seeded state grows the seed by that state (EPICS 3.13 True-now). The page arc is finished on the
-operator's word. Nothing is queued: the open items are Epic 4 (database purge, shapes P1-P3; an
-analytics path), the operator's own readings (the Firefox scrollbar after-reading, the picker's
-"00 to 23" notice, 3.10g(1)), and 3.7t/3.7v under "Awaiting the operator". The night note follows.
+**2026-11-01, the day (the operator present): README for the push; the width bug.** Main at the
+commit this note rides on, suite 912, clean, nothing pushed, no worktree, no lane. In order: 3.13
+(the seed states) DEFERRED, not built — the operator: "I think the page work is done - The saying
+that comes to mind is 'perfect is the enemy of good enough'"; ruling (r) stands, the next page story
+that needs a seeded state grows the seed by that state (EPICS 3.13 True-now). Then 3.14, the README
+made solid before the push (EPICS 3.14, the operator's words verbatim there): rewritten by the
+coordinator from a docs-versus-code audit (quick start 1-7, a Backends section with the flag
+defaults quoted from `llama-server --help` — `--jinja` and `--slots` are on by default, `--metrics`
+and vLLM's `--enable-prompt-tokens-details` are the ones to add — the monitor described as it is
+today), a Qwen/ai1 audit of it (WRONG 2 / MISSING 2 / CLEAN 125, folded), and three voice passes on
+the operator's rulings: "if it sounds like an LLM wrote it, people don't read it"; "I notice your
+giving examples based on my specific set-up - that's not allowed" (every host, IP, build and slot
+value of the fleet replaced by neutral examples; the seeded-database section moved to CONTRIBUTING);
+"'declared, never guessed' is exactly the language of the LLM" and "existing text ... was LLM
+written also" (the whole file swept: no slogan antitheses, bold-labelled paragraphs or
+colon-plus-inventory sentences; two blind reads by other models as the check). Then the bug the
+operator found on the live page ("very wide cards for no obvious reason"): 3.10g(1), the job's
+activity line out of the card floor, landed 825d80c with the floor oracle as the evidence
+(820 → 645 at 1538 px, two columns), the seeded floor sequence and wide.js green, reviewed clean by
+DeepSeek (EPICS 3.10g); the operator: "Confirmed fixed on the width". Open items, none blocking:
+`ollama` is an accepted `backend:` value the README does not name; `localagents --help` lists only
+serve/statusline; the `.ep-line` set (a long `.ep-error`) can still widen the floor for the page's
+life; Epic 4 purge and analytics; the operator's own readings (the Firefox scrollbar after-reading,
+the picker's "00 to 23" notice). The operator's `vllm` shim on this box is broken (ModuleNotFoundError),
+their machine. NEXT: the operator reads the README and the diff since f676d0e, then pushes (the push
+is theirs). The night note follows.
 
 **Paused for the night 2026-11-01 (the operator: "I'll refresh you in the morning").** Main
 246dbd1, suite 911, clean, nothing pushed, no worktree, no lane. The arc is closed and the retro

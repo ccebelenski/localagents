@@ -1850,6 +1850,20 @@ Stories (lanes; every one a DOM smoke over the seeded world, cross-model review 
   (1179). Suite 912. Noted, not a defect of this fix: on the live page `needIsText` reads
   false (page 645 vs oracle 640 for a flex-row head) — the two methods differ by 5 px on a
   flex row at this font; the seeded gates agree to the pixel.
+  **Review (DeepSeek/dgx1-a, job 6acb70ba, 41 turns, 9 min, read-only, its worktree removed): no
+  defect.** Five probes: the trace (marked yes, measured no, no second path, the CSS scroll and
+  barless rules intact); the seeded floor sequence green with both gates to the pixel (floor 530,
+  `ep-job-figs`, columns 4/3/2/1/4); its own act-only render (a 400-char activity alone: floor,
+  need, raised and columns unchanged across seeded → act-only → seeded; the line overflows at
+  2723 > 652, wears `overflows`, no bar, full text in textContent and title, no ellipsis); the
+  mutation check (the pin fails exactly when the skip line is removed; tree byte-identical after);
+  the named 3.7u pins (51 passed). NOTICED, kept: the smoke README's floor paragraph was the
+  fold-day record (946, 2/2/2/1/2) — a True-now line added; the oracle shares the skip, so the
+  static pin plus the mutation check are the guard, not the gates; and the same never-lowering
+  hazard remains for the `.ep-line` set (a down endpoint's long `.ep-error`, a host note) — the
+  next suspect if "very wide cards" returns; an open item, not touched for the release.
+  The chain is closed; the operator confirmed the width on the live page ("Confirmed fixed on the
+  width").
 - ☐ **3.10h "prompt = 1": the request table's prompt column, and the shim's first-byte clock.**
   Operator (2026-10-30 23:00, a job page's request table, screenshot): "Weird - prompt = 1? I hope
   that's due to transient state?" Not transient. Two things: (1) the column shows the API's

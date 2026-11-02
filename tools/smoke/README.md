@@ -119,6 +119,10 @@ otherwise leaves the floor untouched and exits 0. Run it on the seeded world wit
 leaves the floor, a high-water mark, above the current text by design; `needIsText` still holds there).
 Seeded world, 3.7u-fix P-1 fold: floor 946 (the down endpoint's error line) at every step, columns
 2/2/2/1/2; before the fold the floor read 1078 → 1953 → 2153 → 2153 → 2153, columns 2/1/1/1/1.
+True now (3.10g(1), 825d80c, 2026-11-01; the DeepSeek review's reading): the seed's down endpoint no
+longer draws its error line on the card and the job's activity line is marked but not measured, so
+the seeded floor is 530 (ai1's `ep-job-figs`) at every step of 2200,1712,1400,1000,2200 and the
+columns read 4/3/2/1/4; the figures above are the record of the fold's day.
 
 ## keep.js: the overflow mark never costs a node its identity (P-2)
 
