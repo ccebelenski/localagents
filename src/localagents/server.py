@@ -504,7 +504,7 @@ async def run_agent(
     # is the same case (the re-review of the fix wave): read it here too. The post-resolve
     # guard below stays as the net.
     pinned = reg.endpoints.get(endpoint) if endpoint else None
-    wanted = model or reg.defaults.model
+    wanted = model or getattr(reg.defaults, "model", None)
     named_router = pinned if pinned is not None and pinned.is_router else (
         reg.endpoints.get(wanted) if wanted and wanted in reg.endpoints else None)
     if named_router is not None and named_router.is_router:
