@@ -57,7 +57,7 @@ DeepSeek (EPICS 3.10g); the operator: "Confirmed fixed on the width". Open items
 serve/statusline; the `.ep-line` set (a long `.ep-error`) can still widen the floor for the page's
 life; Epic 4 purge and analytics; the operator's own readings (the Firefox scrollbar after-reading,
 the picker's "00 to 23" notice). The operator's `vllm` shim on this box is broken (ModuleNotFoundError),
-their machine. The operator found the 672-line README unreviewable ("TLDR"); it is split, the front page is 299 lines and the rest is docs/using.md, docs/monitor.md, docs/shim.md (EPICS 3.14 True-now). NEXT: the operator reads the README and the diff since f676d0e, then pushes (the push
+their machine. The operator found the 672-line README unreviewable ("TLDR"); it is split, the front page is 299 lines and the rest is docs/using.md, docs/monitor.md, docs/shim.md (EPICS 3.14 True-now). PUSHED 2026-11-01 evening at cbb026c (389 commits, 0100fb6..cbb026c), on the operator's "put it up - let the world have it". NEXT (superseded by the push): the operator reads the README and the diff since f676d0e, then pushes (the push
 is theirs). The night note follows.
 
 **Paused for the night 2026-11-01 (the operator: "I'll refresh you in the morning").** Main
