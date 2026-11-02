@@ -2,6 +2,30 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
+**2026-11-02, late: router phase 1 BUILT and landed.** Main at the commit this note rides on; suite
+977 passed, 1 skipped (the live d3 test, run with `LOCALAGENTS_D3_URL`); nothing pushed (the
+operator: "Nothing gets pushed until we're feature complete on the whole"). Phase 1 of
+docs/superpowers/plans/2026-11-02-router.md (Tasks 1-5) was built by local lanes in worktrees
+(Qwen3.8-Flash-Next on ai1/ai2, the 27B on llama.cpp), each reviewed construct-it by a different
+model (DeepSeek on dgx1-a, the 27B, Qwen) before `tools/land.sh`; then a final whole-branch
+review by Opus (4 Important, several minors), ONE fix wave (12 items, Qwen/ai1), one scoped
+re-review (DeepSeek, all addressed), two coordinator folds. Landed: schema v10 + v11 (the
+router's tables; the operator's real file is at v11 now), the definitions document (d3 takes a
+score's criteria as an ORDERED LIST), `backend: router` entries (invalid entries marked, never
+raised from load), the d3 client, `localagents d3 serve` (the `router` extra: torch, transformers,
+accelerate; default port 8766, the monitor keeps 8765), `localagents router` (definitions get/set/
+dry-run, score-only preflight), docs/router.md, README `### router`. Live: the d3 server runs on
+the Ada GPU in ~22 s; all 135 stored briefs scored through the real client; undetermined rates at
+the shipped bars (specification 100%, context_load 97%, computer_use 73%, complexity 67%,
+software_dev 40%, tool_use 18%, language 16%) are input to the calibration set spec's thresholds.
+The SDD ledger with every ruling and deferred minor: `.superpowers/sdd/2026-11-02-router/progress.md`
+(git-ignored; keep it). Next: phase 2 (Tasks 6-9: scorecard + pass, capacity, calibration-flagged
+jobs, the runner) on the operator's go; the calibration set's content (its spec is approved) feeds
+Task 9. Open from the reviews (deferred, in the ledger): `_SUMMARY_HIDDEN` hides priority/
+calibration/gates until Task 12; the monitor's collector treats a router entry as real until
+Task 14; d3 without the extra reports "SystemExit: 2" on /health; `name:` key in an entry is a
+TypeError; a real served id equal to the router's name listed first captures it.
+
 **2026-11-02, the router design day.** Main at the commit this note rides on; nothing pushed since
 cbb026c (the operator gates the push); no worktree, no lane running. In order: the d3 categorizer
 spike (docs/spikes/2026-11-01-d3-categorizer.md, with its True-now on the complexity baseline); the

@@ -2770,6 +2770,23 @@ lands; 3.12c after 3.12b.
   lost the overflow-error sentences (now one paragraph in docs/shim.md). The operator reviews the
   299 lines; the moved pages wait for a later pass.
 
+## Epic 5: the router (spec docs/superpowers/specs/2026-11-02-router-design.md; plan docs/superpowers/plans/2026-11-02-router.md)
+
+Phase 1 (infrastructure), built 2026-11-02, all landed on main via tools/land.sh after a
+cross-model construct-it review each; details in the landing commits and the SDD ledger.
+
+| Story | Built by | Reviewed by | Landed |
+| --- | --- | --- | --- |
+| router 1: schema v10, the definitions document, jobs.priority/calibration/gates | Qwen/ai1 (job 425ae0a0) | DeepSeek/dgx1-a (48c813e8) clean | 5a2a4c2 |
+| router 2: `backend: router` in the registry; not_routable; README subsection | Qwen/ai1 (883914b2 + fix) | DeepSeek (bd7947b4) | 7b48dbf |
+| router 3: the d3 client, undetermined by confidence, truncation, pointer briefs | Qwen/ai2 (76dee5ce) | Qwen3.8-27B/llamacpp (ef983283) clean | 6eccfd9 |
+| router 4: `localagents d3 serve`, the router extra, CLI branches | Qwen3.8-27B (91bc0094) | Qwen/ai1 (85a12809) clean | 69acf5f |
+| router 5: `localagents router` (definitions, preflight), docs/router.md | Qwen/ai1 (1f830695 + fix) | DeepSeek (186d3c17), live | 1ec728e |
+| coordinator folds from live smokes | accelerate in the extra (8bb2f75); score criteria as an ordered list (16df2ed) | the final review | |
+| final whole-branch review → fix wave (12 items) → scoped re-review | Opus; Qwen/ai1 (e3cc6b27); DeepSeek (498f45fc) all addressed | | 0a0b687, folds c997860 96140cd |
+
+True now: phase 1 complete; phases 2 (calibration) and 3 (routing) wait for the operator's go.
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
