@@ -198,6 +198,25 @@ def test_negative_metrics_store_null(monkeypatch, tmp_path):
     assert all(_row(store, job2.id)[c] is None for c in cols)
 
 
+def test_new_writes_priority_and_calibration_and_row_update_writes_gates(monkeypatch, tmp_path):
+    """router 1: priority and calibration ride on new()'s INSERT — its column list is fixed and
+    an unlisted column is silently never written — and gates is the only new thing _row_update
+    writes."""
+    import json
+
+    store = _store(monkeypatch, tmp_path)
+    r = _row(store, _new(store).id)
+    assert r["priority"] == "normal" and r["calibration"] == 0 and r["gates"] is None
+
+    job = _new(store, priority="background", calibration=True)
+    r = _row(store, job.id)
+    assert r["priority"] == "background" and r["calibration"] == 1 and r["gates"] is None
+
+    job.gates = {"tail_finished": True, "tests_ran": False}
+    job.changed()
+    assert json.loads(_row(store, job.id)["gates"]) == {"tail_finished": True, "tests_ran": False}
+
+
 def test_db_error_does_not_break_changed(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     job = _new(store)

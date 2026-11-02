@@ -117,6 +117,12 @@ class Job:
     log_events: bool = False  # write events.jsonl (every SDK message); debugging only
     context: int | None = None  # backend context window handed to the session
     metrics: dict[str, Any] | None = None  # llama.cpp /metrics delta over the job (endpoint-wide)
+    # router 1 (router-design spec §13): priority comes from the caller, never from the brief's
+    # scoring (§5: priority is not a dimension); calibration marks a calibration probe job;
+    # gates is the gate feed's verdicts, NULL until the router's build writes one.
+    priority: str = "normal"  # urgent|normal|background
+    calibration: bool = False
+    gates: dict[str, Any] | None = None
     # usage, tool_calls, files_touched, ctx_tokens, gen_tps were the duplicated values story
     # 1.5b removed: the rows carry them, summary()/derive compute them at read time.
     # database identity (set by JobStore.new; NULL-ish defaults so a Job built directly still works)
@@ -134,8 +140,11 @@ class Job:
     _METRIC_COLUMNS = derive._METRICS_COLUMNS
     _METRIC_COUNTERS = _METRIC_COLUMNS[:3]  # generated_tokens, prompt_tokens_processed, prompt_tokens_cached
     # storage details: summary()/job_status shows the job, and the id identifies it; the id
-    # columns resolve to model/endpoint/base_url there (DeepSeek review of 1.2)
-    _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id")
+    # columns resolve to model/endpoint/base_url there (DeepSeek review of 1.2). The router 1
+    # columns join them for the parity contract test_summary_and_summary_from_row_agree pins:
+    # derive.summary_from_row is a fixed dict that does not read them yet, so summary() must
+    # not grow keys it cannot match until a later story adds them to both sides.
+    _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id", "priority", "calibration", "gates")
 
     def changed(self) -> None:
         """This job's visible state moved: write the new state to its row. The status line reads
@@ -172,13 +181,14 @@ class Job:
                        compactions = ?, context = ?, generated_tokens = ?,
                        prompt_tokens_processed = ?,
                        prompt_tokens_cached = ?, cache_hit_ratio = ?, prompt_tps = ?,
-                       generate_tps = ?, spec_decode_acceptance = ?, worktree = ?
+                       generate_tps = ?, spec_decode_acceptance = ?, worktree = ?, gates = ?
                        WHERE id = ?""",
                     (self.status, self.started_at, self.finished_at, time.time(), self.session_id,
                      self.result, self.error, self.last_activity, self.num_turns,
                      self.compactions, self.context,
                      *met,
                      json.dumps(self.worktree) if self.worktree is not None else None,
+                     json.dumps(self.gates) if self.gates is not None else None,
                      self.id),
                 )
         except sqlite3.Error as e:
@@ -445,12 +455,13 @@ class JobStore:
                 self.conn.execute(
                     """INSERT INTO jobs (id, mcp_server_id, endpoint_id, model_id, task, cwd,
                                          isolation, status, created_at, updated, dump, log_events, worktree,
-                                         context, num_turns, last_activity)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         context, num_turns, last_activity, priority, calibration)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (jid, self.server_id, endpoint_id, model_id, job.task, job.cwd, job.isolation,
                      job.status, created_at, time.time(), 1 if job.dump else 0, 1 if job.log_events else 0,
                      json.dumps(job.worktree) if job.worktree is not None else None,
-                     job.context, job.num_turns, job.last_activity),
+                     job.context, job.num_turns, job.last_activity,
+                     job.priority, 1 if job.calibration else 0),
                 )
         except BaseException:
             # the job cannot be recorded, so the call fails loudly — but cleanly (story 1.7

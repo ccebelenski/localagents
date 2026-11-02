@@ -395,10 +395,159 @@ def _v9(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE jobs DROP COLUMN name")
 
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 9.
+# Version 10 (router 1, router-design spec §13, 2026-11-02): the router's tables and the three
+# jobs columns. The DDL is §13's, with the spec preamble's rules written out: plain CREATE (a
+# re-run must fail loudly, not half-create), every key column NOT NULL (a TEXT PRIMARY KEY
+# admits NULLs and a NULL key skips a foreign key and splits a UNIQUE, per the version-8 note),
+# every reference declared, a CHECK on every status column. ``scorecard_events`` is NOT here:
+# the review's pass-generation ruling replaced the event log with ``scorecard_passes`` rows.
+# ``jobs.priority`` is the caller's, never the brief's scoring (spec §5: priority is not a
+# dimension); ``jobs.calibration`` marks a calibration probe job; ``jobs.gates`` is the gate
+# feed's verdicts as JSON, NULL until the router's build writes one.
+_V10 = [
+    """CREATE TABLE dimension_definitions (
+        -- the versioned judgement document; the text is a draft owned by the calibration
+        -- set spec (2026-11-02-calibration-set-design.md Appendix A)
+        version  INTEGER PRIMARY KEY NOT NULL,
+        document TEXT NOT NULL,
+        created  REAL NOT NULL
+    )""",
+    """CREATE TABLE scorecard_rows (
+        -- one endpoint/model serving a served_id; an archived row leaves its identity
+        -- (endpoint_name, served_id) behind, so its replacement can insert
+        id             INTEGER PRIMARY KEY NOT NULL,
+        endpoint_name  TEXT NOT NULL,
+        served_id      TEXT NOT NULL,
+        endpoint_id    INTEGER NOT NULL REFERENCES endpoints(id),
+        model_id       INTEGER NOT NULL REFERENCES models(id),
+        created        REAL NOT NULL,
+        archived       REAL,
+        archive_reason TEXT,
+        set_version    TEXT,
+        band_times     TEXT,
+        speed_factor   REAL,
+        facts          TEXT
+    )""",
+    "CREATE UNIQUE INDEX scorecard_rows_identity ON scorecard_rows(endpoint_name, served_id)"
+    " WHERE archived IS NULL",
+    """CREATE TABLE scorecard_passes (
+        -- one estimation pass over a row; the newest per row is the live answer
+        id           TEXT PRIMARY KEY NOT NULL,
+        row_id       INTEGER NOT NULL REFERENCES scorecard_rows(id),
+        at           REAL NOT NULL,
+        constants    TEXT NOT NULL,
+        observations INTEGER NOT NULL
+    )""",
+    "CREATE INDEX scorecard_passes_row_at ON scorecard_passes(row_id, at)",
+    """CREATE TABLE scorecard_cells (
+        -- one (dimension, language) cell of a pass; NULL estimate = no answer yet
+        pass_id      TEXT NOT NULL REFERENCES scorecard_passes(id),
+        dimension    TEXT NOT NULL,
+        language     TEXT NOT NULL DEFAULT '',
+        estimate     REAL,
+        count        REAL NOT NULL,
+        probes_n     INTEGER,
+        jobs_n       INTEGER,
+        thin         INTEGER NOT NULL,
+        defs_version INTEGER NOT NULL,
+        PRIMARY KEY (pass_id, dimension, language)
+    )""",
+    """CREATE TABLE endpoint_capacity (
+        -- the lane's capacity curve; points is the curve's sample count
+        endpoint_id INTEGER PRIMARY KEY NOT NULL REFERENCES endpoints(id),
+        kind        TEXT NOT NULL CHECK (kind IN ('partitioned', 'pooled', 'unknown')),
+        curve       TEXT NOT NULL,
+        state       TEXT NOT NULL CHECK (state IN ('prior', 'probed', 'refined')),
+        points      INTEGER NOT NULL,
+        updated     REAL NOT NULL
+    )""",
+    """CREATE TABLE queue_entries (
+        -- a job waiting at an endpoint; admitted NULL = still queued; forced is a manual pin
+        job_id        TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id),
+        endpoint_id   INTEGER NOT NULL REFERENCES endpoints(id),
+        owner_server  TEXT NOT NULL REFERENCES mcp_servers(id),
+        priority_rank INTEGER NOT NULL,
+        enqueued      REAL NOT NULL,
+        admitted      REAL,
+        forced        INTEGER NOT NULL DEFAULT 0
+    )""",
+    "CREATE INDEX queue_entries_dispatch ON queue_entries(endpoint_id, admitted, priority_rank, enqueued)",
+    """CREATE TABLE router_tickets (
+        -- the routing decision's record; chosen_row NULL until the choice, then the row taken;
+        -- divert/d divert_at record the queued-divert flag and its moment
+        job_id       TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id),
+        defs_version INTEGER NOT NULL,
+        pass_id      TEXT,
+        scores       TEXT NOT NULL,
+        rows         TEXT NOT NULL,
+        chosen_row   INTEGER REFERENCES scorecard_rows(id),
+        divert       INTEGER NOT NULL,
+        divert_at    REAL,
+        est_wait_s   REAL,
+        admitted     REAL,
+        flags        TEXT
+    )""",
+    """CREATE TABLE verdicts (
+        -- the caller's judgement of the finished job; dimensions is the per-dimension detail
+        job_id     TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id),
+        accepted   INTEGER NOT NULL,
+        dimensions TEXT,
+        at         REAL NOT NULL
+    )""",
+    """CREATE TABLE category_corrections (
+        -- an operator's correction of a mis-scored brief: what it said, what it scored, what
+        -- it should have been, at which definitions version
+        id           INTEGER PRIMARY KEY NOT NULL,
+        job_id       TEXT NOT NULL REFERENCES jobs(id),
+        brief        TEXT NOT NULL,
+        scored       TEXT NOT NULL,
+        corrected    TEXT NOT NULL,
+        defs_version INTEGER NOT NULL,
+        at           REAL NOT NULL
+    )""",
+    """CREATE TABLE calibration_runs (
+        -- one tier's run of the calibration set against one row; tier carries no CHECK: the
+        -- set spec adds tiers, the status column is the closed list (§13)
+        id          TEXT PRIMARY KEY NOT NULL,
+        row_id      INTEGER NOT NULL REFERENCES scorecard_rows(id),
+        tier        TEXT NOT NULL,
+        set_version TEXT NOT NULL,
+        plan        TEXT NOT NULL,
+        estimate_s  REAL,
+        actual_s    REAL,
+        started     REAL NOT NULL,
+        finished    REAL,
+        status      TEXT NOT NULL CHECK (status IN ('running', 'complete', 'incomplete', 'stopped'))
+    )""",
+    """CREATE TABLE speed_samples (
+        -- one job's measured generation speed at a session count; the capacity curve's fuel
+        job_id       TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id),
+        endpoint_id  INTEGER NOT NULL REFERENCES endpoints(id),
+        sessions     INTEGER NOT NULL,
+        generate_tps REAL NOT NULL,
+        at           REAL NOT NULL
+    )""",
+    """CREATE TABLE calibration_results (
+        -- one probe of one run; job_id NULL for a probe that never ran (skipped)
+        run_id   TEXT NOT NULL REFERENCES calibration_runs(id),
+        probe_id TEXT NOT NULL,
+        job_id   TEXT REFERENCES jobs(id),
+        status   TEXT NOT NULL CHECK (status IN ('pass', 'fail', 'skipped', 'unreliable')),
+        seconds  REAL,
+        reason   TEXT,
+        PRIMARY KEY (run_id, probe_id)
+    )""",
+    "ALTER TABLE jobs ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'"
+    " CHECK (priority IN ('urgent', 'normal', 'background'))",
+    "ALTER TABLE jobs ADD COLUMN calibration INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE jobs ADD COLUMN gates TEXT",
+]
+
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 10.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5), _v6,
-    _statements(_V7), _statements(_V8), _v9,
+    _statements(_V7), _statements(_V8), _v9, _statements(_V10),
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 

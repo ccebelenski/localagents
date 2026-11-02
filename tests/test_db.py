@@ -12,9 +12,19 @@ import pytest
 
 from localagents import db
 
+# version 10 (router 1, router-design spec §13): the router's twelve tables
+ROUTER_TABLES = {"dimension_definitions", "scorecard_rows", "scorecard_passes", "scorecard_cells",
+                 "endpoint_capacity", "queue_entries", "router_tickets", "verdicts",
+                 "category_corrections", "calibration_runs", "speed_samples", "calibration_results"}
+# the references the spec leaves nullable: a ticket predates its choice, a skipped probe never
+# had a job. Every other router reference is a key column and carries NOT NULL (§13 preamble).
+ROUTER_NULLABLE_REFS = {("router_tickets", "chosen_row"), ("calibration_results", "job_id")}
+
 TABLES = {"mcp_servers", "endpoints", "endpoint_load", "models", "paths", "jobs", "requests", "tool_calls",
           # version 8 (story 1.11): the finished job's transcript text, written once at completion
-          "transcripts"}
+          "transcripts",
+          # version 10 (router 1): the router's tables
+          *ROUTER_TABLES}
 # version 3 (story 2.2): the monitor's tables, monitor-design spec §3 "Storage"
 MONITOR_TABLES = {"probes", "probe_counters", "probe_hardware", "endpoint_events", "host_probes"}
 INDEXES = {
@@ -24,6 +34,9 @@ INDEXES = {
     # version 7 (3.9E audit finding E1): the snapshot's finished-jobs tail reads this backwards
     "jobs_finished_at",
     "mcp_servers_updated", "requests_job_id_t", "tool_calls_job_id_t",
+    # version 10 (router 1, spec §13): scorecard_rows_identity is the partial unique index
+    # on (endpoint_name, served_id) WHERE archived IS NULL
+    "scorecard_rows_identity", "scorecard_passes_row_at", "queue_entries_dispatch",
 }
 MONITOR_INDEXES = {"probes_endpoint_t", "endpoint_events_endpoint_t", "host_probes_host_t"}
 # every column of every table, in the spec's order
@@ -39,13 +52,34 @@ COLUMNS = {
              "created_at", "started_at", "finished_at", "updated", "session_id", "result", "error",
              "last_activity", "num_turns", "context", "generated_tokens", "prompt_tokens_processed",
              "prompt_tokens_cached", "cache_hit_ratio", "prompt_tps", "generate_tps",
-             "spec_decode_acceptance", "worktree", "dump", "log_events", "compactions"],
+             "spec_decode_acceptance", "worktree", "dump", "log_events", "compactions",
+             # version 10 (router 1): ALTER ADD COLUMN appends; priority is the caller's,
+             # calibration marks a probe job, gates is the gate feed's verdicts
+             "priority", "calibration", "gates"],
     "requests": ["job_id", "path_id", "t", "http_status", "ms", "gen_ms", "stream", "input_tokens",
                  "output_tokens", "cache_read_tokens", "cache_creation_tokens", "messages", "tools", "bytes",
                  "moved_system", "folded_text", "context_exceeded", "error"],
     "tool_calls": ["job_id", "t", "finished", "tool", "tool_use_id", "input", "is_error"],
     # version 8 (story 1.11): one row per finished job, keyed by the job id itself
     "transcripts": ["job_id", "text", "bytes", "written"],
+    # version 10 (router 1, router-design spec §13), every column in the spec's order
+    "dimension_definitions": ["version", "document", "created"],
+    "scorecard_rows": ["id", "endpoint_name", "served_id", "endpoint_id", "model_id", "created",
+                       "archived", "archive_reason", "set_version", "band_times", "speed_factor", "facts"],
+    "scorecard_passes": ["id", "row_id", "at", "constants", "observations"],
+    "scorecard_cells": ["pass_id", "dimension", "language", "estimate", "count", "probes_n",
+                        "jobs_n", "thin", "defs_version"],
+    "endpoint_capacity": ["endpoint_id", "kind", "curve", "state", "points", "updated"],
+    "queue_entries": ["job_id", "endpoint_id", "owner_server", "priority_rank", "enqueued",
+                      "admitted", "forced"],
+    "router_tickets": ["job_id", "defs_version", "pass_id", "scores", "rows", "chosen_row",
+                       "divert", "divert_at", "est_wait_s", "admitted", "flags"],
+    "verdicts": ["job_id", "accepted", "dimensions", "at"],
+    "category_corrections": ["id", "job_id", "brief", "scored", "corrected", "defs_version", "at"],
+    "calibration_runs": ["id", "row_id", "tier", "set_version", "plan", "estimate_s", "actual_s",
+                         "started", "finished", "status"],
+    "speed_samples": ["job_id", "endpoint_id", "sessions", "generate_tps", "at"],
+    "calibration_results": ["run_id", "probe_id", "job_id", "status", "seconds", "reason"],
 }
 # the monitor tables, every column in the spec's order (monitor-design §3, approved 2026-10-29)
 MONITOR_COLUMNS = {
@@ -84,12 +118,13 @@ def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     ruling A: probes.state, probe_hardware's disk columns), the version-5 step (story 3.1b:
     host_probes), the version-6 step (story 3.7-fold-2: endpoints.last_active), the
     version-7 step (3.9E audit finding E1: jobs_finished_at), the version-8 step (story 1.11:
-    transcripts) and the version-9 step (3.10f-1: jobs.name dropped), so it comes up at version
-    9 with the table."""
+    transcripts), the version-9 step (3.10f-1: jobs.name dropped) and the version-10 step
+    (router 1, router-design spec §13: the router's tables and jobs' priority, calibration and
+    gates), so it comes up at version 10 with them."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
-    assert db.SCHEMA_VERSION == 9 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+    assert db.SCHEMA_VERSION == 10 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -667,7 +702,7 @@ def test_a_version_8_file_drops_name_and_renames_terminal_job_directories(dbfile
     conn.close()
 
 
-def test_a_version_8_file_with_no_job_directories_still_comes_up_at_9(dbfile):
+def test_a_version_8_file_with_no_job_directories_still_comes_up_at_10(dbfile):
     """The rename step tolerates rows whose directory was already pruned: nothing to move is
     not an error."""
     _v8_file(dbfile, [("11111111-1111-4111-8111-111111111111", "20261030-000000-11111111", "succeeded", "a")])
@@ -679,7 +714,7 @@ def test_a_version_8_file_with_no_job_directories_still_comes_up_at_9(dbfile):
 
 def test_the_version_9_rename_is_idempotent(dbfile, tmp_path):
     """Opening the migrated file a second time runs no step: the directory stays at its id and
-    the old name is not resurrected (the file is already at 9)."""
+    the old name is not resurrected (the file is already current)."""
     jid, name = "11111111-1111-4111-8111-111111111111", "20261030-000000-11111111"
     _v8_file(dbfile, [(jid, name, "succeeded", "a")])
     (tmp_path / "localagents" / "jobs" / name).mkdir(parents=True)
@@ -688,6 +723,78 @@ def test_the_version_9_rename_is_idempotent(dbfile, tmp_path):
     root = tmp_path / "localagents" / "jobs"
     assert (root / jid).is_dir() and not (root / name).exists()
     assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    conn.close()
+
+
+def test_v10_creates_the_router_tables_with_not_null_keys(dbfile):
+    """Router 1 (router-design spec §13): every key column NOT NULL — a TEXT PRIMARY KEY
+    admits NULLs (it is no rowid alias) and a NULL foreign key skips the check, so both are
+    written explicitly — and every reference declared. Exactly the two references the spec
+    leaves optional are nullable: a ticket predates its choice, a skipped probe never had a
+    job."""
+    conn = db.open_db()
+    assert db.SCHEMA_VERSION == 10 == len(db.MIGRATIONS)
+    assert ROUTER_TABLES <= _names(conn, "table")
+    nullable_refs, refs = set(), {}
+    for table in sorted(ROUTER_TABLES):
+        fk = {r["from"]: r["table"] for r in conn.execute(f"PRAGMA foreign_key_list({table})")}
+        refs[table] = set(fk.items())
+        for r in conn.execute(f"PRAGMA table_info({table})"):
+            if r["pk"]:
+                assert r["notnull"], (table, r["name"])  # a NULL key is a second, unchecked row
+            if r["name"] in fk and not r["notnull"]:
+                nullable_refs.add((table, r["name"]))
+    assert nullable_refs == ROUTER_NULLABLE_REFS
+    assert refs == {
+        "calibration_results": {("run_id", "calibration_runs"), ("job_id", "jobs")},
+        "calibration_runs": {("row_id", "scorecard_rows")},
+        "category_corrections": {("job_id", "jobs")},
+        "dimension_definitions": set(),
+        "endpoint_capacity": {("endpoint_id", "endpoints")},
+        "queue_entries": {("job_id", "jobs"), ("endpoint_id", "endpoints"),
+                          ("owner_server", "mcp_servers")},
+        "router_tickets": {("job_id", "jobs"), ("chosen_row", "scorecard_rows")},
+        "scorecard_cells": {("pass_id", "scorecard_passes")},
+        "scorecard_passes": {("row_id", "scorecard_rows")},
+        "scorecard_rows": {("endpoint_id", "endpoints"), ("model_id", "models")},
+        "speed_samples": {("job_id", "jobs"), ("endpoint_id", "endpoints")},
+        "verdicts": {("job_id", "jobs")},
+    }
+    conn.close()
+
+
+def test_v10_partial_unique_row_identity(dbfile):
+    """Spec §13: ``scorecard_rows_identity`` is UNIQUE (endpoint_name, served_id) WHERE
+    archived IS NULL — an archived row leaves its identity behind, so a retired row cannot
+    block the row that replaces it."""
+    conn = db.open_db()
+    ep = db.lookup_id(conn, "endpoints", name="ai1", base_url="http://ai1:8080", backend="strata",
+                      host="ai1")
+    m = db.lookup_id(conn, "models", served_id="Qwen3.8-Flash-Next")
+    ins = ("INSERT INTO scorecard_rows (endpoint_name, served_id, endpoint_id, model_id, created)"
+           " VALUES (?, ?, ?, ?, ?)")
+    conn.execute(ins, ("ai1", "qwen", ep, m, 1.0))
+    with pytest.raises(sqlite3.IntegrityError):  # a second live row for one identity
+        conn.execute(ins, ("ai1", "qwen", ep, m, 2.0))
+    conn.execute("UPDATE scorecard_rows SET archived = 3.0, archive_reason = 'retired'"
+                 " WHERE created = 1.0")
+    conn.execute(ins, ("ai1", "qwen", ep, m, 4.0))  # the archived row no longer carries it
+    assert conn.execute("SELECT COUNT(*) FROM scorecard_rows").fetchone()[0] == 2
+    conn.close()
+
+
+def test_v10_jobs_columns_have_defaults(dbfile):
+    """The three ALTERs give every row an answer: a job written before the router reads
+    'normal', not-calibration, no gates; priority takes only the three named values."""
+    conn = db.open_db()
+    conn.execute("INSERT INTO jobs (id) VALUES ('j1')")
+    row = conn.execute("SELECT priority, calibration, gates FROM jobs WHERE id = 'j1'").fetchone()
+    assert row["priority"] == "normal" and row["calibration"] == 0 and row["gates"] is None
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO jobs (id, priority) VALUES ('bad', 'urgent-ish')")
+    for i, p in enumerate(("urgent", "normal", "background")):
+        conn.execute("INSERT INTO jobs (id, priority) VALUES (?, ?)", (f"p{i}", p))
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 4
     conn.close()
 
 
