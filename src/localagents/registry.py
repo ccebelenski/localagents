@@ -6,6 +6,9 @@ What each endpoint is *currently* serving, its context window and its occupancy 
 discovered live via ``GET /v1/models`` (plus ``/props``, ``/slots`` or ``/metrics``)
 on every call. The human brings models up and down by hand; Claude uses whatever is up.
 
+One entry type speaks no ``/v1/messages``: ``backend: router`` names a decision server that
+picks a real endpoint for each job (see ``docs/router.md``); it serves only its own name.
+
 The YAML file is re-read on every call, so edits take effect immediately.
 """
 
@@ -17,8 +20,9 @@ import fnmatch
 import json
 import os
 import re
+import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -48,11 +52,11 @@ class _Dumper(yaml.SafeDumper):
 
 
 def backend_kind(backend: str) -> str:
-    """Normalise the config's ``backend`` string: llamacpp | vllm | strata | ollama | other."""
+    """Normalise the config's ``backend`` string: llamacpp | vllm | strata | ollama | router | other."""
     b = backend.replace(".", "").replace("-", "").replace("_", "").lower()
     if b in ("llamacpp", "llama"):
         return "llamacpp"
-    if b in ("vllm", "strata", "ollama", "other"):
+    if b in ("vllm", "strata", "ollama", "router", "other"):
         return b
     return "other"
 
@@ -136,11 +140,25 @@ def classify_connect_failure(exc: BaseException, url: str) -> dict[str, Any]:
 class Endpoint:
     name: str
     base_url: str
-    backend: str = "other"  # llama.cpp | vllm | strata | ollama | other
+    backend: str = "other"  # llama.cpp | vllm | strata | ollama | router | other
     host: str = "local"
     notes: str = ""
     env: dict[str, str] = field(default_factory=dict)  # extra env for claude sessions
     api_key: str | None = None  # sent on every call to this endpoint; never handed to the session
+    # router entries (backend: router): no /v1/messages of their own — the d3 decision
+    # server behind decision_url picks a real endpoint for each job (docs/router.md).
+    decision_url: str | None = None  # the only key a router entry must carry
+    decision_model: str = "vllm-sr/d3-mini"  # checked against the decision server's /health
+    decision_timeout_s: float = 20.0  # slower than this is model_unavailable
+    decision_max_tokens: int = 24_000  # longer briefs are scored truncated
+    tolerance: float = 0.5  # shortfall distance for "acceptable" (the calibration spec's spread)
+    divert_after_min: float = 10.0  # normal priority waits this long before diverting
+    max_concurrent: int | None = None  # cap below what the capacity model would admit
+    exclude: list[str] = field(default_factory=list)  # real endpoints this router must not pick
+
+    @property
+    def is_router(self) -> bool:
+        return backend_kind(self.backend) == "router"
 
     @property
     def url(self) -> str:
@@ -196,10 +214,40 @@ class Registry:
         raw = _read_yaml(path)
         local = _read_yaml(local_path(path))
         merged_endpoints = {**(raw.get("endpoints") or {}), **(local.get("endpoints") or {})}
-        endpoints = {name: Endpoint(name=name, **(cfg or {})) for name, cfg in merged_endpoints.items()}
+        endpoints = {name: cls._build_endpoint(name, cfg or {}) for name, cfg in merged_endpoints.items()}
         defaults = Defaults(**{**(raw.get("defaults") or {}), **(local.get("defaults") or {})})
         # A leftover ``models:`` section from older configs is ignored: served models are discovered.
-        return cls(path=path, endpoints=endpoints, defaults=defaults, raw=raw, local=local)
+        reg = cls(path=path, endpoints=endpoints, defaults=defaults, raw=raw, local=local)
+        reg.validate()
+        return reg
+
+    @staticmethod
+    def _build_endpoint(name: str, cfg: dict) -> Endpoint:
+        """Build from the dataclass's known fields only: a key from a newer package's config
+        is skipped with a line on stderr, never a TypeError in a running server that re-reads
+        the file mid-session (§12's upgrade order). ``base_url`` defaults to ``""`` here so a
+        missing one reaches ``validate()``'s ``ValueError`` instead of the constructor's
+        ``TypeError``; the field itself stays required for direct construction."""
+        known = {f.name for f in fields(Endpoint)}
+        kwargs: dict = {}
+        for k, v in cfg.items():
+            if k in known:
+                kwargs[k] = v
+            else:
+                print(f"localagents: endpoint '{name}': ignoring unknown key '{k}'", file=sys.stderr)
+        kwargs.setdefault("base_url", "")
+        return Endpoint(name=name, **kwargs)
+
+    def validate(self) -> None:
+        """Every entry constructible but not every entry usable: the router needs its
+        decision server, the real ones their address. Called by ``load``; the server re-reads
+        the config on every call, so a bad edit fails the call that reads it, not the process."""
+        for ep in self.endpoints.values():
+            if ep.is_router:
+                if not ep.decision_url:
+                    raise ValueError(f"endpoint '{ep.name}': backend router needs decision_url")
+            elif not ep.base_url:
+                raise ValueError(f"endpoint '{ep.name}': needs base_url")
 
     def save(self) -> None:
         """Persist ``self.local`` to the sidecar; ``models.yaml`` itself is left untouched."""
@@ -216,7 +264,12 @@ class Registry:
         (from ``/props``; with ``--parallel N`` and no unified KV that is ``-c`` divided by N) or
         vLLM's ``max_model_len``. It is handed to the Claude Code session as
         ``CLAUDE_CODE_MAX_CONTEXT_TOKENS`` so auto-compact fires before the backend overflows.
+
+        A router entry's probe is its decision server's ``/health``: it serves only its own
+        name; the fleet's windows belong to ``list_models``' ``context_range``.
         """
+        if ep.is_router:
+            return await self._probe_router(ep)
         t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=self.defaults.probe_timeout_s, headers=ep.auth_headers()) as c:
@@ -241,6 +294,35 @@ class Registry:
         except Exception as e:  # noqa: BLE001
             return {"up": False, "models": [], **classify_connect_failure(e, ep.url)}
 
+    async def _probe_router(self, ep: Endpoint) -> dict[str, Any]:
+        """The decision server's ``/health``: up means ``auto`` is usable; the body's ``model``
+        is the decision model the server reports, so a mismatch with the configured one shows
+        in ``list_models`` rather than in every job."""
+        if not ep.decision_url:
+            return {"up": False, "models": [], "router": True, "error": "no decision_url"}
+        t0 = time.monotonic()
+        url = f"{ep.decision_url.rstrip('/')}/health"
+        try:
+            async with httpx.AsyncClient(timeout=self.defaults.probe_timeout_s, headers=ep.auth_headers()) as c:
+                r = await c.get(url)
+        except Exception as e:  # noqa: BLE001
+            return {"up": False, "models": [], "router": True, **classify_connect_failure(e, url)}
+        if r.status_code != 200:
+            return {"up": False, "models": [], "router": True, "error": f"health {r.status_code}"}
+        try:
+            body = r.json()
+        except ValueError:
+            body = None
+        reported = body.get("model") if isinstance(body, dict) else None
+        return {
+            "up": True,
+            "models": [ep.name],
+            "router": True,
+            "decision_model": reported or ep.decision_model,
+            "context": {},
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+        }
+
     @staticmethod
     async def _probe_context(
         c: httpx.AsyncClient, ep: Endpoint, entries: list[dict[str, Any]]
@@ -264,6 +346,11 @@ class Registry:
                             load[key] = int(mt[key])
                     if "kv_cache_usage" in mt:
                         load["kv_cache_usage"] = round(mt["kv_cache_usage"], 3)
+                    # the cache_config_info labels: the engine's KV capacity in tokens and the
+                    # concurrency that capacity admits at full length — the router's capacity model
+                    for key in ("kv_cache_size_tokens", "kv_cache_max_concurrency"):
+                        if key in mt:
+                            load[key] = mt[key]
                     extra["load"] = load
             except httpx.HTTPError:
                 pass
@@ -327,33 +414,54 @@ class Registry:
         results = await asyncio.gather(*(self.probe(self.endpoints[n]) for n in names))
         return dict(zip(names, results))
 
+    def real_endpoints(self) -> list[Endpoint]:
+        """The entries that serve ``/v1/messages`` themselves, in config order."""
+        return [e for e in self.endpoints.values() if not e.is_router]
+
     # ---------- resolution ----------
     @staticmethod
-    def match(name: str, served_ids: list[str]) -> str | None:
+    def match(name: str, served_ids: list[str], exact_only: set[str] | None = None) -> str | None:
         """Served id matching ``name``: exact, then fnmatch glob, then fuzzy.
 
         Fuzzy = alphanumerics only, case-folded, name must be a substring of the id — so
         ``qwen3.8-27b`` matches ``unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL``.
+
+        ``exact_only`` holds router entries' names: an id in it answers to nothing but an
+        exact request, and a request naming one returns nothing but that exact id. A router
+        entry is picked by naming it, so ``auto`` must never reach a real server whose id
+        happens to contain it, and no glob or substring must reach the router's name.
         """
+        exact = exact_only or set()
         for sid in served_ids:
-            if sid == name or fnmatch.fnmatchcase(sid, name):
+            if sid == name:
+                return sid
+        if name in exact:
+            return None
+        for sid in served_ids:
+            if sid not in exact and fnmatch.fnmatchcase(sid, name):
                 return sid
         key = _squash(name)
         if len(key) < 3:
             return None
         for sid in served_ids:
-            if key in _squash(sid):
+            if sid not in exact and key in _squash(sid):
                 return sid
         return None
 
     async def resolve(
-        self, model: str | None = None, endpoint: str | None = None
+        self, model: str | None = None, endpoint: str | None = None, real_only: bool = False
     ) -> "Resolution":
         """Find a live endpoint serving ``model`` (served id, glob or fuzzy name).
 
         With no model (and no ``defaults.model``) the first live endpoint that is serving
         anything wins, in config order. Raises ModelUnavailable with a human-facing hint
         when nothing fits.
+
+        A router entry is a candidate only when ``model`` names it exactly or ``endpoint``
+        names it: with nothing named it is skipped (a router is never a "first live"
+        default), and its name never answers to a glob or substring. ``real_only`` drops
+        router entries from the candidates entirely (``local_complete`` has no routing
+        layer — it posts straight to ``/v1/messages``).
         """
         if endpoint and endpoint not in self.endpoints:
             raise ModelUnavailable(
@@ -362,12 +470,29 @@ class Registry:
             )
 
         model = model or self.defaults.model
-        candidates = [self.endpoints[endpoint]] if endpoint else list(self.endpoints.values())
+        if endpoint:
+            pinned = self.endpoints[endpoint]
+            if pinned.is_router and real_only:
+                raise ModelUnavailable(
+                    f"Endpoint '{endpoint}' is a router entry: it picks an endpoint for a job, "
+                    "it does not serve completions itself. Name a real endpoint, or a model.",
+                    model=model,
+                )
+            candidates = [pinned]
+        elif model:
+            candidates = [e for e in self.endpoints.values() if not e.is_router or e.name == model]
+        else:
+            candidates = [e for e in self.endpoints.values() if not e.is_router]
+        if real_only:
+            candidates = [e for e in candidates if not e.is_router]
+        router_names = {e.name for e in self.endpoints.values() if e.is_router}
         probes = await asyncio.gather(*(self.probe(e) for e in candidates))
         for ep, pr in zip(candidates, probes):
             if not pr["up"] or not pr["models"]:
                 continue
-            served = self.match(model, pr["models"]) if model else pr["models"][0]
+            if ep.is_router:
+                return Resolution.make(ep, ep.name, pr)  # a candidate only by exact name (above)
+            served = self.match(model, pr["models"], exact_only=router_names) if model else pr["models"][0]
             if served:
                 return Resolution.make(ep, served, pr)
 
@@ -413,16 +538,33 @@ _METRIC_KEYS = {
 }
 
 
+_PROM_LABEL = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="([^"]*)"')
+
+
 def parse_metrics(text: str) -> dict[str, float]:
-    """Prometheus text -> {short_name: value}; labelled series (vLLM) are summed per metric."""
+    """Prometheus text -> {short_name: value}; labelled series (vLLM) are summed per metric.
+
+    ``vllm:cache_config_info`` is the exception: its value is a constant, the data is in
+    its labels, and two of those labels (KV capacity in tokens and the concurrency it
+    admits) become plain short-name entries rather than sums."""
     out: dict[str, float] = {}
     for line in text.splitlines():
         if not line or line.startswith("#"):
             continue
         name, _, rest = line.partition(" ")
         if "{" in name:  # name{labels} value
+            lo, hi = name.index("{"), line.rfind("}")
             name, _, _ = name.partition("{")
-            rest = line[line.rfind("}") + 1:].strip()
+            rest = line[hi + 1:].strip()
+            if name == "vllm:cache_config_info":
+                labels = dict(_PROM_LABEL.findall(line[lo:hi + 1]))
+                for key in ("kv_cache_size_tokens", "kv_cache_max_concurrency"):
+                    if key in labels:
+                        try:
+                            out[key] = float(labels[key])
+                        except ValueError:
+                            pass
+                continue
         key = _METRIC_KEYS.get(name)
         if key is None:
             continue

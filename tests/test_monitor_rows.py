@@ -228,7 +228,11 @@ def test_a_vllm_doc_without_the_kv_series_stores_null_not_the_probers_zero(monke
     reg = Registry(path=None, endpoints={}, defaults=Defaults(), raw={}, local={})
     ep = Endpoint(name="dgx1-a", base_url=url, backend="vllm")
     probe = asyncio.run(reg.probe(ep))
-    assert probe["load"] == {"requests_running": 1, "requests_waiting": 0}  # the document's, kv absent
+    assert probe["load"] == {  # the document's, kv absent (the cache_config_info labels join in
+        "requests_running": 1, "requests_waiting": 0,  # since router story 2; the kv rule is what
+        "kv_cache_size_tokens": 307852.0,              # this test guards and it stands: the
+        "kv_cache_max_concurrency": 1.0004559963520292,  # absent kv series stays out of the copy
+    }
     conn = db.open_db(tmp_path / "m.db")
     eid = collect.endpoint_id(conn, ep)
     pid = asyncio.run(collect.tick(reg, conn, ep, eid, T, "vllm"))

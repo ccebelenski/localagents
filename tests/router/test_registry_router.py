@@ -1,0 +1,188 @@
+"""Story "router 2: backend: router in the registry" (router plan 2026-11-02, task 2).
+
+Self-contained by design: the ``tests/router/__init__.py`` and ``conftest.py`` belong
+to task 1's lane, so every fixture this module needs lives in this module.
+"""
+
+import asyncio
+import errno
+from pathlib import Path
+
+import httpx
+import pytest
+
+from localagents import server
+from localagents.registry import Defaults, Endpoint, Registry, backend_kind, parse_metrics
+
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "router" / "vllm_metrics_pooled.txt"
+
+DECISION_URL = "http://127.0.0.1:8765"
+
+
+def _router(name: str = "auto") -> Endpoint:
+    return Endpoint(name=name, base_url="", backend="router", decision_url=DECISION_URL)
+
+
+def _refused() -> httpx.ConnectError:
+    """Mimic httpx: ConnectError -> ConnectError -> OSError (tests/test_probe.py's pattern)."""
+    inner = httpx.ConnectError("All connection attempts failed")
+    inner.__cause__ = ConnectionRefusedError(errno.ECONNREFUSED, "refused")
+    outer = httpx.ConnectError("All connection attempts failed")
+    outer.__cause__ = inner
+    return outer
+
+
+def _fake_probe():
+    """Up everywhere: the router reports its own name, the reals one model each with a window."""
+
+    async def probe(self, ep):
+        if ep.is_router:
+            return {"up": True, "models": [ep.name], "router": True,
+                    "decision_model": ep.decision_model, "context": {}}
+        window = 131072 if ep.name.endswith("1") else 262144
+        return {"up": True, "host": "up", "models": [f"m-{ep.name}"],
+                "context": {f"m-{ep.name}": window}, "context_source": "test"}
+
+    return probe
+
+
+def test_backend_kind_router():
+    assert backend_kind("router") == "router"
+
+
+def test_load_ignores_unknown_keys_with_a_warning(tmp_path, capsys):
+    """§12's upgrade order: a key this package does not know is skipped with a line on
+    stderr, never a TypeError inside a running server that re-reads the file."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(
+        "endpoints:\n"
+        "  llamacpp:\n"
+        "    base_url: http://127.0.0.1:8080\n"
+        "    backend: llama.cpp\n"
+        "    foo: 1\n"
+    )
+    reg = Registry.load(cfg)
+    assert reg.endpoints["llamacpp"].base_url == "http://127.0.0.1:8080"
+    err = capsys.readouterr().err
+    assert "localagents: endpoint 'llamacpp': ignoring unknown key 'foo'" in err
+
+
+def test_router_entry_requires_decision_url(tmp_path):
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text("endpoints:\n  auto:\n    backend: router\n")
+    with pytest.raises(ValueError, match="decision_url"):
+        Registry.load(cfg)
+    # the validate() counterpart for a real entry: load builds it (base_url ""), validate names it
+    cfg2 = tmp_path / "models2.yaml"
+    cfg2.write_text("endpoints:\n  nope:\n    backend: vllm\n")
+    with pytest.raises(ValueError, match="needs base_url"):
+        Registry.load(cfg2)
+
+
+def test_router_probe_reports_health_as_served_id(monkeypatch):
+    seen = []
+
+    async def fake_get(self, url, **kw):
+        seen.append(url)
+        return httpx.Response(200, json={"ok": True, "model": "vllm-sr/d3-mini"},
+                              request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    reg = Registry(path=None, endpoints={}, defaults=Defaults(), raw={}, local={})
+    out = asyncio.run(reg.probe(_router()))
+    assert seen == [f"{DECISION_URL}/health"]
+    assert out["up"] is True
+    assert out["router"] is True
+    assert out["models"] == ["auto"]
+    assert out["decision_model"] == "vllm-sr/d3-mini"
+    assert out["context"] == {}
+
+
+def test_router_probe_down_when_health_fails(monkeypatch):
+    async def boom(self, url, **kw):
+        raise _refused()
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", boom)
+    reg = Registry(path=None, endpoints={}, defaults=Defaults(), raw={}, local={})
+    out = asyncio.run(reg.probe(_router()))
+    assert out["up"] is False
+    assert out["models"] == []
+    assert out["router"] is True
+    # the classifier's shape rides along, same as a real probe's
+    assert out["host"] == "up" and "8765" in out["error"]
+
+
+def test_match_router_id_is_exact_only():
+    exact = {"auto"}
+    # a router entry's name never answers to anything but itself
+    assert Registry.match("auto", ["my-autoround-q4"], exact_only=exact) is None
+    assert Registry.match("auto", ["auto"], exact_only=exact) == "auto"
+    assert Registry.match("a*", ["auto"], exact_only=exact) is None  # no glob onto the router id
+    # real served ids keep the old paths
+    assert Registry.match("auto*", ["my-autoround-q4"], exact_only=exact) == "my-autoround-q4"
+    assert Registry.match("qwen", ["unsloth/Qwen3.8-27B"], exact_only=exact) == "unsloth/Qwen3.8-27B"
+
+
+def test_resolve_without_model_skips_router_entries(monkeypatch):
+    auto, real = _router(), Endpoint(name="real", base_url="http://127.0.0.1:8080", backend="vllm")
+    reg = Registry(path=None, endpoints={"auto": auto, "real": real},
+                   defaults=Defaults(), raw={}, local={})
+    monkeypatch.setattr(Registry, "probe", _fake_probe())
+    res = asyncio.run(reg.resolve())
+    assert res.endpoint.name == "real" and res.served_model == "m-real"
+    # the router entry is a candidate only when model names it exactly
+    res2 = asyncio.run(reg.resolve(model="auto"))
+    assert res2.endpoint.name == "auto" and res2.served_model == "auto"
+    # and a real model never lands on the router by substring
+    res3 = asyncio.run(reg.resolve(model="m-real"))
+    assert res3.endpoint.name == "real"
+
+
+def test_parse_metrics_reads_cache_config_labels():
+    mt = parse_metrics(FIXTURE.read_text())
+    assert mt["kv_cache_size_tokens"] == 307852.0
+    assert mt["kv_cache_max_concurrency"] == pytest.approx(1.00046, abs=1e-4)
+    # the series the parser already read are untouched
+    assert mt["requests_running"] == 0.0 and mt["requests_waiting"] == 0.0
+
+
+def test_list_models_router_entry_has_context_range_and_local_complete_skips_it(monkeypatch):
+    real1 = Endpoint(name="real1", base_url="http://real1:8080", backend="vllm")
+    real2 = Endpoint(name="real2", base_url="http://real2:8080", backend="llama.cpp")
+    reg = Registry(path=None, endpoints={"auto": _router(), "real1": real1, "real2": real2},
+                   defaults=Defaults(), raw={}, local={})
+    monkeypatch.setattr(Registry, "probe", _fake_probe())
+    monkeypatch.setattr(server, "_reg", lambda: reg)
+
+    out = asyncio.run(server.list_models())
+    auto_d = out["endpoints"]["auto"]
+    assert auto_d["router"] is True
+    assert auto_d["context_range"] == [131072, 262144]
+    # real entries unchanged: no router key, no context_range
+    assert "router" not in out["endpoints"]["real1"] and "context_range" not in out["endpoints"]["real1"]
+
+    posts = []
+
+    async def fake_post(self, url, **kw):
+        posts.append(url)
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "ok"}],
+                                         "stop_reason": "end_turn", "usage": {}},
+                              request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    res = asyncio.run(server.local_complete(prompt="hi"))
+    assert res["endpoint"] == "real1"
+    assert posts == ["http://real1:8080/v1/messages"]
+
+
+def test_run_agent_on_a_router_entry_is_refused_before_a_job_exists(monkeypatch):
+    """The dispatch story is not built yet: run_agent returns `not_routable` before
+    store.new(), so no job is recorded and nothing is left `queued` for good."""
+    real = Endpoint(name="real", base_url="http://127.0.0.1:8080", backend="vllm")
+    reg = Registry(path=None, endpoints={"auto": _router(), "real": real},
+                   defaults=Defaults(), raw={}, local={})
+    monkeypatch.setattr(Registry, "probe", _fake_probe())
+    monkeypatch.setattr(server, "_reg", lambda: reg)
+    out = asyncio.run(server.run_agent(task="x", model="auto"))
+    assert out["error"] == "not_routable"
+    assert server.store.jobs == {}

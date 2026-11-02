@@ -118,7 +118,7 @@
     "captured_at": "2026-10-29T15:34:25Z",
     "bytes": 75771,
     "parser": "prometheus",
-    "digest": "fea07543e33a8db27ac98d38cd3f375e62d32b9801c58e305bceed3d69d35777"
+    "digest": "49458c4f244292e73a0ee5d5bc80598ca1904e009f02b7b802191e5a5bef0551"
   },
   {
     "path": "vllm/dgx1-a_models_1.json",
@@ -258,7 +258,7 @@
     "captured_at": "2026-10-29T15:36:44Z",
     "bytes": 75773,
     "parser": "prometheus",
-    "digest": "155e20080d4a28cc04d01a23578f73ac06ed1fddf8a15d2d132735c0076d6f8f"
+    "digest": "a77816ca788df9796ae5286a659acecf25f20d6aa656d35818a12ea01a9e28ca"
   },
   {
     "path": "llamacpp/llamacpp_metrics_2.txt",

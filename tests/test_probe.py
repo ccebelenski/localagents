@@ -109,4 +109,11 @@ def test_a_vllm_probe_over_a_doc_without_the_kv_series_carries_no_kv_key(monkeyp
     reg = Registry(path=None, endpoints={}, defaults=Defaults(), raw={}, local={})
     out = asyncio.run(reg.probe(Endpoint(name="dgx1-a", base_url=URL, backend="vllm")))
     assert out["up"] is True
-    assert out["load"] == {"requests_running": 1, "requests_waiting": 0}  # the document's, no kv key
+    assert out["load"] == {
+        "requests_running": 1,
+        "requests_waiting": 0,
+        # the cache_config_info labels ride along with the document's series (router story 2);
+        # the rule this test guards is unchanged: the absent kv series still gets no 0.0 default
+        "kv_cache_size_tokens": 307852.0,
+        "kv_cache_max_concurrency": 1.0004559963520292,
+    }  # the document's, no kv key

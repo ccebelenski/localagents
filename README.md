@@ -208,6 +208,21 @@ Whatever the backend, the first turn of any job costs about 20k tokens of prompt
 cold slot (system prompt plus tool schemas), ~10 s on a 27B. Everything after that is
 a cache hit plus the delta.
 
+### router
+
+An entry with `backend: router` serves no model itself; it picks another endpoint for
+a job from a calibrated scorecard. It needs `decision_url`, the server running the d3
+decision model, and no `base_url`. Routing is being built in stages, so until the
+dispatch story lands a job aimed at one of these entries is refused with
+`not_routable`. [docs/router.md](docs/router.md) has the detail.
+
+```yaml
+endpoints:
+  auto:
+    backend: router
+    decision_url: http://127.0.0.1:8765
+```
+
 ## Monitor
 
 ```bash

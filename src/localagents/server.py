@@ -90,13 +90,27 @@ async def list_models() -> dict[str, Any]:
     Per endpoint: `up`, `models` (served ids), `context` (real per-request window per served id),
     and slot/queue occupancy where the backend exposes it. Anything listed as served is usable
     immediately via `run_agent`; if nothing suitable is up, ask the user to start a model.
+    A `router` entry serves only its own name: it carries `router: True` and the fleet's
+    `context_range` — the smallest and largest real windows probed right now — instead of a
+    window of its own.
     """
     reg = _reg()
     probes = await reg.probe_all()
-    endpoints = {
-        n: {"base_url": e.url, "backend": e.backend, "host": e.host, "notes": e.notes, **probes[n]}
+    # the fleet's window span over the real endpoints' probed windows; [] when none answered
+    windows = [
+        w
         for n, e in reg.endpoints.items()
-    }
+        if not e.is_router
+        for w in (probes[n].get("context") or {}).values()
+    ]
+    context_range = [min(windows), max(windows)] if windows else []
+    endpoints = {}
+    for n, e in reg.endpoints.items():
+        d = {"base_url": e.url, "backend": e.backend, "host": e.host, "notes": e.notes, **probes[n]}
+        if e.is_router:
+            d["router"] = True
+            d["context_range"] = context_range
+        endpoints[n] = d
     return {
         "config": str(reg.path),
         "server_cwd": os.getcwd(),
@@ -488,6 +502,14 @@ async def run_agent(
         res = await reg.resolve(model=model, endpoint=endpoint)
     except ModelUnavailable as e:
         return {**e.to_dict(), "guidance": GUIDANCE}
+    if res.endpoint.is_router:
+        # routing is a later story; refuse before the shim starts and before new(), so no job
+        # record is left `queued` for good (review of 1.7, finding 4, same reasoning)
+        return {
+            "error": "not_routable",
+            "message": f"endpoint '{res.endpoint.name}' is a router; routing is not built yet, name a model",
+            "guidance": GUIDANCE,
+        }
 
     # Everything that can raise runs before new() or cannot raise after it: a job that exists
     # without its task stays `queued` for good (review of 1.7, finding 4). The shim serves every
@@ -866,7 +888,9 @@ async def local_complete(
     summaries, drafts, classification, translation, boilerplate. Returns the text."""
     reg = _reg()
     try:
-        res = await reg.resolve(model=model, endpoint=endpoint)
+        # real_only: this posts to /v1/messages itself, and a router entry serves no such
+        # route — the routing layer is a run_agent story, not a one-shot.
+        res = await reg.resolve(model=model, endpoint=endpoint, real_only=True)
     except ModelUnavailable as e:
         return e.to_dict()
     body: dict[str, Any] = {
