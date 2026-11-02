@@ -104,7 +104,7 @@ text, drafts in the calibration spec):
 | Dimension | Asks |
 | --- | --- |
 | software_dev | how much code it must write or change |
-| language | `choice` over the shipped language list, plus `none`; the facet of software_dev |
+| language | `choice` over the shipped language list, plus `none`; the facet of software_dev; neutral when `none` or uncertain (§6) |
 | tool_use | how much it must drive shell, tests, git, probes rather than read and write text |
 | computer_use | whether it must operate a live system: a browser over DevTools, a node, a service |
 | complexity | scope and judgement (the spike's difficulty score: d3-mini within a band 81%) |
@@ -141,8 +141,12 @@ NOT a dimension: the brief cannot know it, the caller passes it.
 2. **Shortfall.** For each surviving row, `sum over dimensions of max(0, demand − capability) ×
    weight(demand)`, weight rising with demand so a dimension the brief barely needs barely counts,
    and a row that over-delivers gains nothing (what keeps the 27B dense model from winning every
-   job). Language: the software_dev cell for the brief's language when it has a count, else the
-   row's overall software_dev cell marked "unlabelled".
+   job). Language is neutral unless the brief determines one: when d3's `language` answer is
+   `none`, or its top option is below a confidence threshold (set in the calibration spec), the
+   row's overall software_dev cell is used, the count-weighted mean of its language cells and
+   its language-free evidence, and no row gains or loses by language. Only when the brief names
+   a language does that language's cell rule, and then an empty cell is the unknown case above.
+   The operator's briefs rarely name one; the other dimensions are the rulers most of the time.
 3. **Acceptable set:** rows within `tolerance` (one number in the router entry, default to be
    set by the calibration spec from the probe spread) of the best shortfall.
 4. **Ties** break by predicted speed at the row's current load (§7), then by fewer queued.
