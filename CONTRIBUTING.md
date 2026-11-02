@@ -38,6 +38,10 @@ server. Anything that does — a real job against llama.cpp or vLLM — is done 
 if you change `runner.py` or `shim.py`, run a short job and compare its rows in the
 `requests` table of `~/.local/state/localagents/localagents.db` before and after.
 
+A checkout that is a git worktree refuses the default state directory, so a test
+server or a probe run from one cannot touch your real database and job directories:
+set `XDG_STATE_HOME` (and `LOCALAGENTS_DB`) to a directory of its own.
+
 ## Where things live
 
 | file | what |

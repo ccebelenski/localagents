@@ -27,7 +27,7 @@ import httpx
 import yaml
 
 # Below this per-request window a Claude Code session spends most of its turns compacting
-# (~20k fixed prompt + summary + re-attached files). See README "Context windows".
+# (~20k fixed prompt + summary + re-attached files). See docs/shim.md "Context windows".
 MIN_USEFUL_CONTEXT = 128_000
 
 DEFAULT_CONFIG_LOCATIONS = (

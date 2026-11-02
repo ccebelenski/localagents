@@ -2761,6 +2761,14 @@ lands; 3.12c after 3.12b.
   that's not allowed" — seeding moved to CONTRIBUTING, every host, IP, build and slot value of
   the operator's fleet replaced by neutral examples, the example config's strata host renamed
   (f88d58f; the rule is in the coordinator's memory).
+  True now (2026-11-01, evening): the operator on the 672-line result: "README.md is TLDR - no way
+  I can review all that coherently." Split: the README keeps the three jobs (install and register,
+  the backend flags, running the monitor) plus the config and a Further-reading list, 299 lines;
+  Using it moved whole to docs/using.md, the monitor's flags/page/smoke/routes to docs/monitor.md,
+  the shim and context-window sections to docs/shim.md, the worktree state-dir note to
+  CONTRIBUTING. Text moved, not rewritten, so the Qwen audit's facts stand; the Backends section
+  lost the overflow-error sentences (now one paragraph in docs/shim.md). The operator reviews the
+  299 lines; the moved pages wait for a later pass.
 
 ## Epic 4: operations (V2, not scheduled)
 
