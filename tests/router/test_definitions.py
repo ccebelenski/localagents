@@ -20,13 +20,17 @@ def test_default_document_validates_and_has_the_seven_dimensions():
 def test_questions_shape_is_what_d3_takes():
     q = definitions.questions(definitions.DEFAULT_DOCUMENT)
     assert q["complexity"]["type"] == "score"
-    assert set(q["complexity"]["criteria"]) == {"0", "1", "2", "3", "4"}
+    # d3 takes a score's criteria as an ordered list of levels, band 0 first (not a dict: the
+    # live server answers invalid_question for a dict)
+    assert isinstance(q["complexity"]["criteria"], list) and len(q["complexity"]["criteria"]) == 5
+    assert q["complexity"]["criteria"] == [definitions.DEFAULT_DOCUMENT["complexity"]["criteria"][b] for b in "01234"]
     assert q["language"]["type"] == "choice"
-    assert "none" in q["language"]["criteria"]
+    assert isinstance(q["language"]["criteria"], dict) and "none" in q["language"]["criteria"]
     for name, entry in q.items():
         assert entry["instructions"].strip(), name
         assert entry["criteria"], name
-        assert all(d.strip() for d in entry["criteria"].values()), name
+        texts = entry["criteria"] if isinstance(entry["criteria"], list) else list(entry["criteria"].values())
+        assert all(d.strip() for d in texts), name
 
 
 def test_load_seeds_version_1_and_save_increments(conn):

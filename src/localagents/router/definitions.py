@@ -150,15 +150,21 @@ def validate(document) -> None:
 def questions(document: dict) -> dict:
     """The document in d3's request shape: ``{name: {type, instructions, criteria}}``, the
     seven in ``DIMENSIONS`` order. The stored entry is keyed ``instruction`` (it is the
-    definitions text); the request field d3 takes is ``instructions``."""
-    return {
-        name: {
-            "type": document[name]["type"],
-            "instructions": document[name]["instruction"],
-            "criteria": dict(document[name]["criteria"]),
-        }
-        for name in DIMENSIONS
-    }
+    definitions text); the request field d3 takes is ``instructions``. A ``choice`` sends its
+    criteria as the option→definition mapping; a ``score`` sends an ORDERED LIST of level texts,
+    band 0 first — d3 answers a dict-shaped score with ``invalid_question: score criteria must
+    be an ordered list of 2 to 10 levels`` (the first live scoring of real briefs, 2026-11-02),
+    and its answer's ``probabilities`` come back keyed by the level's index as a string."""
+    out = {}
+    for name in DIMENSIONS:
+        entry = document[name]
+        criteria = entry["criteria"]
+        if entry["type"] == "score":
+            criteria = [criteria[b] for b in BANDS]
+        else:
+            criteria = dict(criteria)
+        out[name] = {"type": entry["type"], "instructions": entry["instruction"], "criteria": criteria}
+    return out
 
 
 @dataclass
