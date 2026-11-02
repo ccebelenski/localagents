@@ -1,0 +1,38 @@
+{
+ "source": "vllm-sr/d3-mini via AutoModel.system_one, 2026-11-01 spike, one brief; keys renamed to nothing: the shapes are what the client must parse",
+ "usage": {
+  "input_tokens": 7278,
+  "output_tokens": 0
+ },
+ "answers": {
+  "kind": {
+   "type": "choice",
+   "choice": "fix",
+   "probabilities": {
+    "code": 0.43625347384356744,
+    "fix": 0.44440157753037735,
+    "review": 0.010793300925041053,
+    "docs": 0.03071489271240193,
+    "test": 0.07594553878708384,
+    "ops": 0.0018912162015283787
+   },
+   "confidence": 0.39400593402555284
+  },
+  "difficulty": {
+   "type": "score",
+   "score": 3.0347104087718186,
+   "probabilities": {
+    "0": 0.0024974661069559114,
+    "1": 0.009106477005349979,
+    "2": 0.2344328667218144,
+    "3": 0.4591145623406793,
+    "4": 0.29484862782520044
+   },
+   "confidence": 0.30701448295194933
+  },
+  "read_only": {
+   "type": "noul",
+   "noul": 0.02602121156390871
+  }
+ }
+}
