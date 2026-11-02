@@ -141,12 +141,16 @@ NOT a dimension: the brief cannot know it, the caller passes it.
 2. **Shortfall.** For each surviving row, `sum over dimensions of max(0, demand − capability) ×
    weight(demand)`, weight rising with demand so a dimension the brief barely needs barely counts,
    and a row that over-delivers gains nothing (what keeps the 27B dense model from winning every
-   job). Language is neutral unless the brief determines one: when d3's `language` answer is
-   `none`, or its top option is below a confidence threshold (set in the calibration spec), the
-   row's overall software_dev cell is used, the count-weighted mean of its language cells and
-   its language-free evidence, and no row gains or loses by language. Only when the brief names
-   a language does that language's cell rule, and then an empty cell is the unknown case above.
-   The operator's briefs rarely name one; the other dimensions are the rulers most of the time.
+   job). **An undetermined axis is neutral.** A dimension whose d3 answer is below a confidence
+   threshold (per question type, set in the calibration spec: top-option probability for a
+   `choice`, mass concentrated within one band for a `score`) contributes nothing to any row's
+   shortfall and is listed as `undetermined` in the ticket. Not every brief carries signal on
+   every axis, and without a tailored prompt the classifier's guess on a silent axis is noise.
+   Language is the clearest case: when the answer is `none` or uncertain, the row's overall
+   software_dev cell is used, the count-weighted mean of its language cells and its language-free
+   evidence, and no row gains or loses by language. Only a determined axis reaches a cell, and
+   only then is an empty cell the unknown case above. A brief with nothing determined puts every
+   surviving row on a tie, so step 4 decides and the ticket says so.
 3. **Acceptable set:** rows within `tolerance` (one number in the router entry, default to be
    set by the calibration spec from the probe spread) of the best shortfall.
 4. **Ties** break by predicted speed at the row's current load (§7), then by fewer queued.
@@ -239,7 +243,8 @@ in the job record.
 **`verdict`** (C&C tool): job id; accepted | rejected; dimensions shown or lacking (a subset of the
 row axes, each −1 | 0 | +1); optional category correction (the brief's true scores on any
 dimension). Accepted/rejected updates the demanded dimensions weighted by demand (a clean fix says
-little about computer_use). A correction goes to `category_corrections` with the brief text, the
+little about computer_use; an axis the ticket lists as `undetermined` is not updated at all). A
+correction goes to `category_corrections` with the brief text, the
 scored and the corrected values, and the definitions version: the dataset for editing definitions
 (now), a nearest-neighbour correction memory (later, if corrections repeat), a fine-tune (if ever).
 None of those is in this build; the log is.
