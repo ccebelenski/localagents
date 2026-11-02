@@ -436,7 +436,7 @@ endpoints:
     decision_model: vllm-sr/d3-mini         # optional; checked against the server's /health
     decision_timeout_s: 20                  # optional; slower is model_unavailable
     decision_max_tokens: 24000              # optional; longer briefs are scored truncated
-    tolerance: 1.0                          # optional; shortfall distance for "acceptable"
+    tolerance: 0.5                          # optional; shortfall distance for "acceptable"
     divert_after_min: 10                    # optional; normal priority waits this long before diverting
 ```
 
@@ -463,7 +463,8 @@ on every status column, plain CREATE in one new step `_V10`.
 `dimension_definitions` (version INTEGER PK, document TEXT NOT NULL, created REAL NOT NULL);
 `scorecard_rows` (id INTEGER PK, endpoint_name TEXT NOT NULL, served_id TEXT NOT NULL,
 endpoint_id REFERENCES endpoints, model_id REFERENCES models, created, archived, archive_reason,
-set_version, band_times TEXT, speed_factor REAL; a partial UNIQUE index on (endpoint_name,
+set_version, band_times TEXT, speed_factor REAL, facts TEXT (thinking/effort facts, calibration
+spec §6); a partial UNIQUE index on (endpoint_name,
 served_id) WHERE archived IS NULL); `scorecard_passes` (id TEXT PK, row_id NOT NULL REFERENCES
 scorecard_rows, at REAL NOT NULL, constants TEXT NOT NULL, observations INTEGER NOT NULL);
 `scorecard_cells` (pass_id TEXT NOT NULL REFERENCES scorecard_passes, dimension TEXT NOT NULL,
