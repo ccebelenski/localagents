@@ -14,9 +14,6 @@ build the two halves of a package in parallel against an agreed interface.
 
 It comes with a web **monitor** for the servers and the jobs running on them.
 
-> **Status: early.** It works, I use it daily, and the interface will move. It
-> targets llama.cpp and vLLM specifically; Ollama isn't a goal.
-
 ## How it works
 
 ```
@@ -33,14 +30,12 @@ localagents ── spawns ──▶ headless `claude` (Agent SDK)
 ```
 
 Pointing `ANTHROPIC_BASE_URL` at a local server almost works by itself. localagents
-adds three things on top. The config is a list of servers; which model each one is
-serving, its real context window and how many slots are busy are read from the server
-on every call, and you start and stop models yourself. A shim between Claude Code and
-the backend fixes the requests local servers choke on, tells the session the real
-context window and translates overflow errors into the form Claude Code recovers from
-([what the shim does](docs/shim.md)). And every job is recorded in one SQLite
-database, so Claude can read a job after the server that ran it has exited, the status
-line shows what is running, and the monitor reads from the same file.
+adds three things on top. The config is a list of servers. The model each one is
+serving, the real context window and how many slots are busy are read from the server
+on every call. You start and stop models yourself. A shim between Claude Code and the
+backend mediates the requests, reports the real context window and translates overflow
+errors ([what the shim does](docs/shim.md)). Every result is recorded in one SQLite
+database, so Claude can read a job after the work is completed.
 
 ## Quick start
 
