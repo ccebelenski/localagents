@@ -237,6 +237,14 @@ state (prior | probed | refined, with the point count).
   from. A pass is initiated, never implicit: `scorecard --recompute` (§11), the end of a
   calibration run, and `localagents calibrate --recompute` from the CLI. The ticket records the
   pass id the decision used, so a decision is reproducible against the cells it saw.
+- **Notices, not triggers.** The router never spends resources on its own; it tells the
+  coordinating model and the operator decides. Two notices per row, shown on the router entry in
+  `list_models`, in every ticket and by `scorecard`: **pass pending** when the row has N new
+  observations since its last pass (N in the calibration spec, tens; a ticket then reads
+  "decided on cells from pass 7, 23 observations since"); **needs recalibration** when a pass
+  finds the row's traffic evidence disagreeing with its probe results beyond a margin (the
+  calibration spec), or its served id changed. A pass costs seconds; a recalibration costs GPU
+  hours; the notice names which it is asking for.
 - **Replay.** Because cells are derived, a change to the weights replays the whole log under the
   new constants, and a definitions version change rescores the logged briefs before the pass.
 - **Time per complexity band** and **speed factor** are derived by the same pass from the logged
