@@ -468,8 +468,7 @@ Flags:
   port, the command opens the page and exits 0 instead of failing; with `--no-open`
   the "port in use" failure stands.
 
-It prints one line at start — the URL, the database path, the endpoint count, and
-"not collecting" when `--no-collect` was given — and stops on Ctrl-C or SIGTERM.
+It prints the URL and the database path at start and stops on Ctrl-C or SIGTERM.
 
 To keep it running in the background from a checkout, `tools/monitor.sh` wraps it:
 
@@ -501,45 +500,40 @@ monitor:
 
 ### The page
 
-The overview is one card per host, in `models.yaml` order, and a card never moves when
-its state changes. A live endpoint gets a fixed grid of tiles — load, KV fill, decode and
-prompt speed, cache hit, context window, probe latency, and on Strata the GPU, VRAM,
-temperature and power — with a dash where the backend reports nothing. The head line
-has the served model and when the endpoint was last active; the foot lists the jobs
-running on it. An endpoint that was up within the attention window and is down now is
-drawn in the alert colour with the probe's sentence; an older one is a muted "last
-seen" line; endpoints never seen aren't drawn, just counted in one line under the cards.
+The overview is one card per host, in `models.yaml` order; a card never moves when its
+state changes. A live endpoint's card is a grid of tiles for what the backend reports —
+throughput, cache hit, KV fill, context window, and the GPU figures on Strata — with the
+jobs running on it listed at the foot. An endpoint that went down recently is drawn in
+the alert colour with the probe's own sentence ("connection refused" and the like); one
+that has been down longer than the attention window fades to a "last seen" line;
+endpoints never seen at all aren't drawn, just counted under the cards.
 
-Under the cards, **Recent jobs** lists every running and queued job and the last ten
-finished ones, with a status pill (`queued`, `running`, `succeeded`, `failed`,
-`timeout`, `cancelled`, or `lost` for a live job whose MCP server stopped beating), the
-model and endpoint, elapsed, turns, tool calls, tool errors, context fill, prefill and
-decode speed and the last activity. Below that is a timeline: one row per live endpoint,
-its busy intervals as a band and its jobs as bars you can click.
+Under the cards is the **Recent jobs** table: running and queued jobs, then the last ten
+finished. Each row has a status pill — one of them is `lost`, for a job whose MCP server
+stopped beating — and the numbers from the status line: where it ran, how long, turns,
+tool calls and errors, context fill, speed, and what it was last doing. A non-zero error
+count is a link. Below that a timeline draws each live endpoint's busy intervals with
+its jobs as bars on top.
 
-Every table pages at 50 rows, sorts by clicking a header, and filters per column —
-a select for columns with a fixed set of values, a number box in the column's own unit,
-a date-and-hour picker for start times, plain text elsewhere. The range buttons (`15m`
-to `7d`, default `1h`) apply to everything and are remembered by the browser. The page
-redraws when the server pushes a snapshot and never polls; the header shows when the
-last one arrived and goes red while the stream reconnects. It loads nothing from the
-internet.
+Tables sort by header and filter per column, with a filter that fits the column (a
+select for status, a number box in the column's unit, a date-and-hour picker for start
+times). The range buttons (`15m` to `7d`) apply to everything and the browser remembers
+them. The page redraws when the server pushes a snapshot and never polls; the header
+says when the last one arrived and turns red while the stream reconnects. Nothing is
+loaded from the internet.
 
-Clicking an endpoint's name opens its page: the state and last-seen time, what it is
-serving, a tile with a sparkline for every figure the backend reports over the range,
-the jobs that ran on it, restarts and outages when the range holds any, and its request
-table. Clicking a job opens the job page: status and times, a context gauge, the usage
-counters and `/metrics` deltas, the files touched, a tool-call timeline with errors in
-red, the breakdown by tool, the request table and the transcript tail. The job page
-also shows the build stamp of the MCP server that ran it, with a note when the
-monitor's own code is newer — handy when a server has been left running on old code.
+An endpoint's name opens its own page — every figure it reports as a tile with a
+sparkline, the jobs that ran on it, its restarts and outages, and its requests. A job
+opens the job page: the usage and `/metrics` numbers, the files it touched, a timeline
+of its tool calls with errors in red, its requests, and the transcript tail. The job
+page also shows the build stamp of the MCP server that ran it, with a note when the
+monitor's own code is newer; that is how you notice a server left running on old code.
 
-The request tables show each request's status, path, prompt size (split into new and
-reused tokens), output, prefill and decode speed, duration and error. Claude Code's
-connection warm-up (`/api/hello`) is answered by the shim itself and labelled
-`handshake`, outside the error counts. A backend that reports no cache fields (vLLM
-without `--enable-prompt-tokens-details`) is marked as such, and its prefill speed is
-an upper bound.
+Two rows in the request tables are not what they look like. Claude Code's connection
+warm-up (`/api/hello`) is answered by the shim itself and labelled `handshake`, outside
+the error counts. And a backend that reports no cache fields (vLLM without
+`--enable-prompt-tokens-details`) gets a prefill speed that is an upper bound, marked as
+such.
 
 ### Seeing it without a fleet
 
