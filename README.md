@@ -5,14 +5,13 @@
 localagents is an MCP server that gives Claude Code a `run_agent` tool. Each call
 starts a full headless Claude Code session — same tools, same `CLAUDE.md`, same
 working tree — except its API traffic goes to a llama.cpp or vLLM server you run
-instead of to Anthropic. Claude writes the brief, the local model does the work,
-Claude reviews the result. Your Anthropic token budget goes on the parts that
-need it.
+instead of to Anthropic. Claude writes the brief and reviews the result; the local
+model does the work in between, and you spend Anthropic tokens on the parts that
+actually need Claude.
 
-A 27B Qwen on one GPU is perfectly capable of "add a CLI for this module and
-tests to match"; Opus is better spent on the design conversation than on
-watching pytest run. Two local agents in parallel can build the two halves of a
-package against a pinned interface.
+A 27B Qwen on one GPU can handle "add a CLI for this module and tests to match" on
+its own; there is no reason to pay Opus to watch pytest run. Two local agents can
+build the two halves of a package in parallel against an agreed interface.
 
 It comes with a web **monitor** for the servers and the jobs running on them.
 
@@ -34,25 +33,25 @@ localagents ── spawns ──▶ headless `claude` (Agent SDK)
    llama-server / vllm   (/v1/messages, on your machine or your LAN)
 ```
 
-Three things make this more than an environment variable:
+Pointing `ANTHROPIC_BASE_URL` at a local server almost works by itself. localagents
+adds three things on top:
 
-1. **Endpoints, not models, in the config.** `models.yaml` is a list of servers.
-   What each one is actually serving right now, its real context window, and how
-   many slots are busy are discovered on every call via `/v1/models` and friends.
-   You bring models up and down by hand — the server never launches anything —
-   and Claude uses whatever is up. If nothing suitable is running it asks you to
-   start something.
+1. The config lists servers, not models. `models.yaml` says where your servers are;
+   what each one is serving right now, its real context window and how many slots
+   are busy are read from the server on every call. You start and stop models
+   yourself (the server launches nothing), Claude uses whatever is up, and if nothing
+   suitable is running it asks you to start something.
 
-2. **A shim between Claude Code and the backend.** Claude Code sends things local
+2. A shim sits between Claude Code and the backend. Claude Code sends things local
    servers choke on (system messages mid-conversation, text blocks next to tool
-   results) and assumes a 200k context window. The shim fixes the requests
-   without breaking the server's prefix cache, tells the session the real window,
-   and translates overflow errors into the form Claude Code knows how to recover
-   from. See [What the shim does](#what-the-shim-does).
+   results) and assumes a 200k context window. The shim fixes the requests without
+   breaking the server's prefix cache, tells the session the real window, and
+   translates overflow errors into the form Claude Code knows how to recover from.
+   See [What the shim does](#what-the-shim-does).
 
-3. **One database.** Each job's requests, tool calls, usage and transcript go into
-   one SQLite file, so Claude can read a job after the server that ran it has exited,
-   the status line can show what is running, and the monitor has something to draw.
+3. Every job is recorded in one SQLite database: its requests, tool calls, usage and
+   transcript. Claude can read a job after the server that ran it has exited, the
+   status line can show what is running, and the monitor has something to draw.
 
 ## Quick start
 
@@ -185,7 +184,7 @@ translates it so the session compacts and retries.
 A llama.cpp-compatible server; mark it `backend: strata`. Its `/props`, `/slots` and
 `/v1/messages` have llama-server's shapes, but `/slots` and `/metrics` are always on
 and never advertised in `/props`, and `/metrics` is JSON (cumulative totals plus a
-live queue depth and the GPU figures) rather than Prometheus text. The strata probe
+live queue depth and the GPU figures) instead of Prometheus text. The strata probe
 reads them unconditionally: `list_models` shows `{total, busy, free}` plus
 `requests_waiting`, jobs get the same cache and throughput record as on llama.cpp,
 and the monitor draws its hardware tiles. Marked `llama.cpp` it still works (window
@@ -244,13 +243,13 @@ background task (shown in `/tasks`), Claude keeps working, and the final job rec
 arrives as a task notification. Claude reads `files_touched` (or the worktree diff)
 and checks the work. The server sends a progress notification every minute while it
 waits — e.g. `running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: uv run pytest -q`
-— so the call never trips Claude Code's idle timeout, and the tool timeout itself
-defaults to about 28 hours. A swarm is one blocking `run_agent` per job, and every
+— so Claude Code's idle timeout does not fire, and the tool timeout itself defaults
+to about 28 hours. A swarm is one blocking `run_agent` per job, and every
 job delivers its own notification when it finishes, with nothing for Claude to
 re-arm.
 
 `wait_jobs` is the fallback for calls that cannot background: start each job with
-`wait_s: 0` and wait on all the ids in one call. Use it knowingly: a `mode: "any"` wait
+`wait_s: 0` and wait on all the ids in one call. Be careful with it: a `mode: "any"` wait
 returns on the first finish and must be re-armed at once, or the remaining jobs finish
 with nobody watching (one coordinator lost six hours to that). Its `running` list holds
 every job whose record is not yet settled, including one whose `status` is already final
@@ -262,10 +261,10 @@ If nothing suitable is running you'll be asked to start one:
 > Currently serving: {'gpu-server': ['GLM-5.3-Flash-EXL3']}
 
 Start whatever you like, however you normally do, say "it's up", and Claude retries.
-Which model that is, is your call; the config never names one. The flip side: anything
-you leave running is fair game. Claude is told to name the model it's about to use and
+Which model that is, is your call; the config does not name one. It also means anything
+you leave running may get used. Claude is told to name the model it's about to use and
 to check with you if the id looks unfamiliar, and `list_models` flags windows under
-128k, but the real gate is what you choose to start.
+128k, but in the end what you start is what gets used.
 
 ### Tools
 
@@ -402,7 +401,7 @@ of a 6 GB state directory before it became opt-in) with `defaults.log_events: tr
 `LOCALAGENTS_LOG_EVENTS=1`, and `requests_full.jsonl` (every request body) with
 `defaults.dump_requests: true` or `LOCALAGENTS_DUMP_REQUESTS=1`.
 
-**Retention.** Job directories with nothing written for more than
+Job directories with nothing written for more than
 `defaults.job_retention_days` (default 7, `0` disables) are deleted when a server starts
 and after every job finishes. The age is mtime — the newest of the directory itself and
 its files — and nothing that is not named like a job directory is touched; database
@@ -423,8 +422,7 @@ holds every server process's jobs, the requests their shims saw, their tool call
 their transcripts, the monitor's probes, and the endpoints and models seen so far. The
 full schema is
 [`docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md`](docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md).
-Because the record is the database rather than a server's memory, it outlives the server
-that ran the job: any server's `job_status`, `job_log` and `list_jobs(all=True)` can
+The record lives in the database, so it outlives the server process that ran the job: any server's `job_status`, `job_log` and `list_jobs(all=True)` can
 read it after the original process is gone, and the waits can wait on it too; only
 `cancel_job` and `run_agent(resume_job=…)` cannot — see `foreign_job` above. Retention
 removes job directories and the monitor's old probes; job rows stay for good.
@@ -574,8 +572,8 @@ endpoints:
     host: gpu-server
 ```
 
-- **endpoints** are places that serve `/v1/messages`. That's the whole config:
-  what each one is serving is probed, never written down. Order is priority —
+- **endpoints** are places that serve `/v1/messages`, and that is all the file holds;
+  which model a server is serving is found by probing it. Order is priority —
   with no model named, the first endpoint that is up and serving something wins.
   `backend` (`llama.cpp`, `vllm`, `strata`, `other`) selects how the window and occupancy
   are probed (see [Backends](#backends)); `host` groups endpoints under one card in the
@@ -603,9 +601,9 @@ A `models:` section from an older config is ignored.
 ## What the shim does
 
 Both llama.cpp and vLLM speak `/v1/messages` natively, so pointing
-`ANTHROPIC_BASE_URL` at them almost works. The shim closes the gaps:
+`ANTHROPIC_BASE_URL` at them almost works. The shim handles what doesn't.
 
-**System messages mid-conversation.** Claude Code puts `role: system` entries
+Claude Code puts `role: system` entries
 inside `messages` — the skills listing, a token-budget marker, and one more per
 turn. Qwen's chat template refuses: *"System message must be at the beginning"*.
 The shim folds each one into the adjacent user message as a `<system>…</system>`
@@ -615,7 +613,7 @@ KV-cache prefix and re-evaluates the whole ~35k-token prompt each time (21–47 
 per turn on a 27B). Folding in place keeps the prompt append-only: `f_sim_best`
 0.88–0.99 in llama-server's log, 2.5–14 s per turn.
 
-**Text next to tool results.** Claude Code appends a `<system-reminder>` text
+Claude Code also appends a `<system-reminder>` text
 block to the user turn that carries tool results (and the fold above adds a
 `<system>` block there too). Gemma 4's chat template renders a tool response
 only when it sits directly after the assistant's tool call; behind llama.cpp's
@@ -627,12 +625,11 @@ gemma-4-31B-it-qat (llama.cpp b11515): prompt growth after three file reads went
 from 256 tokens (blind) to ~3.1k (sees them); Qwen3.6 and Muse-Glimmer were
 unaffected either way.
 
-**Context overflow.** Claude Code assumes a 200k window for any model it doesn't
-recognise; with a smaller slot it runs into llama.cpp's
+Claude Code assumes a 200k window for any model it doesn't recognise; with a smaller slot it runs into llama.cpp's
 `exceed_context_size_error`, which it doesn't understand, and the job dies. See
 the next section.
 
-**The handshake.** Claude Code opens every session with a request to `/api/hello`,
+Claude Code opens every session with a request to `/api/hello`,
 which no local backend serves. The shim answers it itself, so the backend never sees
 it and it is not counted as an error.
 
