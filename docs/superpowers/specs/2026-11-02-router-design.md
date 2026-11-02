@@ -63,7 +63,7 @@ tables, own MCP surface.
 | Capacity model + queue | admission per real endpoint, the curve, the wait | registry + jobs store |
 | Scorecard | rows (endpoint × served id), cells per dimension | tables |
 | Feedback | mechanical gates after every job; the verdict tool | job completion hook + C&C tool |
-| Calibration runner | runs a tier of the probe set as calibration-marked jobs | `calibrate` tool; the set's spec is separate |
+| Calibration runner | runs a tier of the probe set as calibration-marked jobs | `localagents calibrate` (CLI, like `monitor`) and the `calibrate` tool; the set's spec is separate |
 | Router MCP | calibrate, scorecard, explain, verdict, definitions, queue, preflight | second server, `localagents router` |
 
 ## 4. The dispatch path
@@ -161,9 +161,12 @@ used and the ticket says "default". The divert threshold is a router-entry setti
 **Never preempt.** A running job is never cancelled for a higher priority arrival.
 **No acceptable row, free or busy:** refuse with `no_acceptable_row` listing each row's
 shortfall; Claude may loosen `tolerance` per call or name a model.
-**Unprobed rows** carry the backend-family prior for the curve and empty cells for capability;
-an empty cell counts as demand-level shortfall (unknown is not zero and not full), and the ticket
-marks the row "uncalibrated".
+**Uncalibrated rows are not routed.** A row without a completed core calibration (§10) is
+filtered with reason `uncalibrated`; it is still usable by name. If no row survives, `auto`
+refuses with `no_calibrated_row` and the guidance "run `localagents calibrate <endpoint>`". A
+cell a completed core run did not fill (a language not probed) counts as demand-level shortfall:
+unknown is not zero and not full. The curve of a row carries the backend-family prior until its
+throughput probe has run, which the core run does first.
 
 ## 7. Capacity models and queues (every real endpoint)
 
@@ -251,9 +254,12 @@ that spec must satisfy:
   language toolchains are present) is what `calibrate` runs when no tier is named. Medium
   (SWE-bench Verified, Terminal-Bench; Docker) and Large (ProgramBench; Docker, linux/amd64,
   hours; the inference container's network allows the model endpoint and nothing else) are named
-  explicitly. The router never starts a calibration on its own: an empty or reset row is routed
-  on priors and marked `uncalibrated` in every ticket (§6) until someone calls `calibrate`.
-  Results are used whenever they exist; nothing enables or disables a tier after the fact.
+  explicitly. The router never starts a calibration on its own, and it never routes to a row
+  whose core run is not complete (§6): calibration is a deliberate step, started from the CLI
+  (`localagents calibrate <endpoint> [--tier core|medium|large] [--reset] [--estimate]`, the way
+  `localagents monitor` is started) or from the `calibrate` tool. Results are used whenever they
+  exist; nothing enables or disables a tier after the fact. A core run is complete when every
+  probe has a result or a `skipped` reason; `unreliable` probes are rerun before it counts.
 - **Distribution:** instances fetched from the source at a pinned revision at run time, not
   vendored; a source enters the set only after its licence is checked and recorded. The set is
   versioned; a row records the set version it was calibrated on.
@@ -275,7 +281,7 @@ that spec must satisfy:
 
 | Tool | In | Out |
 | --- | --- | --- |
-| `calibrate` | endpoint, tier, reset?, estimate_only? | the estimate; then the run id and progress |
+| `calibrate` | endpoint, tier, reset?, estimate_only? | the estimate; then the run id and progress (same runner as the CLI) |
 | `scorecard` | endpoint?, history? | rows with every cell (estimate, count, sources), speed factor, curve state |
 | `explain` | job id | the ticket (§4) |
 | `verdict` | job id, accepted, dimensions{}, correction{} | the cells it changed |
@@ -322,6 +328,8 @@ schema module gains a version; the monitor reads these as it reads the rest.
   ticket records the re-route. Once running, the job fails as it does today.
 - Database locked on admission: retry within the busy timeout; the job stays queued, never lost.
 - Facts unreadable for a row (probe failed): the row is filtered with reason `facts_unavailable`.
+- No row with a completed core calibration: `auto` refuses with `no_calibrated_row` (§6); direct
+  jobs unaffected.
 - Probe set source unreachable: the tier reports which probes could not be fetched and runs the
   rest; nothing is scored from a partial fetch without saying so.
 - A queued job cancelled: the entry is removed, nothing was sent.
