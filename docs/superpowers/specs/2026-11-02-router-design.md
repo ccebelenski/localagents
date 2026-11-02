@@ -225,31 +225,43 @@ state (prior | probed | refined, with the point count).
 - **Row identity:** endpoint × served id. A served id change under an endpoint is a new row; the
   old one is archived with its history. `calibrate --reset` archives by command.
 - **Cell:** dimension (and language where it applies), estimate 0–4, count, sources (probes n,
-  jobs n), last updated, definitions version. A cell is never a bare number.
-- **Updates:** exponentially weighted so recent evidence dominates (a quant change shows within a
-  few jobs, not a few hundred). A probe result and a job verdict are the same kind of evidence with
-  different weights (set in the calibration spec).
-- **Time per complexity band** and **speed factor** sit on the row (§5).
-- **History:** every cell change is a row in `scorecard_events` (what, from, to, evidence job id),
-  so a swap reads as a before and after.
+  jobs n), computed at, definitions version, the pass that computed it. A cell is never a bare
+  number.
+- **The evidence log is primary; cells are derived.** Nothing writes a cell when a job finishes.
+  Jobs write evidence: the ticket, the gate results, a verdict, a probe result. A **pass** reads
+  the log for a row and recomputes every cell from it: per cell, a recency-weighted mean of the
+  observations (a probe result and a job verdict are the same kind of evidence with different
+  weights; weights, the recency curve and the minimum count below which a cell is "thin" are set
+  in the calibration spec). The operator said why: per-job increments are a delta function over
+  signals too small to carry one; a batch over accumulated evidence is what the scorecard learns
+  from. A pass is initiated, never implicit: `scorecard --recompute` (§11), the end of a
+  calibration run, and `localagents calibrate --recompute` from the CLI. The ticket records the
+  pass id the decision used, so a decision is reproducible against the cells it saw.
+- **Replay.** Because cells are derived, a change to the weights replays the whole log under the
+  new constants, and a definitions version change rescores the logged briefs before the pass.
+- **Time per complexity band** and **speed factor** are derived by the same pass from the logged
+  durations and probe timings (§5).
+- **History:** every pass writes its cells as a new generation (`scorecard_events` keeps the
+  previous values), so a swap reads as a before and after.
 
 ## 9. Feedback
 
-Two feeds, one always on, one explicit; both attribute to the row that did the work (a divert is
-recorded as such and does not touch the row that was busy).
+Two feeds, one always on, one explicit; both WRITE EVIDENCE (§8) and neither touches a cell. Both
+attribute to the row that did the work (a divert is recorded as such and does not touch the row
+that was busy).
 
 **Mechanical gates** run on every finished job, calibration or not, from the record and the diff,
 as accept.sh does by hand today: tests ran / passed where the brief named them; stop rule honoured
 (diff empty when the report says stopped); `/tmp` in the diff; `git stash list` non-empty; tail
 capped (max_turns or timeout with the last step's commit missing); file count vs the brief's list;
-the lint rules a model ignores. Results update completeness, adherence and ceiling, and are shown
-in the job record.
+the lint rules a model ignores. Results are logged on the job (`jobs.gates`) and are what the pass
+reads for completeness, adherence and ceiling; they are shown in the job record.
 
 **`verdict`** (C&C tool): job id; accepted | rejected; dimensions shown or lacking (a subset of the
 row axes, each −1 | 0 | +1); optional category correction (the brief's true scores on any
-dimension). Accepted/rejected updates the demanded dimensions weighted by demand (a clean fix says
-little about computer_use; an axis the ticket lists as `undetermined` is not updated at all). A
-correction goes to `category_corrections` with the brief text, the
+dimension). The pass reads accepted/rejected as an observation on the demanded dimensions weighted
+by demand (a clean fix says little about computer_use; an axis the ticket lists as `undetermined`
+contributes nothing). A correction goes to `category_corrections` with the brief text, the
 scored and the corrected values, and the definitions version: the dataset for editing definitions
 (now), a nearest-neighbour correction memory (later, if corrections repeat), a fine-tune (if ever).
 None of those is in this build; the log is.
@@ -296,7 +308,7 @@ that spec must satisfy:
 | Tool | In | Out |
 | --- | --- | --- |
 | `calibrate` | endpoint, tier, reset?, estimate_only? | the estimate; then the run id and progress (same runner as the CLI) |
-| `scorecard` | endpoint?, history? | rows with every cell (estimate, count, sources), speed factor, curve state |
+| `scorecard` | endpoint?, history?, recompute? | rows with every cell (estimate, count, sources, pass id), speed factor, curve state; `recompute` runs a pass first (§8) |
 | `explain` | job id | the ticket (§4) |
 | `verdict` | job id, accepted, dimensions{}, correction{} | the cells it changed |
 | `definitions` | get | set(document), dry_run | the current document and version; what moved on the probe set |
