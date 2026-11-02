@@ -5,7 +5,7 @@
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 - Something that serves `/v1/messages` locally if you want to run a real job:
-  llama.cpp's `llama-server` (with `--jinja`) or vLLM.
+  llama.cpp's `llama-server`, Strata, or vLLM (see the README's Backends section for the flags).
 
 ## Setup
 

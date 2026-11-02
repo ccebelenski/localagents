@@ -14,6 +14,8 @@ tests to match"; Opus is better spent on the design conversation than on
 watching pytest run. Two local agents in parallel can build the two halves of a
 package against a pinned interface.
 
+It comes with a web **monitor** for the servers and the jobs running on them.
+
 > **Status: early.** It works, I use it daily, and the interface will move. It
 > targets llama.cpp and vLLM specifically; Ollama isn't a goal.
 
@@ -42,58 +44,196 @@ Three things make this more than an environment variable:
    start something.
 
 2. **A shim between Claude Code and the backend.** Claude Code sends things local
-   chat templates reject, and local servers fail in ways Claude Code doesn't
-   recognise. The shim fixes both directions (details below) and records every
-   backend request — timing, size, usage, the fixups it applied — in the
-   `requests` table of the shared database, so you can see what each turn cost.
+   servers choke on (system messages mid-conversation, text blocks next to tool
+   results) and assumes a 200k context window. The shim fixes the requests
+   without breaking the server's prefix cache, tells the session the real window,
+   and translates overflow errors into the form Claude Code knows how to recover
+   from. See [What the shim does](#what-the-shim-does).
 
-3. **The same isolation model as Claude's own subagents.** By default a job works
-   in your tree, like the Agent tool does. `isolation: worktree` gives it a fresh
-   git worktree on a `local-agent/<id>` branch (named by the job's id — see
-   [Job records](#job-records)), kept only if it changed something, with a
-   diffstat in the job record so Claude can review it as a diff.
+3. **Every job is a record.** Each job's requests, tool calls, usage and
+   transcript go into one SQLite database, so Claude can read a job after the
+   server that ran it is gone, the status line shows what is running, and the
+   monitor draws the fleet.
 
-## Requirements
+## Quick start
 
-- Python 3.12+ and [uv](https://docs.astral.sh/uv/)
-- Claude Code. The Agent SDK bundles its own `claude` binary, so nothing else to install.
-- A server that speaks Anthropic's `/v1/messages`:
-  - **llama.cpp** `llama-server` — start it with `--jinja`; add `--slots --metrics`
-    to get occupancy and cache stats in the tool output.
-  - **vLLM** with `--enable-auto-tool-choice --tool-call-parser <parser>`.
-- A model that can actually drive Claude Code: solid native tool calling and a
-  context window of 128k or more per request. Qwen3.8-27B works well.
-  Smaller windows work but compact constantly; see [Context windows](#context-windows).
+You need Python 3.12+, [uv](https://docs.astral.sh/uv/), Claude Code (the Agent
+SDK bundles its own `claude` binary, so nothing else to install), and a server that
+speaks Anthropic's `/v1/messages`: llama.cpp's `llama-server`, Strata, or vLLM. The
+model has to be able to drive Claude Code — solid native tool calling and a context
+window of 128k or more per request. Qwen3.8-27B works well. Smaller windows work but
+compact constantly; see [Context windows](#context-windows).
 
-## Install
+1. **Install the package.** Editable, so repo edits apply:
+
+   ```bash
+   git clone https://github.com/ccebelenski/localagents.git && cd localagents
+   uv tool install -e .          # puts `localagents` on PATH
+   ```
+
+2. **Describe your servers.** Copy the example and edit it; the file is gitignored.
+   It lists where your servers are and what kind they are, never which models — see
+   [Backends](#backends) for how to start each kind and
+   [Config](#config-modelsyaml) for the file:
+
+   ```bash
+   cp models.example.yaml models.yaml
+   ```
+
+3. **Register the MCP server with Claude Code.** User scope means every project
+   gets it; the server inherits the cwd of the Claude Code session that launched
+   it, so `run_agent` defaults to that project's tree:
+
+   ```bash
+   claude mcp add --scope user local -- localagents --config "$PWD/models.yaml"
+   ```
+
+   To keep it to one project instead, put this in that project's `.mcp.json`:
+
+   ```json
+   {"mcpServers": {"local": {"command": "localagents", "args": ["--config", "/path/to/models.yaml"]}}}
+   ```
+
+   MCP servers load at startup: restart Claude Code, or `/mcp` and reconnect. The
+   same applies after every `git pull` of this repo — a running server keeps the
+   code it started with until you reconnect.
+
+4. **Let long calls go to the background quickly.** `run_agent` blocks until the
+   job ends. Claude Code moves a blocking MCP call to a background task after
+   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS` milliseconds (default two minutes, and calls
+   run one after another, so that is two minutes per agent launched). Set it to ten
+   seconds in the `env` block of `~/.claude/settings.json`; `list_models` and the
+   other quick calls stay inline:
+
+   ```json
+   {"env": {"CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "10000"}}
+   ```
+
+5. **Install the `local-agent` subagent** so jobs appear as agents, which also
+   covers the cases where auto-backgrounding is off (see
+   [below](#the-local-agent-subagent)):
+
+   ```bash
+   mkdir -p ~/.claude/agents && ln -s "$PWD/agents/local-agent.md" ~/.claude/agents/
+   ```
+
+   The file names the server's tools as `mcp__local__*`; if you registered the
+   server under another name than `local`, copy the file instead and change its
+   `tools:` line.
+
+6. **Optional: the status line.** `localagents statusline` prints the running jobs
+   for your status line script; see [Status line](#status-line).
+
+7. **Run a job.** Start a model on one of your servers, then ask Claude:
+
+   > Use the local agent to add a `--json` flag to the CLI and cover it in the tests.
+
+   Claude calls `list_models`, picks a served model, and runs `run_agent` with the
+   brief. If nothing suitable is up it asks you to start something.
+
+Then, when you want to watch the fleet: `localagents monitor` opens the
+[Monitor](#monitor) at <http://127.0.0.1:8765/>.
+
+## Backends
+
+An endpoint is anything that serves Anthropic's `/v1/messages` and lists its models
+at `/v1/models`. Beyond that, what localagents can see depends on the backend and
+on how you start it. The `backend:` key in `models.yaml` picks the probe; it is
+declared, never guessed.
+
+| localagents reads | llama.cpp | Strata | vLLM |
+|---|---|---|---|
+| served model ids | `/v1/models` | `/v1/models` | `/v1/models` |
+| context window per request | `/props` → `n_ctx`, always on | `/props` → `n_ctx`, always on | `max_model_len` in `/v1/models`, always on |
+| slot or request occupancy (`list_models`, the status line, the monitor) | `/slots`, on by default (`--no-slots` turns it off) | `/slots`, always on | `/metrics`, always on |
+| server counters (per-job cache hit and throughput, the monitor's speed tiles) | `/metrics`, **needs `--metrics`** | `/metrics`, always on (JSON) | `/metrics`, always on |
+| cache fields in each response's `usage` (the request tables' reused and prefill columns) | always | always | **needs `--enable-prompt-tokens-details`** |
+| GPU, VRAM, temperature, power | — | `/metrics` | — |
+
+A missing figure never breaks a job: `list_models` leaves the field out, the status
+line and monitor show a dash. The two flags in bold are the ones people forget.
+
+### llama.cpp
 
 ```bash
-git clone https://github.com/ccebelenski/localagents.git && cd localagents
-uv tool install -e .                  # `localagents` on PATH; editable, so repo edits apply
-cp models.example.yaml models.yaml    # edit for your servers (gitignored)
-claude mcp add --scope user local -- localagents --config "$PWD/models.yaml"
+llama-server -hf <repo>:<quant> -c 262144 --parallel 2 --metrics
 ```
 
-User scope means every project gets the `local` server. It inherits the cwd of the
-Claude Code session that launched it, so `run_agent` defaults to that project's
-tree. A project can carry its own `./models.yaml` to override the registry.
+The flag defaults below are quoted from `llama-server --help` (build b11913); check
+yours, the defaults have moved before.
 
-If you'd rather keep it to one project, put this in that project's `.mcp.json`:
+- `--jinja` — "whether to use jinja template engine for chat (default: enabled)".
+  Tool calling needs it; leave it on.
+- `--slots` / `--no-slots` — "expose slots monitoring endpoint (default: enabled)".
+  With `/slots` on, `list_models` shows `{total, busy, free}` so Claude knows whether
+  a second agent will run now or queue.
+- `--metrics` — "enable prometheus compatible metrics endpoint (default: disabled)".
+  With it on, each job records prompt tokens processed vs. cached, the cache hit
+  ratio, prompt and generation tok/s and speculative-decode acceptance, and the
+  monitor's speed and cache tiles have data. The counters are server-wide, so
+  overlapping jobs share the delta.
+- `-c N` / `--ctx-size N` and `-np N` / `--parallel N` — the window localagents
+  reports is the **per-slot** window `n_ctx` from `/props`. Without unified KV
+  (`--kv-unified`, "default: enabled if number of slots is auto") that is `-c`
+  divided by the slot count. Give each slot 128k or more.
+- `--reasoning on` for thinking models; the default, `auto`, detects it from the
+  template.
+- `--api-key KEY` — put the same key in the endpoint's `api_key:`; see
+  [Config](#config-modelsyaml).
 
-```json
-{"mcpServers": {"local": {"command": "localagents", "args": ["--config", "/path/to/models.yaml"]}}}
-```
+llama.cpp reports a too-long prompt as `exceed_context_size_error`; the shim
+translates it so the session compacts and retries.
 
-Restart Claude Code (or `/mcp` → reconnect) after adding it; MCP servers load at startup.
+### Strata
 
-Then install the `local-agent` subagent, so jobs show up as agents (see [below](#the-local-agent-subagent)):
+A llama.cpp-compatible server; mark it `backend: strata`. Its `/props`, `/slots` and
+`/v1/messages` have llama-server's shapes, but `/slots` and `/metrics` are always on
+and never advertised in `/props`, and `/metrics` is JSON (cumulative totals plus a
+live queue depth and the GPU figures) rather than Prometheus text. The strata probe
+reads them unconditionally: `list_models` shows `{total, busy, free}` plus
+`requests_waiting`, jobs get the same cache and throughput record as on llama.cpp,
+and the monitor draws its hardware tiles. Marked `llama.cpp` it still works (window
+from `/props`) but without occupancy or per-job metrics, and `list_models` says so in
+a `hint`. Strata counts `max_tokens` against the window instead of clamping it, so it
+refuses a request earlier than llama-server would; the shim translates that refusal,
+or set `"fit_max_tokens": true` in its `strata-<model>.json` to clamp.
+
+### vLLM
 
 ```bash
-mkdir -p ~/.claude/agents && ln -s "$PWD/agents/local-agent.md" ~/.claude/agents/
+vllm serve <model> --served-model-name <alias> \
+    --enable-auto-tool-choice --tool-call-parser <parser> \
+    --enable-prompt-tokens-details
 ```
 
-It names the server's tools as `mcp__local__*`; if you registered the server under
-another name than `local`, copy the file instead and change the `tools:` line.
+From the vLLM CLI reference:
+
+- `--enable-auto-tool-choice` — "Enable auto tool choice for supported models. Use
+  `--tool-call-parser` to specify which parser to use." Default `False`. Both are
+  required for tool calling; the parser depends on the model.
+- `--enable-prompt-tokens-details` — "If set to True, enable prompt_tokens_details in
+  usage." Default `False`. Without it vLLM's Anthropic-shaped responses carry no cache
+  fields: the request tables' reused column is blank and the prefill rate is an upper
+  bound (the cell's title says so).
+- `--served-model-name` — the id `list_models` shows and `run_agent(model=...)`
+  matches; `--max-model-len` is the window localagents reports.
+
+The Anthropic `/v1/messages` endpoint and the Prometheus `/metrics` endpoint need no
+flag. vLLM reports a too-long prompt on the Anthropic endpoint as HTTP 500
+`internal_error`; the shim translates that too. Sessions are started with
+`CLAUDE_CODE_ATTRIBUTION_HEADER=0`, because the per-request attribution hash defeats
+prefix caching. Verified with DeepSeek-V4-Flash: thinking blocks replay with their
+signatures, prefix cache hits on every turn after the first.
+
+### Other
+
+`backend: other` probes `/v1/models` and, if it answers, `/props` for a window.
+Without a window the session is told nothing and Claude Code assumes 200k, so only
+use it for a server whose window really is that large.
+
+The first turn of any job costs about 20k tokens of prompt on a cold slot (system
+prompt plus tool schemas), ~10 s on a 27B. Everything after that is a cache hit plus
+the delta.
 
 ## Using it
 
@@ -103,21 +243,15 @@ Claude picks it up like any tool. Ask for it by name and it'll do the right thin
 
 What Claude does behind that: `list_models` to see what's up and pick a model, then
 `run_agent` with the brief and `wait_s` set to the job's timeout. The call blocks
-until the job ends; after two minutes Claude Code moves it to a background task (shown
-in `/tasks`), Claude keeps working, and the final job record arrives as a task
-notification. Claude reads `files_touched` (or the worktree diff) and checks the work.
-The server sends a progress notification every minute while it waits — e.g.
-`running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: uv run pytest -q`
+until the job ends; after the auto-background delay Claude Code moves it to a
+background task (shown in `/tasks`), Claude keeps working, and the final job record
+arrives as a task notification. Claude reads `files_touched` (or the worktree diff)
+and checks the work. The server sends a progress notification every minute while it
+waits — e.g. `running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: uv run pytest -q`
 — so the call never trips Claude Code's idle timeout, and the tool timeout itself
-defaults to about 28 hours.
-
-The two minutes are Claude Code's default (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`, in
-milliseconds). MCP calls run one after another, so with several agents to launch that
-is two minutes each. Set the variable lower in the `env` block of your settings: `10000`
-backgrounds `run_agent` after ten seconds and leaves `list_models` and the other quick
-calls inline (a `local_complete` that runs long comes back as a notification instead).
-Then a swarm is one blocking `run_agent` per job, and every job delivers its own
-notification when it finishes, with nothing for Claude to re-arm.
+defaults to about 28 hours. A swarm is one blocking `run_agent` per job, and every
+job delivers its own notification when it finishes, with nothing for Claude to
+re-arm.
 
 `wait_jobs` is the fallback for calls that cannot background: start each job with
 `wait_s: 0` and wait on all the ids in one call. Use it knowingly: a `mode: "any"` wait
@@ -190,8 +324,7 @@ same base commit. Jobs live in the server's memory, so a follow-up is only possi
 while that server process is up. Stopping the relay from `/tasks` does **not**
 stop the local job; use `cancel_job`. The overhead is a few small Haiku turns per job,
 one per 25 minutes of job time (each `wait_job` blocks for 1500 s with progress
-notifications in between; v0.1.5 waited 100 s at a time, which with the relay's turn
-cap ended jobs longer than about 2.7 hours).
+notifications in between).
 
 ### Status line
 
@@ -222,29 +355,27 @@ the file instead of the path that leads to it. The load of each endpoint your
 jobs run on rides its header line, probed every ten seconds while jobs run: slots busy
 for llama.cpp, requests running and queued and KV cache fill for vLLM. Finished jobs
 stay on the line for two minutes with a check mark (or a cross, clock, null sign or
-dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost); a finished row
-keeps its compaction count for those two minutes — it's a trailing indicator of a
-context-tuning problem, worth seeing even after the job turned green.
+dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost), keeping their
+compaction count for those two minutes.
 
 "Live" means the heartbeat: a server is shown while its last beat is under a minute
 old (and its pid still exists). A server that exited or was killed drops off the line
 as its jobs age out; the next server to start marks that one's unfinished jobs `lost`.
 The line is scoped to the Claude Code session asking: each server records as its owner
 the nearest Claude Code process it runs under (native `claude`, or an npm install running
-as `node` with a `claude` entry in its command line; its parent pid when there is none —
-the same walk the renderer does up from the status line script), so a session's own jobs
-match their session whichever way the server was started (`uv run localagents` included). Jobs of other sessions on the same machine fold into a trailing
-`+N jobs in other sessions` line, because the boxes are shared and knowing one is
-busy matters even when the job isn't yours.
+as `node` with a `claude` entry in its command line; its parent pid when there is none),
+so a session's own jobs match their session whichever way the server was started
+(`uv run localagents` included). Jobs of other sessions on the same machine fold into a
+trailing `+N jobs in other sessions` line, because the boxes are shared and knowing one
+is busy matters even when the job isn't yours.
 
 The renderer imports nothing heavy and runs in well under 100 ms, and it never prints a
 traceback: the database is another process's file, so a too-new schema or a lock
 renders as the empty line, and with no database yet it prints one empty line and
-creates nothing. Append it to your
-status line script and set `refreshInterval` in the `statusLine` settings block so
-the elapsed times tick while the session is idle. Your script is
-`~/.claude/statusline-command.sh`; it prints your own first line and the local lines
-after it (shape only — the script is yours, not in the repo):
+creates nothing. Append it to your status line script and set `refreshInterval` in
+the `statusLine` settings block so the elapsed times tick while the session is idle.
+Your script is `~/.claude/statusline-command.sh`; it prints your own first line and
+the local lines after it (shape only — the script is yours, not in the repo):
 
 ```bash
 local_lines=$(timeout 2 localagents statusline 2>/dev/null)
@@ -259,33 +390,29 @@ fi
 
 A job's record is split between the database and its directory. The brief and the
 numbers are rows in SQLite (see [The database](#the-database) below): the brief is the
-`jobs.task` column — there is no `task.txt` — and every backend request is a row in the
-`requests` table with timing, size and usage, written directly by the shim; there is no
-`requests.jsonl`. `job_status` answers from those rows: `usage` as the sums over the
-job's requests, `tool_calls` with `tool_counts` per tool, `errors`, `last_tool`,
-`files_touched`, `ctx_tokens` and `gen_tps`. `compactions` is a column of its own,
-not a derivation: the runner counts the harness's `compact_boundary` messages into
-it (and the status line shows the count when it is above zero).
+`jobs.task` column and every backend request is a row in the `requests` table with
+timing, size and usage, written directly by the shim. `job_status` answers from those
+rows: `usage` as the sums over the job's requests, `tool_calls` with `tool_counts` per
+tool, `errors`, `last_tool`, `files_touched`, `ctx_tokens` and `gen_tps`. `compactions`
+is a column of its own: the runner counts the harness's `compact_boundary` messages
+into it. The transcript is written to the `transcripts` table once when the job
+finishes, so it outlives the directory below.
 
 The directory — `~/.local/state/localagents/jobs/<id>/`, where `<id>` is the job's uuid
 (the same `job_id` the tools take; it also names the worktree branch `local-agent/<id>`)
-— holds
-`transcript.txt` (what the agent said and did) and nothing else unless debugging is on:
-`events.jsonl` (every SDK message, tool results included; it was 98% of a 6 GB state
-directory before it became opt-in) with `defaults.log_events: true` or
+— holds `transcript.txt` (what the agent said and did) and nothing else unless
+debugging is on: `events.jsonl` (every SDK message, tool results included; it was 98%
+of a 6 GB state directory before it became opt-in) with `defaults.log_events: true` or
 `LOCALAGENTS_LOG_EVENTS=1`, and `requests_full.jsonl` (every request body) with
 `defaults.dump_requests: true` or `LOCALAGENTS_DUMP_REQUESTS=1`.
 
 **Retention.** Job directories with nothing written for more than
 `defaults.job_retention_days` (default 7, `0` disables) are deleted when a server starts
 and after every job finishes. The age is mtime — the newest of the directory itself and
-its files — because the directory is named by the job's opaque uuid (3.10f-1 retired the
-old `YYYYMMDD-HHMMSS-<8 hex>` name, whose stamp only stood in for the creation time), and
-nothing that is not named like a job directory is touched; database rows are never
-deleted. Keep retention above the longest `timeout_s` you configure: prune deletes by
-age, so a job still running past its directory's expiry would have its transcript deleted
-out from under it. The same pass is available
-by hand, which is also how you clean up a state directory that predates this rule:
+its files — and nothing that is not named like a job directory is touched; database
+rows are never deleted. Keep retention above the longest `timeout_s` you configure:
+prune deletes by age, so a job still running past its directory's expiry would have
+its transcript deleted out from under it. The same pass is available by hand:
 
 ```bash
 localagents prune --dry-run   # list what would go
@@ -296,14 +423,16 @@ localagents prune             # delete it; --days N overrides the default
 
 Every server writes to one SQLite file: `~/.local/state/localagents/localagents.db`
 (`XDG_STATE_HOME` honoured; `LOCALAGENTS_DB=/path` overrides). It is in WAL mode and
-holds every server process's jobs, the requests their shims saw, their tool calls, and
-the endpoints and models seen so far. The full schema is
+holds every server process's jobs, the requests their shims saw, their tool calls,
+their transcripts, the monitor's probes, and the endpoints and models seen so far. The
+full schema is
 [`docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md`](docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md).
 Because the record is the database rather than a server's memory, it outlives the server
 that ran the job: any server's `job_status`, `job_log` and `list_jobs(all=True)` can
 read it after the original process is gone, and the waits can wait on it too; only
-`cancel_job` and `run_agent(resume_job=…)` cannot — see `foreign_job` above. `list_jobs` answers with the 50 newest by default; `limit=0`
-lists the whole history. Rows are history: retention removes job directories, never rows.
+`cancel_job` and `run_agent(resume_job=…)` cannot — see `foreign_job` above. Rows are
+history: retention removes job directories and the monitor's old probes, never job
+rows.
 
 It lives on one machine — SQLite's WAL files do not work on a network filesystem, so
 never point `LOCALAGENTS_DB` at one. Back it up with SQLite, not `cp`:
@@ -312,253 +441,185 @@ never point `LOCALAGENTS_DB` at one. Back it up with SQLite, not `cp`:
 sqlite3 ~/.local/state/localagents/localagents.db ".backup /path/to/backup.db"
 ```
 
-#### Seeding a database for the monitor
-
-The monitor's web UI (Epic 3) and its route tests run against a **seeded** database, built
-offline and deterministically from the captured fixtures under `tests/fixtures/monitor/` with
-every timestamp shifted to `--now` (the current time by default). One command builds a
-database that shows every display state at once:
-
-```bash
-LOCALAGENTS_DB=/tmp/seed.db localagents seed
-```
-
-The seeded world has three hosts: **ai1** (Strata, live — an hour of probes at 5 s with the
-busy ai2 capture's counters interpolated across it, a running job on its one slot), **dgx1-a**
-(vLLM, down since 20 min ago — a refused connection: the box answers, nothing listens), and
-**llamacpp** (dormant — last up a week ago). It also holds a finished job with its requests
-and tool calls (the real story-1.9 export, re-timed to have ended 10 min ago) and a running
-job (the same export truncated to its first 40 requests and 50 tool calls, started 5 min ago).
-
-A naive ISO `--now` (`2026-10-29T12:00:00`) is read in **local time** — noon where you are, not
-UTC — so the same command gives a different world on a CI box (UTC) than on a laptop. The file
-is a **snapshot at `--now`**: its up/down/dormant states and the running job's age are computed
-from that clock and decay after the attention window, so a file seeded a day ago shows three
-dormant endpoints and a job "running" for a day — re-seed to see the states again.
-
-`localagents seed` is for the monitor's smoke and route tests, not for your live fleet. It
-writes to the path `--db` names (default `db.db_path()`, so `LOCALAGENTS_DB` is the normal
-way to aim it), so point it at a throwaway file, never the real one. It refuses a database
-that already holds `jobs` or `probes` rows unless `--force` is given — and `--force`
-*replaces* (it deletes every row of every table and seeds fresh), never appends. `--force`
-still refuses a database a running localagents server owns (a heartbeat in the last 60 s and a
-live pid), naming the pid: stop the server first, or point `--db` at a throwaway file.
-
-#### Smoke test
-
-`localagents smoke --endpoint NAME --model SERVED_ID` is the online acceptance run:
-a few short `/v1/messages` requests to the named endpoint, one real agent job through
-the shim and runner with a fixed brief, a probe of a port nothing listens on, and a
-printed checklist of the rows and states that appeared (exit 1 on any missing row). It
-needs a model actually running on that endpoint (it runs a real job there, Bash included),
-and it writes real rows — into `LOCALAGENTS_DB` when set, otherwise this same shared
-database; point it at a throwaway file to rehearse.
-
 ## Monitor
 
 `localagents monitor` is a web dashboard for the endpoints in `models.yaml` and the jobs
-localagents runs on them: one process that probes every endpoint (every 5 s; a dormant one
-every 60 s) into the shared database and serves a page that redraws from a server-sent
-events stream after each probe. (True now, 3.7m: after each *round*, not each probe — the
-server's fan-out coalesces the collector's ticks and pushes one snapshot at a time, at most
-one per `refresh_s`; the probe cadence itself is unchanged.)
+localagents runs on them: one process that probes every endpoint (every 5 s; a dormant
+one every 60 s) into the shared database and serves a page that redraws from a
+server-sent events stream, one snapshot per probe round.
+
+### Running it
 
 ```bash
-localagents monitor                 # http://127.0.0.1:8765/
+localagents monitor                 # http://127.0.0.1:8765/, opens in your browser
 localagents monitor --port 9000 --config ~/.config/localagents/models.yaml
 ```
 
-Flags: `--port N` (default: the `monitor:` section's `port`, else **8765**), `--host`
-(default `127.0.0.1` — the page has no authentication, so bind another address only on a
-network you trust), `--db PATH` (default: `monitor: db`, else `LOCALAGENTS_DB`, else the state
-directory's `localagents.db`), `--config PATH`, and `--no-collect` (serve the database as it
-is, without probing or pruning — the page still follows the database, the server pushing a
-snapshot every `refresh_s`). It prints one line at start — the URL, the database path, the
-endpoint count, and "not collecting" when `--no-collect` was given — and stops on Ctrl-C or
-SIGTERM.
+Flags:
 
-By default the page also opens in the default browser, in a new tab, once the server is up
-(`$BROWSER` is honoured); `--no-open` keeps the browser shut, as the headless smokes do. If the
-monitor is already running on that port, the command opens the page and exits 0 instead of
-failing with "port N is already in use" (with `--no-open` that failure stands).
+- `--port N` — default: the `monitor:` section's `port`, else **8765**.
+- `--host ADDR` — default `127.0.0.1`. The page has no authentication, so bind another
+  address only on a network you trust.
+- `--db PATH` — default: `monitor: db`, else `LOCALAGENTS_DB`, else the state
+  directory's `localagents.db`.
+- `--config PATH` — the `models.yaml` to read; found as the MCP server finds it (see
+  [Config](#config-modelsyaml)).
+- `--no-collect` — serve the database as it is, without probing or pruning. The page
+  still follows the jobs the MCP server writes, a snapshot every `refresh_s`.
+- `--no-open` — do not open the browser. By default the page opens in a new tab once
+  the server is up (`$BROWSER` is honoured). If a monitor is already running on that
+  port, the command opens the page and exits 0 instead of failing; with `--no-open`
+  the "port in use" failure stands.
 
-`tools/monitor.sh` runs it in the background from a checkout: `start` detaches it with `setsid`
-so closing the terminal does not stop it, and writes its pid to
-`${XDG_STATE_HOME:-~/.local/state}/localagents/monitor.pid` and its output to `monitor.log`;
-`stop` sends SIGTERM and waits up to 10 s; `status` prints running or stopped with the last start
-line; `log` tails the log. It needs `localagents` on PATH (`uv tool install -e .`); any other
-arguments after `start` go to `localagents monitor`.
+It prints one line at start — the URL, the database path, the endpoint count, and
+"not collecting" when `--no-collect` was given — and stops on Ctrl-C or SIGTERM.
 
-The overview shows one card per host, in `models.yaml` order. A live endpoint shows its
-served model, a state strip (Strata's own state, `idle`/`busy` for the others, over the chosen
-range), slots or running/waiting requests, KV-cache fill (vLLM), decode speed with a sparkline,
-prompt speed, cache hit, GPU figures when the backend reports them (Strata), and the jobs
-running on it. (True now, 3.7d/3.7e/3.7n/3.7q: the card is a fixed grid of twelve tiles in
-the same slots on every live card — load, KV, decode and stream / prompt, cache hit, ctx and
-probe / GPU, VRAM, temp and power — a figure the backend does not report shows a dash in its
-slot rather than vanishing, and the unit lives in the label so a value is always one line.
-The KV tile is a bar meter. The decode tile's sparkline is drawn from the endpoint's own
-history over the chosen range; all live cards share one y scale, so a tall line on one card
-and a low line on another compare by height, the shared peak rides at each sparkline's right
-edge, and the strip row names the window once per card — True now, 3.7-fold-5: the decode label is plain "decode tok/s".) The head line carries a
-state dot, the served model in the status line's short form (the full served id in its
-title), and at the right the last-active phrase: "active 4m12s ago", the date form past 24 h,
-"no recent activity" when the retained history holds no advancing counters interval. The
-jobs block sits at the card's foot in the same place on every card: one row per running job
-in the MCP status line's form (mark, name, elapsed · calls · files · ctx bar · t/s ·
-compactions · tool errors · activity), a muted "no jobs" line when empty and "busy, no local
-job" when the engine is occupied without one of ours. An endpoint that was up within the
-attention window and is down now is drawn in the alert colour with the probe's sentence and
-when it was last seen; an older one is a single muted "last seen" line. Endpoints that were
-never seen are not drawn at all; one muted line under the cards names the hidden ones.
-(True now, 3.7a/3.7b: a host whose every endpoint is dormant no longer collapses to one
-line — every host is a card of the same shape, a card never moves when its state changes,
-and a host with nothing left to draw is not drawn.) When the node itself is unreachable the
-card carries the probe's sentence once and its endpoints are greyed, not each alarming.
-(True now, 3.7c: a down node's card has the same shape and size as a live host's.)
-Below the cards is the **Recent jobs** log: every running and queued job by start, then the
-last 10 finished newest first, with the columns job, status, model, endpoint, elapsed,
-turns, tool calls, tool errors, context, speed and last activity. (True now, 3.7g/3.7h: it
-replaces the running-jobs table — finished rows stay instead of vanishing on the next tick,
-the status is a word pill (running / queued / done / failed and friends) rather than a mark,
-"current tool" is gone as a column, a finished row's elapsed is frozen at its run's length,
-and a running row's turn count is a muted dash until its first turn lands.) A non-zero tool
-errors count is a link: the count is tool results that came back as errors, and the job page
-lists them by tool. "server gone" marks a job whose MCP server no longer beats. (True now,
-3.10a, 2026-10-30: a "started" column (day-stamped) follows the job column; the "server gone"
-badge is gone — a live job whose server stopped beating wears the pill "lost"; "speed" is two
-columns, prefill tok/s and decode tok/s.) (True now, 3.10f-2, 2026-10-30: the job's one key is
-its UUID — the job column, a card's job row, a timeline bar's label and the request table's job
-column show its first eight characters with the full id in the title, and the job page's header
-shows the id itself.) (True now, 3.10c, 2026-10-31: every table — this log, the endpoint page's
-jobs table and both request tables — pages at 50 with a pager line, sorts by clicking any
-header (numeric columns numerically, a second click reverses) and filters per column
-(substring; `>n`/`<n` on numeric columns), all client-side over the rows already fetched; sort,
-filters and page survive every push, the view living in a per-table state map rather than in
-the DOM. The endpoint requests route still caps at 1000 rows and its totals line still counts
-the whole range.)
-Beneath the log the fleet section is one **timeline** on a shared time axis. One 36 px row
-per live endpoint, in card order: the endpoint's busy intervals from its own history as a
-6 px band along the row's bottom (idle is not drawn, so a box idle all day reads as an empty
-row), and its jobs as labelled bars above it, each a link to the job page; two jobs
-overlapping on one endpoint stack as two thinner bars. One axis under the rows carries 4–7
-time labels with hairline gridlines up through the rows, and a "now" marker sits at the
-right edge. (True now, 3.7l: this replaces the three fleet charts — decode speed, prompt
-speed and occupancy per live endpoint on one time axis — which answered no question the
-operator had.) The range buttons (`15m` to `7d`, default `1h`, remembered by the browser)
-apply to every chart and strip (True now, 3.7l: the strips, the sparklines and the
-timeline). The page redraws on each snapshot the server pushes and never polls, and a
-snapshot identical to the last one redraws nothing — cards kept across pushes update their
-changed tiles in place, losing no hover state; the dot in the header is green while the
-stream is open and red while it reconnects, and the header names the attention window in
-hours (`24h` by default; the `attention_hours` setting below) and the database the server
-opened (the path elided from the left when long, the full path in the title). (True now,
-3.7r: beside the dot is one phrase, not the word "live" — "updated HH:MM:SS" while the
-stream is open, moving with every push; "connection lost, last update HH:MM:SS" while it
-reconnects; "connecting" before the first snapshot.) The charting
-library, uPlot 1.6.31, is vendored into the package
-(`src/localagents/monitor/static/VENDOR.md` has its checksums), so the page needs no internet.
-(True-now, 3.7-fold-4: story 3.7l replaced the fleet charts with the timeline, and once no page
-used uPlot the vendored files and `VENDOR.md` were dropped — the sentences above record the state
-when written; the page loads nothing but its own files.)
+To keep it running in the background from a checkout, `tools/monitor.sh` wraps it:
 
-Refresh and load. The fan-out is the one refresh clock, separate from the probe cadence: it
-coalesces the collector's ticks, so a probe round is one snapshot push and nothing is sent
-between pushes, at most one push per `refresh_s` (the `monitor:` setting, default 5 s; the
-snapshot on first connect stays immediate). The snapshot is read once per push and its bytes
-shared by every open tab, and it carries `refresh_s` so the page paces its one history call
-by the same clock, floored at 1 s. The history bodies are cached server-side per endpoint,
-fleet and window, keyed on the newest probe time, so a request between probes is a cache
-hit, and `/api/overview/history` answers the strips, sparklines and timeline — the timeline's
-job spans included — in one batched call. A `--no-collect` server has no probe ticks, so the
-same clock drives itself every `refresh_s`: an open page still follows the jobs the MCP
-server writes, at most `refresh_s` behind. The last-active figure rides the same read:
-`endpoints.last_active` (schema version 6) stores the newest probe at which the endpoint's
-counters advanced, the collector writes the witness at each advancing interval, and the
-monitor backfills null witnesses from the stored probes once, at its own start.
+```bash
+tools/monitor.sh start            # detached with setsid; the page opens
+tools/monitor.sh status           # running (pid, last start line) or stopped
+tools/monitor.sh log              # tail -f the log
+tools/monitor.sh stop             # SIGTERM, waits up to 10 s
+```
 
-An endpoint's name on the overview opens its detail page (`#/endpoint/<name>`), drawn from the
-monitor's own database for every backend, with no link to the endpoint's own UI. Its header
-gives the backend, the host card it sits under, the base URL, the state and when it was last
-seen, and for a down endpoint the probe's sentence and the job that was running when it
-dropped; for a down or dormant endpoint it also names what the engine last served there (the
-model and context window, while the live pair above is null). Below it are stat tiles, each
-with the current figure and a sparkline over the chosen range, grouped by what the backend
-reports: tier 0 for every endpoint (up/down, node state, served model, context window, probe
-latency); tier 1 when it serves counters (llama.cpp with `--metrics`, vLLM, Strata: prompt and
-decode speed, cache hit ratio); tier 2 when it reports occupancy (llama.cpp with `--slots`,
-vLLM, Strata: slots busy, requests running and waiting, KV-cache fill); tier 3 when it reports
-hardware (Strata today: GPU use, VRAM, temperature, power, PCIe traffic, CPU, RAM, disk; the
-PCIe and disk figures read `MB`, not a rate: Strata reports megabytes per sample and does not
-document the sample window, which each of those tiles' tooltip says). (True now, 3.10d: the
-tiers order the tiles but the page draws no tier headings — the groups after the first carry a
-plain noun, speeds, occupancy, hardware; up/down and node state are not tiles, the header says
-them with the port-22 fallback note; and a value is never cut with an ellipsis — the tile grows
-to fit it.) A
-tile whose source reported nothing in the range is left out rather than drawn empty, and a
-figure the newest probe lacks (a down endpoint) shows the newest value in the range, marked as
-such. Then come the state strip, the jobs that ran on the endpoint in the range, its restart
-and outage events, and the request table: our own jobs' requests to it (time, job, path,
-status, milliseconds, tokens in, out and from cache, streaming, error), newest first, under a
-totals line. (True now, 3.7k/3.7-fold-4: both request tables — this one and the job page's —
-draw through one renderer with one look: time, a status pill, job, path, prompt, new, reused,
-output, prefill t/s, decode t/s, duration (whole ms under a second, tenths above) and error;
-the stream flag and the raw gen_ms are gone, the two rates are the per-request derivations
-Strata derives from the same facts, and the time cell reads clock time inside 24 h and the
-date past it.) (True now, 3.10h(b), 2026-10-30: the prompt column is the whole prompt the
-request carried (input + reused + cache creation), next to the new tokens (input +
-cache_creation — the prefill numerator) and the reused share; the API's bare `input_tokens`,
-1 on a hot prefix cache, is no longer shown as "prompt".) (True now, 3.10i, 2026-10-31: a
-backend that reports no cache fields — vLLM's Anthropic shape, until
-`--enable-prompt-tokens-details` — still gets a prefill t/s: a missing cache_creation counts
-as 0, the whole input over time-to-first-token, an upper bound the cell's title names.)
-(True now, 3.10b: the endpoint page has no tables of its own anymore — the
-jobs table is the Recent-jobs table filtered to the endpoint, one renderer with the endpoint
-column dropped and every row a full snapshot job row; events are the collector's up/down
-transitions and are drawn only when the range holds one, as "Restarts and outages"; and every
-section heading is a noun phrase with the filter — "Jobs · <name> · last <range>", "Requests ·
-<name> · last <range>", "Restarts and outages · <name> · last <range>" — no parentheses of
-explanation.) The range buttons apply here too; the tiles follow each snapshot, and the
-series and tables are re-fetched on a range change and at most every 30 s.
+It writes its pid to `${XDG_STATE_HOME:-~/.local/state}/localagents/monitor.pid` and its
+output to `monitor.log` beside it, needs `localagents` on PATH, and passes any other
+arguments after `start` to `localagents monitor`.
 
-The job detail page (`#/job/<id>`, from the running-jobs table — True now, 3.7g: from the
-Recent jobs log) fetches the job's record in
-one call and shows its status, model, endpoint and times; a context gauge when the job
-reported a window; the four usage counters and the seven /metrics deltas the runner recorded
-(or "metrics not recorded"); the files touched, shown relative to the job's worktree or cwd;
-a tool-call timeline across the job's duration — one mark per call coloured by tool, errors
-red, the context fill drawn over it — and the breakdown by tool; the request table with a
-totals line; and the transcript tail with the job's log directory path (copy it to open the
-transcript; a sentence when the directory is gone). A running job's header refreshes in place
-from the snapshot stream; a job whose server stopped beating is shown lost. The header's
-"server" figure is the build stamp of the MCP server that ran the job (`<version>+<short git
-sha>`, written once when that server starts; `job_status` and `list_jobs` carry it as
-`server_version`), with a muted "server code differs from the monitor's" beside it when the
-monitor's own stamp is another, so a server left running on older code is visible on its jobs.
+### Settings
 
-An optional top-level `monitor:` section in `models.yaml` holds its settings; the MCP server
-ignores it, and an unknown key or a bad value in it is an error naming the key:
+An optional top-level `monitor:` section in `models.yaml` holds the monitor's settings.
+The MCP server ignores the section; the monitor rejects an unknown key or a bad value
+with an error naming it:
 
 ```yaml
 monitor:
   port: 8765
   attention_hours: 24     # an endpoint seen up within this window and down now is an alert; older is dormant
   retention_days: 7       # probe rows older than this are deleted (job rows never are)
-  refresh_s: 5            # the one refresh clock: at most one snapshot push per this many seconds, max 3600
+  refresh_s: 5            # at most one snapshot push per this many seconds (max 3600)
   # db: /path/to/localagents.db
 ```
 
-To see every display state without a fleet, serve a seeded database (above) without
-collecting:
+### The page
+
+**Overview.** One card per host, in `models.yaml` order; a card never moves when its
+state changes. A live endpoint's card is a fixed grid of twelve tiles in the same slots
+on every card — load, KV, decode tok/s with a sparkline, prompt tok/s, cache hit, ctx,
+probe ms, and Strata's GPU, VRAM, temperature and power — with a dash for a figure the
+backend does not report. The head line carries a state dot, the served model and the
+last-active phrase ("active 4m12s ago"); the foot lists the jobs running on the
+endpoint in the status line's form, "no jobs", or "busy, no local job" when the engine
+is occupied without one of ours. An endpoint that was up within the attention window
+and is down now is drawn in the alert colour with the probe's sentence and when it was
+last seen; an older one is a single muted "last seen" line; endpoints never seen are
+not drawn, and one muted line under the cards counts them. When the node itself is
+unreachable the card carries the probe's sentence once and its endpoints are greyed.
+
+**Recent jobs.** Every running and queued job by start, then the last 10 finished,
+newest first: job (the first eight characters of its uuid, the full id in the title),
+started, a status pill (`queued`, `running`, `succeeded`, `failed`, `timeout`,
+`cancelled`, `lost` — a live job whose MCP server stopped beating), model, endpoint,
+elapsed (frozen at the run's length once finished), turns, tool calls, tool errors (a
+link to the job page's list when non-zero), context, prefill tok/s, decode tok/s and
+last activity.
+
+Every table on the site — this one, the endpoint page's jobs table and both request
+tables — pages at 50 rows, sorts by clicking a header (a second click reverses), and
+filters per column: a select for columns with a fixed set of values such as status, a
+number box in the column's own unit for numeric columns, a date-and-hour picker for
+started, substring text elsewhere. Sort, filters and page survive every push.
+
+**Timeline.** Below the log, one row per live endpoint on a shared time axis: the
+endpoint's busy intervals as a band along the row's bottom (idle is not drawn), its
+jobs as labelled bars above it, each a link to the job page, and a "now" marker at the
+right edge.
+
+**Range and header.** The range buttons (`15m` to `7d`, default `1h`, remembered by the
+browser) apply to every strip, sparkline, table and the timeline. The page redraws on
+each snapshot the server pushes and never polls; a snapshot identical to the last one
+redraws nothing, and cards kept across pushes update their changed tiles in place. The
+header's dot is green while the stream is open and red while it reconnects, beside
+"updated HH:MM:SS" (or "connection lost, last update HH:MM:SS"), the attention window
+in hours, and the database the server opened. The page loads nothing but its own files:
+no CDN, no internet.
+
+**Endpoint page** (`#/endpoint/<name>`, from the card's name). The header gives the
+backend, the host, the base URL, the state and when it was last seen; for a down
+endpoint the probe's sentence and the job that was running when it dropped; for a down
+or dormant endpoint what the engine last served there. Then stat tiles, each with the
+current figure and a sparkline over the range, grouped by what the backend reports:
+served model, context window and probe latency for every endpoint; speeds (prompt,
+decode, cache hit) when it serves counters; occupancy (slots busy, requests running and
+waiting, KV-cache fill) when it reports it; hardware (GPU use, VRAM, temperature,
+power, PCIe traffic, CPU, RAM, disk) for Strata. A tile whose source reported nothing in
+the range is left out. Below: the state strip, the jobs that ran on the endpoint in the
+range (the Recent jobs table filtered to it), "Restarts and outages" when the range
+holds an up/down transition, and the request table under a totals line.
+
+**Job page** (`#/job/<id>`). Status, model, endpoint and times; a context gauge when the
+job reported a window; the four usage counters and the seven `/metrics` deltas the
+runner recorded (or "metrics not recorded"); the files touched, relative to the job's
+worktree or cwd; a tool-call timeline across the job's duration — one mark per call
+coloured by tool, errors red, the context fill drawn over it — and the breakdown by
+tool; the request table; and the transcript tail with the job's log directory. A
+running job's header refreshes in place. The header's "server" figure is the build
+stamp of the MCP server that ran the job (`<version>+<short git sha>`), with a note
+when the monitor's own stamp differs, so a server left running on older code is
+visible on its jobs.
+
+**Request tables** (on the endpoint and job pages) share one renderer: time, a status
+pill, job, path, prompt (the whole prompt the request carried: input, reused and cache
+creation), new (the tokens actually prefilled), reused, output, prefill tok/s, decode
+tok/s, duration and error. Claude Code's connection warm-up (`/api/hello`) is answered by
+the shim itself and labelled `handshake`, outside the error counts. A backend that
+reports no cache fields (vLLM without `--enable-prompt-tokens-details`) shows "no cache
+fields" and a prefill rate that is an upper bound.
+
+### Seeing it without a fleet
+
+The monitor's route tests and browser smokes run against a **seeded** database, built
+offline and deterministically from the captured fixtures under `tests/fixtures/monitor/`
+with every timestamp shifted to `--now` (the current time by default). To see the page
+with data and no servers:
 
 ```bash
-LOCALAGENTS_DB=/tmp/x localagents seed && LOCALAGENTS_DB=/tmp/x localagents monitor --no-collect
+LOCALAGENTS_DB=/tmp/seed.db localagents seed
+LOCALAGENTS_DB=/tmp/seed.db localagents monitor --no-collect
 ```
 
-The routes and their JSON (`/api/snapshot`, `/api/endpoints/<name>/history?range=1h`,
+The seeded world has three hosts: **ai1** (Strata, live — an hour of probes at 5 s with
+a running job on its one slot), **dgx1-a** (vLLM, down since 20 min ago — a refused
+connection: the box answers, nothing listens) and **llamacpp** (dormant — last up a week
+ago), plus one finished job with its requests and tool calls (ended 10 min ago) and one
+running job (started 5 min ago). The file is a snapshot at `--now`: its states decay
+after the attention window, so re-seed to see them again. A naive ISO `--now`
+(`2026-10-29T12:00:00`) is read in local time.
+
+`localagents seed` is for the tests and this demo, not for your live fleet: point it
+at a throwaway file. It refuses a database that already holds `jobs` or `probes` rows
+unless `--force` is given, and `--force` *replaces* (every row of every table) rather
+than appending. Even with `--force` it refuses a database a running localagents server
+owns (a heartbeat in the last 60 s and a live pid), naming the pid.
+
+### Smoke test
+
+`localagents smoke --endpoint NAME --model SERVED_ID` is the online acceptance run: a
+few short `/v1/messages` requests to the named endpoint, one real agent job through the
+shim and runner with a fixed brief (`--skip-job` leaves it out; `--timeout-s` caps it),
+a probe of a port nothing listens on, and a printed checklist of the rows and states
+that appeared (exit 1 on any missing row). It needs a model actually running on that
+endpoint (it runs a real job there, Bash included), and it writes real rows — into
+`LOCALAGENTS_DB` or `--db` when set, otherwise the shared database; point it at a
+throwaway file to rehearse.
+
+### Routes
+
+The page's JSON — `/api/snapshot`, `/api/endpoints/<name>/history?range=1h`,
 `/api/fleet/history?range=1h`, `/api/overview/history?range=1h`,
-`/api/endpoints/<name>/requests?range=24h`,
-`/api/jobs?range=24h`, `/api/jobs/<id>`, `/events`) are specified in
+`/api/endpoints/<name>/requests?range=24h`, `/api/jobs?range=24h`, `/api/jobs/<id>`
+and the `/events` stream — is specified in
 [`docs/superpowers/specs/2026-10-29-monitor-design.md`](docs/superpowers/specs/2026-10-29-monitor-design.md)
 §5a. Ranges run from `15m` to `7d`.
 
@@ -566,7 +627,10 @@ The routes and their JSON (`/api/snapshot`, `/api/endpoints/<name>/history?range
 
 Start from `models.example.yaml`. It's re-read on every call, so edits take effect
 immediately, and the server never rewrites it — `register_endpoint` writes to a
-sidecar `models.local.yaml` that is merged on top.
+sidecar `models.local.yaml` that is merged on top. Both the MCP server and the monitor
+find it the same way: `--config`, else `LOCALAGENTS_CONFIG`, else `./models.yaml` in the
+current directory (so a project can carry its own), else
+`~/.config/localagents/models.yaml`.
 
 ```yaml
 endpoints:
@@ -583,21 +647,25 @@ endpoints:
   what each one is serving is probed, never written down. Order is priority —
   with no model named, the first endpoint that is up and serving something wins.
   `backend` (`llama.cpp`, `vllm`, `strata`, `other`) selects how the window and occupancy
-  are probed; `host` and `notes` are informational and shown in `list_models`; `env` adds
-  environment variables to sessions that run against that endpoint. `api_key` is sent on
-  every call to that endpoint (as both `x-api-key` and `Authorization: Bearer`, so
-  llama.cpp's and vLLM's `--api-key` and Anthropic-shaped servers all accept it). It stays
-  in the MCP server: the delegated session is given the placeholder `local` and the shim
-  swaps the real key in, so an agent's `env` or Bash never sees it. Without a key the
-  placeholder is what goes out, which open servers ignore.
+  are probed (see [Backends](#backends)); `host` groups endpoints under one card in the
+  monitor and, with `notes`, is shown in `list_models`; `env` adds environment
+  variables to sessions that run against that endpoint. `api_key` is sent on every
+  call to that endpoint (as both `x-api-key` and `Authorization: Bearer`, so
+  llama.cpp's and vLLM's `--api-key` and Anthropic-shaped servers all accept it). It
+  stays in the MCP server: the delegated session is given the placeholder `local` and
+  the shim swaps the real key in, so an agent's `env` or Bash never sees it. Without a
+  key the placeholder is what goes out, which open servers ignore.
 - **Picking a model** is done per call. `run_agent(model=...)` takes a served id,
   a glob, or a fuzzy name (`qwen3.8-27b` finds `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL`);
   `endpoint=` pins a server. Both are only needed when more than one thing is up.
   `defaults.model` is an optional standing preference in the same syntax.
-- **defaults** also cover `permission_mode` (`acceptEdits`), allowed and disallowed
-  tools (subagents can't spawn subagents), which Claude settings to load,
-  `max_turns`, `timeout_s`, and a system-prompt suffix telling the agent it's a
-  delegate and how to report back.
+- **defaults** also cover `permission_mode` (`acceptEdits`), `allowed_tools` and
+  `disallowed_tools` (subagents can't spawn subagents), `setting_sources` (which
+  Claude settings the session loads), `max_turns` (60), `timeout_s` (1800),
+  `probe_timeout_s` (2.5), `job_retention_days` (7), the debugging switches
+  `log_events` and `dump_requests`, and `system_prompt_append`, a suffix telling the
+  agent it's a delegate and how to report back.
+- **monitor** is the monitor's own section; see [Settings](#settings).
 
 A `models:` section from an older config is ignored.
 
@@ -633,8 +701,12 @@ recognise; with a smaller slot it runs into llama.cpp's
 `exceed_context_size_error`, which it doesn't understand, and the job dies. See
 the next section.
 
+**The handshake.** Claude Code opens every session with a request to `/api/hello`,
+which no local backend serves. The shim answers it itself, so the backend never sees
+it and it is not counted as an error.
+
 Everything the shim does is a no-op when it isn't needed, and every request is
-logged with its timing, message count, byte size and reported usage.
+recorded with its timing, message count, byte size and reported usage.
 
 ## Context windows
 
@@ -643,8 +715,9 @@ Two layers keep a session inside the real window:
 1. The probe reads it — llama.cpp `/props` `n_ctx` (per slot: `-c` divided by
    `--parallel` when unified KV is off), vLLM `max_model_len` — and the session
    gets `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. Claude Code's own auto-compact then fires
-   at the right point. Below 128k the output budget is also shrunk to `n_ctx/8`,
-   because the compact threshold is `window − max_output` and would otherwise sit at zero.
+   at the right point. Below 128k the output budget is also shrunk to `n_ctx/8`
+   (floor 8k), because the compact threshold is `window − max_output` and would
+   otherwise sit at zero.
 2. If a request still overflows, the shim rewrites the backend's error into
    Anthropic's `prompt is too long: N tokens > M maximum`, which Claude Code
    answers by compacting and retrying.
@@ -654,37 +727,6 @@ schemas, plus a ~7k-token compaction summary (~55 s on a 27B) and the files it
 re-attaches, refill the window within a few turns and its thrash guard ends the
 job. Give each slot 128k or more.
 
-## Backend notes
-
-- **llama.cpp**: `llama-server -hf <gguf> --jinja -fa on --slots --metrics`, plus
-  `--reasoning on` for thinking models and `--parallel N` for concurrent jobs. With
-  `/slots` on, `list_models` shows `{total, busy, free}` so Claude knows whether a
-  second agent will run now or queue. With `/metrics` on, each job records prompt
-  tokens processed vs. cached, cache hit ratio, prompt and generation tok/s, and
-  speculative-decode acceptance — the counters are server-wide, so overlapping jobs
-  share the delta.
-- **strata**: a llama.cpp-compatible server; mark it `backend: strata`. Its `/props`,
-  `/slots` and `/v1/messages` have llama-server's shapes but `/slots` and `/metrics` are
-  always on and never advertised in `/props`, and `/metrics` is JSON (cumulative `totals`
-  plus a live queue depth) rather than Prometheus text, so the strata backend reads them
-  unconditionally: `list_models` shows `{total, busy, free}` plus `requests_waiting`, and
-  jobs get the same cache/throughput record as on llama.cpp. Marked `llama.cpp` it still
-  works (window from `/props`) but without occupancy or per-job metrics, and the probe
-  says so in a `hint`. strata counts `max_tokens` against the window instead of clamping
-  it, so it refuses a request earlier than llama-server would; the shim translates that
-  refusal, or set `"fit_max_tokens": true` in its `strata-<model>.json` to clamp.
-- **vLLM**: `vllm serve <model> --served-model-name <alias> --enable-auto-tool-choice
-  --tool-call-parser <parser>`. The context window comes from `max_model_len` in
-  `/v1/models`; occupancy (`requests_running`/`waiting`, `kv_cache_usage`) and the per-job
-  cache stats come from its always-on `/metrics`. vLLM reports context overflow on the
-  Anthropic endpoint as HTTP 500 `internal_error`; the shim translates that too. The session
-  is started with `CLAUDE_CODE_ATTRIBUTION_HEADER=0` because the per-request attribution
-  hash defeats prefix caching. Verified with DeepSeek-V4-Flash: thinking blocks replay with
-  their signatures, prefix cache hits on every turn after the first.
-- The first turn of a job costs about 20k tokens of prompt on a cold slot (system
-  prompt plus tool schemas), ~10 s on a 27B. Everything after that is a cache hit
-  plus the delta.
-
 ## Development
 
 ```bash
@@ -692,8 +734,11 @@ uv sync --dev
 uv run pytest -q
 ```
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the layout and how to test changes
-against a real server.
+A checkout that is a git worktree refuses the default state directory, so a test
+server or a probe run from one cannot touch your real database and job directories:
+set `XDG_STATE_HOME` (and `LOCALAGENTS_DB`) to a directory of its own. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the layout and how to test changes against a
+real server.
 
 ## License
 
