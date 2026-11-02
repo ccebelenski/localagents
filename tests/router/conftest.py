@@ -9,6 +9,13 @@ import pytest
 from localagents import db
 
 
+def pytest_configure(config):
+    """router 4: the project has no pytest configuration (no pytest.ini, no [tool.pytest.ini_options]
+    in pyproject.toml), so the ``live`` marker is registered here rather than in an ini."""
+    config.addinivalue_line("markers",
+                            "live: runs against a running d3 server (LOCALAGENTS_D3_URL)")
+
+
 @pytest.fixture(autouse=True)
 def env_redirects(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))

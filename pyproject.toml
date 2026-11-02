@@ -27,6 +27,15 @@ dependencies = [
     "uvicorn>=0.52.4",
 ]
 
+# the router's d3 server (localagents d3 serve): the Decision 3.0 checkpoint's Python stack,
+# pinned to what d3 needs (router design §3). A box without the extra runs the rest of the
+# package unchanged; the d3 server answers the install line instead of a traceback.
+[project.optional-dependencies]
+router = [
+    "torch>=2.15",
+    "transformers==5.17.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/ccebelenski/localagents"
 Issues = "https://github.com/ccebelenski/localagents/issues"

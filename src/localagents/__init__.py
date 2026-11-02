@@ -81,6 +81,22 @@ def main() -> None:
 
         monitor(sys.argv[2:])
         return
+    if sys.argv[1:2] == ["d3"]:
+        # lazy, as the monitor: the d3 server (starlette, uvicorn) loads only for this command,
+        # and torch/transformers only when the model is actually loaded
+        from .router.d3serve import main as d3
+
+        d3(sys.argv[2:])
+        return
+    if sys.argv[1:2] == ["router"]:
+        # router plan phase 1 task 5 builds the router's MCP surface; until it lands, the word
+        # answers one line and exit 2 (a later story replaces this body)
+        print("localagents router: not built yet (router plan phase 1 task 5)", file=sys.stderr)
+        sys.exit(2)
+    if sys.argv[1:2] == ["calibrate"]:
+        # router plan phase 2 task 9 (the calibration runner); the same one line
+        print("localagents calibrate: not built yet (router plan phase 2 task 9)", file=sys.stderr)
+        sys.exit(2)
     from .server import main as serve
 
     serve()
