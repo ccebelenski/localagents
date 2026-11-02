@@ -1,6 +1,7 @@
 # The calibration set: design
 
-Date: 2026-11-02. Status: approved in conversation, awaiting written review. Sub-project of the
+Date: 2026-11-02. Status: approved in conversation and on its written form ("I wouldn't change anything
+at this point until we have ground-truth"); revised by rerun as §12 says. Sub-project of the
 router (docs/superpowers/specs/2026-11-02-router-design.md, §10 fixes the interface this set must
 satisfy). Evidence: docs/spikes/2026-11-01-d3-categorizer.md, docs/spikes/2026-11-02-probe-as-job.md.
 
@@ -19,7 +20,15 @@ learning as we go."
 The set is what `localagents calibrate` runs (router §10): probes with checkers, labels and nominal
 timings, organised in tiers, plus the constants the router's pass and selection use, plus the
 dimension definitions d3 reads. This document fixes HOW the set is built and judged, not a list of
-probes: the list is the output of the procedure in §2, shipped as a versioned manifest (§8). The
+probes: the list is the output of the procedure in §2, shipped as a versioned manifest (§8).
+
+**The purpose is the axes, not the benchmarks.** The operator: "the purpose isn't to show the
+benchmark itself - those are probably published numbers. The purpose is to guide our classifier,
+which is neutral otherwise to the actual benchmark - it cares about the axes it uses." So a probe
+is evidence on an axis at a band in a language; the benchmark it came from is a source line in
+the manifest and nothing else. Nothing in the build, the pass, the scorecard or the docs reports a
+per-benchmark score, a row's cells are never "its SWE-bench number", and selection (§2) is by axis
+coverage and spread, never by how representative the subset is of its benchmark. The
 first version is expected to be revised; every number here is a starting value with its
 measurement named, so a revision is a rerun, not a redesign.
 
