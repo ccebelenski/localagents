@@ -498,6 +498,19 @@ async def run_agent(
             model, endpoint = prev.model, endpoint or prev.endpoint
 
     reg = _reg()
+    # M1: a named router entry answers not_routable before resolve. resolve probes the fleet,
+    # and with the d3 server down that probe buries the true answer (routing is not built yet)
+    # under a misleading "no endpoint serving 'auto'". The post-resolve guard below stays for
+    # the unnamed case: defaults.model naming a router entry is only known after resolve.
+    pinned = reg.endpoints.get(endpoint) if endpoint else None
+    named_router = pinned if pinned is not None and pinned.is_router else (
+        reg.endpoints.get(model) if model and model in reg.endpoints else None)
+    if named_router is not None and named_router.is_router:
+        return {
+            "error": "not_routable",
+            "message": f"endpoint '{named_router.name}' is a router; routing is not built yet, name a model",
+            "guidance": GUIDANCE,
+        }
     try:
         res = await reg.resolve(model=model, endpoint=endpoint)
     except ModelUnavailable as e:

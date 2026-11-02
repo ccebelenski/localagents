@@ -474,7 +474,7 @@ _V10 = [
     "CREATE INDEX queue_entries_dispatch ON queue_entries(endpoint_id, admitted, priority_rank, enqueued)",
     """CREATE TABLE router_tickets (
         -- the routing decision's record; chosen_row NULL until the choice, then the row taken;
-        -- divert/d divert_at record the queued-divert flag and its moment
+        -- divert / divert_at record the queued-divert flag and its moment
         job_id       TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id),
         defs_version INTEGER NOT NULL,
         pass_id      TEXT,
@@ -544,10 +544,77 @@ _V10 = [
 ]
 
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 10.
+# Version 11 (router 1's whole-branch review, M7, router-design spec §13): three references
+# version 10 left undeclared — a ticket's defs_version and pass_id, a scorecard cell's and a
+# correction's defs_version. SQLite has no ALTER TABLE ... ADD CONSTRAINT, so the documented
+# rebuild: create the new shape beside the old, copy every row, drop the old, rename. Rebuilding
+# is safe for exactly these three tables because nothing references them: each name is handed
+# back inside the same migration transaction, so no foreign key elsewhere could catch a swap
+# mid-flight. The new shapes are v10's DDL with the REFERENCES added, column for column
+# (tests/test_db.py pins the column order against the §13 listing).
+_V11 = [
+    """CREATE TABLE router_tickets_new (
+        -- the routing decision's record; chosen_row NULL until the choice, then the row taken;
+        -- divert / divert_at record the queued-divert flag and its moment
+        job_id       TEXT PRIMARY KEY NOT NULL REFERENCES jobs(id),
+        defs_version INTEGER NOT NULL REFERENCES dimension_definitions(version),
+        pass_id      TEXT REFERENCES scorecard_passes(id),
+        scores       TEXT NOT NULL,
+        rows         TEXT NOT NULL,
+        chosen_row   INTEGER REFERENCES scorecard_rows(id),
+        divert       INTEGER NOT NULL,
+        divert_at    REAL,
+        est_wait_s   REAL,
+        admitted     REAL,
+        flags        TEXT
+    )""",
+    "INSERT INTO router_tickets_new (job_id, defs_version, pass_id, scores, rows, chosen_row,"
+    " divert, divert_at, est_wait_s, admitted, flags)"
+    " SELECT job_id, defs_version, pass_id, scores, rows, chosen_row, divert, divert_at,"
+    " est_wait_s, admitted, flags FROM router_tickets",
+    "DROP TABLE router_tickets",
+    "ALTER TABLE router_tickets_new RENAME TO router_tickets",
+    """CREATE TABLE scorecard_cells_new (
+        -- one (dimension, language) cell of a pass; NULL estimate = no answer yet
+        pass_id      TEXT NOT NULL REFERENCES scorecard_passes(id),
+        dimension    TEXT NOT NULL,
+        language     TEXT NOT NULL DEFAULT '',
+        estimate     REAL,
+        count        REAL NOT NULL,
+        probes_n     INTEGER,
+        jobs_n       INTEGER,
+        thin         INTEGER NOT NULL,
+        defs_version INTEGER NOT NULL REFERENCES dimension_definitions(version),
+        PRIMARY KEY (pass_id, dimension, language)
+    )""",
+    "INSERT INTO scorecard_cells_new (pass_id, dimension, language, estimate, count, probes_n,"
+    " jobs_n, thin, defs_version)"
+    " SELECT pass_id, dimension, language, estimate, count, probes_n, jobs_n, thin, defs_version"
+    " FROM scorecard_cells",
+    "DROP TABLE scorecard_cells",
+    "ALTER TABLE scorecard_cells_new RENAME TO scorecard_cells",
+    """CREATE TABLE category_corrections_new (
+        -- an operator's correction of a mis-scored brief: what it said, what it scored, what
+        -- it should have been, at which definitions version
+        id           INTEGER PRIMARY KEY NOT NULL,
+        job_id       TEXT NOT NULL REFERENCES jobs(id),
+        brief        TEXT NOT NULL,
+        scored       TEXT NOT NULL,
+        corrected    TEXT NOT NULL,
+        defs_version INTEGER NOT NULL REFERENCES dimension_definitions(version),
+        at           REAL NOT NULL
+    )""",
+    "INSERT INTO category_corrections_new (id, job_id, brief, scored, corrected, defs_version, at)"
+    " SELECT id, job_id, brief, scored, corrected, defs_version, at FROM category_corrections",
+    "DROP TABLE category_corrections",
+    "ALTER TABLE category_corrections_new RENAME TO category_corrections",
+]
+
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 11.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5), _v6,
-    _statements(_V7), _statements(_V8), _v9, _statements(_V10),
+    _statements(_V7), _statements(_V8), _v9, _statements(_V10), _statements(_V11),
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 

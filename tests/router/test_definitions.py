@@ -44,6 +44,23 @@ def test_load_seeds_version_1_and_save_increments(conn):
     assert definitions.load(conn).version == 2
 
 
+def test_validate_pins_each_dimensions_type():
+    """§5 pins each dimension's kind: language is the one choice question, the other six
+    score. A revision that reshaped one would move every scorecard cell citing it, so the
+    document cannot silently swap a kind — the ValueError names the dimension."""
+    definitions.validate(definitions.DEFAULT_DOCUMENT)  # the shipped draft obeys the pin
+
+    doc = {name: dict(entry) for name, entry in definitions.DEFAULT_DOCUMENT.items()}
+    doc["language"]["type"] = "score"  # language re-shaped to a band
+    with pytest.raises(ValueError, match="language: type is 'choice'"):
+        definitions.validate(doc)
+
+    doc = {name: dict(entry) for name, entry in definitions.DEFAULT_DOCUMENT.items()}
+    doc["complexity"]["type"] = "choice"  # a score question re-shaped to an option
+    with pytest.raises(ValueError, match="complexity: type is 'score'"):
+        definitions.validate(doc)
+
+
 def test_save_rejects_a_document_missing_a_dimension(conn):
     doc = {k: v for k, v in definitions.DEFAULT_DOCUMENT.items() if k != "complexity"}
     with pytest.raises(ValueError, match="complexity"):

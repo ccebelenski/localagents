@@ -114,6 +114,32 @@ def test_long_brief_is_truncated_and_marked():
     assert scores.truncated is False
 
 
+def test_request_wire_shape_is_what_the_server_reads():
+    """The POSTed body is the wire contract (spec §4 step 1): exactly the three fields the
+    server route requires, the question set straight from the document the scores will be
+    recorded against, and a score's criteria as an ordered list of the five level texts —
+    a dict there is refused by the live server (invalid_question, the first live scoring of
+    real briefs), which would make every axis silently undetermined."""
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"answers": {}, "usage": {}})
+
+    defs = _defs(version=9)
+    _score(_client(handler), text="fix the flaky test", defs=defs)
+
+    body = seen["body"]
+    assert set(body) == {"model", "state", "questions"}
+    assert body["model"] == "d3-mini"
+    assert body["state"] == "fix the flaky test"
+    assert body["questions"] == definitions.questions(defs.document)
+    for name, q in body["questions"].items():
+        if q["type"] == "score":
+            assert isinstance(q["criteria"], list) and len(q["criteria"]) == 5, name
+            assert all(isinstance(text, str) and text for text in q["criteria"]), name
+
+
 def test_connect_error_is_model_unavailable_down():
     def handler(request):
         raise httpx.ConnectError("Connection refused", request=request)
@@ -142,10 +168,51 @@ def test_non_200_is_bad_response():
     with pytest.raises(decision.DecisionUnavailable) as excinfo:
         _score(_client(lambda request: httpx.Response(503, text="nope")))
     assert excinfo.value.reason == "bad_response"
+    assert excinfo.value.to_dict()["message"] == f"the d3 server at {URL} answered 503"
     # a 200 whose body carries no answers is the same failure
     with pytest.raises(decision.DecisionUnavailable) as excinfo:
         _score(_client(lambda request: httpx.Response(200, json={"usage": {}})))
     assert excinfo.value.reason == "bad_response"
+
+
+def test_answer_with_error_is_bad_response():
+    """A question the server refused (its answer carries ``error``) is not an answer
+    missing: silently marking that axis undetermined would hide a broken document, so the
+    refusal rides out as bad_response with the server's sentence."""
+    answers = {name: _score_answer(0.8) for name in definitions.DIMENSIONS}
+    answers["tool_use"] = {"error": "invalid_question", "message": "criteria must be five levels"}
+    with pytest.raises(decision.DecisionUnavailable) as excinfo:
+        _score(_served(answers))
+    assert excinfo.value.reason == "bad_response"
+    assert excinfo.value.to_dict()["message"] == (
+        "d3 refused the question tool_use: invalid_question: criteria must be five levels")
+
+    # a refusal with no sentence still names the question and the error, no dangling colon
+    answers = {name: _score_answer(0.8) for name in definitions.DIMENSIONS}
+    answers["language"] = {"error": "bad_request"}
+    with pytest.raises(decision.DecisionUnavailable) as excinfo:
+        _score(_served(answers))
+    assert excinfo.value.to_dict()["message"] == "d3 refused the question language: bad_request"
+
+
+def test_json_error_body_is_reported_in_the_message():
+    """The server answers its own failures in JSON (d3serve's model_error 500); the client
+    carries the error and the server's sentence into the message the operator reads, rather
+    than a bare status code."""
+    def handler(request):
+        return httpx.Response(500, json={"error": "model_error", "type": "RuntimeError",
+                                         "message": "CUDA out of memory"})
+
+    with pytest.raises(decision.DecisionUnavailable) as excinfo:
+        _score(_client(handler))
+    assert excinfo.value.reason == "bad_response"
+    assert excinfo.value.to_dict()["message"] == (
+        f"the d3 server at {URL} answered 500: model_error: CUDA out of memory")
+
+    # an error body without a message sentence still names the error, with no dangling colon
+    with pytest.raises(decision.DecisionUnavailable) as excinfo:
+        _score(_client(lambda request: httpx.Response(413, json={"error": "state too long"})))
+    assert excinfo.value.to_dict()["message"] == f"the d3 server at {URL} answered 413: state too long"
 
 
 def test_resolve_brief_reads_a_pointer(tmp_path):
@@ -163,6 +230,22 @@ def test_resolve_brief_leaves_a_normal_brief_alone(tmp_path):
     assert decision.resolve_brief(long_brief, str(tmp_path)) == long_brief
     plain = "fix the flaky test in tests/test_probe.py"
     assert decision.resolve_brief(plain, str(tmp_path)) == plain
+
+
+def test_resolve_brief_accepts_comma_backticks_quotes_and_tilde(tmp_path, monkeypatch):
+    """How operators write the pointer: the path wrapped in backticks or quotes, trailed by
+    the sentence's own comma, and with ~/ for home. All four reach the same file."""
+    home = tmp_path / "home"
+    (home / "briefs").mkdir(parents=True)
+    (home / "briefs" / "job.md").write_text("do the thing\n")
+    monkeypatch.setenv("HOME", str(home))  # expanduser is environment-read on posix
+    for form in (
+        "cat `briefs/job.md`, and follow it",  # backticks, comma outside them
+        "cat 'briefs/job.md' and follow it",   # single quotes
+        'cat "briefs/job.md" and follow it',   # double quotes
+        "cat ~/briefs/job.md and follow it",   # home, expanded after the strips
+    ):
+        assert decision.resolve_brief(form, str(home)) == "do the thing\n", form
 
 
 def test_resolve_brief_missing_file_is_an_error(tmp_path):

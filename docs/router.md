@@ -16,15 +16,17 @@ as phase 1 built them. Routing a job is a later story.
 endpoints:
   auto:
     backend: router
-    decision_url: http://127.0.0.1:8765
+    decision_url: http://127.0.0.1:8766
 ```
 
 `decision_url`, the server running the d3 decision model, is the only required key, and
 the entry needs no `base_url` because it serves no model itself. The entry's name is
 the model name it answers for. The optional keys are `decision_model` (the probe reports
 what the d3 server's `/health` says, and flags a mismatch with the entry),
-`decision_timeout_s`, `decision_max_tokens` (a longer brief is scored on its front part
-and marked truncated), and the policy knobs `tolerance` and
+`decision_timeout_s`, `decision_max_tokens` (default 12,000 tokens — kept under the
+server's own limit on this class of GPU, measured on the live box — so an over-long brief
+is truncated by the client instead of failing inside the model; a longer brief is scored
+on its front part and marked truncated), and the policy knobs `tolerance` and
 `divert_after_min`, which have shipped defaults. The README's config section says where
 `models.yaml` lives, and `localagents router --config <path>` names another file.
 
@@ -34,7 +36,7 @@ d3 needs the router extra (`pip install 'localagents[router]'`, or `uv sync --ex
 router` in a checkout): torch, transformers and accelerate.
 
 ```bash
-localagents d3 serve   # 127.0.0.1:8765, the pinned vllm-sr/d3-mini
+localagents d3 serve   # 127.0.0.1:8766, the pinned vllm-sr/d3-mini
 ```
 
 Loading the weights takes a while, and `/health` reports it: `{"ok": false,

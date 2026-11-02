@@ -54,7 +54,16 @@ def _wait_until_loaded(client) -> None:
 
 def test_pins_the_revision_and_max_chars():
     assert d3serve.D3_REVISION == "df99bf4ca4418bc6908ee68e9b7479af1f3b8800"
-    assert d3serve.D3_MAX_CHARS == 120_000
+    # 60,000: what the live server answers on this class of GPU; above it the model's own
+    # forward pass fails, so the limit lives here where the client can read it
+    assert d3serve.D3_MAX_CHARS == 60_000
+
+
+def test_default_port_is_8766():
+    """8766: 8765 belongs to the monitor, and a box that starts the monitor and d3 on the
+    same default cannot have one steal the port from the other."""
+    assert d3serve.parse_args(["serve"]).port == 8766
+    assert d3serve.parse_args(["serve", "--port", "9999"]).port == 9999
 
 
 def test_health_before_load_is_503():
@@ -118,7 +127,33 @@ def test_oversize_state_is_413():
                                            "state": "x" * (d3serve.D3_MAX_CHARS + 1),
                                            "questions": {"q": {"type": "noul"}}})
         assert r.status_code == 413
-        assert r.json() == {"error": "state too long", "max_chars": 120000}
+        assert r.json() == {"error": "state too long", "max_chars": 60000}
+
+
+def test_model_exception_is_a_json_500():
+    """An exception inside system_one is this request's JSON 500, not the server's death:
+    the lock released when the call raised, so the very next request answers normally."""
+
+    class ExplodingOnce:
+        def __init__(self):
+            self.calls = 0
+
+        def system_one(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("CUDA out of memory")
+            return {"answers": {"q": {"type": "noul", "noul": 0.9}}, "usage": {}}
+
+    fake = ExplodingOnce()
+    with _client(lambda: fake) as c:
+        _wait_until_loaded(c)
+        body = {"model": MODEL_ID, "state": "a brief", "questions": {"q": {"type": "noul"}}}
+        r = c.post("/v1/systemone", json=body)
+        assert r.status_code == 500
+        assert r.json() == {"error": "model_error", "type": "RuntimeError",
+                            "message": "CUDA out of memory"}
+        r = c.post("/v1/systemone", json=body)
+        assert r.status_code == 200  # still serving: the model call's lock came back
 
 
 def test_cli_without_torch_says_install_the_extra(monkeypatch, capsys):

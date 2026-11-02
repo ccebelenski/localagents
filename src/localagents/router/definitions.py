@@ -113,7 +113,8 @@ DEFAULT_DOCUMENT: dict[str, dict] = {
 
 
 def validate(document) -> None:
-    """The document's shape: all seven dimensions, each an entry with a known type, a non-empty
+    """The document's shape: all seven dimensions, each an entry with the type the spec pins
+    for it (``choice`` for language, ``score`` for the other six — §5), a non-empty
     instruction and a non-empty criteria. A ``score`` entry's criteria are keyed exactly by the
     five bands; a ``choice`` entry's by its options, ``none`` among them. Raises ValueError
     naming the missing or malformed key."""
@@ -129,8 +130,12 @@ def validate(document) -> None:
         entry = document[name]
         if not isinstance(entry, dict):
             raise ValueError(f"{name}: an entry is a mapping, got {type(entry).__name__}")
-        if entry.get("type") not in ("score", "choice"):
-            raise ValueError(f"{name}: type is 'score' or 'choice', got {entry.get('type')!r}")
+        # the spec pins each dimension's kind (§5): language is the one choice question
+        # (its answer is an option), the other six score (their answer is a band). A
+        # revision that reshaped one would move every scorecard cell citing it
+        expected_type = "choice" if name == "language" else "score"
+        if entry.get("type") != expected_type:
+            raise ValueError(f"{name}: type is '{expected_type}', got {entry.get('type')!r}")
         instruction = entry.get("instruction")
         if not isinstance(instruction, str) or not instruction.strip():
             raise ValueError(f"{name}: the instruction is a non-empty string")

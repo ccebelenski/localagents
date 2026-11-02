@@ -16,9 +16,11 @@ from localagents import db
 ROUTER_TABLES = {"dimension_definitions", "scorecard_rows", "scorecard_passes", "scorecard_cells",
                  "endpoint_capacity", "queue_entries", "router_tickets", "verdicts",
                  "category_corrections", "calibration_runs", "speed_samples", "calibration_results"}
-# the references the spec leaves nullable: a ticket predates its choice, a skipped probe never
-# had a job. Every other router reference is a key column and carries NOT NULL (§13 preamble).
-ROUTER_NULLABLE_REFS = {("router_tickets", "chosen_row"), ("calibration_results", "job_id")}
+# the references the spec leaves nullable: a ticket predates its choice and predates the pass
+# it cites (d3 may never have scored it), a skipped probe never had a job. Every other router
+# reference is a key column and carries NOT NULL (§13 preamble).
+ROUTER_NULLABLE_REFS = {("router_tickets", "chosen_row"), ("router_tickets", "pass_id"),
+                        ("calibration_results", "job_id")}
 
 TABLES = {"mcp_servers", "endpoints", "endpoint_load", "models", "paths", "jobs", "requests", "tool_calls",
           # version 8 (story 1.11): the finished job's transcript text, written once at completion
@@ -120,11 +122,12 @@ def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     version-7 step (3.9E audit finding E1: jobs_finished_at), the version-8 step (story 1.11:
     transcripts), the version-9 step (3.10f-1: jobs.name dropped) and the version-10 step
     (router 1, router-design spec §13: the router's tables and jobs' priority, calibration and
-    gates), so it comes up at version 10 with them."""
+    gates) and the version-11 step (router 1 review M7: the ticket's, cell's and correction's
+    references, rebuilt in place), so it comes up at version 11 with them."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
-    assert db.SCHEMA_VERSION == 10 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
+    assert db.SCHEMA_VERSION == 11 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -702,7 +705,7 @@ def test_a_version_8_file_drops_name_and_renames_terminal_job_directories(dbfile
     conn.close()
 
 
-def test_a_version_8_file_with_no_job_directories_still_comes_up_at_10(dbfile):
+def test_a_version_8_file_with_no_job_directories_still_comes_up_at_11(dbfile):
     """The rename step tolerates rows whose directory was already pruned: nothing to move is
     not an error."""
     _v8_file(dbfile, [("11111111-1111-4111-8111-111111111111", "20261030-000000-11111111", "succeeded", "a")])
@@ -729,11 +732,13 @@ def test_the_version_9_rename_is_idempotent(dbfile, tmp_path):
 def test_v10_creates_the_router_tables_with_not_null_keys(dbfile):
     """Router 1 (router-design spec §13): every key column NOT NULL — a TEXT PRIMARY KEY
     admits NULLs (it is no rowid alias) and a NULL foreign key skips the check, so both are
-    written explicitly — and every reference declared. Exactly the two references the spec
-    leaves optional are nullable: a ticket predates its choice, a skipped probe never had a
-    job."""
+    written explicitly — and every reference declared (the review's M7 fold added the ticket's
+    defs_version and pass_id and the cell's and correction's defs_version in version 11, so
+    this test reads the current schema, not version 10's as-written). Exactly the references
+    the spec leaves optional are nullable: a ticket predates its choice and predates the pass
+    it cites, a skipped probe never had a job."""
     conn = db.open_db()
-    assert db.SCHEMA_VERSION == 10 == len(db.MIGRATIONS)
+    assert db.SCHEMA_VERSION == 11 == len(db.MIGRATIONS)
     assert ROUTER_TABLES <= _names(conn, "table")
     nullable_refs, refs = set(), {}
     for table in sorted(ROUTER_TABLES):
@@ -748,13 +753,16 @@ def test_v10_creates_the_router_tables_with_not_null_keys(dbfile):
     assert refs == {
         "calibration_results": {("run_id", "calibration_runs"), ("job_id", "jobs")},
         "calibration_runs": {("row_id", "scorecard_rows")},
-        "category_corrections": {("job_id", "jobs")},
+        "category_corrections": {("job_id", "jobs"), ("defs_version", "dimension_definitions")},
         "dimension_definitions": set(),
         "endpoint_capacity": {("endpoint_id", "endpoints")},
         "queue_entries": {("job_id", "jobs"), ("endpoint_id", "endpoints"),
                           ("owner_server", "mcp_servers")},
-        "router_tickets": {("job_id", "jobs"), ("chosen_row", "scorecard_rows")},
-        "scorecard_cells": {("pass_id", "scorecard_passes")},
+        "router_tickets": {("job_id", "jobs"), ("chosen_row", "scorecard_rows"),
+                           ("pass_id", "scorecard_passes"),
+                           ("defs_version", "dimension_definitions")},
+        "scorecard_cells": {("pass_id", "scorecard_passes"),
+                            ("defs_version", "dimension_definitions")},
         "scorecard_passes": {("row_id", "scorecard_rows")},
         "scorecard_rows": {("endpoint_id", "endpoints"), ("model_id", "models")},
         "speed_samples": {("job_id", "jobs"), ("endpoint_id", "endpoints")},
@@ -795,6 +803,75 @@ def test_v10_jobs_columns_have_defaults(dbfile):
     for i, p in enumerate(("urgent", "normal", "background")):
         conn.execute("INSERT INTO jobs (id, priority) VALUES (?, ?)", (f"p{i}", p))
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 4
+    conn.close()
+
+
+def _v10_file(path: Path) -> None:
+    """A file as a pre-review localagents would have left it: every step through version 10
+    ran, user_version says 10, and one row sits in each table version 11 rebuilds (with its
+    parents), so the rebuild is tested against data, not an empty schema."""
+    raw = sqlite3.connect(path)
+    for step in db.MIGRATIONS[:10]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 10")
+    ep = db.lookup_id(raw, "endpoints", name="ai1", base_url="http://ai1:8080", backend="strata",
+                      host="ai1")
+    m = db.lookup_id(raw, "models", served_id="Qwen3.8-Flash-Next")
+    raw.execute("INSERT INTO jobs (id) VALUES ('j1')")
+    raw.execute("INSERT INTO dimension_definitions (version, document, created) VALUES (1, '{}', 1.0)")
+    raw.execute("INSERT INTO scorecard_rows (endpoint_name, served_id, endpoint_id, model_id, created)"
+                " VALUES ('ai1', 'qwen', ?, ?, 1.0)", (ep, m))
+    row_id = raw.execute("SELECT id FROM scorecard_rows").fetchone()[0]
+    raw.execute("INSERT INTO scorecard_passes (id, row_id, at, constants, observations)"
+                " VALUES ('p1', ?, 1.0, '{}', 0)", (row_id,))
+    raw.execute("INSERT INTO router_tickets (job_id, defs_version, pass_id, scores, rows, chosen_row, divert)"
+                " VALUES ('j1', 1, 'p1', '{}', '[]', ?, 0)", (row_id,))
+    raw.execute("INSERT INTO scorecard_cells (pass_id, dimension, language, estimate, count, thin, defs_version)"
+                " VALUES ('p1', 'complexity', '', 3.0, 1.0, 0, 1)")
+    raw.execute("INSERT INTO category_corrections (id, job_id, brief, scored, corrected, defs_version, at)"
+                " VALUES (1, 'j1', 'the brief', '{}', '{}', 1, 1.0)")
+    raw.commit()
+    raw.close()
+
+
+def test_v11_declares_the_three_references(dbfile):
+    """M7: version 10 wrote the ticket's defs_version and pass_id, the cell's and the
+    correction's defs_version as bare columns, so a version nobody asked about could be cited
+    and no tool could tell which text a scorecard cell judged against. Version 11 rebuilds the
+    three tables with those references, carries every row across, and the rebuilt file enforces
+    them the way §13's preamble wants the DDL to say it."""
+    _v10_file(dbfile)
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+
+    def fks(table):
+        return {(r["from"], r["table"]) for r in conn.execute(f"PRAGMA foreign_key_list({table})")}
+
+    assert ("defs_version", "dimension_definitions") in fks("router_tickets")
+    assert ("pass_id", "scorecard_passes") in fks("router_tickets")
+    assert ("defs_version", "dimension_definitions") in fks("scorecard_cells")
+    assert ("defs_version", "dimension_definitions") in fks("category_corrections")
+
+    # every row crossed the swap intact, values and keys included
+    ticket = conn.execute("SELECT defs_version, pass_id, chosen_row, divert FROM router_tickets"
+                          " WHERE job_id = 'j1'").fetchone()
+    assert (ticket["defs_version"], ticket["pass_id"]) == (1, "p1")
+    assert ticket["chosen_row"] is not None and ticket["divert"] == 0
+    assert conn.execute("SELECT estimate, defs_version FROM scorecard_cells"
+                        " WHERE pass_id = 'p1' AND dimension = 'complexity'").fetchone()[:] == (3.0, 1)
+    assert conn.execute("SELECT defs_version FROM category_corrections WHERE id = 1").fetchone()[0] == 1
+
+    # the references are live now, not decoration: a citation of a version that does not
+    # exist is refused at every one of the three tables
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO category_corrections (id, job_id, brief, scored, corrected,"
+                     " defs_version, at) VALUES (2, 'j1', 'b', '{}', '{}', 99, 1.0)")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO router_tickets (job_id, defs_version, pass_id, scores, rows,"
+                     " chosen_row, divert) VALUES ('j2', 99, 'p1', '{}', '[]', NULL, 0)")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO scorecard_cells (pass_id, dimension, language, estimate, count,"
+                     " thin, defs_version) VALUES ('p1', 'tool_use', '', 1.0, 1.0, 0, 99)")
     conn.close()
 
 

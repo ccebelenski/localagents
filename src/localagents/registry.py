@@ -150,11 +150,18 @@ class Endpoint:
     decision_url: str | None = None  # the only key a router entry must carry
     decision_model: str = "vllm-sr/d3-mini"  # reported by the server; a mismatch is flagged on the probe
     decision_timeout_s: float = 20.0  # slower than this is model_unavailable
-    decision_max_tokens: int = 24_000  # longer briefs are scored truncated
+    decision_max_tokens: int = 12_000  # longer briefs are scored truncated (the measured server limit; docs/router.md)
     tolerance: float = 0.5  # shortfall distance for "acceptable" (the calibration spec's spread)
     divert_after_min: float = 10.0  # normal priority waits this long before diverting
     max_concurrent: int | None = None  # cap below what the capacity model would admit
-    exclude: list[str] = field(default_factory=list)  # real endpoints this router must not pick
+    # a real endpoint's conditions under which the router must not pick it (spec §5, §12):
+    # strings of the form "dimension >= n" ("complexity >= 3"), read off the brief's scores —
+    # an endpoint carrying one is skipped as a candidate whenever its condition holds
+    exclude: list[str] = field(default_factory=list)
+    # the problem validate() found on this entry, or None. I2: the server re-reads the config
+    # on every call, so one bad entry is marked (load prints it) rather than raising into every
+    # running job; a marked entry probes down, is never a resolution candidate, and is not real.
+    invalid: str | None = None
 
     @property
     def is_router(self) -> bool:
@@ -219,6 +226,10 @@ class Registry:
         # A leftover ``models:`` section from older configs is ignored: served models are discovered.
         reg = cls(path=path, endpoints=endpoints, defaults=defaults, raw=raw, local=local)
         reg.validate()
+        for ep in endpoints.values():
+            if ep.invalid:
+                print(f"localagents: endpoint '{ep.name}': {ep.invalid}, ignored until fixed",
+                      file=sys.stderr)
         return reg
 
     @staticmethod
@@ -226,8 +237,8 @@ class Registry:
         """Build from the dataclass's known fields only: a key from a newer package's config
         is skipped with a line on stderr, never a TypeError in a running server that re-reads
         the file mid-session (§12's upgrade order). ``base_url`` defaults to ``""`` here so a
-        missing one reaches ``validate()``'s ``ValueError`` instead of the constructor's
-        ``TypeError``; the field itself stays required for direct construction."""
+        missing one reaches ``validate()`` (which marks it invalid) instead of the
+        constructor's ``TypeError``; the field itself stays required for direct construction."""
         known = {f.name for f in fields(Endpoint)}
         kwargs: dict = {}
         for k, v in cfg.items():
@@ -240,14 +251,20 @@ class Registry:
 
     def validate(self) -> None:
         """Every entry constructible but not every entry usable: the router needs its
-        decision server, the real ones their address. Called by ``load``; the server re-reads
-        the config on every call, so a bad edit fails the call that reads it, not the process."""
+        decision server, the real ones their address. Called by ``load``, which prints the
+        marked entries.
+
+        I2: this never raises. The server re-reads the config on every call, so a raise here
+        turned one bad entry into a 500 on every job. A problem marks the entry (``invalid``
+        holds the sentence) and the entry probes down, is never a resolution candidate, and
+        is left out of ``real_endpoints`` until the file is fixed."""
         for ep in self.endpoints.values():
             if ep.is_router:
-                if not ep.decision_url:
-                    raise ValueError(f"endpoint '{ep.name}': backend router needs decision_url")
+                ep.invalid = None if ep.decision_url else "backend router needs decision_url"
             elif not ep.base_url:
-                raise ValueError(f"endpoint '{ep.name}': needs base_url")
+                ep.invalid = "needs base_url"
+            else:
+                ep.invalid = None
 
     def save(self) -> None:
         """Persist ``self.local`` to the sidecar; ``models.yaml`` itself is left untouched."""
@@ -267,7 +284,11 @@ class Registry:
 
         A router entry's probe is its decision server's ``/health``: it serves only its own
         name; the fleet's windows belong to ``list_models``' ``context_range``.
+
+        An entry ``validate`` marked answers with its problem, without touching the network.
         """
+        if ep.invalid:
+            return {"up": False, "models": [], "error": ep.invalid}
         if ep.is_router:
             return await self._probe_router(ep)
         t0 = time.monotonic()
@@ -419,8 +440,10 @@ class Registry:
         return dict(zip(names, results))
 
     def real_endpoints(self) -> list[Endpoint]:
-        """The entries that serve ``/v1/messages`` themselves, in config order."""
-        return [e for e in self.endpoints.values() if not e.is_router]
+        """The entries that serve ``/v1/messages`` themselves, in config order.
+
+        An entry validate marked invalid is not among them: it serves nothing until fixed."""
+        return [e for e in self.endpoints.values() if not e.is_router and not e.invalid]
 
     # ---------- resolution ----------
     @staticmethod
@@ -466,6 +489,9 @@ class Registry:
         default), and its name never answers to a glob or substring. ``real_only`` drops
         router entries from the candidates entirely (``local_complete`` has no routing
         layer — it posts straight to ``/v1/messages``).
+
+        An entry validate marked invalid is never a candidate, and naming it with
+        ``endpoint=`` answers with its problem rather than resolving to a broken entry.
         """
         if endpoint and endpoint not in self.endpoints:
             raise ModelUnavailable(
@@ -476,6 +502,11 @@ class Registry:
         model = model or self.defaults.model
         if endpoint:
             pinned = self.endpoints[endpoint]
+            if pinned.invalid:
+                raise ModelUnavailable(
+                    f"Endpoint '{endpoint}' is not usable: {pinned.invalid}. Fix models.yaml.",
+                    model=model,
+                )
             if pinned.is_router and real_only:
                 raise ModelUnavailable(
                     f"Endpoint '{endpoint}' is a router entry: it picks an endpoint for a job, "
@@ -484,11 +515,20 @@ class Registry:
                 )
             candidates = [pinned]
         elif model:
-            candidates = [e for e in self.endpoints.values() if not e.is_router or e.name == model]
+            candidates = [e for e in self.endpoints.values()
+                          if not e.invalid and (not e.is_router or e.name == model)]
         else:
-            candidates = [e for e in self.endpoints.values() if not e.is_router]
+            candidates = [e for e in self.endpoints.values() if not e.invalid and not e.is_router]
         if real_only:
             candidates = [e for e in candidates if not e.is_router]
+            # a config of nothing but routers: the caller (local_complete) needs something
+            # that serves /v1/messages, and the generic "no endpoint is up" hint would send
+            # the operator to check servers that do not exist here (M1)
+            if not candidates and self.endpoints and all(e.is_router for e in self.endpoints.values()):
+                raise ModelUnavailable(
+                    "only router entries are configured; name a real endpoint or add one",
+                    model=model,
+                )
         router_names = {e.name for e in self.endpoints.values() if e.is_router}
         probes = await asyncio.gather(*(self.probe(e) for e in candidates))
         for ep, pr in zip(candidates, probes):

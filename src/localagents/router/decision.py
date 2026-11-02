@@ -5,6 +5,7 @@ the truncation mark. No routing lives here: selection (§6) reads a BriefScores 
 and an undetermined axis is neutral there, so an answer below its bar is absent from ``values``
 rather than guessed at."""
 
+import os
 import pathlib
 import re
 from dataclasses import dataclass
@@ -60,18 +61,37 @@ class BriefUnresolved(Exception):
         return {"error": "brief_unresolved", "message": str(self), "path": self.path}
 
 
+def _clean_pointer_path(raw: str) -> str:
+    """The path out of a pointer line, as people actually type it: wrapped in backticks or
+    quotes, trailed by the punctuation of the sentence it was written in ("cat `briefs/
+    job.md`, and follow it"), and ``~/`` for home. The quote strip and the punctuation strip
+    feed each other (a comma sits outside the closing backtick), so they run together until
+    the text stops shrinking; home is expanded last, on what is left."""
+    path = raw
+    while True:
+        trimmed = path.rstrip(",.;:")
+        if len(trimmed) >= 2 and trimmed[0] == trimmed[-1] and trimmed[0] in "`\"'":
+            trimmed = trimmed[1:-1]
+        if trimmed == path:
+            break
+        path = trimmed
+    return os.path.expanduser(path)
+
+
 def resolve_brief(task: str, cwd: str) -> str:
     """A pointer brief ("cat `<path>` and follow it", the pointer on its first non-empty line,
     at most three non-empty lines total) is replaced by the file's text — the spike: pointer
     text as stored drops d3 from 85% to 65%. The record keeps the pointer itself as ``task``.
-    Relative paths read against ``cwd``; a missing or unreadable file is BriefUnresolved.
+    The path survives being wrapped in backticks or quotes, trailed by sentence punctuation,
+    and being written with ``~/`` (``_clean_pointer_path``). Relative paths read against
+    ``cwd``; a missing or unreadable file is BriefUnresolved.
     Any other brief is returned unchanged (a long brief that happens to open with "cat " is
     prose, not a pointer)."""
     lines = [line for line in task.splitlines() if line.strip()]
     if lines and len(lines) <= 3:
         match = _POINTER.match(lines[0])
         if match:
-            path = pathlib.Path(match.group(1))
+            path = pathlib.Path(_clean_pointer_path(match.group(1)))
             if not path.is_absolute():
                 path = pathlib.Path(cwd) / path
             try:
@@ -103,15 +123,25 @@ def _top_band(probabilities) -> int | None:
     return max(bands)[1]
 
 
-def _read_answer(answer):
+def _read_answer(name, answer):
     """One d3 answer as ``(value, confidence, type)``, or None when the answer carries no
     usable shape (absent, not a dict, an unknown type, a missing field). The answer's own
     ``type`` field is what parses it — the recorded shapes are self-describing, and a type
     the document never asked for is still parseable — and it is the threshold's key too.
     A noul answer carries no confidence field: its distance from the coin flip,
-    ``abs(noul - 0.5) * 2``, is."""
+    ``abs(noul - 0.5) * 2``, is.
+
+    An answer that carries ``error`` is the server refusing this question (a shape it would
+    not answer), not an answer missing: that is bad_response with the server's sentence,
+    raised, because an unparseable answer is silently undetermined and a refusal is the
+    document's failure — §14: never a silently-guessed ticket."""
     if not isinstance(answer, dict):
         return None
+    if "error" in answer:
+        message = f"d3 refused the question {name}: {answer['error']}"
+        if answer.get("message"):
+            message += f": {answer['message']}"
+        raise DecisionUnavailable("bad_response", message)
     atype = answer.get("type")
     if atype == "score":
         band = _top_band(answer.get("probabilities"))
@@ -169,7 +199,20 @@ async def score(
     except httpx.HTTPError as e:
         raise DecisionUnavailable("bad_response", f"the d3 request failed: {type(e).__name__}: {e}") from e
     if response.status_code != 200:
-        raise DecisionUnavailable("bad_response", f"the d3 server at {url} answered {response.status_code}")
+        # the d3 server answers its own failures in JSON (model_error with the exception's
+        # name and text, state too long with the limit): carry what it said into the message
+        # — the operator reads this dict, and "answered 500" alone says nothing — rather
+        # than leaving them to guess at a bare status code
+        message = f"the d3 server at {url} answered {response.status_code}"
+        try:
+            err = response.json()
+        except ValueError:
+            err = None
+        if isinstance(err, dict) and "error" in err:
+            message += f": {err['error']}"
+            if err.get("message"):
+                message += f": {err['message']}"
+        raise DecisionUnavailable("bad_response", message)
     try:
         body = response.json()
     except ValueError as e:
@@ -182,7 +225,7 @@ async def score(
     confidences: dict[str, float] = {}
     undetermined: set[str] = set()
     for name in questions(defs.document):
-        read = _read_answer(answers.get(name))
+        read = _read_answer(name, answers.get(name))
         if read is None:
             undetermined.add(name)
             continue

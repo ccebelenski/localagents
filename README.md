@@ -220,7 +220,7 @@ dispatch story lands a job aimed at one of these entries is refused with
 endpoints:
   auto:
     backend: router
-    decision_url: http://127.0.0.1:8765
+    decision_url: http://127.0.0.1:8766
 ```
 
 ## Monitor

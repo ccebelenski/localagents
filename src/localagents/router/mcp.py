@@ -58,10 +58,12 @@ def _client() -> httpx.AsyncClient:
 
 
 def _router_entry() -> Endpoint | None:
-    """The config's first ``backend: router`` entry, or None. Any failure of ``Registry.load``
-    rides out here (a config file is operator input); callers answer config_error."""
+    """The config's first usable ``backend: router`` entry, or None. Any failure of
+    ``Registry.load`` rides out here (a config file is operator input); callers answer
+    config_error. An entry validate marked invalid is skipped: returning it would hand the
+    caller a None decision_url (I2: marked entries stay out of the way until fixed)."""
     for ep in Registry.load().endpoints.values():
-        if ep.is_router:
+        if ep.is_router and not ep.invalid:
             return ep
     return None
 

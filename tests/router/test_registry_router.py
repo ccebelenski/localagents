@@ -12,7 +12,8 @@ import httpx
 import pytest
 
 from localagents import server
-from localagents.registry import Defaults, Endpoint, Registry, backend_kind, parse_metrics
+from localagents.registry import (Defaults, Endpoint, ModelUnavailable, Registry, backend_kind,
+                                  parse_metrics)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "router" / "vllm_metrics_pooled.txt"
 
@@ -50,6 +51,13 @@ def test_backend_kind_router():
     assert backend_kind("router") == "router"
 
 
+def test_decision_max_tokens_default_is_under_the_server_limit():
+    """12,000 tokens (the client's four-chars-each reading: 48,000 chars) sits under the
+    server's own 60,000-char limit — measured on the live box — so an over-long brief
+    truncates at the client instead of failing inside the model."""
+    assert _router().decision_max_tokens == 12_000
+
+
 def test_load_ignores_unknown_keys_with_a_warning(tmp_path, capsys):
     """§12's upgrade order: a key this package does not know is skipped with a line on
     stderr, never a TypeError inside a running server that re-reads the file."""
@@ -67,16 +75,65 @@ def test_load_ignores_unknown_keys_with_a_warning(tmp_path, capsys):
     assert "localagents: endpoint 'llamacpp': ignoring unknown key 'foo'" in err
 
 
-def test_router_entry_requires_decision_url(tmp_path):
+def test_invalid_router_entry_is_marked_and_other_entries_still_work(tmp_path, capsys, monkeypatch):
+    """I2: the server re-reads models.yaml on every call, so a typo in one entry must not
+    raise into every running job. The bad entry is marked and printed once per load; the good
+    ones load, resolve and serve as before."""
     cfg = tmp_path / "models.yaml"
-    cfg.write_text("endpoints:\n  auto:\n    backend: router\n")
-    with pytest.raises(ValueError, match="decision_url"):
-        Registry.load(cfg)
-    # the validate() counterpart for a real entry: load builds it (base_url ""), validate names it
-    cfg2 = tmp_path / "models2.yaml"
-    cfg2.write_text("endpoints:\n  nope:\n    backend: vllm\n")
-    with pytest.raises(ValueError, match="needs base_url"):
-        Registry.load(cfg2)
+    cfg.write_text(
+        "endpoints:\n"
+        "  auto:\n"
+        "    backend: router\n"
+        "    decision_url: \n"
+        "  real:\n"
+        "    base_url: http://127.0.0.1:8080\n"
+        "    backend: vllm\n"
+    )
+    reg = Registry.load(cfg)  # the old code raised ValueError right here
+    err = capsys.readouterr().err
+    assert "localagents: endpoint 'auto': backend router needs decision_url, ignored until fixed" in err
+    auto = reg.endpoints["auto"]
+    assert auto.invalid == "backend router needs decision_url"
+    # the marked entry's probe is its problem, with no network call to make it up
+    out = asyncio.run(reg.probe(auto))
+    assert out == {"up": False, "models": [], "error": "backend router needs decision_url"}
+    # naming the broken entry with endpoint= names its problem instead of resolving to it
+    with pytest.raises(ModelUnavailable, match="backend router needs decision_url"):
+        asyncio.run(reg.resolve(endpoint="auto"))
+    # the good entry loads, resolves and serves
+    assert reg.endpoints["real"].invalid is None
+    monkeypatch.setattr(Registry, "probe", _fake_probe())
+    res = asyncio.run(reg.resolve(model="m-real"))
+    assert res.endpoint.name == "real"
+
+
+def test_real_entry_without_base_url_is_marked_invalid(tmp_path, capsys):
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text("endpoints:\n  nope:\n    backend: vllm\n")  # base_url is what it forgot
+    reg = Registry.load(cfg)  # used to raise ValueError here
+    assert "localagents: endpoint 'nope': needs base_url, ignored until fixed" in capsys.readouterr().err
+    assert reg.endpoints["nope"].invalid == "needs base_url"
+    assert reg.real_endpoints() == []  # an entry serving nothing is not real
+    out = asyncio.run(reg.probe(reg.endpoints["nope"]))
+    assert out == {"up": False, "models": [], "error": "needs base_url"}
+
+
+def test_shim_lookup_survives_an_invalid_router_entry(tmp_path, monkeypatch):
+    """The shim looks up an endpoint per request against a freshly loaded registry: one
+    broken router entry must not turn every lookup into a raised ValueError (a 500)."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(
+        "endpoints:\n"
+        "  auto:\n"
+        "    backend: router\n"  # no decision_url: marked, not fatal
+        "  real:\n"
+        "    base_url: http://127.0.0.1:8080\n"
+        "    backend: vllm\n"
+    )
+    reg = Registry.load(cfg)  # the per-request load answers, it does not raise
+    monkeypatch.setattr(Registry, "probe", _fake_probe())
+    res = asyncio.run(reg.resolve())  # what the shim does with no model named
+    assert res.endpoint.name == "real" and res.served_model == "m-real"
 
 
 def test_router_probe_reports_health_as_served_id(monkeypatch):
@@ -205,3 +262,32 @@ def test_run_agent_on_a_router_entry_is_refused_before_a_job_exists(monkeypatch)
     out = asyncio.run(server.run_agent(task="x", model="auto"))
     assert out["error"] == "not_routable"
     assert server.store.jobs == {}
+
+
+def test_run_agent_on_a_router_entry_is_refused_even_when_d3_is_down(monkeypatch):
+    """M1: the refusal was posed after resolve, so with the d3 server down the probe said
+    the router entry was dead and the operator got "no endpoint serving 'auto'" instead of
+    the true answer. The guard reads the config, not the network."""
+    real = Endpoint(name="real", base_url="http://127.0.0.1:8080", backend="vllm")
+    reg = Registry(path=None, endpoints={"auto": _router(), "real": real},
+                   defaults=Defaults(), raw={}, local={})
+
+    async def down(self, ep):  # nothing is up: neither d3 nor the real box
+        return {"up": False, "models": [], "error": "test: down"}
+
+    monkeypatch.setattr(Registry, "probe", down)
+    monkeypatch.setattr(server, "_reg", lambda: reg)
+    for kwargs in ({"model": "auto"}, {"endpoint": "auto"}):  # named either way
+        out = asyncio.run(server.run_agent(task="x", **kwargs))
+        assert out["error"] == "not_routable"
+        assert "'auto'" in out["message"]
+    assert server.store.jobs == {}
+
+
+def test_real_only_with_only_router_entries_names_the_cause():
+    """local_complete needs an endpoint that serves /v1/messages; on a config of nothing
+    but routers, "No endpoint is up. Ask the user to start a model server" would send the
+    operator to servers this config never named. Name the actual cause."""
+    reg = Registry(path=None, endpoints={"auto": _router()}, defaults=Defaults(), raw={}, local={})
+    with pytest.raises(ModelUnavailable, match="only router entries are configured"):
+        asyncio.run(reg.resolve(real_only=True))

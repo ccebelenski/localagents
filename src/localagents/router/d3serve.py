@@ -28,9 +28,11 @@ import starlette.routing
 # revision is pinned — the model's answers are what the calibration set measures, and a
 # drifting checkpoint would move them out from under the scorecard
 D3_REVISION = "df99bf4ca4418bc6908ee68e9b7479af1f3b8800"
-# d3 takes the brief as text: a state longer than this is refused with 413 (the client scores
-# longer briefs truncated — the router entry's decision_max_tokens, §12)
-D3_MAX_CHARS = 120_000
+# d3 takes the brief as text: a state longer than this is refused with 413. 60,000 is what a
+# live server on this class of GPU answers up to — above it the model's own forward pass fails,
+# so the limit moves here where the client can read it (the client scores longer briefs
+# truncated — the router entry's decision_max_tokens, §12)
+D3_MAX_CHARS = 60_000
 
 # one request at a time: the model is not concurrent, so every system_one call takes this
 # lock. It is module-level: one process serves one model, as the CLI starts it
@@ -122,9 +124,18 @@ def app(model_loader: Callable[[], Any], model_id: str, device: str) -> starlett
             return starlette.responses.JSONResponse({"error": "state too long", "max_chars": D3_MAX_CHARS},
                                                     status_code=413)
         # the handler is async because request.json() is; the model call goes to the
-        # threadpool explicitly, so the event loop never blocks on it
-        result = await starlette.concurrency.run_in_threadpool(_call_model, model, state,
-                                                               body["questions"])
+        # threadpool explicitly, so the event loop never blocks on it. An exception inside
+        # system_one (a CUDA fault, an answer the serializer chokes on) is this request's
+        # JSON 500, not the server's death: _call_model's lock released when the call raised,
+        # and the client reports what the server said (decision.py turns the body into the
+        # message) instead of guessing at an empty 500
+        try:
+            result = await starlette.concurrency.run_in_threadpool(_call_model, model, state,
+                                                                   body["questions"])
+        except Exception as e:  # noqa: BLE001 — one bad answer must not take the server down
+            return starlette.responses.JSONResponse(
+                {"error": "model_error", "type": type(e).__name__, "message": str(e)[:500]},
+                status_code=500)
         return starlette.responses.JSONResponse(result)
 
     server = starlette.applications.Starlette(
@@ -158,7 +169,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                     help="the checkpoint revision to pin (a git sha; default the one shipped)")
     ap.add_argument("--device", default="cuda:0", help="the device to load on (default cuda:0)")
     ap.add_argument("--host", default="127.0.0.1", help="address to bind (default 127.0.0.1)")
-    ap.add_argument("--port", type=_port, default=8765, help="port to serve on (default 8765)")
+    ap.add_argument("--port", type=_port, default=8766, help="port to serve on (default 8766)")
     return ap.parse_args(argv)
 
 
