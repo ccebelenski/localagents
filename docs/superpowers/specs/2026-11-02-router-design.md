@@ -73,8 +73,12 @@ tables, own MCP surface.
 `run_agent(task, model="auto", priority="normal", admit="queue", ...)` where `auto` is the router
 entry's name and served id (the operator names it; it is matched EXACTLY, never by glob or
 substring, so a real served id containing the same letters cannot capture it). New arguments,
-both optional on every call: `priority` ∈ urgent | normal | background; `admit` ∈ queue | force
-(§7).
+both optional on every call: `priority` ∈ urgent | normal | background; `admit` ∈ queue | now |
+force (§7). `now` is the coordinator's "run it or tell me": if the chosen row cannot admit at
+once, the call returns `would_queue` with the position, the expected wait and the acceptable
+alternatives instead of enqueueing, so the coordinator can wait, divert, split the brief or name
+a model. The operator's rule for this surface: the coordinating model must be able to make the
+right submission decision, so everything the router knows at enqueue is available before it.
 
 1. **Resolve the brief.** A pointer brief ("cat `<path>` and follow it") is read and the file's
    text is what gets scored; the record keeps the pointer as `task`. The spike: pointer text as
@@ -90,7 +94,8 @@ both optional on every call: `priority` ∈ urgent | normal | background; `admit
    `router_tickets` row.
 6. **Admit.** At admission the chosen endpoint is probed again: if it is down, or no longer serves
    that id, or its window changed, the job fails with `row_down` (named jobs: `model_unavailable`
-   as today) and Claude re-dispatches. There is no automatic re-route: it would rewrite the
+   as today), the record carries the ticket, and Claude resubmits: the brief is rescored against
+   what is up now. There is no automatic re-route: it would rewrite the
    record's endpoint, model, base URL and resolution under a job that has a ticket for another
    row, and a model restart reads as "down" for a minute. From admission on, the job is exactly
    what a directly named job is. **Only the initial brief is routed.** The headless Claude Code
@@ -169,10 +174,11 @@ know it, the caller passes it.
 2. **Shortfall.** For each surviving row:
    `shortfall = (Σ over determined matched axes of gap(axis) × weight(demand)) / (number of
    determined axes) + penalty(completeness) + penalty(adherence)`, where `gap = max(0, demand −
-   cell)` for a cell with a count, `gap = demand / 2` for a cell with no evidence (unknown is a
-   gamble, half the demand, never zero and never full), `weight(demand) = demand / 4`, and
-   `penalty(cell) = (4 − cell) / 8` (at most 0.5 each; an unknown completeness or adherence cell
-   counts 2). Dividing by the determined axes gives the tolerance one scale: 1.0 is about one
+   cell)` for a cell with a count and `gap = demand` for a cell with no evidence (the operator:
+   a row with nothing shown on an axis "can appear suitable in a competition with an actual
+   suitable model", so unknown counts as zero and loses to any row with evidence; calibration,
+   not traffic, is how it earns a number), `weight(demand) = demand / 4`, and `penalty(cell) =
+   (4 − cell) / 8` (at most 0.5 each; an unknown completeness or adherence cell counts as 0). Dividing by the determined axes gives the tolerance one scale: 1.0 is about one
    band short on one axis whatever the brief determines. A row that over-delivers gains nothing,
    which is what keeps the biggest model from winning every job.
    **An undetermined axis is neutral.** A dimension whose d3 answer is below the confidence
@@ -268,11 +274,20 @@ is marked `lost` by the process that notices, so a closed session at the head of
 nothing. A stalled server with a live pid is treated the same after the window; the `queue` tool
 (§11) can drop an entry by hand.
 
+**Stalled sessions.** Lack of forward progress is the signal the operator named for a stalled,
+looping or dead endpoint. A running admitted session whose `last_activity` is older than
+`STALL_S` (a constant; the job's own timeout still governs the job) makes the next wake probe its
+endpoint and raise a notice on the job and the endpoint: `stalled: no progress for 14 min,
+endpoint up` or `… endpoint down`. The router never cancels it: the session still holds its slot
+on the server, and cancelling is the coordinator's call (`cancel_job`). While it stands, it counts
+as occupancy, so the queue behind it reads an honest wait.
+
 **Directly named jobs** pass the same gate. The behaviour change from today: a job whose
 endpoint has no free session waits in our queue with a visible reason where it used to interleave
 inside the server with none, and a third session on a two-slot box waits for a job to finish
-instead of thrashing two others' caches. `admit: force` skips the wait but still writes an
-admitted entry, so it is counted; the record says it forced. **Queue time counts inside the
+instead of thrashing two others' caches. `admit: now` refuses instead of waiting (`would_queue`,
+§4); `admit: force` skips the wait but still writes an admitted entry, so it is counted; the
+record says it forced. **Queue time counts inside the
 blocking wait**: `run_agent(wait_s)` covers queue plus run, the progress line says `queued #n,
 ~m min`, and a wait that ends while the job is still queued returns the non-final record with
 its position, as it does today for a running job.
@@ -500,6 +515,9 @@ this build.
 - Probe set source unreachable: those probes are `skipped` with the reason, the rest run, and the
   run is complete only if two thirds have results (§10).
 - A queued job cancelled: the entry is removed, nothing was sent.
+- `admit: now` and the row cannot admit: `would_queue` with position, wait and alternatives; no job.
+- A running session with no progress past `STALL_S`: the endpoint is probed, a notice is raised on
+  the job and the endpoint, nothing is cancelled (§7).
 - A process at the previous package version reading a config with the router entry: see §12.
 
 ## 15. Testing
