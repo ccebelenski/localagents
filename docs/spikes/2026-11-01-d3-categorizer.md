@@ -68,3 +68,8 @@ on a GPU the picture would differ. A one-second GPU call is fine for a job-level
 - The router takes the brief text itself; a pointer brief is resolved before the decision.
 - Serving: the package's own `d3_server.py` (stdlib HTTP, `/v1/systemone`, bearer key) is
   enough; no Docker, no semantic-router.
+
+True now (2026-11-02): the recommendation above was written for the operator's hardware. The
+router design (docs/superpowers/specs/2026-11-02-router-design.md) targets a fleet with a d3 model
+always available, so d3 is the categorizer, full stop; the prompted one-shot is not a fallback
+in the design. The CPU result stands: no CPU path.
