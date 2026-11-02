@@ -19,6 +19,7 @@
   each(hostsEl.children, function (card) {
     var cardW = card.getBoundingClientRect().width;
     each(card.querySelectorAll(".ep-head, .ep-job-figs, .ep-act, .ep-line"), function (line) {
+      if (line.classList.contains("ep-act")) return; // 3.10g(1): marked, scrolls, never measured
       var box = line;
       var parentStyle = getComputedStyle(line.parentNode);
       if (/flex/.test(parentStyle.display) && line.parentNode !== card) box = line.parentNode;

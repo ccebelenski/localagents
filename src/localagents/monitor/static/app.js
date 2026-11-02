@@ -1876,7 +1876,8 @@
   // card to not truncate (and use that as min size so it can't shrink below that high water
   // mark). We get fewer cards horizontally, but more complete information."
   // After every render the page measures every card's one-line rows at their whole width — the
-  // endpoint head, the job row's figures and activity lines, every other one-line text on the
+  // endpoint head, the job row's figures line (the activity line scrolls but is not measured —
+  // 3.10g(1), below), every other one-line text on the
   // card (the .ep-line class: the speeds note, the last-seen span, a down card's error and its
   // dropped-job line, the host note, a dormant line) and the field grid (its column count times
   // the widest tile text, plus the gaps) — each plus the card's own chrome around
@@ -1914,6 +1915,12 @@
       var rows = [];
       each(card.querySelectorAll(".ep-head, .ep-job-figs, .ep-act, .ep-line"), function (line) {
         marked.push(line);
+        // 3.10g(1) (the operator, 2026-11-01: one running job's tool command made "very wide
+        // cards for no obvious reason"): the activity line is the one unbounded text on a card.
+        // It is marked (it scrolls barless, full text in its title) but never measured, so the
+        // floor follows the head, the figures line and the tile grid — bounded, structural —
+        // and a long tool command widens nothing but its own scroll box.
+        if (line.classList.contains("ep-act")) return;
         var box = line;
         if (line.parentNode !== card && /flex/.test(getComputedStyle(line.parentNode).display)) box = line.parentNode;
         if (rows.indexOf(box) >= 0) return; // the row is measured once (.ep-head is a line itself)

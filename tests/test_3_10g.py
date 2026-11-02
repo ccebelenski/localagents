@@ -85,3 +85,32 @@ def test_the_narrow_query_still_draws_one_full_width_column():
         if not NARROW.match(prelude):
             outside += [body for sel, body in rules if sel == ".host"]
     assert all("max-width: none" not in body for body in outside), outside
+
+
+def _js_function(js, name):
+    """The source of a function declared at the IIFE's top level (two-space indent), as
+    test_monitor_page.py reads it."""
+    m = re.search(r"\n  function " + re.escape(name) + r"\(.*?\n  \}\n", js, re.S)
+    assert m is not None, name
+    return m.group(0)
+
+
+def test_the_activity_line_scrolls_but_never_bears_the_floor():
+    """3.10g(1), built 2026-11-01 (the operator, the live page at ~1540 px: "very wide cards for
+    no obvious reason"; the floor oracle named the running job's ``.ep-act`` line, 820 px, the
+    next line 639): the job's activity text is the one unbounded line on a card. It stays in
+    raiseCardFloor's line selector — so the U1 pin holds (the CSS scrolls it, the floor marks
+    it ``overflows``) and it scrolls barless with its full text in the title — but it is skipped
+    before the need is measured, so a long tool command never widens every card on the page.
+    tools/smoke/floor.js, the floor's independent oracle, skips it the same way."""
+    js = (STATIC / "app.js").read_text()
+    body = _js_function(js, "raiseCardFloor")
+    # still selected (marked for the overflows class) ...
+    assert re.search(r'querySelectorAll\("\.ep-head, \.ep-job-figs, \.ep-act, \.ep-line"\)', body)
+    # ... and skipped for the measurement, right after it is marked, before any measuring
+    # (comment lines between the mark and the skip are allowed; code is not)
+    skip = re.search(r'marked\.push\(line\);(?:\s*\n\s*//[^\n]*)*\s*\n\s*'
+                     r'if \(line\.classList\.contains\("ep-act"\)\) return;', body)
+    assert skip is not None, "raiseCardFloor measures the activity line"
+    oracle = Path("tools/smoke/floor.js").read_text()
+    assert 'if (line.classList.contains("ep-act")) return;' in oracle
