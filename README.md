@@ -71,8 +71,8 @@ compact constantly; see [Context windows](#context-windows).
    ```
 
 2. **Tell it where your servers are.** Copy the example and edit it (the file is
-   gitignored). It says where each server is and what kind it is, never which model is
-   loaded — see [Backends](#backends) for starting each kind and
+   gitignored). It lists servers and their kind; which model is loaded on each is
+   discovered at call time — see [Backends](#backends) for starting each kind and
    [Config](#config-modelsyaml) for the file:
 
    ```bash
@@ -426,9 +426,8 @@ full schema is
 Because the record is the database rather than a server's memory, it outlives the server
 that ran the job: any server's `job_status`, `job_log` and `list_jobs(all=True)` can
 read it after the original process is gone, and the waits can wait on it too; only
-`cancel_job` and `run_agent(resume_job=…)` cannot — see `foreign_job` above. Rows are
-history: retention removes job directories and the monitor's old probes, never job
-rows.
+`cancel_job` and `run_agent(resume_job=…)` cannot — see `foreign_job` above. Retention
+removes job directories and the monitor's old probes; job rows stay for good.
 
 It lives on one machine — SQLite's WAL files do not work on a network filesystem, so
 never point `LOCALAGENTS_DB` at one. Back it up with SQLite, not `cp`:
