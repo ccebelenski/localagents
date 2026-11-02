@@ -5,12 +5,11 @@
 localagents is an MCP server that gives Claude Code a `run_agent` tool. Each call
 starts a full headless Claude Code session — same tools, same `CLAUDE.md`, same
 working tree — except its API traffic goes to a llama.cpp or vLLM server you run
-instead of to Anthropic. Claude writes the brief and reviews the result; the local
-model does the work in between, and you spend Anthropic tokens on the parts that
-actually need Claude.
+instead of to Anthropic. Claude writes the brief and checks the result. The local
+model does the work, and the Anthropic tokens go where Claude is actually needed.
 
 A 27B Qwen on one GPU can handle "add a CLI for this module and tests to match" on
-its own; there is no reason to pay Opus to watch pytest run. Two local agents can
+its own, while Opus does the design instead of watching pytest. Two local agents can
 build the two halves of a package in parallel against an agreed interface.
 
 It comes with a web **monitor** for the servers and the jobs running on them.
@@ -36,11 +35,10 @@ localagents ── spawns ──▶ headless `claude` (Agent SDK)
 Pointing `ANTHROPIC_BASE_URL` at a local server almost works by itself. localagents
 adds three things on top:
 
-1. The config lists servers, not models. `models.yaml` says where your servers are;
-   what each one is serving right now, its real context window and how many slots
-   are busy are read from the server on every call. You start and stop models
-   yourself (the server launches nothing), Claude uses whatever is up, and if nothing
-   suitable is running it asks you to start something.
+1. The config is a list of servers. Which model each one is serving, its real context
+   window and how many slots are busy are read from the server on every call. You
+   start and stop models yourself; the server launches nothing. Claude uses whatever
+   is up, and if nothing suitable is running it asks you to start something.
 
 2. A shim sits between Claude Code and the backend. Claude Code sends things local
    servers choke on (system messages mid-conversation, text blocks next to tool
@@ -51,7 +49,7 @@ adds three things on top:
 
 3. Every job is recorded in one SQLite database: its requests, tool calls, usage and
    transcript. Claude can read a job after the server that ran it has exited, the
-   status line can show what is running, and the monitor has something to draw.
+   status line shows what is running, and the monitor reads from the same file.
 
 ## Quick start
 
@@ -244,9 +242,8 @@ arrives as a task notification. Claude reads `files_touched` (or the worktree di
 and checks the work. The server sends a progress notification every minute while it
 waits — e.g. `running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: uv run pytest -q`
 — so Claude Code's idle timeout does not fire, and the tool timeout itself defaults
-to about 28 hours. A swarm is one blocking `run_agent` per job, and every
-job delivers its own notification when it finishes, with nothing for Claude to
-re-arm.
+to about 28 hours. To run several jobs, Claude makes one blocking call per job; each
+one notifies on its own when it finishes.
 
 `wait_jobs` is the fallback for calls that cannot background: start each job with
 `wait_s: 0` and wait on all the ids in one call. Be careful with it: a `mode: "any"` wait
@@ -264,7 +261,7 @@ Start whatever you like, however you normally do, say "it's up", and Claude retr
 Which model that is, is your call; the config does not name one. It also means anything
 you leave running may get used. Claude is told to name the model it's about to use and
 to check with you if the id looks unfamiliar, and `list_models` flags windows under
-128k, but in the end what you start is what gets used.
+128k.
 
 ### Tools
 
@@ -282,16 +279,16 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 
 Auto-backgrounding needs Claude Code 2.1.212 or later and is off inside subagents and
 in non-interactive runs unless `CLAUDE_AUTO_BACKGROUND_TASKS=1`. Without it a
-`run_agent` job is an MCP tool call plus a job id Claude has to remember to poll:
-Claude Code doesn't know it's an agent, nothing tells Claude when it finishes, and a
-job can be forgotten if Claude ends its turn before it's done.
+`run_agent` job is an MCP tool call plus a job id Claude has to remember to poll.
+Claude Code doesn't treat it as an agent, so nothing announces when it finishes, and
+a job can be forgotten if Claude ends its turn first.
 
 [`agents/local-agent.md`](agents/local-agent.md) covers those cases by making each job
 a real background subagent. It's only a relay. It runs on Haiku, can use only the job
-tools (`run_agent`, `wait_job`, `job_status`, `job_log`, `cancel_job`), passes the
-brief through verbatim, waits, and returns the final job record unchanged. Picking the
-model stays with the main session, which still has all of the server's tools,
-`list_models` included. Claude passes its choice to the relay in a short header:
+tools (`run_agent`, `wait_job`, `job_status`, `job_log`, `cancel_job`). It passes the
+brief through unchanged, waits, and hands back the job record. Picking the model stays
+with the main session, which has `list_models` and the rest of the server's tools.
+Claude passes its choice to the relay in a short header:
 
 ```
 model: unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL
@@ -302,8 +299,8 @@ Add a --json flag to the CLI and cover it in the tests. ...
 
 `model:` is required and should be the exact served id from `list_models`. Which
 model runs matters, and the main session is the one with the live context windows
-and slot occupancy, the conversation, and your instructions. The relay doesn't have
-any of that, so it won't fill in a model, fall back to a default, or swap one. With
+and slot occupancy, the conversation, and your instructions. The relay has none of
+that, so it never picks a model for you. With
 no `model:` it refuses to start, and if the model isn't up it returns the
 `model_unavailable` error so Claude asks you as usual. Other header keys: `endpoint`,
 `cwd`, `max_turns`, `timeout_s`, `permission_mode`, `resume_job`. A resume header is
@@ -343,15 +340,14 @@ local gpu-server · 1 run kv 31%
 Per running job: elapsed time, tool calls, files touched, how full the local model's
 context window is (`ctx`, from the token usage recorded on every backend request, so it
 tells you how close the agent is to compaction), its recent generation speed, the
-compaction count (a trailing indicator of a context-tuning problem — the harness says so
-with a `compact_boundary` message) and its last tool call — shown as one line (a multi-line
-command is folded to one row) with paths relative to the job's worktree, so the row names
-the file instead of the path that leads to it. The load of each endpoint your
+compaction count (compactions mean the window is too small for the job; the harness
+reports each one with a `compact_boundary` message) and its last tool call, folded to
+one line with paths relative to the job's worktree. The load of each endpoint your
 jobs run on rides its header line, probed every ten seconds while jobs run: slots busy
 for llama.cpp, requests running and queued and KV cache fill for vLLM. Finished jobs
 stay on the line for two minutes with a check mark (or a cross, clock, null sign or
-dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost), keeping their
-compaction count for those two minutes.
+dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost), compaction
+count included.
 
 "Live" means the heartbeat: a server is shown while its last beat is under a minute
 old (and its pid still exists). A server that exited or was killed drops off the line
@@ -428,7 +424,8 @@ read it after the original process is gone, and the waits can wait on it too; on
 removes job directories and the monitor's old probes; job rows stay for good.
 
 It lives on one machine — SQLite's WAL files do not work on a network filesystem, so
-never point `LOCALAGENTS_DB` at one. Back it up with SQLite, not `cp`:
+don't point `LOCALAGENTS_DB` at one. Back it up with SQLite's own command; a plain `cp`
+of a WAL database can miss the last writes:
 
 ```bash
 sqlite3 ~/.local/state/localagents/localagents.db ".backup /path/to/backup.db"
