@@ -529,6 +529,10 @@ async def start_job(
         except Exception as e:  # noqa: BLE001
             job._log_safe(f"[db-error] shim_port: {type(e).__name__}: {e}")
     _ensure_sampler()
+    # router 9d: the levers the caller set, for the shim to write into the relayed body
+    levers = {k: v for k, v in (("thinking", thinking), ("effort", effort)) if v is not None}
+    if levers:
+        job.levers = levers
     job._task = asyncio.create_task(
         run_job(
             job, reg, res,

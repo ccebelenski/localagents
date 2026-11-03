@@ -130,6 +130,9 @@ class Job:
     endpoint_id: int | None = None
     model_id: int | None = None
     # runtime-only
+    # router 9d: the caller's thinking/effort levers, read by the shim on every /v1/messages
+    # request; not a column (the requests row notes what was applied) and not in summary()
+    levers: dict[str, Any] | None = None
     _task: asyncio.Task | None = field(default=None, repr=False)
     _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)  # the store's db connection
@@ -144,7 +147,8 @@ class Job:
     # columns join them for the parity contract test_summary_and_summary_from_row_agree pins:
     # derive.summary_from_row is a fixed dict that does not read them yet, so summary() must
     # not grow keys it cannot match until a later story adds them to both sides.
-    _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id", "priority", "calibration", "gates")
+    _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id", "priority", "calibration",
+                       "gates", "levers")
 
     def changed(self) -> None:
         """This job's visible state moved: write the new state to its row. The status line reads

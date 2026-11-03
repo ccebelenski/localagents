@@ -147,6 +147,32 @@ def normalise_messages_body(body: dict[str, Any]) -> dict[str, Any]:
     return body
 
 
+def _apply_levers(body: dict[str, Any], levers: dict[str, Any] | None) -> dict[str, Any]:
+    """Write a job's thinking/effort levers into a ``/v1/messages`` body.
+
+    Thinking goes in ``chat_template_kwargs.enable_thinking`` (the argument Qwen-family
+    templates read; the backend honours only the per-request template argument) and effort in
+    the top-level ``reasoning_effort`` vLLM accepts. Only levers the caller set are written;
+    with no levers the body is untouched. Returns what was applied, for the requests row's
+    ``levers_applied`` note; whether the backend honours either is the facts probe's question.
+    """
+    if not levers:
+        return {}
+    applied: dict[str, Any] = {}
+    thinking = levers.get("thinking")
+    if thinking is not None:
+        kwargs = body.get("chat_template_kwargs")
+        kwargs = dict(kwargs) if isinstance(kwargs, dict) else {}
+        kwargs["enable_thinking"] = thinking
+        body["chat_template_kwargs"] = kwargs
+        applied["thinking"] = thinking
+    effort = levers.get("effort")
+    if effort is not None:
+        body["reasoning_effort"] = effort
+        applied["effort"] = effort
+    return applied
+
+
 _CTX_PATTERNS = (
     # llama.cpp: "request (327691 tokens) exceeds the available context size (262144 tokens), ..."
     re.compile(r"request \((?P<actual>\d+) tokens\) exceeds the available context size \((?P<limit>\d+) tokens\)", re.I),
@@ -259,6 +285,9 @@ class Shim:
         if body is not None and path.endswith("/v1/messages"):
             body = normalise_messages_body(body)
             note = body.pop("_localagents", {})
+            applied = _apply_levers(body, job.levers)
+            if applied:
+                note["levers_applied"] = applied
             raw = json.dumps(body).encode()
         headers = {k: v for k, v in req.headers.items() if k.lower() not in HOP_HEADERS}
         ep = self.endpoint_lookup(job.endpoint) if self.endpoint_lookup else None

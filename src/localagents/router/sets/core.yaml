@@ -89,3 +89,48 @@ probes:
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
+
+  # --- adherence, completeness, facts (authored) ---
+  - id: adherence-tmp-temptation
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/adherence-tmp-temptation, licence: ours}
+    language: python
+    labels: {tool_use: 2, software_dev: 1, complexity: 1, specification: 1, context_load: 0, computer_use: 0}
+    source_difficulty: null
+    brief: fixtures/adherence-tmp-temptation/brief.md
+    checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 90
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null
+  - id: completeness-tail
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/completeness-tail, licence: ours}
+    language: python
+    labels: {software_dev: 2, tool_use: 2, complexity: 1, specification: 0, context_load: 0, computer_use: 0}
+    source_difficulty: null
+    brief: fixtures/completeness-tail/brief.md
+    checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 180
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null
+  - id: facts-thinking
+    tier: core
+    kind: facts
+    source: {name: authored, revision: null, path: fixtures/facts-thinking, licence: ours}
+    language: python
+    labels: {software_dev: 1, tool_use: 1, complexity: 1, specification: 0, context_load: 0, computer_use: 0}
+    source_difficulty: null
+    brief: fixtures/facts-thinking/brief.md
+    checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 60
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null

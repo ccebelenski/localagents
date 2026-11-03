@@ -1,0 +1,8 @@
+{
+  "regions": {
+    "north": 60,
+    "south": 40
+  },
+  "rows": 5,
+  "units": 100
+}
