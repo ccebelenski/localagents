@@ -2,6 +2,9 @@
 # Authored probes ship under fixtures/; their checkers are proven on stub and reference in
 # tests/router/test_probes_judgement.py (spec §11).
 version: "2026.11"
+# the reference row's single-session generation speed (tokens/s), the speed factor's seed
+# until the first run measures the row; null = seed 1.0 (router plan Task 9a)
+reference_tps: null
 
 probes:
   # --- judgement and review (authored) ---

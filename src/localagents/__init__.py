@@ -96,9 +96,12 @@ def main() -> None:
         router(sys.argv[2:])
         return
     if sys.argv[1:2] == ["calibrate"]:
-        # router plan phase 2 task 9 (the calibration runner); the same one line
-        print("localagents calibrate: not built yet (router plan phase 2 task 9)", file=sys.stderr)
-        sys.exit(2)
+        # router plan phase 2 task 9: the calibration runner, lazily imported like `router` —
+        # its registry, database and server imports load only for this command
+        from .router.calibrate import main as calibrate
+
+        calibrate(sys.argv[2:])
+        return
     from .server import main as serve
 
     serve()

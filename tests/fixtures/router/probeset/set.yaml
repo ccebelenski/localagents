@@ -1,0 +1,43 @@
+version: "2026.11"
+reference_tps: 42.0
+probes:
+  - id: alpha
+    tier: core
+    source: {name: probe-fixture, revision: "1", path: alpha, licence: test-only}
+    language: python
+    labels: {software_dev: 2, tool_use: 1, computer_use: 0, complexity: 1, judgement: 0}
+    source_difficulty: null
+    brief: fixtures/alpha/brief.md
+    checker: "test -f answer.txt && grep -qx 42 answer.txt"
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 60
+    spread: {failed_on: []}
+    needs: []
+    variant: null
+  - id: beta
+    tier: core
+    source: {name: probe-fixture, revision: "1", path: beta, licence: test-only}
+    language: none
+    labels: {software_dev: 1, tool_use: 2, computer_use: 0, complexity: 2, judgement: 1}
+    source_difficulty: null
+    brief: fixtures/beta/brief.md
+    checker: "test -f beta.txt"
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 30
+    spread: {failed_on: []}
+    needs: []
+    variant: null
+  - id: facts
+    tier: core
+    kind: facts
+    source: {name: probe-fixture, revision: "1", path: facts, licence: test-only}
+    language: none
+    labels: {software_dev: 0, tool_use: 0, computer_use: 0, complexity: 0, judgement: 0}
+    source_difficulty: null
+    brief: fixtures/facts/brief.md
+    checker: "test -f facts-answer.txt"
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 30
+    spread: {failed_on: []}
+    needs: []
+    variant: null

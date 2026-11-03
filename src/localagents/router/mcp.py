@@ -22,6 +22,7 @@ from mcp.server.mcpserver import MCPServer
 from localagents import db
 from localagents.registry import Endpoint, Registry
 from localagents.router import definitions as defsmod
+from localagents.router import scorecard as scorecard_mod
 from localagents.router.decision import (
     BriefUnresolved,
     DecisionUnavailable,
@@ -31,9 +32,10 @@ from localagents.router.decision import (
 
 INSTRUCTIONS = (
     "Command and control for the localagents router: read and edit the dimension definitions "
-    "(every edit through a dry run over briefs), and preflight a brief to see the scores d3 "
-    "gives it right now. Nothing on this surface dispatches work; jobs run through the "
-    "localagents server."
+    "(every edit through a dry run over briefs), preflight a brief to see the scores d3 gives "
+    "it right now, start and resume a calibration run (calibrate), and read the scorecard "
+    "(scorecard). Nothing on this surface dispatches work; jobs run through the localagents "
+    "server."
 )
 
 # §4's priorities; routing itself (which of these admits where) is a later story
@@ -246,13 +248,126 @@ async def preflight(
     }
 
 
+@mcp.tool()
+async def calibrate(
+    endpoint: str,
+    tier: str = "core",
+    reset: bool = False,
+    estimate_only: bool = False,
+) -> dict[str, Any]:
+    """Run a tier of the calibration set against an endpoint, the same runner as the CLI.
+
+    The estimate is printed first; then every probe is a background, calibration-marked job
+    and the report lines are collected into the reply. A run that completes ends with a
+    scorecard pass, so the row has cells at once. `estimate_only` stops after the estimate and
+    writes no run. A router entry or an unknown endpoint answers its refusal dict.
+    """
+    from localagents import server
+    from localagents.router import calibrate as calibrate_mod
+
+    lines: list[str] = []
+    try:
+        reg = Registry.load()
+    except Exception as e:  # a config file is operator input; every failure answers
+        return {"error": "config_error", "message": f"{type(e).__name__}: {e}"}
+    ep = reg.endpoints.get(endpoint)
+    if ep is None:
+        return {"error": "unknown_endpoint", "message": f"unknown endpoint {endpoint!r}"}
+    if ep.is_router:
+        return {"error": "not_calibratable",
+                "message": f"endpoint {endpoint!r} is a router; a router entry is not calibratable"}
+    try:
+        await server.shim.start()
+        server.store.describe_server(config=str(getattr(reg, "path", None) or "") or None,
+                                     transport="calibrate")
+        server._ensure_sampler()
+        result = await calibrate_mod.run(reg, server.store, _db(), endpoint, tier=tier,
+                                         reset=reset, estimate_only=estimate_only,
+                                         report=lines.append)
+    except Exception as e:  # the tool answers a dict, never a stack trace
+        return {"error": "calibrate_failed", "message": f"{type(e).__name__}: {e}"}
+    if result in ("unknown_endpoint", "not_calibratable", "model_unavailable", "endpoint_busy"):
+        return {"error": result, "lines": lines}
+    if result == "estimate":
+        return {"run_id": None, "status": "estimate", "lines": lines}
+    row = _db().execute("SELECT status FROM calibration_runs WHERE id = ?", (result,)).fetchone()
+    return {"run_id": result, "status": row["status"] if row is not None else "unknown",
+            "lines": lines}
+
+
+def _cell_dict(cell) -> dict[str, Any]:
+    return {"dimension": cell.dimension, "language": cell.language,
+            "estimate": cell.estimate, "count": cell.count,
+            "probes_n": cell.probes_n, "jobs_n": cell.jobs_n, "thin": cell.thin,
+            "pass_id": cell.pass_id, "defs_version": cell.defs_version}
+
+
+def _history(conn, row_id: int) -> list[dict[str, Any]]:
+    out = []
+    for p in conn.execute("SELECT id, at FROM scorecard_passes WHERE row_id = ?"
+                          " ORDER BY at, rowid", (row_id,)).fetchall():
+        out.append({"pass_id": p["id"], "at": p["at"],
+                    "cells": [_cell_dict(c) for c in scorecard_mod.cells(conn, row_id, p["id"])]})
+    return out
+
+
+@mcp.tool()
+async def scorecard(
+    endpoint: str | None = None,
+    history: bool = False,
+    recompute: bool = False,
+) -> dict[str, Any]:
+    """The scorecard's live rows: identity, set version, speed factor, core completeness, the
+    two notices, the row's facts and every cell of its latest pass.
+
+    `endpoint` narrows the rows to that name; `history` adds every pass's cells, so a swap
+    reads as a before and after; `recompute` runs a pass over the installed set's labels
+    first, which is what the operator uses to replay the log after a constants change.
+    """
+    from localagents.router import calibrate as calibrate_mod
+
+    try:
+        installed_set = calibrate_mod.load_set()
+    except Exception as e:  # a malformed manifest is operator input; answer, never raise
+        return {"error": "probe_set_error", "message": f"{type(e).__name__}: {e}"}
+    try:
+        conn = _db()
+        installed = installed_set.version
+        labels = installed_set.labels() if recompute else None
+        live = scorecard_mod.rows(conn)
+        if endpoint is not None:
+            live = [row for row in live if row.endpoint_name == endpoint]
+        if recompute:
+            for row in live:
+                scorecard_mod.run_pass(conn, row.id, probes=labels)
+        out = []
+        for row in live:
+            item = {
+                "endpoint_name": row.endpoint_name,
+                "served_id": row.served_id,
+                "archived": bool(row.archived),
+                "set_version": row.set_version,
+                "speed_factor": row.speed_factor,
+                "core_complete": scorecard_mod.core_complete(conn, row.id),
+                "notices": scorecard_mod.notices(conn, row.id, installed),
+                "facts": row.facts,
+                "cells": [_cell_dict(c) for c in scorecard_mod.cells(conn, row.id)],
+            }
+            if history:
+                item["history"] = _history(conn, row.id)
+            out.append(item)
+        return {"rows": out}
+    except (sqlite3.Error, db.SchemaError) as e:
+        return _database_error(e)
+
+
 def main(argv: list[str] | None = None) -> None:
     import argparse
 
     ap = argparse.ArgumentParser(
         prog="localagents router",
-        description="the router's command-and-control MCP server (definitions, preflight); "
-                    "nothing here dispatches work",
+        description="the router's command-and-control MCP server (definitions, preflight, "
+                    "calibrate, scorecard); nothing here dispatches work",
     )
     ap.add_argument("--config", help="path to models.yaml (or set LOCALAGENTS_CONFIG)")
     ap.add_argument("--transport", default="stdio", choices=["stdio"],
