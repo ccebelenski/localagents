@@ -118,6 +118,36 @@ def test_real_entry_without_base_url_is_marked_invalid(tmp_path, capsys):
     assert out == {"up": False, "models": [], "error": "needs base_url"}
 
 
+@pytest.mark.parametrize("value, usable", [
+    ('"2"', False),  # quoted: str < int raises in capacity.from_probe's min()
+    ("0", False),    # an endpoint that admits nothing
+    ("true", False),  # a bool is not a whole number here, not a cap of 1 either
+    ("2", True),     # a real cap
+    (None, True),    # absent: the capacity model alone decides
+])
+def test_max_concurrent_must_be_a_positive_int(tmp_path, capsys, value, usable):
+    """M7: ``max_concurrent`` is never coerced — it feeds ``min(sessions, cap)`` in the
+    throughput probe as written. An entry whose cap is present and not an int >= 1 is marked
+    with its problem (I2's pattern: printed once per load, probes down), never a TypeError
+    into the calibration run and never a silent zero-cap endpoint."""
+    cfg = tmp_path / "models.yaml"
+    line = f"    max_concurrent: {value}\n" if value is not None else ""
+    cfg.write_text(
+        "endpoints:\n  real:\n    base_url: http://127.0.0.1:8080\n    backend: vllm\n" + line
+    )
+    reg = Registry.load(cfg)  # marked, never raised
+    ep = reg.endpoints["real"]
+    if usable:
+        assert ep.invalid is None
+        assert ep.max_concurrent == (2 if value == "2" else None)
+    else:
+        assert ep.invalid == "max_concurrent must be a whole number of 1 or more"
+        assert ("localagents: endpoint 'real': max_concurrent must be a whole number of 1 "
+                "or more, ignored until fixed") in capsys.readouterr().err
+        out = asyncio.run(reg.probe(ep))  # the probe answers with the problem, no network
+        assert out == {"up": False, "models": [], "error": ep.invalid}
+
+
 def test_shim_lookup_survives_an_invalid_router_entry(tmp_path, monkeypatch):
     """The shim looks up an endpoint per request against a freshly loaded registry: one
     broken router entry must not turn every lookup into a raised ValueError (a 500)."""

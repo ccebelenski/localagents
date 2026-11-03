@@ -265,6 +265,14 @@ class Registry:
                 ep.invalid = "needs base_url"
             else:
                 ep.invalid = None
+            mc = ep.max_concurrent
+            if ep.invalid is None and mc is not None and (
+                isinstance(mc, bool) or not isinstance(mc, int) or mc < 1
+            ):
+                # M7: the value feeds capacity.from_probe's min() directly — a quoted "2" is a
+                # TypeError mid-throughput-probe and a 0 is an endpoint that admits nothing.
+                # A bool is not an int here: ``max_concurrent: true`` is a typo, not a cap of 1.
+                ep.invalid = "max_concurrent must be a whole number of 1 or more"
 
     def save(self) -> None:
         """Persist ``self.local`` to the sidecar; ``models.yaml`` itself is left untouched."""

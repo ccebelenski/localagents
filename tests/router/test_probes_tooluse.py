@@ -161,6 +161,15 @@ def test_log_to_config_value_is_derivable_from_the_log_only(tmp_path):
     assert str(check.CORRECT_PORT) not in (fixture / "brief.md").read_text()
 
 
+def test_log_to_config_wrong_port_is_not_a_default_port():
+    """M8: the shipped config's wrong port must be one nothing serves by default. 8080 is
+    llama-server's default, and the brief says the gateway runs on this machine — on a box
+    serving a model there, a model that checks finds the port listening and is misled into
+    'fixing' the config to a live but wrong port. The wrong value is a dead one instead."""
+    config = json.loads((FIXTURES / "tool-log-to-config" / "project" / "config.json").read_text())
+    assert config["gateway_port"] not in (8080, 8000)
+
+
 def test_inventory_constants_match_the_shipped_tree():
     """§5: the checker compares against the fixture's own constants — they must equal what the
     tree actually holds, or the reference would grade wrong."""

@@ -1,6 +1,6 @@
 {
   "collector_id": "col-7",
   "gateway_host": "127.0.0.1",
-  "gateway_port": 8080,
+  "gateway_port": 8471,
   "batch_size": 200
 }
