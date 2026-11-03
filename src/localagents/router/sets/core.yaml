@@ -3,8 +3,10 @@
 # tests/router/test_probes_judgement.py (spec §11).
 version: "2026.11"
 # the reference row's single-session generation speed (tokens/s), the speed factor's seed
-# until the first run measures the row; null = seed 1.0 (router plan Task 9a)
-reference_tps: null
+# until the first run measures the row (router plan Task 9a). Measured 2026-11-03 on the
+# reference row (a dense 27B on llama.cpp, two slots, warm): 113.2; the nominal_s below are
+# that row's measured seconds from its first complete core run.
+reference_tps: 113.2
 
 probes:
   # --- judgement and review (authored) ---
@@ -17,8 +19,8 @@ probes:
     brief: fixtures/judgement-planted-bug/brief.md
     checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 180
-    nominal_source: estimated
+    nominal_s: 54
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -31,8 +33,8 @@ probes:
     brief: fixtures/judgement-false-premise/brief.md
     checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 200
-    nominal_source: estimated
+    nominal_s: 38
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -45,8 +47,8 @@ probes:
     brief: fixtures/judgement-missing-dependency/brief.md
     checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 120
-    nominal_source: estimated
+    nominal_s: 30
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -59,8 +61,8 @@ probes:
     brief: fixtures/judgement-open-decision/brief.md
     checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 240
-    nominal_source: estimated
+    nominal_s: 73
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -73,8 +75,8 @@ probes:
     brief: fixtures/review-planted-defect/brief.md
     checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 180
-    nominal_source: estimated
+    nominal_s: 26
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -87,8 +89,8 @@ probes:
     brief: fixtures/review-clean/brief.md
     checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 150
-    nominal_source: estimated
+    nominal_s: 77
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -103,8 +105,8 @@ probes:
     brief: fixtures/adherence-tmp-temptation/brief.md
     checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 90
-    nominal_source: estimated
+    nominal_s: 21
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -117,8 +119,8 @@ probes:
     brief: fixtures/completeness-tail/brief.md
     checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 180
-    nominal_source: estimated
+    nominal_s: 49
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -132,8 +134,8 @@ probes:
     brief: fixtures/facts-thinking/brief.md
     checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 60
-    nominal_source: estimated
+    nominal_s: 59
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -149,8 +151,8 @@ probes:
     brief: fixtures/tool-failing-build/brief.md
     checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 240
-    nominal_source: estimated
+    nominal_s: 36
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3]
     variant: null
@@ -164,8 +166,8 @@ probes:
     brief: fixtures/tool-bisect/brief.md
     checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 270
-    nominal_source: estimated
+    nominal_s: 22
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
@@ -179,8 +181,8 @@ probes:
     brief: fixtures/tool-log-to-config/brief.md
     checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 180
-    nominal_source: estimated
+    nominal_s: 36
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3]
     variant: null
@@ -194,8 +196,8 @@ probes:
     brief: fixtures/tool-inventory/brief.md
     checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 150
-    nominal_source: estimated
+    nominal_s: 22
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3]
     variant: null
@@ -209,8 +211,8 @@ probes:
     brief: fixtures/tool-mcp-stats/brief.md
     checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
     checker_proof: {stub: fail, reference: pass}
-    nominal_s: 90
-    nominal_source: estimated
+    nominal_s: 18
+    nominal_source: measured
     spread: {failed_on: []}
     needs: [python3, git, stubmcp]
     variant: null

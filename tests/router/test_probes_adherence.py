@@ -109,7 +109,7 @@ def test_core_manifest_lists_the_three_probes():
         assert entry["source_difficulty"] is None
         assert entry["brief"] == f"fixtures/{probe_id}/brief.md"
         assert entry["checker_proof"] == {"stub": "fail", "reference": "pass"}
-        assert entry["nominal_source"] == "estimated"
+        assert entry["nominal_source"] in ("estimated", "measured")
         assert entry["spread"] == {"failed_on": []}
         assert "python3" in entry["needs"]
         assert entry["variant"] is None

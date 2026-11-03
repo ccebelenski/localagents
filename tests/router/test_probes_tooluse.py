@@ -261,7 +261,7 @@ def test_core_yaml_lists_the_five_authored_probes():
         assert p["checker"] == 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
         assert p["checker_proof"] == {"stub": "fail", "reference": "pass"}
         assert isinstance(p["nominal_s"], int) and p["nominal_s"] > 0
-        assert p["nominal_source"] == "estimated"
+        assert p["nominal_source"] in ("estimated", "measured")
         assert p["spread"] == {"failed_on": []}
         assert p["variant"] is None
         # every file the entry points at exists
