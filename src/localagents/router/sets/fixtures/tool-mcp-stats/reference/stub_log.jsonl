@@ -1,0 +1,2 @@
+{"t": 1.0, "tool": "list_models", "args": {}}
+{"t": 2.0, "tool": "job_status", "args": {"job_id": "f00dcafe-0000-4000-8000-000000000001"}}

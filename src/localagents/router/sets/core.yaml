@@ -134,3 +134,80 @@ probes:
     spread: {failed_on: []}
     needs: [python3, git]
     variant: null
+
+  # --- tool use (authored) ---
+  - id: tool-failing-build
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/tool-failing-build, licence: ours}
+    language: python
+    labels: {software_dev: 1, tool_use: 2, computer_use: 0, complexity: 1, specification: 1,
+             context_load: 0}
+    source_difficulty: null
+    brief: fixtures/tool-failing-build/brief.md
+    checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 240
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3]
+    variant: null
+  - id: tool-bisect
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/tool-bisect, licence: ours}
+    language: python
+    labels: {software_dev: 0, tool_use: 3, computer_use: 0, complexity: 2, specification: 1,
+             context_load: 1}
+    source_difficulty: null
+    brief: fixtures/tool-bisect/brief.md
+    checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 270
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null
+  - id: tool-log-to-config
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/tool-log-to-config, licence: ours}
+    language: none
+    labels: {software_dev: 1, tool_use: 1, computer_use: 0, complexity: 1, specification: 1,
+             context_load: 0}
+    source_difficulty: null
+    brief: fixtures/tool-log-to-config/brief.md
+    checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 180
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3]
+    variant: null
+  - id: tool-inventory
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/tool-inventory, licence: ours}
+    language: none
+    labels: {software_dev: 0, tool_use: 2, computer_use: 0, complexity: 1, specification: 1,
+             context_load: 0}
+    source_difficulty: null
+    brief: fixtures/tool-inventory/brief.md
+    checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 150
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3]
+    variant: null
+  - id: tool-mcp-stats
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/tool-mcp-stats, licence: ours}
+    language: none
+    labels: {software_dev: 0, tool_use: 2, computer_use: 1, complexity: 1, specification: 0,
+             context_load: 0}
+    source_difficulty: null
+    brief: fixtures/tool-mcp-stats/brief.md
+    checker: 'python3 "$LOCALAGENTS_PROBE_DIR/check.py"'
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 90
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git, stubmcp]
+    variant: null

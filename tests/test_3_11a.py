@@ -41,8 +41,14 @@ def test_every_module_level_name_in_src_is_used_somewhere():
     texts = [p.read_text() for p in (*SRC.rglob("*.py"), *SRC.rglob("*.js"),
                                      *(ROOT / "tests").rglob("*.py"), *(ROOT / "tools").rglob("*.*"))
              if p.resolve() != here]
+    # the calibration set's fixture trees ship under src/ but are inert data: their planted
+    # names (a checker's constant, a project class) are single-use by design — a fixture is
+    # read by its checker and its tests, never imported — so the scan skips the fixture dirs.
+    fixtures = SRC / "router" / "sets" / "fixtures"
     dead = []
     for p in sorted(SRC.rglob("*.py")):
+        if fixtures in p.parents:
+            continue
         for name, line in _module_level_names(p):
             if name.startswith("__") and name.endswith("__"):
                 continue

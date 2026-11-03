@@ -1,0 +1,5 @@
+2026-06-04 03:12:01 INFO  svc: starting
+2026-06-04 03:12:04 WARN  svc: RETRY attempt 1 for upload
+2026-06-04 03:12:09 WARN  svc: RETRY attempt 2 for upload
+2026-06-04 03:12:15 INFO  svc: upload delivered
+2026-06-04 03:12:15 INFO  svc: flush done

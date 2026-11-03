@@ -1,0 +1,17 @@
+2026-05-11 07:59:58 INFO  gateway: starting (version 2.4.1)
+2026-05-11 07:59:58 INFO  gateway: config read from /etc/gateway/gateway.conf
+2026-05-11 07:59:58 INFO  gateway: listening on 0.0.0.0:9009
+2026-05-11 08:00:03 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 5s
+2026-05-11 08:00:08 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 5s
+2026-05-11 08:00:13 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 5s
+2026-05-11 08:00:18 INFO  gateway: accepted connection from 127.0.0.1:43122 (healthcheck)
+2026-05-11 08:00:19 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 10s
+2026-05-11 08:00:29 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 10s
+2026-05-11 08:00:39 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 10s
+2026-05-11 08:00:49 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 20s
+2026-05-11 08:01:09 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 20s
+2026-05-11 08:01:29 ERROR collector col-7: batch of 118 events dropped after 3 failures
+2026-05-11 08:06:29 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 60s
+2026-05-11 08:11:29 WARN  collector col-7: connect 127.0.0.1:8080 refused, retrying in 60s
+2026-05-11 08:12:44 ERROR collector col-7: giving up: connect 127.0.0.1:8080 refused, 40 attempts
+2026-05-11 08:15:02 INFO  gateway: flushed write queue (0 events received this hour)
