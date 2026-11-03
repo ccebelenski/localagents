@@ -748,7 +748,11 @@
     }
     var cells = {
       job: h("td", null, idCell),
-      status: h("td", null, [statusPill(lost ? "lost" : job.status)]),
+      // router 8: a calibration probe keeps its status pill and wears a `cal` tag beside it
+      status: h("td", null, [
+        statusPill(lost ? "lost" : job.status),
+        job.calibration ? h("span", { class: "badge cal", text: "cal" }) : null,
+      ]),
       started: timeTd(job.started_at, now),
       model: h("td", { class: "cut", title: job.model || "", text: job.model || "" }),
       endpoint: h("td", null, [job.endpoint ? endpointLink(job.endpoint) : null]),

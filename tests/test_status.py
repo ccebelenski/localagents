@@ -488,3 +488,47 @@ def test_open_records_the_walked_session_pid(monkeypatch, tmp_path):
     other = jobs.JobStore()
     srv = other.conn.execute("SELECT owner FROM mcp_servers WHERE id = ?", (other.server_id,)).fetchone()
     assert srv["owner"] == os.getppid()
+
+
+def test_status_collect_excludes_calibration_jobs_from_counts(monkeypatch, tmp_path):
+    """router 8 (spec §10 "Transparent"): a calibration probe is a job row shown like any
+    job, with `cal` beside its status mark, but it is not traffic — it adds nothing to the
+    other-sessions job count, while its own t/s bit still shows on its row."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    mine = _new(store)
+    mine.status, mine.started_at = "running", now - 30
+    mine.record_request({"t": now - 10, "path": "/v1/messages", "status": 200, "ms": 3000,
+                         "usage": {"input_tokens": 41000, "output_tokens": 100}})
+    mine.changed()
+    cal = _new(store, calibration=True, priority="background")
+    cal.status, cal.started_at = "running", now - 20
+    cal.record_request({"t": now - 8, "path": "/v1/messages", "status": 200, "ms": 3000,
+                        "usage": {"input_tokens": 4000, "output_tokens": 120}})
+    cal.changed()
+
+    # another session: one ordinary job (traffic) and one calibration probe (not traffic)
+    other = jobs.JobStore()
+    other.conn.execute("UPDATE mcp_servers SET owner = 4242 WHERE id = ?", (other.server_id,))
+    o1 = _new(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000")
+    o1.status, o1.started_at = "running", now - 5
+    o1.changed()
+    ocal = _new(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000",
+                calibration=True, priority="background")
+    ocal.status, ocal.started_at = "running", now - 4
+    ocal.changed()
+
+    entries, _ = status.collect(now=now, conn=store.conn)
+    by_id = {e["id"]: e for e in entries}
+    assert by_id[cal.id]["calibration"] is True
+    assert by_id[ocal.id]["calibration"] is True
+    assert by_id[mine.id]["calibration"] is False
+
+    assert status.render(now=now, owner=_owner()) == (
+        "local: ⟳ Qwen3.8-Flash-Next 30s 33 t/s · ⟳ cal Qwen3.8-Flash-Next 20s 40 t/s · +1 other")
+    assert status.render_lines(now=now, owner=_owner()) == [
+        "local llamacpp",
+        "  ⟳ Qwen3.8-Flash-Next 30s · 33 t/s",
+        "  ⟳ cal Qwen3.8-Flash-Next 20s · 40 t/s",
+        "+1 job in another session",
+    ]

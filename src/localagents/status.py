@@ -146,6 +146,8 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
                     "model": j["model_served"] or "?",
                     "endpoint": j["endpoint_name"],
                     "status": j["status"],
+                    # router 8: a calibration probe shows its `cal` mark and is not traffic
+                    "calibration": bool(j["calibration"]),
                     "started_at": j["started_at"] or j["created_at"],
                     "finished_at": j["finished_at"],
                     "tool_calls": derive.tool_call_count(conn, j["id"]),
@@ -215,9 +217,15 @@ def _row_bits(e: dict[str, Any]) -> list[str]:
     return bits
 
 
+def _cal_mark(e: dict[str, Any]) -> str:
+    """The `cal` mark beside a calibration probe's status mark (router 8, spec §10)."""
+    return "cal " if e.get("calibration") else ""
+
+
 def render_entry(e: dict[str, Any], now: float) -> str:
     end = e.get("finished_at") or now
-    head = f"{MARK.get(e.get('status', ''), '?')} {short_model(e.get('model', ''))} {fmt_elapsed(end - (e.get('started_at') or now))}"
+    head = (f"{MARK.get(e.get('status', ''), '?')} {_cal_mark(e)}"
+            f"{short_model(e.get('model', ''))} {fmt_elapsed(end - (e.get('started_at') or now))}")
     bits = _entry_bits(e)
     if not bits:
         return head
@@ -228,11 +236,24 @@ def _job_row(e: dict[str, Any], now: float) -> str:
     """One indented multi-line row (story 1.11): the same head as render_entry, the row's
     bits joined by ` · `."""
     end = e.get("finished_at") or now
-    head = f"  {MARK.get(e.get('status', ''), '?')} {short_model(e.get('model', ''))} {fmt_elapsed(end - (e.get('started_at') or now))}"
+    head = (f"  {MARK.get(e.get('status', ''), '?')} {_cal_mark(e)}"
+            f"{short_model(e.get('model', ''))} {fmt_elapsed(end - (e.get('started_at') or now))}")
     bits = _row_bits(e)
     if not bits:
         return head
     return f"{head} · " + " · ".join(bits)
+
+
+def _split_by_owner(entries: list[dict[str, Any]], owner: int | None) -> tuple[list[dict[str, Any]], int]:
+    """This session's entries, and the number of other-session jobs that count as traffic.
+    A calibration probe is shown like any job when it is ours, but it is not traffic: another
+    session's probe adds nothing to the `+N` count (router 8, spec §10)."""
+    mine = [e for e in entries if owner is None or e.get("owner") == owner]
+    others = sum(
+        1 for e in entries
+        if not e.get("calibration") and not (owner is None or e.get("owner") == owner)
+    )
+    return mine, others
 
 
 def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ", owner: int | None = None) -> str:
@@ -254,8 +275,7 @@ def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ",
         return ""
     if owner is None:
         owner = my_owner()
-    mine = [e for e in entries if owner is None or e.get("owner") == owner]
-    others = len(entries) - len(mine)
+    mine, others = _split_by_owner(entries, owner)
     parts = [render_entry(e, now) for e in mine]
     for name in dict.fromkeys(e["endpoint"] for e in mine if e.get("status") == "running" and e.get("endpoint")):
         if loads.get(name):
@@ -284,8 +304,7 @@ def render_lines(now: float | None = None, owner: int | None = None) -> list[str
         return []
     if owner is None:
         owner = my_owner()
-    mine = [e for e in entries if owner is None or e.get("owner") == owner]
-    others = len(entries) - len(mine)
+    mine, others = _split_by_owner(entries, owner)
     lines: list[str] = []
     for name in dict.fromkeys(e["endpoint"] or "?" for e in mine):
         header = f"local {name}"

@@ -522,6 +522,8 @@
           // in full — the page's subject (the overview's links title it, the tables show the short form)
           h("span", { class: "job-name", text: detail.id }),
           mark,
+          // router 8: a calibration probe says so beside its status mark
+          detail.calibration ? h("span", { class: "tag cal", text: "cal" }) : null,
           detail.model ? h("span", { class: "tag", text: detail.model }) : null,
           detail.endpoint ? h("a", { class: "ep-name", href: "#/endpoint/" + encodeURIComponent(detail.endpoint), text: detail.endpoint }) : null,
         ]),

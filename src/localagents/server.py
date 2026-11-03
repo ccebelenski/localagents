@@ -413,6 +413,140 @@ def _foreign_or_unknown(job_id: str, e: KeyError) -> dict[str, Any]:
     return foreign or {"error": "unknown_job", "message": e.args[0]}
 
 
+class JobRefused(Exception):
+    """A start_job refusal, carrying the dict run_agent's tool returns: a router guard, a
+    resolution failure, a bad argument or a failed job record."""
+
+    def __init__(self, reply: dict[str, Any]) -> None:
+        super().__init__(reply.get("message") or reply.get("error") or "job refused")
+        self.reply = reply
+
+
+async def start_job(
+    task: str,
+    model: str | None = None,
+    endpoint: str | None = None,
+    cwd: str | None = None,
+    isolation: str = "none",
+    permission_mode: str | None = None,
+    max_turns: int | None = None,
+    allowed_tools: list[str] | None = None,
+    system_prompt_append: str | None = None,
+    timeout_s: int | None = None,
+    *,
+    priority: str = "normal",
+    calibration: bool = False,
+    admit: str = "queue",
+    mcp_servers: dict[str, Any] | None = None,
+    thinking: bool | None = None,
+    effort: str | None = None,
+    resume_session: str | None = None,
+    run_cwd: str | None = None,
+    worktree: dict[str, Any] | None = None,
+) -> Job:
+    """Record one job and start its task: run_agent's dispatch between the tool's arguments
+    and the running job (router 8).
+
+    A caller that cannot start a job gets ``JobRefused`` carrying the dict run_agent returns
+    for the same refusal. ``priority`` and ``calibration`` are the caller's (router design
+    §4, §10: a calibration probe is a background job with ``calibration = 1``); ``admit`` is
+    validated and not stored yet (the queue story reads it). ``mcp_servers``, ``thinking`` and
+    ``effort`` are handed to run_job, which puts them on the session's options. ``resume_session``,
+    ``run_cwd`` and ``worktree`` carry a resumed job's state; run_agent owns that preamble.
+    """
+    if priority not in ("urgent", "normal", "background"):
+        raise JobRefused({"error": "bad_argument",
+                          "message": "priority must be 'urgent', 'normal' or 'background'"})
+    if admit not in ("queue", "now", "force"):
+        raise JobRefused({"error": "bad_argument", "message": "admit must be 'queue', 'now' or 'force'"})
+
+    reg = _reg()
+    # M1: a named router entry answers not_routable before resolve. resolve probes the fleet,
+    # and with the d3 server down that probe buries the true answer (routing is not built yet)
+    # under a misleading "no endpoint serving 'auto'". `defaults.model` naming a router entry
+    # is the same case (the re-review of the fix wave): read it here too. The post-resolve
+    # guard below stays as the net.
+    pinned = reg.endpoints.get(endpoint) if endpoint else None
+    wanted = model or getattr(reg.defaults, "model", None)
+    named_router = pinned if pinned is not None and pinned.is_router else (
+        reg.endpoints.get(wanted) if wanted and wanted in reg.endpoints else None)
+    if named_router is not None and named_router.is_router:
+        raise JobRefused({
+            "error": "not_routable",
+            "message": f"endpoint '{named_router.name}' is a router; routing is not built yet, name a model",
+            "guidance": GUIDANCE,
+        })
+    try:
+        res = await reg.resolve(model=model, endpoint=endpoint)
+    except ModelUnavailable as e:
+        raise JobRefused({**e.to_dict(), "guidance": GUIDANCE}) from e
+    if res.endpoint.is_router:
+        # routing is a later story; refuse before the shim starts and before new(), so no job
+        # record is left `queued` for good (review of 1.7, finding 4, same reasoning)
+        raise JobRefused({
+            "error": "not_routable",
+            "message": f"endpoint '{res.endpoint.name}' is a router; routing is not built yet, name a model",
+            "guidance": GUIDANCE,
+        })
+
+    # Everything that can raise runs before new() or cannot raise after it: a job that exists
+    # without its task stays `queued` for good (review of 1.7, finding 4). The shim serves every
+    # job and does not depend on this one, so it starts first.
+    await shim.start()
+    work = str(Path(cwd or os.getcwd()).expanduser().resolve())
+    try:
+        job = store.new(
+            task=task,
+            model=res.served_model,
+            endpoint=res.endpoint.name,
+            base_url=res.endpoint.url,
+            cwd=work,
+            run_cwd=run_cwd or work,
+            isolation=isolation,
+            backend=res.endpoint.backend,
+            host=res.endpoint.host,
+            worktree=worktree,
+            dump=reg.defaults.dump_requests,
+            log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",
+            context=res.context,
+            priority=priority,
+            calibration=calibration,
+        )
+    except (sqlite3.Error, db.SchemaError) as e:
+        # a refusal like the others, not a bare tool error: the SDK keeps an exception's text out
+        # of the reply, and the caller should see "database is locked" (review of 1.7, finding 8).
+        # The store opens lazily, so this new() is often the first use and a newer-schema file
+        # raises db.SchemaError (a RuntimeError) here too — the guard must take it (1.9a review)
+        raise JobRefused({"error": "database_error", "message": f"the job could not be recorded: {e}"}) from e
+    global _shim_port_recorded
+    if not _shim_port_recorded and shim.port:
+        # Nothing between new() and create_task may raise: a job without its task stays `queued`
+        # for good. So any failure here is a line, and the line itself may fail (a full disk, a
+        # read-only state directory): stderr then (DeepSeek review of 6005f94).
+        try:
+            store.describe_server(shim_port=shim.port)  # once: the port is the process's, not the job's
+            _shim_port_recorded = True  # only on success: a dropped write is retried by the next job
+        except Exception as e:  # noqa: BLE001
+            job._log_safe(f"[db-error] shim_port: {type(e).__name__}: {e}")
+    _ensure_sampler()
+    job._task = asyncio.create_task(
+        run_job(
+            job, reg, res,
+            permission_mode=permission_mode,
+            max_turns=max_turns,
+            allowed_tools=allowed_tools,
+            system_prompt_append=system_prompt_append,
+            resume_session=resume_session,
+            timeout_s=timeout_s,
+            shim_base_url=shim.base_url_for(job.id),
+            mcp_servers=mcp_servers or {},
+            thinking=thinking,
+            effort=effort,
+        )
+    )
+    return job
+
+
 @mcp.tool()
 async def run_agent(
     task: str,
@@ -497,84 +631,18 @@ async def run_agent(
         if model is None:
             model, endpoint = prev.model, endpoint or prev.endpoint
 
-    reg = _reg()
-    # M1: a named router entry answers not_routable before resolve. resolve probes the fleet,
-    # and with the d3 server down that probe buries the true answer (routing is not built yet)
-    # under a misleading "no endpoint serving 'auto'". `defaults.model` naming a router entry
-    # is the same case (the re-review of the fix wave): read it here too. The post-resolve
-    # guard below stays as the net.
-    pinned = reg.endpoints.get(endpoint) if endpoint else None
-    wanted = model or getattr(reg.defaults, "model", None)
-    named_router = pinned if pinned is not None and pinned.is_router else (
-        reg.endpoints.get(wanted) if wanted and wanted in reg.endpoints else None)
-    if named_router is not None and named_router.is_router:
-        return {
-            "error": "not_routable",
-            "message": f"endpoint '{named_router.name}' is a router; routing is not built yet, name a model",
-            "guidance": GUIDANCE,
-        }
     try:
-        res = await reg.resolve(model=model, endpoint=endpoint)
-    except ModelUnavailable as e:
-        return {**e.to_dict(), "guidance": GUIDANCE}
-    if res.endpoint.is_router:
-        # routing is a later story; refuse before the shim starts and before new(), so no job
-        # record is left `queued` for good (review of 1.7, finding 4, same reasoning)
-        return {
-            "error": "not_routable",
-            "message": f"endpoint '{res.endpoint.name}' is a router; routing is not built yet, name a model",
-            "guidance": GUIDANCE,
-        }
-
-    # Everything that can raise runs before new() or cannot raise after it: a job that exists
-    # without its task stays `queued` for good (review of 1.7, finding 4). The shim serves every
-    # job and does not depend on this one, so it starts first.
-    await shim.start()
-    try:
-        job = store.new(
-            task=task,
-            model=res.served_model,
-            endpoint=res.endpoint.name,
-            base_url=res.endpoint.url,
-            cwd=work,
-            run_cwd=run_cwd,
-            isolation=isolation,
-            backend=res.endpoint.backend,
-            host=res.endpoint.host,
+        # priority and calibration are run_agent's defaults (this tool admits no calibration
+        # probe; the calibration runner calls start_job directly)
+        job = await start_job(
+            task, model=model, endpoint=endpoint, cwd=work, isolation=isolation,
+            permission_mode=permission_mode, max_turns=max_turns,
+            allowed_tools=allowed_tools, system_prompt_append=system_prompt_append,
+            timeout_s=timeout_s, resume_session=resume_session, run_cwd=run_cwd,
             worktree=worktree,
-            dump=reg.defaults.dump_requests,
-            log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",
-            context=res.context,
         )
-    except (sqlite3.Error, db.SchemaError) as e:
-        # a refusal like the others, not a bare tool error: the SDK keeps an exception's text out
-        # of the reply, and the caller should see "database is locked" (review of 1.7, finding 8).
-        # The store opens lazily, so this new() is often the first use and a newer-schema file
-        # raises db.SchemaError (a RuntimeError) here too — the guard must take it (1.9a review)
-        return {"error": "database_error", "message": f"the job could not be recorded: {e}"}
-    global _shim_port_recorded
-    if not _shim_port_recorded and shim.port:
-        # Nothing between new() and create_task may raise: a job without its task stays `queued`
-        # for good. So any failure here is a line, and the line itself may fail (a full disk, a
-        # read-only state directory): stderr then (DeepSeek review of 6005f94).
-        try:
-            store.describe_server(shim_port=shim.port)  # once: the port is the process's, not the job's
-            _shim_port_recorded = True  # only on success: a dropped write is retried by the next job
-        except Exception as e:  # noqa: BLE001
-            job._log_safe(f"[db-error] shim_port: {type(e).__name__}: {e}")
-    _ensure_sampler()
-    job._task = asyncio.create_task(
-        run_job(
-            job, reg, res,
-            permission_mode=permission_mode,
-            max_turns=max_turns,
-            allowed_tools=allowed_tools,
-            system_prompt_append=system_prompt_append,
-            resume_session=resume_session,
-            timeout_s=timeout_s,
-            shim_base_url=shim.base_url_for(job.id),
-        )
-    )
+    except JobRefused as e:
+        return e.reply
     if wait_s > 0:
         await store.wait(job.id, wait_s, progress=_progress_reporter(ctx))
     try:

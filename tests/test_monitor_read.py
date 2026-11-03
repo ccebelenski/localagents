@@ -394,8 +394,26 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
         "id", "model", "endpoint", "status", "started_at", "finished_at", "elapsed_s",
         "num_turns", "tool_calls", "errors", "last_tool", "last_activity", "ctx_pct", "ctx_tokens",
         "context", "gen_tps", "prefill_tps", "compactions", "files", "owner", "server_version",
-        "server_live",
+        "server_live", "calibration",  # router 8: the §10 calibration flag
     }
+
+
+def test_monitor_marks_and_excludes_calibration_jobs(world):
+    """router 8 (spec §10 "Transparent"): the snapshot's job entries carry the row's
+    calibration flag (the page draws its `cal` tag from it), and the card's jobs_running is a
+    traffic figure, so a calibration probe does not count toward it."""
+    conn, reg = world
+    row = conn.execute("SELECT id FROM jobs WHERE status = 'running'").fetchone()
+    assert _ep(read.overview(conn, reg, NOW, WINDOW_S), "ai1")["jobs_running"] == 1
+    with db.immediate(conn):
+        conn.execute("UPDATE jobs SET calibration = 1 WHERE id = ?", (row["id"],))
+    ov = read.overview(conn, reg, NOW, WINDOW_S)
+    j = next(j for j in ov["jobs"] if j["id"] == row["id"])
+    assert j["calibration"] is True
+    # the finished entry carries the flag too, false for an ordinary job
+    finished = next(j for j in ov["jobs"] if j["status"] == "succeeded")
+    assert finished["calibration"] is False
+    assert _ep(ov, "ai1")["jobs_running"] == 0
 
 
 def test_finished_jobs_follow_the_running_ones_in_the_log(world):

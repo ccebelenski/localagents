@@ -369,6 +369,9 @@ async def run_job(
     resume_session: str | None,
     timeout_s: int | None,
     shim_base_url: str,
+    mcp_servers: dict[str, Any] | None = None,
+    thinking: bool | None = None,
+    effort: str | None = None,
 ) -> None:
     d = reg.defaults
     job.status = "running"
@@ -392,6 +395,14 @@ async def run_job(
             )
 
         append = "\n\n".join(s for s in (d.system_prompt_append, system_prompt_append) if s)
+        # router 8: the caller's levers, when it passed one. `thinking` is a bool at that
+        # interface and a config object for the SDK; None leaves the field unset, as does a
+        # None effort. The shim's translation of either for a local backend is a later story.
+        levers: dict[str, Any] = {}
+        if thinking is not None:
+            levers["thinking"] = {"type": "adaptive" if thinking else "disabled"}
+        if effort is not None:
+            levers["effort"] = effort
         opts = ClaudeAgentOptions(
             model=res.served_model,
             env=build_env(res, shim_base_url),
@@ -404,6 +415,8 @@ async def run_job(
             system_prompt={"type": "preset", "preset": "claude_code", **({"append": append} if append else {})},
             resume=resume_session,
             stderr=lambda line: job.log_text(f"[stderr] {line}"),
+            mcp_servers=mcp_servers or {},
+            **levers,
         )
         job.log_text(
             f"[start] endpoint={res.endpoint.name} ({res.endpoint.url}) via shim {shim_base_url} "

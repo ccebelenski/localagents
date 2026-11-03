@@ -1,0 +1,150 @@
+"""router 8: calibration-flagged jobs (router design §10 "Transparent": every probe is a job
+row with ``calibration = 1``, admitted as ``background`` through the same gate as any job,
+shown in the monitor like any job, and excluded from the traffic figures).
+
+``start_job`` is run_agent's dispatch factored out of the tool: the router guards, resolve,
+the shim, the job record, the sampler and the task. It raises ``JobRefused`` carrying the dict
+run_agent's tool returns; run_agent stays a tool with the same answers."""
+
+import asyncio
+
+import pytest
+
+from localagents import jobs, server
+from localagents.registry import Defaults, Endpoint, Registry
+
+SERVING = {"first": ["default-model"], "second": ["big-model"]}
+
+
+@pytest.fixture
+def reg(monkeypatch, tmp_path):
+    endpoints = {n: Endpoint(name=n, base_url=f"http://{n}:8080", backend="llama.cpp") for n in SERVING}
+    r = Registry(path=None, endpoints=endpoints, defaults=Defaults(), raw={}, local={})
+
+    async def probe(self, ep):
+        return {"up": True, "models": SERVING[ep.name]}
+
+    async def no_start():
+        return 0
+
+    monkeypatch.setattr(Registry, "probe", probe)
+    monkeypatch.setattr(server, "_reg", lambda: r)
+    monkeypatch.setattr(server.shim, "start", no_start)
+    return r
+
+
+def test_start_job_marks_calibration(reg, monkeypatch):
+    """The row carries the caller's flags: calibration = 1 and the background priority the
+    spec admits every probe at. The task starts like any other job's."""
+    started = []
+
+    async def record_run(job, *a, **kw):
+        started.append(job.id)
+
+    monkeypatch.setattr(server, "run_job", record_run)
+
+    async def go():
+        job = await server.start_job("probe", calibration=True, priority="background")
+        await asyncio.sleep(0)  # let the task start
+        return job
+
+    job = asyncio.run(go())
+    row = server.store.conn.execute(
+        "SELECT calibration, priority FROM jobs WHERE id = ?", (job.id,)).fetchone()
+    assert row["calibration"] == 1 and row["priority"] == "background"
+    assert job.calibration is True and job.priority == "background"
+    assert started == [job.id]
+
+
+def test_start_job_rejects_bad_priority_and_admit(reg):
+    """The two admission inputs are validated before anything is resolved or recorded: a
+    typo is bad_argument, the same refusal shape every other tool argument gets."""
+    for kwargs in ({"priority": "later"}, {"admit": "later"}):
+        with pytest.raises(server.JobRefused) as exc:
+            asyncio.run(server.start_job("t", **kwargs))
+        assert exc.value.reply["error"] == "bad_argument"
+    assert server.store.jobs == {}
+
+
+def test_run_agent_still_returns_refusals_as_dicts(monkeypatch):
+    """The guards moved into start_job; the tool still answers its callers with the same
+    dict, because run_agent turns JobRefused back into e.reply."""
+    real = Endpoint(name="real", base_url="http://127.0.0.1:8080", backend="vllm")
+    auto = Endpoint(name="auto", base_url="", backend="router", decision_url="http://127.0.0.1:8766")
+    r = Registry(path=None, endpoints={"auto": auto, "real": real}, defaults=Defaults(), raw={}, local={})
+    monkeypatch.setattr(server, "_reg", lambda: r)
+    out = asyncio.run(server.run_agent(task="x", model="auto"))
+    assert out["error"] == "not_routable" and "'auto'" in out["message"]
+    assert server.store.jobs == {}
+
+
+def test_pass_throughs_reach_the_options(reg, monkeypatch):
+    """mcp_servers, thinking and effort are start_job's keyword-only pass-throughs: a fake
+    run_job sees them unchanged (run_job maps thinking onto the SDK's config there)."""
+    seen = {}
+
+    async def record_run(job, *a, **kw):
+        seen.update(kw)
+
+    monkeypatch.setattr(server, "run_job", record_run)
+    mcp = {"tools": {"type": "stdio", "command": "tools"}}
+
+    async def go():
+        await server.start_job("t", mcp_servers=mcp, thinking=True, effort="high")
+        await asyncio.sleep(0)
+
+    asyncio.run(go())
+    assert seen["mcp_servers"] == mcp
+    assert seen["thinking"] is True and seen["effort"] == "high"
+
+
+async def _no_metrics(*a, **kw):
+    return None
+
+
+def _empty_query(prompt, options):
+    async def nothing():
+        return
+        yield
+
+    return nothing()
+
+
+@pytest.mark.parametrize("thinking, expected", [
+    (True, {"type": "adaptive"}),
+    (False, {"type": "disabled"}),
+    (None, None),
+])
+def test_run_job_maps_the_levers_onto_the_sdk_options(monkeypatch, tmp_path, thinking, expected):
+    """run_job translates the bool for the SDK: adaptive, disabled, or the field left unset.
+    mcp_servers reaches the SDK field (None is the empty dict), effort is passed as given."""
+    from localagents import runner
+    from localagents.registry import Resolution
+
+    store = jobs.JobStore()
+    job = store.new(task="t", model="m", endpoint="e", base_url="http://e:8080",
+                    backend="llama.cpp", host="local", cwd=str(tmp_path), run_cwd=str(tmp_path),
+                    isolation="none")
+    captured = {}
+
+    def fake_options(**kw):
+        captured.update(kw)
+        return object()
+
+    monkeypatch.setattr(runner, "fetch_metrics", _no_metrics)
+    monkeypatch.setattr(runner, "finish_worktree", lambda j: None)
+    monkeypatch.setattr(runner, "query", _empty_query)
+    monkeypatch.setattr(runner, "ClaudeAgentOptions", fake_options)
+    ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
+    reg = Registry(path=None, endpoints={"e": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
+    asyncio.run(runner.run_job(
+        job, reg, Resolution(ep, "m"), permission_mode=None, max_turns=None, allowed_tools=None,
+        system_prompt_append=None, resume_session=None, timeout_s=5,
+        shim_base_url="http://127.0.0.1:1/job/x", thinking=thinking, effort="high",
+    ))
+    assert captured["mcp_servers"] == {}
+    if expected is None:  # None leaves the field unset rather than passing None through
+        assert "thinking" not in captured
+    else:
+        assert captured["thinking"] == expected
+    assert captured["effort"] == "high"

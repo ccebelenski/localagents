@@ -260,6 +260,8 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
         "model": j["model_served"],
         "endpoint": j["endpoint_name"],
         "status": j["status"],
+        # router 8: the page marks a calibration probe (`cal`) and the count below excludes it
+        "calibration": bool(j["calibration"]),
         "started_at": start,
         "finished_at": j["finished_at"],
         "elapsed_s": elapsed,
@@ -378,7 +380,9 @@ def _endpoint(conn: sqlite3.Connection, ep: Endpoint, eid: int | None, now: floa
         "gen_tps_live": last["gen_tps"] if last is not None else None,
         "hardware": ({k: last[k] for k in HARDWARE_COLUMNS}
                      if last is not None and last["has_hardware"] is not None else None),
-        "jobs_running": sum(1 for job_eid, _ in running if eid is not None and job_eid == eid),
+        # router 8: jobs_running is a traffic figure, so a calibration probe never counts
+        "jobs_running": sum(1 for job_eid, job in running
+                            if eid is not None and job_eid == eid and not job.get("calibration")),
     }
     node_input = {"up": up, "host": last["host"]} if last is not None else None
     return entry, node_input
@@ -832,6 +836,10 @@ def job_detail(conn: sqlite3.Connection, job_id: str, now: float | None = None) 
     if row is None:
         return None
     d = derive.summary_from_row(conn, row, now=now)
+    # router 8: the job page's `cal` tag. summary_from_row leaves the router columns out until
+    # a story adds them to both readers (jobs.Job._SUMMARY_HIDDEN), so the detail body carries
+    # the flag itself; the snapshot entry carries it for the live header.
+    d["calibration"] = bool(row["calibration"])
     d["requests"] = [
         {"path": r["path"], "t": r["t"], "http_status": r["http_status"], "ms": r["ms"], "gen_ms": r["gen_ms"],
          "tokens": {"input": r["input_tokens"], "output": r["output_tokens"],

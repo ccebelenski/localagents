@@ -170,6 +170,8 @@ td.cut { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .badge { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px;
   padding: 0 4px; margin-left: 6px; }
 .badge.err { color: var(--critical); border-color: var(--critical); }
+/* router 8: the `cal` tag beside a calibration probe's status pill or header mark */
+.cal { color: var(--accent); border-color: var(--accent); }
 .empty { padding: 12px; color: var(--muted); }
 
 /* detail placeholder */
