@@ -406,9 +406,11 @@ def run_pass(conn, row_id, constants=None, probes=None) -> str:
     # observations stamps the module weights; the replay's overrides take them over by source
     obs = [replace(o, weight=eff["PROBE_WEIGHT"] if o.source == "probe" else eff["JOB_WEIGHT"])
            for o in obs]
+    # a probe the caller names with EMPTY labels (the facts probe) is labelled-with-no-axes:
+    # no observation and not unlabelled; only an id absent from ``probes`` is unlabelled
     unlabelled = sum(1 for pr in _probe_results(conn, row_id)
                      if pr["status"] in ("pass", "fail")
-                     and not _labels_for(probes, pr["probe_id"]))
+                     and pr["probe_id"] not in (probes or {}))
 
     languages = sorted({o.language for o in obs if o.dimension == "software_dev" and o.language})
     cell_keys = [(dim, "") for dim in CAPABILITY_CELLS]
@@ -503,7 +505,10 @@ def _speed_factor(conn, row, probes) -> float | None:
     for pr in _probe_results(conn, row.id):
         if pr["status"] != "pass" or pr["seconds"] is None:
             continue
-        nominal = ((probes or {}).get(pr["probe_id"]) or {}).get("nominal_s")
+        entry = (probes or {}).get(pr["probe_id"]) or {}
+        if not entry.get("labels"):
+            continue  # a probe with no axes (the facts probe runs five jobs) is not a timing
+        nominal = entry.get("nominal_s")
         if nominal:
             factors.append(pr["seconds"] / nominal)
     return float(statistics.median(factors)) if factors else None

@@ -14,7 +14,9 @@ keeps its ``pass``/``fail`` results and reruns ``skipped``, ``unreliable`` and m
 The estimate carries to another machine by the row's speed factor: the row's own when a pass
 has measured one, else the manifest's reference tokens/s over this box's throughput probe, else
 1.0. Everything the runner writes is a row in the shared database; the model work is a job the
-server records like any other."""
+server records like any other. ``--estimate`` is not read-only: before stopping it writes the
+capacity curve the estimate needed, the endpoint's scorecard row, and the server bookkeeping
+rows the command opens, and nothing else."""
 
 import asyncio
 import json
@@ -52,10 +54,22 @@ FACTS_LEVERS = (("defaults", {}),
 THINKING_MARK = "[thinking]"
 EFFORT_RATIO = 1.5  # §6: high effort's thinking text is at least 1.5x low's, by characters
 
+# The stub MCP server's name as a session addresses its tools (``mcp__localagents__*``): the
+# whole server goes into ``allowed_tools`` for a stubmcp probe, or every attempted dispatch is
+# permission-denied and never reaches the recording the checker reads.
+STUB_SERVER_NAME = "mcp__localagents"
+
+# materialize builds every probe's tree with git, so git is a need of every probe without being
+# named in the manifest: a box without git has no runnable probe (final review M5).
+IMPLICIT_NEEDS = ("git",)
+
 # §5: the probe's job may run four times its nominal duration at the row's speed factor.
 TIMEOUT_MULTIPLIER = 4.0
 # §10 "Reliable": a sample above ours during a probe is foreign load; the run redos the probe.
 FOREIGN_LOAD_SAMPLE_S = 30.0
+# §10 "Restartable" means restart, not double-run: this file inside the run directory holds the
+# holder's pid and the start time, so a fresh launch tells a live run from a crashed one.
+LOCK_FILE = "lock"
 
 # The throughput probe (§10: "from the throughput probe, run first, which needs the endpoint
 # quiet"): a short completion to warm the box and one 2k-token completion alone, then two
@@ -96,7 +110,9 @@ class Probe:
 @dataclass
 class ProbeSet:
     """One tier's validated manifest. ``labels()`` is what ``scorecard.run_pass`` takes; a facts
-    probe is not an observation and stays out of it (its output is the row's facts, not a cell)."""
+    probe rides in it with empty labels and its nominal_s (final review, layout): it is a known
+    probe whose output is the row's facts rather than a cell, so it earns no observations, and
+    naming it keeps it out of the unlabelled count and lets its timing speak."""
 
     version: str
     reference_tps: float | None
@@ -107,6 +123,8 @@ class ProbeSet:
         out = {}
         for probe in self.probes:
             if probe.kind == "facts":
+                # no labels to merge: the language of a reading of the levers is not a cell
+                out[probe.id] = {"labels": {}, "nominal_s": float(probe.nominal_s)}
                 continue
             labels = dict(probe.labels)
             labels["language"] = probe.language
@@ -145,7 +163,10 @@ def load_set(path=None) -> ProbeSet:
     manifest is a ``ValueError`` naming the probe and the field it refuses."""
     p = Path(path) if path is not None else Path(
         os.environ.get("LOCALAGENTS_PROBE_SET") or _default_set_path())
-    p = p.expanduser()
+    # resolve now so every derived path (brief, fixture directory, the ProbeSet's own path) is
+    # absolute: the run dispatches with cwd inside the attempt directory, and a relative
+    # manifest -- from --set or the env var -- would otherwise stop resolving mid-run
+    p = p.expanduser().resolve()
     data = yaml.safe_load(p.read_text()) or {}
     for field_name in ("version", "probes"):
         if field_name not in data:
@@ -204,12 +225,13 @@ def load_set(path=None) -> ProbeSet:
 
 
 def present_tools(probe_set: ProbeSet | None = None) -> set[str]:
-    """The tool names the probes need that this box has. ``stubmcp`` is the set's own stub, so
-    it is always present (a probe needing it is runnable wherever the package is)."""
+    """The tool names the probes need that this box has, IMPLICIT_NEEDS included (every tree
+    is materialised with git). ``stubmcp`` is the set's own stub, so it is always present (a
+    probe needing it is runnable wherever the package is)."""
     probe_set = probe_set if probe_set is not None else load_set()
     tools = {"stubmcp"}
     for probe in probe_set.probes:
-        for name in probe.needs:
+        for name in set(probe.needs) | set(IMPLICIT_NEEDS):
             if name != "stubmcp" and shutil.which(name):
                 tools.add(name)
     return tools
@@ -217,12 +239,15 @@ def present_tools(probe_set: ProbeSet | None = None) -> set[str]:
 
 def plan(probe_set: ProbeSet, tier: str, tools: set[str]) -> Plan:
     """The tier's runnable probes and, beside them, the ones an absent tool skips (the spec's
-    "environment reason": retried on resume and the cell it would feed stays thin)."""
+    "environment reason": retried on resume and the cell it would feed stays thin). IMPLICIT_NEEDS
+    count against every probe: on a box without git the whole tier is skipped, not run and
+    failed probe by probe."""
     runnable, skipped = [], []
     for probe in probe_set.probes:
         if probe.tier != tier:
             continue
-        missing = [name for name in probe.needs if name != "stubmcp" and name not in tools]
+        needs = list(dict.fromkeys([*probe.needs, *IMPLICIT_NEEDS]))
+        missing = [name for name in needs if name != "stubmcp" and name not in tools]
         if missing:
             skipped.append((probe, "missing tool: " + ", ".join(missing)))
         else:
@@ -285,9 +310,11 @@ def materialize(probe: Probe, dest) -> Path:
 
 
 def _next_attempt_dir(probe_dir) -> Path:
-    """The root for a new attempt of a probe: ``<run_dir>/<probe id>/<n>``, n one past the
-    number of existing attempt directories. Nothing is removed: a previous attempt's tree is
-    evidence, and a fresh run each time is what keeps it from being read as the fixture base
+    """The directory for a new attempt of a probe: ``<run_dir>/<probe id>/<n>``, n one past the
+    number of existing attempt directories; the job works in ``<n>/repo`` and the stub log sits
+    beside it, never inside the tree the checker reads. Nothing is removed: a previous attempt's
+    tree is evidence, and a fresh run each time is what keeps it from being read as the fixture
+    base
     (a retried probe — resume after a crash, an unreliable rerun — must never materialise
     into the last attempt's leftovers)."""
     probe_dir = Path(probe_dir)
@@ -312,8 +339,9 @@ def apply_reference(probe: Probe, root) -> None:
 def check(probe: Probe, root, env_extra: dict | None = None) -> tuple[bool, str | None]:
     """Run the manifest's one shell command at the probe's root; exit 0 is pass. The checker
     sees ``LOCALAGENTS_PROBE_DIR`` (its fixture) and ``LOCALAGENTS_PROBE_BASE`` (the revision
-    the job started from). The failure reason is the first non-empty output line, ``no_answer``
-    when the checker printed that, cut to 200 characters."""
+    the job started from). The failure reason is the first non-empty output line cut to 200
+    characters, except a line that STARTS with ``no_answer``: that gives the reason
+    ``no_answer`` whatever the checker appended to it."""
     env = dict(os.environ)
     env["LOCALAGENTS_PROBE_DIR"] = str(probe.fixture_dir)
     base = _probe_base(root)
@@ -327,7 +355,9 @@ def check(probe: Probe, root, env_extra: dict | None = None) -> tuple[bool, str 
         return True, None
     output = (proc.stdout or "") + "\n" + (proc.stderr or "")
     lines = [line.strip() for line in output.splitlines() if line.strip()]
-    if any(line == "no_answer" for line in lines):
+    if any(line.startswith("no_answer") for line in lines):
+        # checkers add context ("no_answer: the brief named no file"); the scorecard
+        # aggregates the reason, so the prefix is what matters, not the checker's prose
         return False, "no_answer"
     return False, (lines[0][:200] if lines else f"exit {proc.returncode}")
 
@@ -396,9 +426,15 @@ async def run_probe_job(reg, store, conn, ep, served_id, probe: Probe, run_dir, 
     levers = levers or {}
     run_dir = Path(run_dir)
     attempt = _next_attempt_dir(run_dir / probe.id)
-    root = materialize(probe, attempt)
+    try:
+        root = materialize(probe, attempt / "repo")
+    except Exception as e:  # a fixture that will not build, or a box without git, measures
+        # nothing: skipped with the environment's own words as the reason and retried on
+        # resume, while the run goes on to the next probe instead of dying on one bad tree.
+        return ProbeOutcome("skipped", 0.0, str(e) or type(e).__name__, None)
     mcp_servers = None
     stub_log = None
+    allowed_tools = None
     if "stubmcp" in probe.needs:
         stub_log = attempt / "stub.jsonl"
         mcp_servers = {"localagents": {
@@ -406,6 +442,10 @@ async def run_probe_job(reg, store, conn, ep, served_id, probe: Probe, run_dir, 
             "args": ["-m", "localagents.router.stubmcp"],
             "env": {"LOCALAGENTS_STUB_LOG": str(stub_log)},
         }}
+        # C1: the session must be allowed to call the stub (the defaults plus the server
+        # name), or every mcp__localagents__* call is permission-denied and the probe
+        # measures a refusal instead of a dispatch
+        allowed_tools = list(reg.defaults.allowed_tools) + [STUB_SERVER_NAME]
     try:
         job = await server.start_job(
             task=probe.brief_text(),
@@ -415,7 +455,7 @@ async def run_probe_job(reg, store, conn, ep, served_id, probe: Probe, run_dir, 
             isolation="none",
             permission_mode=None,
             max_turns=None,
-            allowed_tools=None,
+            allowed_tools=allowed_tools,
             system_prompt_append=None,
             timeout_s=timeout_s,
             priority="background",
@@ -423,6 +463,10 @@ async def run_probe_job(reg, store, conn, ep, served_id, probe: Probe, run_dir, 
             mcp_servers=mcp_servers,
             thinking=levers.get("thinking"),
             effort=levers.get("effort"),
+            # every calibration job sees only the stub, never an operator's real localagents
+            # server, and no ancestor CLAUDE.md or settings reach the session
+            strict_mcp_config=True,
+            setting_sources=[],
         )
     except server.JobRefused as e:
         return ProbeOutcome("skipped", 0.0, str(e.reply.get("error") or e), None)
@@ -432,8 +476,14 @@ async def run_probe_job(reg, store, conn, ep, served_id, probe: Probe, run_dir, 
     while True:
         try:
             live = await reg.probe(ep)
+            # the same reading capacity.from_probe uses: vLLM and strata report a ``load``
+            # section, llama.cpp reports only ``slots`` — on that box the foreign-session
+            # guard would otherwise never see the one busy slot that is not ours
             load = live.get("load") or {}
-            max_running = max(max_running, int(load.get("requests_running") or 0))
+            slots = live.get("slots") or {}
+            running = (load["requests_running"] if "requests_running" in load
+                       else slots.get("busy", 0))
+            max_running = max(max_running, int(running or 0))
         except Exception:  # a probe failure is a missing sample, never a failed job
             pass
         if wait_task.done():
@@ -445,6 +495,11 @@ async def run_probe_job(reg, store, conn, ep, served_id, probe: Probe, run_dir, 
     seconds = 0.0
     if job.started_at is not None and job.finished_at is not None:
         seconds = float(job.finished_at - job.started_at)
+    # a job the environment took down (failed with nothing to show), cancelled, or lost to a
+    # server exit measures nothing: skipped with the environment's own words as the reason,
+    # and a skipped probe is retried on resume. timeout and tail_capped stay fail.
+    if (job.status == "failed" and not job.result) or job.status in ("cancelled", "lost"):
+        return ProbeOutcome("skipped", seconds, job.error or job.status, job.id)
     if max_running > 1:
         return ProbeOutcome("unreliable", seconds, "foreign load", job.id)
     if job.status == "timeout":
@@ -476,8 +531,21 @@ def _transcript_text(store, job_id: str | None) -> str:
 
 
 def _thinking_chars(text: str) -> int:
-    return sum(len(line[len(THINKING_MARK):]) for line in text.splitlines()
-               if line.startswith(THINKING_MARK))
+    """Thinking characters in a transcript. The log line carries the block's real length in
+    the ``(N chars)`` prefix, because the transcript itself holds only the first 500 chars of
+    each block; a line without that prefix was written before the runner recorded lengths and
+    counts the text it logged, as it always did."""
+    total = 0
+    for line in text.splitlines():
+        if not line.startswith(THINKING_MARK):
+            continue
+        rest = line[len(THINKING_MARK):]
+        close = rest.find(" chars)")
+        if rest.startswith(" (") and close > 2 and rest[2:close].isdigit():
+            total += int(rest[2:close])
+        else:
+            total += len(rest)
+    return total
 
 
 def _effort_verdict(texts: dict[str, str]) -> str:
@@ -491,10 +559,13 @@ def _effort_verdict(texts: dict[str, str]) -> str:
 async def _run_facts(reg, store, conn, ep, served_id, probe: Probe, run_dir, timeout_s: float,
                      row_id: int) -> ProbeOutcome:
     """Run the probe five ways (defaults, thinking on/off, effort low/high), read the five
-    transcripts and write ``scorecard_rows.facts``. The probe passes when all five jobs
-    finished without a timeout; a capped lever fails it with reason ``tail_capped`` (a capped
-    reading is not a fact), but the facts probe is not a capability probe, so a cap here does
-    not stop the tier (§10's cap rule is about capability ceilings)."""
+    transcripts and write ``scorecard_rows.facts``. Facts are a whole reading or nothing: they
+    are written only when all five levers passed, and otherwise the row keeps what an earlier
+    full pass read (a verdict inferred from four readings is not a fact). A skipped lever skips
+    the probe, so a resume runs the whole reading again; a timed-out or capped lever fails it
+    with that reason (a capped reading is not a fact), but the facts probe is not a capability
+    probe, so a cap here does not stop the tier (§10's cap rule is about capability ceilings).
+    The result names the job of the lever that broke when it has one, else the defaults'."""
     texts: dict[str, str] = {}
     outcomes: dict[str, ProbeOutcome] = {}
     for name, levers in FACTS_LEVERS:
@@ -502,27 +573,29 @@ async def _run_facts(reg, store, conn, ep, served_id, probe: Probe, run_dir, tim
                                       Path(run_dir) / name, timeout_s, levers=levers)
         outcomes[name] = outcome
         texts[name] = _transcript_text(store, outcome.job_id)
-    facts = {
-        "default_thinking": "on" if THINKING_MARK in texts["defaults"] else "off",
-        "thinking_switch": ("honoured" if THINKING_MARK in texts["thinking_on"]
-                            and THINKING_MARK not in texts["thinking_off"] else "inert"),
-        "effort": _effort_verdict(texts),
-    }
-    with db.immediate(conn):
-        conn.execute("UPDATE scorecard_rows SET facts = ? WHERE id = ?",
-                     (json.dumps(facts), row_id))
+    seconds = sum(o.seconds for o in outcomes.values())
+    broken = next((o for o in outcomes.values() if o.status != "pass"), None)
+    job_id = broken.job_id if broken is not None and broken.job_id else outcomes["defaults"].job_id
+    if any(o.status == "skipped" for o in outcomes.values()):
+        return ProbeOutcome("skipped", seconds, "skipped", job_id)
+    if broken is None:
+        facts = {
+            "default_thinking": "on" if THINKING_MARK in texts["defaults"] else "off",
+            "thinking_switch": ("honoured" if THINKING_MARK in texts["thinking_on"]
+                                and THINKING_MARK not in texts["thinking_off"] else "inert"),
+            "effort": _effort_verdict(texts),
+        }
+        with db.immediate(conn):
+            conn.execute("UPDATE scorecard_rows SET facts = ? WHERE id = ?",
+                         (json.dumps(facts), row_id))
+        return ProbeOutcome("pass", seconds, None, job_id)
     timed_out = any(o.status == "fail" and o.reason == "timeout" for o in outcomes.values())
     capped = any(o.status == "fail" and o.reason == "tail_capped" for o in outcomes.values())
-    skipped = any(o.status == "skipped" for o in outcomes.values())
-    seconds = sum(o.seconds for o in outcomes.values())
-    job_id = outcomes["defaults"].job_id
     if timed_out:
         return ProbeOutcome("fail", seconds, "timeout", job_id)
     if capped:
         return ProbeOutcome("fail", seconds, "tail_capped", job_id)
-    if skipped:
-        return ProbeOutcome("fail", seconds, "skipped", job_id)
-    return ProbeOutcome("pass", seconds, None, job_id)
+    return ProbeOutcome("fail", seconds, broken.reason, job_id)
 
 
 # --- a run (spec §10 "Restartable", "Complete", "Time, honestly") ---------------------------------
@@ -577,7 +650,9 @@ def _write_result(conn, run_id: str, probe_id: str, outcome: ProbeOutcome) -> No
 
 
 def _complete_run(conn, run_id: str, plan_obj: Plan) -> bool:
-    """Every planned probe has a status and at least two thirds are pass or fail. A tier that
+    """Every planned probe reads pass, fail or skipped, and at least two thirds of the planned
+    probes are pass or fail (spec §10: an unreliable probe is rerun before the run counts, so a
+    status that is not a verdict — unreliable above all — holds the run incomplete). A tier that
     planned nothing is not complete: an empty set has measured nothing."""
     statuses = {r["probe_id"]: r["status"] for r in conn.execute(
         "SELECT probe_id, status FROM calibration_results WHERE run_id = ?", (run_id,))}
@@ -586,7 +661,7 @@ def _complete_run(conn, run_id: str, plan_obj: Plan) -> bool:
     ids = [probe.id for probe in plan_obj.probes] + [probe.id for probe, _ in plan_obj.skipped]
     if not ids:
         return False
-    if any(pid not in statuses for pid in ids):
+    if any(statuses.get(pid) not in ("pass", "fail", "skipped") for pid in ids):
         return False
     decided = sum(1 for pid in ids if statuses[pid] in ("pass", "fail"))
     return decided >= math.ceil(2 * len(ids) / 3)
@@ -594,53 +669,135 @@ def _complete_run(conn, run_id: str, plan_obj: Plan) -> bool:
 
 def _revised_estimate(conn, run_id: str, plan_obj: Plan, speed_factor: float) -> float | None:
     """After three results, the estimate again: the actuals so far plus the remaining nominal
-    times scaled by the median ``actual / nominal`` seen in this run."""
-    nominal = {probe.id: probe.nominal_s for probe in plan_obj.probes}
+    times scaled by the median ``actual / nominal`` seen in this run. The facts probe stays
+    out of it: its row's seconds are five jobs summed against one nominal_s, and that ratio
+    would carry the median and every projection behind it (final review M9)."""
+    nominal = {probe.id: probe.nominal_s for probe in plan_obj.probes if probe.kind != "facts"}
     elapsed = 0.0
     decided: set[str] = set()
     ratios: list[float] = []
     for r in conn.execute("SELECT probe_id, seconds FROM calibration_results WHERE run_id = ?",
                           (run_id,)).fetchall():
+        if r["probe_id"] not in nominal:
+            continue  # the facts probe: a whole reading of the levers, not a timed probe
         decided.add(r["probe_id"])
         if r["seconds"] is None:
             continue
         elapsed += float(r["seconds"])
-        if nominal.get(r["probe_id"]):
+        if nominal[r["probe_id"]]:
             ratios.append(float(r["seconds"]) / (nominal[r["probe_id"]] * speed_factor))
     if not ratios:
         return None
-    remaining = sum(nominal[probe.id] * speed_factor for probe in plan_obj.probes
-                    if probe.id not in decided)
+    remaining = sum(nom * speed_factor for pid, nom in nominal.items() if pid not in decided)
     return elapsed + remaining * statistics.median(ratios)
+
+
+def _pid_alive(pid: int) -> bool:
+    """True while the pid exists; a pid we cannot signal is somebody else's, so alive."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:  # an unexpected answer treats the holder as alive: never double-run
+        return True
+    return True
+
+
+def _acquire_run_lock(run_dir: Path) -> bool:
+    """Claim the run by writing ``<run_dir>/lock`` with this pid and the start time. A lock
+    whose pid is alive means another process is driving this run: refuse, the caller's. A
+    lock whose pid is gone is stale (the holder died mid-run) and we take over, which is
+    exactly what a crashed run's resume is."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    lock = run_dir / LOCK_FILE
+    if lock.exists():
+        pid = 0
+        try:
+            pid = int(lock.read_text().split()[0])
+        except (OSError, ValueError, IndexError):  # unreadable or corrupt: nothing holds it
+            pid = 0
+        if pid > 0 and _pid_alive(pid):
+            return False
+    lock.write_text(f"{os.getpid()} {time.time()}\n")
+    return True
+
+
+def _release_run_lock(run_dir: Path) -> None:
+    (run_dir / LOCK_FILE).unlink(missing_ok=True)
+
+
+def lock_held(run_id: str) -> bool:
+    """True while a live calibrate process holds this run's lock: the same reading
+    ``_acquire_run_lock`` makes, shared so the MCP tool's refusal checks the open run the
+    way a new launch does (a dead pid is a crashed run, which a resume takes over)."""
+    lock = state_dir() / "calibration" / run_id / LOCK_FILE
+    try:
+        pid = int(lock.read_text().split()[0])
+    except (OSError, ValueError, IndexError):  # absent, unreadable or corrupt: nothing holds it
+        return False
+    return pid > 0 and _pid_alive(pid)
+
+
+def cli_report(line: str) -> None:
+    """The CLI's reporter. A plain ``print`` sits in a block buffer whenever stdout is a file
+    or a pipe, which is exactly how a live run's log stayed empty until the process exited;
+    every line must reach a pipe reader the moment it is made."""
+    print(line, flush=True)
+
+
+def _refuse(line: str) -> None:
+    """Refusals are not part of the report a caller pipes: unknown endpoint, router entry,
+    down, busy, an already-running run and an empty tier go to stderr, flushed, so they are
+    visible even when the report lines are redirected."""
+    print(line, file=sys.stderr, flush=True)
 
 
 async def run(reg, store, conn, endpoint: str, tier: str = "core", reset: bool = False,
               estimate_only: bool = False, keep_going: bool = False, set_path=None,
-              report=print) -> str:
+              report=cli_report, on_open=None) -> str:
     """Run a tier of the set against one endpoint and return the run id (or the refusal's error
     name when nothing ran). ``estimate`` is the return when ``estimate_only`` stopped after the
-    estimate; nothing is written in that case beyond the throughput curve the estimate needed."""
+    estimate; what that stop leaves written is the capacity curve the estimate needed, the
+    scorecard row the estimate read or opened, and the server bookkeeping rows the command
+    opened -- no run and no results (final review, docs).
+    ``on_open``, when given, is called with the run id the moment the run is ours to drive
+    (the run row exists and the lock is held): how the MCP tool learns the id it is waiting
+    on without waiting for the run itself."""
     ep = reg.endpoints.get(endpoint)
     if ep is None:
-        report(f"unknown_endpoint: no endpoint named {endpoint!r}")
+        _refuse(f"unknown_endpoint: no endpoint named {endpoint!r}")
         return "unknown_endpoint"
     if ep.is_router:
-        report(f"not_calibratable: endpoint {endpoint!r} is a router")
+        _refuse(f"not_calibratable: endpoint {endpoint!r} is a router")
         return "not_calibratable"
     live = await reg.probe(ep)
     models = live.get("models") or []
     if not live.get("up") or not models:
-        report(f"model_unavailable: endpoint {endpoint!r} is down or serves nothing")
+        _refuse(f"model_unavailable: endpoint {endpoint!r} is down or serves nothing")
         return "model_unavailable"
     served_id = str(models[0])
     endpoint_id = db.lookup_id(conn, "endpoints", name=ep.name, base_url=ep.url,
                                backend=ep.backend, host=ep.host)
     model_id = db.lookup_id(conn, "models", served_id=served_id)
-    row = _row_for(conn, ep.name, served_id, endpoint_id, model_id, reset)
-
     probe_set = load_set(set_path)
     tools = present_tools(probe_set)
     plan_obj = plan(probe_set, tier, tools)
+    if not plan_obj.probes:
+        # an empty tier has measured nothing and a run of it could never complete: refused
+        # before any row, curve or run is written, with the skip reasons on stderr if the
+        # plan skipped everything (final review M6)
+        detail = "; ".join(f"{p.id}: {why}" for p, why in plan_obj.skipped)
+        _refuse("no_probes: tier " + repr(tier) + " has nothing to run"
+                + (f" ({detail})" if detail else ""))
+        return "no_probes"
+
+    # A reset is not applied yet: an estimate or a refusal must leave the row as it was, so the
+    # archive and fresh row happen after the estimate and the busy check, just before the run
+    # opens. Until then the factor reads the live row when there is one to read (no reset: the
+    # row the run will use; reset: nothing is written, and a fresh row has no speed factor).
+    row = None if reset else _row_for(conn, ep.name, served_id, endpoint_id, model_id, False)
 
     curve = capacity.load_capacity(conn, endpoint_id)
     tps_single = None
@@ -648,17 +805,36 @@ async def run(reg, store, conn, endpoint: str, tier: str = "core", reset: bool =
         try:
             curve, tps_single = await throughput_probe(reg, ep, served_id, conn)
         except EndpointBusy as e:
-            report(f"endpoint_busy: {e}")
+            _refuse(f"endpoint_busy: {e}")
             return "endpoint_busy"
-    if row.speed_factor is not None:
+    if row is not None and row.speed_factor is not None:
         factor = float(row.speed_factor)
     elif probe_set.reference_tps is not None and tps_single:
         factor = float(probe_set.reference_tps) / tps_single
     else:
         factor = 1.0
-    low, high = estimate_s(plan_obj, factor)
-    line = (f"estimate: {len(plan_obj.probes)} probes, ~{low / 60:.1f}-{high / 60:.1f} min"
-            f" (speed factor {factor:.2f}, margin 50%)")
+    resumed = None
+    if row is not None:
+        # a resume has already paid for its finished probes: the estimate line and the twice
+        # rule below both speak of the remaining ones, so the lookup _open_run makes again
+        # runs first here (final review M10)
+        resumed = conn.execute(
+            "SELECT id FROM calibration_runs WHERE row_id = ? AND tier = ? AND set_version = ?"
+            " AND status != 'complete' ORDER BY started DESC, rowid DESC LIMIT 1",
+            (row.id, tier, probe_set.version)).fetchone()
+    if resumed is not None:
+        finished_probes = {r["probe_id"] for r in conn.execute(
+            "SELECT probe_id FROM calibration_results WHERE run_id = ?"
+            " AND status IN ('pass', 'fail')", (resumed["id"],))}
+        left = [probe for probe in plan_obj.probes if probe.id not in finished_probes]
+        low, high = estimate_s(Plan(left, plan_obj.skipped), factor)
+        line = (f"estimate: resuming run {resumed['id']}: {len(left)} of {len(plan_obj.probes)}"
+                f" probes left, ~{low / 60:.1f}-{high / 60:.1f} min"
+                f" (speed factor {factor:.2f}, margin 50%)")
+    else:
+        low, high = estimate_s(plan_obj, factor)
+        line = (f"estimate: {len(plan_obj.probes)} probes, ~{low / 60:.1f}-{high / 60:.1f} min"
+                f" (speed factor {factor:.2f}, margin 50%)")
     if curve is not None and float(curve.points.get(2, 0.0)) > 1.0:
         # the probe never clamps (the curve is the box's own record), but a point above 1.0 at
         # two sessions on a small box usually means the box was not quiet; say so once, here
@@ -669,69 +845,111 @@ async def run(reg, store, conn, endpoint: str, tier: str = "core", reset: bool =
     if estimate_only:
         return "estimate"
 
+    if reset:
+        # past the estimate and the busy check: now the archive and the fresh row the run uses
+        row = _row_for(conn, ep.name, served_id, endpoint_id, model_id, True)
     run_id, run_started = _open_run(conn, row.id, tier, probe_set, plan_obj, low)
-    prior = {r["probe_id"]: r["status"] for r in conn.execute(
-        "SELECT probe_id, status FROM calibration_results WHERE run_id = ?", (run_id,))}
     run_dir = state_dir() / "calibration" / run_id
-    results_this_run = 0
-    stopped = False
-    for probe in plan_obj.probes:
-        if prior.get(probe.id) in ("pass", "fail"):
-            continue
-        timeout_s = TIMEOUT_MULTIPLIER * probe.nominal_s * factor
-        if probe.kind == "facts":
-            outcome = await _run_facts(reg, store, conn, ep, served_id, probe, run_dir,
-                                       timeout_s, row.id)
-        else:
-            outcome = await run_probe_job(reg, store, conn, ep, served_id, probe, run_dir,
-                                          timeout_s)
-        _write_result(conn, run_id, probe.id, outcome)
-        results_this_run += 1
-        detail = f"; {outcome.reason}" if outcome.reason else ""
-        report(f"{probe.id}: {outcome.status} ({outcome.seconds:.1f}s{detail})")
-        if (outcome.status == "fail" and outcome.reason == "tail_capped"
-                and probe.kind != "facts"):
-            stopped = True
-            report("stopping: a capped probe stops the tier")
-            break
-        if not keep_going and results_this_run == 3:
-            revised = _revised_estimate(conn, run_id, plan_obj, factor)
-            if revised is not None and revised > 2.0 * low:
+    if not _acquire_run_lock(run_dir):
+        # another process is driving this run: joining it would double-dispatch its probes
+        _refuse(f"run_in_progress: another calibrate process holds run {run_id}")
+        return "run_in_progress"
+    try:
+        if on_open is not None:
+            # the row exists and the lock is ours: a caller running us in the background can
+            # answer its caller now, and follow the progress in the scorecard rows
+            on_open(run_id)
+        prior = {r["probe_id"]: r["status"] for r in conn.execute(
+            "SELECT probe_id, status FROM calibration_results WHERE run_id = ?",
+            (run_id,))}
+        results_this_run = 0
+        stopped = False
+        for probe in plan_obj.probes:
+            if prior.get(probe.id) in ("pass", "fail"):
+                continue
+            timeout_s = TIMEOUT_MULTIPLIER * probe.nominal_s * factor
+            if probe.kind == "facts":
+                outcome = await _run_facts(reg, store, conn, ep, served_id, probe, run_dir,
+                                           timeout_s, row.id)
+            else:
+                outcome = await run_probe_job(reg, store, conn, ep, served_id, probe, run_dir,
+                                              timeout_s)
+            _write_result(conn, run_id, probe.id, outcome)
+            results_this_run += 1
+            detail = f"; {outcome.reason}" if outcome.reason else ""
+            report(f"{probe.id}: {outcome.status} ({outcome.seconds:.1f}s{detail})")
+            if (outcome.status == "fail" and outcome.reason == "tail_capped"
+                    and probe.kind != "facts"):
                 stopped = True
-                report(f"estimate revised: ~{revised / 60:.1f} min; stopping"
-                       " (twice the original)")
+                report("stopping: a capped probe stops the tier")
                 break
-    if stopped:
-        status = "stopped"
-    elif _complete_run(conn, run_id, plan_obj):
-        status = "complete"
-    else:
-        status = "incomplete"
-    finished = time.time()
-    with db.immediate(conn):
-        conn.execute("UPDATE calibration_runs SET status = ?, actual_s = ?, finished = ?"
-                     " WHERE id = ?", (status, finished - run_started, finished, run_id))
-    if status == "complete":
+            if not keep_going and results_this_run == 3:
+                revised = _revised_estimate(conn, run_id, plan_obj, factor)
+                if revised is not None and revised > 2.0 * low:
+                    # low is the estimate this invocation budgeted: the whole plan on a fresh
+                    # run, the remaining probes on a resume (final review M10)
+                    stopped = True
+                    report("stopped: actuals exceed twice the estimate"
+                           " (rerun with --keep-going to continue)")
+                    break
+        if not stopped:
+            # spec §10 "Reliable": every unreliable probe is rerun ONCE in the same invocation, a
+            # fresh attempt. A rerun that comes back unreliable again holds the run incomplete and
+            # is left for the next resume: never a second rerun here. A probe that was already
+            # unreliable when this invocation started had its one rerun in the main loop above
+            # (the re-review of the wave: it was dispatched twice), so only a probe that turned
+            # unreliable in this invocation's main loop is rerun here.
+            unreliable = {r["probe_id"] for r in conn.execute(
+                "SELECT probe_id FROM calibration_results WHERE run_id = ? AND status = 'unreliable'",
+                (run_id,)) if prior.get(r["probe_id"]) != "unreliable"}
+            for probe in plan_obj.probes:
+                if probe.id not in unreliable:
+                    continue
+                report(f"rerun {probe.id}: unreliable load, one fresh attempt")
+                timeout_s = TIMEOUT_MULTIPLIER * probe.nominal_s * factor
+                if probe.kind == "facts":
+                    outcome = await _run_facts(reg, store, conn, ep, served_id, probe, run_dir,
+                                               timeout_s, row.id)
+                else:
+                    outcome = await run_probe_job(reg, store, conn, ep, served_id, probe, run_dir,
+                                                  timeout_s)
+                _write_result(conn, run_id, probe.id, outcome)
+                detail = f"; {outcome.reason}" if outcome.reason else ""
+                report(f"{probe.id}: {outcome.status} ({outcome.seconds:.1f}s{detail})")
+        if stopped:
+            status = "stopped"
+        elif _complete_run(conn, run_id, plan_obj):
+            status = "complete"
+        else:
+            status = "incomplete"
+        finished = time.time()
         with db.immediate(conn):
-            conn.execute("UPDATE scorecard_rows SET set_version = ? WHERE id = ?",
-                         (probe_set.version, row.id))
-        scorecard.run_pass(conn, row.id, probes=probe_set.labels())
-        fresh = conn.execute("SELECT speed_factor FROM scorecard_rows WHERE id = ?",
-                             (row.id,)).fetchone()
-        speed = fresh["speed_factor"] if fresh is not None else None
-        report(f"complete: speed factor {speed:.2f}" if speed is not None
-               else "complete: speed factor unmeasured")
-    report(f"run {run_id}: {status}")
+            conn.execute("UPDATE calibration_runs SET status = ?, actual_s = ?, finished = ?"
+                         " WHERE id = ?", (status, finished - run_started, finished, run_id))
+        if status == "complete":
+            with db.immediate(conn):
+                conn.execute("UPDATE scorecard_rows SET set_version = ? WHERE id = ?",
+                             (probe_set.version, row.id))
+            scorecard.run_pass(conn, row.id, probes=probe_set.labels())
+            fresh = conn.execute("SELECT speed_factor FROM scorecard_rows WHERE id = ?",
+                                 (row.id,)).fetchone()
+            speed = fresh["speed_factor"] if fresh is not None else None
+            report(f"complete: speed factor {speed:.2f}" if speed is not None
+                   else "complete: speed factor unmeasured")
+        report(f"run {run_id}: {status}")
+    finally:
+        _release_run_lock(run_dir)
     return run_id
 
 
 # --- the CLI (spec §10: started from the CLI the way `localagents monitor` is) --------------------
 
 
-def _recompute(conn, endpoint: str) -> None:
-    """``--recompute``: a pass for every live row of the endpoint with the installed set's
-    labels, then each cell as ``dimension[/language]: estimate (count, thin?)``."""
-    probe_set = load_set()
+def _recompute(conn, endpoint: str, set_path=None) -> None:
+    """``--recompute``: a pass for every live row of the endpoint with the labels of the set
+    named by ``--set`` (the default set when none is named), then each cell as
+    ``dimension[/language]: estimate (count, thin?)``."""
+    probe_set = load_set(set_path)
     labels = probe_set.labels()
     for row in scorecard.rows(conn):
         if row.endpoint_name != endpoint:
@@ -765,7 +983,9 @@ def main(argv=None) -> None:
     ap.add_argument("endpoint", help="the endpoint name from models.yaml")
     ap.add_argument("--tier", default="core", choices=["core", "medium", "large"])
     ap.add_argument("--reset", action="store_true", help="archive the row and start fresh")
-    ap.add_argument("--estimate", action="store_true", help="print the estimate and stop")
+    ap.add_argument("--estimate", action="store_true",
+                    help="print the estimate and stop; writes the capacity curve and the"
+                         " scorecard row (and the server bookkeeping rows) and nothing else")
     ap.add_argument("--recompute", action="store_true",
                     help="run a scorecard pass for the endpoint's rows and exit")
     ap.add_argument("--keep-going", action="store_true",
@@ -791,14 +1011,14 @@ def main(argv=None) -> None:
     conn = db.open_db()
     try:
         if a.recompute:
-            _recompute(conn, a.endpoint)
+            _recompute(conn, a.endpoint, a.set_path)
             return
         result = asyncio.run(_go(reg, conn, a))
         if result == "estimate":
             return
-        if result in ("unknown_endpoint", "not_calibratable"):
+        if result in ("unknown_endpoint", "not_calibratable", "no_probes"):
             raise SystemExit(2)
-        if result in ("model_unavailable", "endpoint_busy"):
+        if result in ("model_unavailable", "endpoint_busy", "run_in_progress"):
             raise SystemExit(1)
         row = conn.execute("SELECT status FROM calibration_runs WHERE id = ?",
                            (result,)).fetchone()

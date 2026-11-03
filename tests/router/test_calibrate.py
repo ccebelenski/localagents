@@ -8,9 +8,13 @@ checker proofs run the fixtures' shell commands on the stub and the reference so
 
 import asyncio
 import dataclasses
+import inspect
 import json
+import os
+import select
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -200,9 +204,13 @@ def test_loader_refuses_a_duplicate_id_and_a_missing_fixture(tmp_path):
     assert "no-such-fixture" in str(exc.value)
 
 
-def test_labels_merge_language_and_drop_facts(probeset):
+def test_labels_carry_facts_probes_with_empty_labels(probeset):
+    """The facts probe rides in ``labels()`` with empty labels and its nominal_s (final review,
+    layout): a known probe whose output is the row's facts rather than a cell earns no
+    observations, and naming it keeps its timing able to speak."""
     labels = probeset.labels()
-    assert set(labels) == {"alpha", "beta"}  # the facts probe is not an observation
+    assert set(labels) == {"alpha", "beta", "facts"}
+    assert labels["facts"] == {"labels": {}, "nominal_s": 30.0}
     assert labels["alpha"]["labels"]["language"] == "python"
     assert labels["alpha"]["nominal_s"] == 60
     assert "language" in labels["beta"]["labels"]
@@ -220,6 +228,24 @@ def test_plan_skips_probes_whose_tools_are_absent(probes, probeset):
     assert [(pr.id, why) for pr, why in p.skipped] == [
         ("beta-tool", "missing tool: localagents-no-such-tool")]
     assert "stubmcp" in calibrate.present_tools(s)
+
+
+def test_git_is_an_implicit_need(monkeypatch, probeset):
+    """Every tree is built with git, so a box without it skips the whole tier with that
+    reason (final review M5) rather than planning probes whose materialise would die."""
+    monkeypatch.setattr(calibrate.shutil, "which", lambda name: None)
+    tools = calibrate.present_tools(probeset)
+    assert tools == {"stubmcp"}  # the set's own stub; git, like every real tool, is absent
+    p = calibrate.plan(probeset, "core", tools)
+    assert p.probes == []
+    assert p.skipped  # every core probe, no exception
+    assert all(why == "missing tool: git" for _pr, why in p.skipped)
+    core = {pr.id for pr in probeset.probes if pr.tier == "core"}
+    assert {pr.id for pr, _why in p.skipped} == core
+    # with git on the box the implicit need costs nothing
+    p2 = calibrate.plan(probeset, "core", tools | {"git"})
+    assert {pr.id for pr in p2.probes} == core
+    assert p2.skipped == []
 
 
 def test_estimate_scales_by_speed_factor_with_margin(probes):
@@ -273,6 +299,36 @@ def test_check_runs_the_command_with_the_probe_dir_env(probes, tmp_path):
     env_probe = dataclasses.replace(
         probes["alpha"], checker='test -f "$LOCALAGENTS_PROBE_DIR/brief.md"')
     assert calibrate.check(env_probe, root) == (True, None)
+
+
+def test_no_answer_prefix_is_the_reason(probes, tmp_path):
+    # checkers add context to their no_answer ("no_answer: the brief named no file"); the
+    # reason stays the marker, which is what the scorecard aggregates over
+    prefixed = dataclasses.replace(
+        probes["alpha"], checker="echo 'no_answer: the brief named no file'; exit 1")
+    assert calibrate.check(prefixed, tmp_path) == (False, "no_answer")
+    exact = dataclasses.replace(probes["alpha"], checker="echo 'no_answer'; exit 1")
+    assert calibrate.check(exact, tmp_path) == (False, "no_answer")
+    other = dataclasses.replace(probes["alpha"],
+                                checker="echo 'checker: input missing'; exit 1")
+    assert calibrate.check(other, tmp_path) == (False, "checker: input missing")
+
+
+def test_relative_set_path_is_resolved(tmp_path, monkeypatch):
+    # a --set path is relative to the shell's directory, and the run dispatches with cwd
+    # inside the attempt directory: the loader pins the manifest and everything derived
+    # from it to absolute at load time, or a mid-run cwd change loses the fixture
+    monkeypatch.chdir(tmp_path)
+    rel = os.path.relpath(SET_PATH, tmp_path)
+    assert not os.path.isabs(rel)
+    s = calibrate.load_set(rel)
+    assert s.path.is_absolute()
+    for probe in s.probes:
+        assert probe.fixture_dir.is_absolute() and probe.brief_path.is_absolute()
+    # and from this unrelated directory the set still materializes and checks
+    root = calibrate.materialize(s.probes[0], tmp_path / "rel")
+    ok, reason = calibrate.check(s.probes[0], root)
+    assert ok is False and reason
 
 
 # --- throughput probe (spec §7, §10) -------------------------------------------------------------
@@ -361,10 +417,37 @@ def test_estimate_line_flags_a_curve_point_above_one(conn, probes, installed, se
                for line in lines)
 
 
-def test_run_refuses_a_down_model(conn):
+def test_run_refuses_a_down_model(conn, capsys):
     reg = FakeRegistry({"ep": _endpoint()}, probe={"up": False, "models": []})
-    result = _run(conn, reg=reg)
+    lines = []
+    result = asyncio.run(calibrate.run(reg, _store(conn), conn, "ep", report=lines.append))
     assert result == "model_unavailable"
+    # a refusal is not a report line: it goes to stderr, so the operator sees why nothing
+    # ran even when the report lines are piped somewhere else
+    assert lines == []
+    assert "model_unavailable" in capsys.readouterr().err
+
+
+def test_empty_tier_is_refused_before_running(conn, probes, installed, monkeypatch, capsys):
+    """A tier with nothing to run has measured nothing: the refusal is no_probes (the CLI's
+    exit-2 family) on stderr, and it happens before anything runs or writes -- no throughput
+    probe, no scorecard row, no run row that could never complete (final review M6)."""
+    installed(probes["alpha"])  # the set has one core probe and nothing under "large"
+    seen = []
+
+    async def no_throughput(*a):
+        seen.append(a)
+        raise AssertionError("the throughput probe ran for an empty tier")
+
+    monkeypatch.setattr(calibrate, "throughput_probe", no_throughput)
+    lines = []
+    result = asyncio.run(calibrate.run(_reg(), _store(conn), conn, "ep", tier="large",
+                                       report=lines.append))
+    assert result == "no_probes"
+    assert seen == [] and lines == []  # a refusal is stderr, not the piped report
+    assert "no_probes" in capsys.readouterr().err
+    assert conn.execute("SELECT COUNT(*) FROM calibration_runs").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM scorecard_rows").fetchone()[0] == 0
 
 
 def test_run_resumes_retrying_skipped_and_unreliable(conn, probes, installed, seam):
@@ -399,6 +482,88 @@ def test_run_complete_needs_two_thirds_results(conn, probes, installed, seam):
     assert _run_status(conn, run_id) == "incomplete"
 
 
+def test_unreliable_probe_is_rerun_once_and_never_counts_as_complete(conn, probes, installed,
+                                                                     seam):
+    # spec §10 "Reliable": an unreliable probe is rerun once in the same invocation (a fresh
+    # attempt), and a status that is not a verdict keeps the run incomplete until it has one
+    _row(conn)
+    _save_capacity(conn)
+    installed(probes["alpha"], probes["beta"])
+    counts = {"alpha": 0, "beta": 0}
+
+    def unreliable(probe_id):
+        def out(levers):
+            counts[probe_id] += 1
+            return _outcome("unreliable", 5.0, "foreign load")
+        return out
+
+    fake = seam({pid: unreliable(pid) for pid in counts})
+    run_id = _run(conn)
+    assert _run_status(conn, run_id) == "incomplete"
+    assert [c["id"] for c in fake.calls] == ["alpha", "beta", "alpha", "beta"]  # never a 3rd
+    statuses = {r["probe_id"]: r["status"] for r in conn.execute(
+        "SELECT probe_id, status FROM calibration_results WHERE run_id = ?", (run_id,))}
+    assert statuses == {"alpha": "unreliable", "beta": "unreliable"}
+
+    # a resume whose leftover unreliable probe STAYS unreliable: its one rerun is the main
+    # loop's; the post-loop rerun must not dispatch it a second time (the wave's re-review)
+    fake.outcomes["alpha"] = _outcome()
+    assert _run(conn) == run_id
+    assert _run_status(conn, run_id) == "incomplete"
+    assert [c["id"] for c in fake.calls][4:] == ["alpha", "beta"]  # beta once, not twice
+
+    fake.outcomes["beta"] = _outcome()
+    assert _run(conn) == run_id  # resume: the unreliable row goes through the main loop again
+    assert _run_status(conn, run_id) == "complete"
+    assert len(fake.calls) == 7  # this resume's one run; no further rerun of a verdict
+
+
+def _open_running_run(conn):
+    """A ``running`` run row a fresh launch would resume and its run directory (the lock
+    lives at ``<run_dir>/lock``); returns the directory."""
+    row = _row(conn)
+    conn.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan, started,"
+                 " status) VALUES ('run-held', ?, 'core', '2026.11', '{}', ?, 'running')",
+                 (row.id, time.time()))
+    run_dir = calibrate.state_dir() / "calibration" / "run-held"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def test_second_launch_refuses_while_the_first_runs(conn, probes, installed, seam):
+    # a `running` run row whose lock names a live pid is being driven by another process
+    _save_capacity(conn)
+    installed(probes["alpha"])
+    fake = seam({"alpha": _outcome()})
+    run_dir = _open_running_run(conn)
+    (run_dir / "lock").write_text(f"{os.getpid()} {time.time()}\n")  # this test process: alive
+    result = _run(conn)
+    assert result == "run_in_progress"
+    assert fake.calls == []  # never a second dispatcher on one run
+    assert conn.execute("SELECT COUNT(*) FROM calibration_results").fetchone()[0] == 0
+    assert (run_dir / "lock").read_text().split()[0] == str(os.getpid())  # the holder's stays
+
+
+def test_stale_lock_resumes(conn, probes, installed, seam):
+    # a lock whose pid is gone is a crashed holder: the resume takes over, works, releases
+    _save_capacity(conn)
+    installed(probes["alpha"])
+    seam({"alpha": _outcome()})
+    run_dir = _open_running_run(conn)
+    dead = 2 ** 20
+    while True:
+        try:
+            os.kill(dead, 0)
+        except ProcessLookupError:
+            break
+        dead += 1
+    (run_dir / "lock").write_text(f"{dead} 1.0\n")
+    run_id = _run(conn)
+    assert run_id == "run-held"
+    assert _run_status(conn, run_id) == "complete"
+    assert not (run_dir / "lock").exists()  # released when the run ends
+
+
 def _four_probes(probes):
     return [dataclasses.replace(probes["alpha"], id=f"p{i}", nominal_s=60.0) for i in range(4)]
 
@@ -416,6 +581,52 @@ def test_run_stops_when_actuals_exceed_twice_the_estimate(conn, probes, monkeypa
     assert [c["id"] for c in fake.calls] == ["p0", "p1", "p2"]  # stopped after the third
     assert conn.execute("SELECT COUNT(*) FROM calibration_results WHERE run_id = ?",
                         (run_id,)).fetchone()[0] == 3
+
+
+def test_revised_estimate_excludes_facts(conn, probes, installed):
+    """The facts row is five jobs' seconds summed against one nominal_s: it enters neither
+    the revised estimate's elapsed, its median ratio nor its remaining projection (M9). Here
+    the facts pass at 900s must leave the answer where alpha (120s actual, 60s nominal) and
+    beta (30s nominal, undecided) alone put it."""
+    row = _row(conn)
+    s = installed(probes["alpha"], probes["beta"], probes["facts"])
+    conn.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan, started, status)"
+                 " VALUES ('rx', ?, 'core', '2026.11', '{}', ?, 'running')", (row.id, time.time()))
+    for pid, secs in (("alpha", 120.0), ("facts", 900.0)):
+        conn.execute("INSERT INTO calibration_results (run_id, probe_id, status, seconds)"
+                     " VALUES ('rx', ?, 'pass', ?)", (pid, secs))
+    plan_obj = calibrate.plan(s, "core", {"stubmcp", "git"})
+    # 120 elapsed + beta's 30 nominal * median(120 / 60) = 180; with facts in the figure the
+    # median ratio alone would be 16.0
+    assert calibrate._revised_estimate(conn, "rx", plan_obj, 1.0) == 180.0
+
+
+def test_resumed_run_estimates_the_remaining_probes(conn, probes, monkeypatch):
+    """A resume has already paid for its finished probes: the estimate line names the run
+    and counts what is left, and the twice rule budgets against that remaining estimate, not
+    the original whole-plan total (M10). Three 150s results against 180s of remaining
+    nominal stop the run; the 300s original total would have let it run on."""
+    row = _row(conn)
+    _save_capacity(conn)
+    five = [dataclasses.replace(probes["alpha"], id=f"p{i}") for i in range(5)]  # nominal 60 each
+    s = calibrate.ProbeSet("2026.11", None, five, SET_PATH)
+    monkeypatch.setattr(calibrate, "load_set", lambda path=None: s)
+    conn.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan, started, status)"
+                 " VALUES ('r', ?, 'core', '2026.11', '{}', ?, 'running')", (row.id, time.time()))
+    for pid in ("p0", "p1"):
+        conn.execute("INSERT INTO calibration_results (run_id, probe_id, status, seconds)"
+                     " VALUES ('r', ?, 'pass', 60.0)", (pid,))
+    fake = FakeSeam({f"p{i}": _outcome(seconds=150.0) for i in (2, 3, 4)})
+    monkeypatch.setattr(calibrate, "run_probe_job", fake)
+    lines = []
+    run_id = asyncio.run(calibrate.run(_reg(), _store(conn), conn, "ep", report=lines.append))
+    assert run_id == "r"
+    est = next(ln for ln in lines if ln.startswith("estimate:"))
+    assert "resuming run r: 3 of 5 probes left" in est
+    assert "~3.0-4.5 min" in est  # the three left at factor 1.0, not all five
+    assert "stopped: actuals exceed twice the estimate (rerun with --keep-going to continue)" in lines
+    assert _run_status(conn, run_id) == "stopped"
+    assert [c["id"] for c in fake.calls] == ["p2", "p3", "p4"]
 
 
 def test_run_keeps_going_when_asked(conn, probes, monkeypatch):
@@ -475,6 +686,34 @@ def test_reset_archives_the_row_first(conn, probes, installed, seam):
     assert len(live) == 1 and live[0].id != old.id
     assert live[0].set_version == "2026.11"
     assert _run_status(conn, run_id) == "complete"
+
+
+def test_reset_with_estimate_only_or_busy_leaves_the_row(conn, probes, installed, seam,
+                                                         monkeypatch):
+    # an estimate or a refusal is no reason to lose a calibration: the archive and the fresh
+    # row happen only once the estimate and the busy check are past and a run opens
+    old = _row(conn)
+    _save_capacity(conn)
+    installed(probes["alpha"])
+    fake = seam({"alpha": _outcome()})
+    result = _run(conn, reset=True, estimate_only=True)
+    assert result == "estimate" and fake.calls == []
+    archived = conn.execute("SELECT archived FROM scorecard_rows WHERE id = ?",
+                            (old.id,)).fetchone()
+    assert archived is not None and archived["archived"] is None
+    assert len(scorecard.rows(conn)) == 1  # no fresh row opened for an estimate
+
+    async def busy(*a, **k):
+        raise calibrate.EndpointBusy("endpoint 'ep' is serving requests; run when quiet")
+
+    monkeypatch.setattr(calibrate, "throughput_probe", busy)
+    monkeypatch.setattr(capacity, "load_capacity", lambda conn, eid: None)
+    result = _run(conn, reset=True)
+    assert result == "endpoint_busy" and fake.calls == []
+    archived = conn.execute("SELECT archived FROM scorecard_rows WHERE id = ?",
+                            (old.id,)).fetchone()
+    assert archived["archived"] is None and len(scorecard.rows(conn)) == 1
+    assert conn.execute("SELECT COUNT(*) FROM calibration_runs").fetchone()[0] == 0
 
 
 # --- the facts probe (spec §6) -------------------------------------------------------------------
@@ -555,6 +794,84 @@ def test_capped_facts_lever_fails_facts_without_stopping_the_tier(conn, probes, 
     assert _run_status(conn, run_id) == "complete"  # decided results all round, not stopped
 
 
+def test_facts_fail_closed_and_a_skipped_lever_is_retried(conn, probes, installed, monkeypatch,
+                                                          tmp_path):
+    """Facts are a whole reading or nothing: a lever that skips leaves the row's facts exactly
+    as they were, skips the probe (so the unfinished run resumes and reads all five again), and
+    a lever that fails with a job of its own is the job the result names."""
+    row = _row(conn)
+    _save_capacity(conn)
+    installed(probes["facts"])
+    store = _store(conn)
+    broken = {}
+
+    def lever_name(levers):
+        if not levers:
+            return "defaults"
+        if levers.get("thinking") is True:
+            return "thinking_on"
+        if levers.get("thinking") is False:
+            return "thinking_off"
+        return "effort_low" if levers.get("effort") == "low" else "effort_high"
+
+    async def fake(reg, store_, conn_, ep, served_id, probe, run_dir, timeout_s, levers=None):
+        name = lever_name(levers or {})
+        if broken.get(name):
+            return _outcome("skipped", 0.0, "endpoint went down", None)
+        if broken.get("fail_" + name):
+            jid = f"broken-{name}"
+            _fake_job(store_, jid, "[thinking] x", tmp_path)
+            return _outcome("fail", 1.0, "timeout", jid)
+        jid = f"facts-{name}"
+        _fake_job(store_, jid, "[thinking] x\n[assistant] y", tmp_path)
+        return _outcome("pass", 1.0, None, jid)
+
+    monkeypatch.setattr(calibrate, "run_probe_job", fake)
+
+    broken["effort_high"] = True  # the one lever the reading still needs
+    run_id = _run(conn, store=store)
+    result = conn.execute("SELECT status, job_id FROM calibration_results WHERE run_id = ?"
+                          " AND probe_id = 'facts'", (run_id,)).fetchone()
+    assert result["status"] == "skipped"  # not a fail: a resume runs the whole reading again
+    assert result["job_id"] == "facts-defaults"  # the skipped lever had no job: the defaults'
+    fresh = conn.execute("SELECT facts FROM scorecard_rows WHERE id = ?", (row.id,)).fetchone()
+    assert fresh["facts"] is None  # a fact inferred from four readings is not written
+    assert _run_status(conn, run_id) == "incomplete"
+
+    broken.clear()
+    assert _run(conn, store=store) == run_id  # resume: the skipped probe is retried
+    result = conn.execute("SELECT status FROM calibration_results WHERE run_id = ?"
+                          " AND probe_id = 'facts'", (run_id,)).fetchone()
+    assert result["status"] == "pass"
+    fresh = conn.execute("SELECT facts FROM scorecard_rows WHERE id = ?", (row.id,)).fetchone()
+    assert json.loads(fresh["facts"])["default_thinking"] == "on"
+    assert _run_status(conn, run_id) == "complete"
+
+    # a failing lever with a job of its own names that job, and still writes no facts
+    broken["fail_effort_high"] = True
+    run2 = _run(conn, store=store)
+    assert run2 != run_id  # the completed run is history; this is a fresh reading
+    result = conn.execute("SELECT status, reason, job_id FROM calibration_results"
+                          " WHERE run_id = ? AND probe_id = 'facts'", (run2,)).fetchone()
+    assert (result["status"], result["reason"]) == ("fail", "timeout")
+    assert result["job_id"] == "broken-effort_high"  # the job worth pulling is the broken one
+    fresh = conn.execute("SELECT facts FROM scorecard_rows WHERE id = ?", (row.id,)).fetchone()
+    assert json.loads(fresh["facts"])["default_thinking"] == "on"  # untouched by the failed run
+
+
+def test_thinking_chars_reads_the_recorded_length():
+    """The ``(N chars)`` prefix the runner writes is what gets counted: the logged excerpt is
+    the first 500 chars only, so measuring the text would undercount a long block. A line
+    without the prefix predates the runner change and counts its logged text, as before."""
+    assert calibrate._thinking_chars("[thinking] (1200 chars) " + "x" * 500) == 1200
+    assert calibrate._thinking_chars("[thinking] (12 chars) hello there") == 12
+    assert calibrate._thinking_chars("[thinking] old style line") == len(" old style line")
+    two = ("[thinking] (7 chars) texty\n[assistant] (not thinking)\n[thinking] tail"
+           "\n[thinking] (bad chars) x")
+    assert calibrate._thinking_chars(two) == 7 + len(" tail") + len(" (bad chars) x")
+    assert calibrate._thinking_chars("") == 0
+
+
 # --- the unreliable seam (spec §10 "Reliable") ----------------------------------------------------
 
 
@@ -577,11 +894,105 @@ def test_unreliable_when_foreign_load_was_seen(conn, probes, monkeypatch, tmp_pa
     assert outcome.status == "unreliable"
 
 
+def test_unreliable_from_slots_busy_on_llamacpp(conn, probes, monkeypatch, tmp_path):
+    """llama.cpp reports ``slots``, not ``load`` (Registry.probe's real shape): the sampler
+    reads slots.busy when requests_running is absent, as capacity.from_probe does, or the
+    foreign-session guard would never fire on exactly the box it was written for."""
+    ep = _endpoint()
+    reg = FakeRegistry({"ep": ep}, probe={"up": True, "models": ["served"],
+                                          "slots": {"total": 2, "busy": 2, "free": 0}})
+    job = _fake_job(_store(conn), "job-1b", "", tmp_path)
+
+    async def start_job(**kw):
+        return job
+
+    class Store:
+        async def wait(self, jid, timeout_s):
+            return job
+
+    monkeypatch.setattr(calibrate.server, "start_job", start_job)
+    outcome = asyncio.run(calibrate.run_probe_job(
+        reg, Store(), conn, ep, "served", probes["alpha"], tmp_path / "run", 30.0))
+    assert outcome.status == "unreliable" and outcome.reason == "foreign load"
+
+
+def test_environment_failure_is_skipped_not_failed(conn, probes, monkeypatch, tmp_path):
+    """A job that ends failed with no result, cancelled or lost measured nothing: skipped
+    with the job's error (or status) as the reason, retried on resume. A capability fail
+    would be kept and poison the run; timeout and tail_capped stay fail as now."""
+    ep = _endpoint()
+    reg = FakeRegistry({"ep": ep}, probe={"up": True, "models": ["served"]})
+    held = {}
+
+    async def start_job(**kw):
+        return held["job"]
+
+    class Store:
+        async def wait(self, jid, timeout_s):
+            return held["job"]
+
+    monkeypatch.setattr(calibrate.server, "start_job", start_job)
+
+    async def one(status, error=None, result=None):
+        job = _fake_job(_store(conn), f"env-{status}", "", tmp_path, status=status)
+        job.error, job.result = error, result
+        held["job"] = job
+        return await calibrate.run_probe_job(
+            reg, Store(), conn, ep, "served", probes["alpha"], tmp_path / "run", 30.0)
+
+    for status, error, reason in (("failed", "connection reset", "connection reset"),
+                                  ("cancelled", None, "cancelled"),
+                                  ("lost", "server exited", "server exited")):
+        outcome = asyncio.run(one(status, error=error))
+        assert outcome.status == "skipped" and outcome.reason == reason
+    assert asyncio.run(one("timeout")).status == "fail"  # stays a fail as now
+    # a failed job WITH a result is a real attempt: the checker still decides it
+    assert asyncio.run(one("failed", result="some output")).status == "fail"
+
+
+def test_materialize_failure_is_skipped(conn, probes, installed, monkeypatch, tmp_path):
+    """A tree that cannot be built (a broken fixture, a box without git) is an environment
+    reason: the probe is skipped with the environment's own words, and the run goes on to the
+    next probe instead of dying on the first bad tree (final review M5)."""
+    _row(conn)
+    _save_capacity(conn)
+    installed(probes["alpha"], probes["beta"])
+    job = _fake_job(_store(conn), "job-mat", "[assistant] done", tmp_path)
+    dispatched = []
+
+    def materialize(probe, dest):
+        if probe.id == "alpha":
+            raise FileNotFoundError(2, "No such file or directory: 'git'")
+        root = Path(dest)
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "main.py").write_text("print('x')\n")
+        return root
+
+    async def start_job(**kw):
+        dispatched.append(kw["task"])
+        return job
+
+    class Store:
+        async def wait(self, jid, timeout_s):
+            return job
+
+    monkeypatch.setattr(calibrate, "materialize", materialize)
+    monkeypatch.setattr(calibrate.server, "start_job", start_job)
+    run_id = asyncio.run(calibrate.run(_reg(), Store(), conn, "ep", tier="core",
+                                       report=lambda line: None))
+    rows = {r["probe_id"]: r for r in conn.execute(
+        "SELECT probe_id, status, reason FROM calibration_results WHERE run_id = ?", (run_id,))}
+    assert rows["alpha"]["status"] == "skipped"
+    assert "git" in rows["alpha"]["reason"]  # the environment's own words, kept for the report
+    assert "beta" in rows  # the run went on: one bad tree never killed it
+    assert dispatched  # beta really was dispatched
+
+
 def test_seconds_come_from_the_job_row(conn, probes, monkeypatch, tmp_path):
     ep = _endpoint()
     reg = FakeRegistry({"ep": ep}, probe={"up": True, "models": ["served"]})
     job = _fake_job(_store(conn), "job-2", "", tmp_path, started=10.0, finished=16.5)
-    root = tmp_path / "run" / "alpha" / "1"
+    root = tmp_path / "run" / "alpha" / "1" / "repo"
 
     async def start_job(**kw):
         assert kw["calibration"] is True and kw["priority"] == "background"
@@ -601,7 +1012,8 @@ def test_seconds_come_from_the_job_row(conn, probes, monkeypatch, tmp_path):
 
 def test_retried_probe_gets_a_fresh_attempt_directory(conn, probes, monkeypatch, tmp_path):
     """A retried probe (resume, unreliable rerun) materialises into a fresh attempt directory:
-    two attempts get two roots, and the first one's leftovers stay out of the new base."""
+    two attempts get two roots under ``<n>/repo``, and the first one's leftovers stay out of
+    the new base."""
     ep = _endpoint()
     reg = FakeRegistry({"ep": ep}, probe={"up": True, "models": ["served"]})
     store = _store(conn)
@@ -619,13 +1031,14 @@ def test_retried_probe_gets_a_fresh_attempt_directory(conn, probes, monkeypatch,
     for _attempt in range(2):
         asyncio.run(calibrate.run_probe_job(
             reg, Store(), conn, ep, "served", probes["alpha"], tmp_path / "run", 30.0))
-    assert roots == [tmp_path / "run" / "alpha" / "1", tmp_path / "run" / "alpha" / "2"]
+    assert roots == [tmp_path / "run" / "alpha" / "1" / "repo",
+                     tmp_path / "run" / "alpha" / "2" / "repo"]
     assert calibrate._git_head(roots[1], calibrate.PROBE_BASE_REF) is not None
     # the first attempt's work survives as evidence and is not the new attempt's tree
     (roots[0] / "answer.txt").write_text("previous attempt's work\n")
     asyncio.run(calibrate.run_probe_job(
         reg, Store(), conn, ep, "served", probes["alpha"], tmp_path / "run", 30.0))
-    assert roots[2] == tmp_path / "run" / "alpha" / "3"
+    assert roots[2] == tmp_path / "run" / "alpha" / "3" / "repo"
     assert (roots[0] / "answer.txt").read_text() == "previous attempt's work\n"
     assert not (roots[2] / "answer.txt").exists()
     n_commits = subprocess.run(["git", "-C", str(roots[0]), "rev-list", "--count", "HEAD"],
@@ -664,6 +1077,68 @@ def test_stub_log_path_reaches_the_checker(conn, probes, monkeypatch, tmp_path):
     assert env_path == str(tmp_path / "run" / "alpha" / "1" / "stub.jsonl")
 
 
+def test_attempt_layout_keeps_the_stub_log_outside_the_repo(conn, probes, monkeypatch, tmp_path):
+    """The attempt directory holds ``repo/`` (the materialised root the job works in) and
+    ``stub.jsonl`` beside it (final review, layout): the recording is not a file in the tree
+    the checker reads as untouched, so a stubmcp probe's own log never shows up as work."""
+    ep = _endpoint()
+    reg = FakeRegistry({"ep": ep}, probe={"up": True, "models": ["served"]})
+    job = _fake_job(_store(conn), "job-layout", "", tmp_path)
+    seen = {}
+
+    async def start_job(**kw):
+        seen["cwd"] = Path(kw["cwd"])
+        seen["stub"] = Path(kw["mcp_servers"]["localagents"]["env"]["LOCALAGENTS_STUB_LOG"])
+        return job
+
+    class Store:
+        async def wait(self, jid, timeout_s):
+            return job
+
+    probe = dataclasses.replace(probes["alpha"], needs=["stubmcp"])
+    monkeypatch.setattr(calibrate.server, "start_job", start_job)
+    asyncio.run(calibrate.run_probe_job(
+        reg, Store(), conn, ep, "served", probe, tmp_path / "run", 30.0))
+    attempt = tmp_path / "run" / "alpha" / "1"
+    assert seen["cwd"] == attempt / "repo"
+    assert seen["stub"] == attempt / "stub.jsonl"  # beside repo/, not inside it
+    assert not (seen["cwd"] / "stub.jsonl").exists()
+
+
+def test_stubmcp_probe_allows_the_stub_server_and_pins_mcp_config(conn, probes, monkeypatch,
+                                                                  tmp_path):
+    """C1: a stubmcp probe's session is allowed the stub (the registry defaults plus the
+    server name), or every ``mcp__localagents__*`` call is permission-denied and the probe
+    measures a refusal, never a dispatch. And every calibration job is pinned: strict MCP
+    config (the stub only, never an operator's real localagents server) and no setting
+    sources (no ancestor CLAUDE.md or settings reach a probe session)."""
+    ep = _endpoint()
+    reg = FakeRegistry({"ep": ep}, probe={"up": True, "models": ["served"]})
+    job = _fake_job(_store(conn), "job-c1", "", tmp_path)
+    seen = {}
+
+    async def start_job(**kw):
+        seen.update(kw)
+        return job
+
+    class Store:
+        async def wait(self, jid, timeout_s):
+            return job
+
+    monkeypatch.setattr(calibrate.server, "start_job", start_job)
+    stub_probe = dataclasses.replace(probes["alpha"], needs=["stubmcp"])
+    asyncio.run(calibrate.run_probe_job(
+        reg, Store(), conn, ep, "served", stub_probe, tmp_path / "run", 30.0))
+    assert seen["allowed_tools"] == Defaults().allowed_tools + [calibrate.STUB_SERVER_NAME]
+    assert seen["strict_mcp_config"] is True
+    assert seen["setting_sources"] == []
+    # a probe needing no stub keeps the defaults (None) but is pinned the same way
+    asyncio.run(calibrate.run_probe_job(
+        reg, Store(), conn, ep, "served", probes["beta"], tmp_path / "run", 30.0))
+    assert seen["allowed_tools"] is None
+    assert seen["strict_mcp_config"] is True and seen["setting_sources"] == []
+
+
 # --- the CLI and the tools (spec §11) ------------------------------------------------------------
 
 
@@ -680,6 +1155,30 @@ def test_cli_refuses_a_router_endpoint(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit) as exc:
         calibrate.main(["nosuch", "--config", str(cfg)])
     assert exc.value.code == 2
+
+
+def test_cli_flushes_each_report_line():
+    # The CLI reporter must not hold lines in a block buffer: a pipe reader (a tee, a log
+    # tail) sees every line the moment it is made, not when the process exits -- the live
+    # run's log stayed empty until the run ended. A pipe test through main() would drive a
+    # registry, a db and the shim for real, so the pin is two pieces: the identity of the
+    # reporter run() installs by default, and a real-pipe check of that reporter from a
+    # child that pauses after its first line.
+    assert inspect.signature(calibrate.run).parameters["report"].default is calibrate.cli_report
+    code = (
+        "import time\n"
+        "from localagents.router import calibrate\n"
+        "calibrate.cli_report('estimate: first out')\n"
+        "time.sleep(30)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE)
+    try:
+        ready, _, _ = select.select([proc.stdout], [], [], 15.0)
+        assert ready, "the first report line never reached the pipe while the writer lived"
+        assert proc.stdout.readline() == b"estimate: first out\n"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
 
 
 def test_recompute_runs_a_pass(conn, tmp_path, monkeypatch, capsys):
@@ -702,6 +1201,32 @@ def test_recompute_runs_a_pass(conn, tmp_path, monkeypatch, capsys):
                         (row.id,)).fetchone()[0] == 1
     out = capsys.readouterr().out
     assert "software_dev/python:" in out and "complexity:" in out
+
+
+def test_recompute_uses_the_named_set(conn, tmp_path, monkeypatch, capsys):
+    """``--recompute --set PATH`` runs its passes with the labels of the named set, not the
+    default one (final review, --set): the printed cells carry the named manifest's labels."""
+    row = _row(conn)
+    _ids(conn)
+    conn.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan, started, status)"
+                 " VALUES ('old', ?, 'core', '2026.11', '{}', ?, 'complete')", (row.id, time.time()))
+    conn.execute("INSERT INTO calibration_results (run_id, probe_id, job_id, status, seconds)"
+                 " VALUES ('old', 'alpha', NULL, 'pass', 60.0)")
+    named = tmp_path / "named"
+    shutil.copytree(SET_PATH.parent, named)  # the manifest resolves its briefs beside itself
+    data = yaml.safe_load((named / "set.yaml").read_text())
+    data["probes"][0]["language"] = "go"  # the pass's labels speak the named manifest's language
+    (named / "set.yaml").write_text(yaml.safe_dump(data))
+    reg = FakeRegistry({"ep": _endpoint()})
+    monkeypatch.setattr(calibrate.Registry, "load", staticmethod(lambda path=None: reg))
+    real_open = db.open_db
+    monkeypatch.setattr(calibrate.db, "open_db", lambda path=None: real_open(tmp_path / "r.db"))
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text("")
+    calibrate.main(["ep", "--recompute", "--set", str(named / "set.yaml"), "--config", str(cfg)])
+    out = capsys.readouterr().out
+    assert "software_dev/go:" in out  # alpha's language cell as the named set defines it
+    assert "software_dev/python:" not in out  # the default set's labels were not used
 
 
 def test_scorecard_tool_lists_rows_cells_and_notices(conn, monkeypatch):
@@ -729,30 +1254,6 @@ def test_scorecard_tool_lists_rows_cells_and_notices(conn, monkeypatch):
     assert len(out["rows"][0]["cells"]) == len(got["cells"])
     assert conn.execute("SELECT COUNT(*) FROM scorecard_passes WHERE row_id = ?",
                         (row.id,)).fetchone()[0] == 2
-
-
-def test_calibrate_tool_collects_the_report_lines(conn, tmp_path, monkeypatch):
-    row = _row(conn)
-    conn.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan, started, status)"
-                 " VALUES ('run-x', ?, 'core', '2026.11', '{}', ?, 'complete')",
-                 (row.id, time.time()))
-    reg = FakeRegistry({"ep": _endpoint()})
-    monkeypatch.setattr(router.Registry, "load", staticmethod(lambda path=None: reg))
-    monkeypatch.setattr(router, "_db", lambda: conn)
-
-    async def fake_run(reg_, store_, conn_, endpoint, **kw):
-        kw["report"]("a line")
-        return "run-x"
-
-    async def no_start():
-        return 0
-
-    monkeypatch.setattr(calibrate, "run", fake_run)
-    monkeypatch.setattr(calibrate.server.shim, "start", no_start)
-    monkeypatch.setattr(calibrate.server, "_ensure_sampler", lambda: None)
-    monkeypatch.setattr(calibrate.server.store, "describe_server", lambda **kw: None)
-    out = asyncio.run(router.calibrate("ep"))
-    assert out == {"run_id": "run-x", "status": "complete", "lines": ["a line"]}
 
 
 # --- the shipped set's checker proofs (spec §11) -------------------------------------------------

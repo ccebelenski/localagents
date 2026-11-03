@@ -247,7 +247,10 @@ def _apply_message(job: Job, m: Any) -> None:
                 job.log_text(f"[assistant] {b.text}")
                 job.last_activity = b.text.strip()[:200]
             elif isinstance(b, ThinkingBlock):
-                job.log_text(f"[thinking] {b.thinking[:500]}")
+                # the length the block really had travels with the excerpt: the transcript
+                # holds only its first 500 chars, and the facts probe measures thinking by
+                # the number, not by the tail (router M4).
+                job.log_text(f"[thinking] ({len(b.thinking)} chars) {b.thinking[:500]}")
             elif isinstance(b, ToolUseBlock):
                 short = json.dumps(b.input, default=str)
                 job.log_text(f"[tool] {b.name} {short[:400]}")
@@ -372,6 +375,8 @@ async def run_job(
     mcp_servers: dict[str, Any] | None = None,
     thinking: bool | None = None,
     effort: str | None = None,
+    strict_mcp_config: bool | None = None,
+    setting_sources: list[str] | None = None,
 ) -> None:
     d = reg.defaults
     job.status = "running"
@@ -411,12 +416,16 @@ async def run_job(
             allowed_tools=allowed_tools or d.allowed_tools,
             disallowed_tools=d.disallowed_tools,
             max_turns=max_turns or d.max_turns,
-            setting_sources=d.setting_sources,  # type: ignore[arg-type]
+            # the caller's setting_sources override the config's (a calibration job passes [],
+            # so no ancestor CLAUDE.md or settings reach the session); None keeps the config's
+            setting_sources=(d.setting_sources if setting_sources is None else setting_sources),  # type: ignore[arg-type]
             system_prompt={"type": "preset", "preset": "claude_code", **({"append": append} if append else {})},
             resume=resume_session,
             stderr=lambda line: job.log_text(f"[stderr] {line}"),
             mcp_servers=mcp_servers or {},
             **levers,
+            # None keeps the SDK's own default (the server's MCP config not filtered out)
+            **({} if strict_mcp_config is None else {"strict_mcp_config": strict_mcp_config}),
         )
         job.log_text(
             f"[start] endpoint={res.endpoint.name} ({res.endpoint.url}) via shim {shim_base_url} "

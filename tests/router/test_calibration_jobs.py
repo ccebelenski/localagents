@@ -7,6 +7,7 @@ the shim, the job record, the sampler and the task. It raises ``JobRefused`` car
 run_agent's tool returns; run_agent stays a tool with the same answers."""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -110,6 +111,37 @@ def _empty_query(prompt, options):
     return nothing()
 
 
+def test_strict_mcp_and_setting_sources_reach_the_options(reg, monkeypatch):
+    """The two new keyword-only pass-throughs (C1) travel start_job -> run_job ->
+    ClaudeAgentOptions: a calibration job's session runs with the strict MCP config and no
+    setting sources; None keeps today's behaviour (the SDK default, the config's sources)."""
+    from localagents import runner
+
+    captured = {}
+
+    def fake_options(**kw):
+        captured.update(kw)
+        return object()
+
+    monkeypatch.setattr(runner, "fetch_metrics", _no_metrics)
+    monkeypatch.setattr(runner, "finish_worktree", lambda j: None)
+    monkeypatch.setattr(runner, "query", _empty_query)
+    monkeypatch.setattr(runner, "ClaudeAgentOptions", fake_options)
+
+    async def go(**kw):
+        job = await server.start_job("t", **kw)
+        await job._done.wait()
+        return job
+
+    asyncio.run(go(strict_mcp_config=True, setting_sources=[]))
+    assert captured["strict_mcp_config"] is True
+    assert captured["setting_sources"] == []
+    captured.clear()
+    asyncio.run(go())
+    assert "strict_mcp_config" not in captured
+    assert captured["setting_sources"] == Defaults().setting_sources
+
+
 @pytest.mark.parametrize("thinking, expected", [
     (True, {"type": "adaptive"}),
     (False, {"type": "disabled"}),
@@ -148,3 +180,22 @@ def test_run_job_maps_the_levers_onto_the_sdk_options(monkeypatch, tmp_path, thi
     else:
         assert captured["thinking"] == expected
     assert captured["effort"] == "high"
+
+
+def test_runner_logs_the_thinking_length(tmp_path):
+    """The thinking line names the block's real length before its excerpt: the transcript
+    records only the first 500 chars, and the facts probe must measure thinking by the
+    number, not by the truncated tail (final review M4)."""
+    from claude_agent_sdk import AssistantMessage, ThinkingBlock
+
+    from localagents import runner
+
+    store = jobs.JobStore()
+    job = store.new(task="t", model="m", endpoint="e", base_url="http://e:8080",
+                    backend="llama.cpp", host="local", cwd=str(tmp_path), run_cwd=str(tmp_path),
+                    isolation="none")
+    thinking = "x" * 700
+    runner._apply_message(job, AssistantMessage(
+        content=[ThinkingBlock(thinking=thinking, signature="")], model="m"))
+    line = (Path(job.log_dir) / "transcript.txt").read_text()
+    assert line == f"[thinking] ({len(thinking)} chars) {thinking[:500]}\n"

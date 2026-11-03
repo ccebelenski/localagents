@@ -440,6 +440,8 @@ async def start_job(
     mcp_servers: dict[str, Any] | None = None,
     thinking: bool | None = None,
     effort: str | None = None,
+    strict_mcp_config: bool | None = None,
+    setting_sources: list[str] | None = None,
     resume_session: str | None = None,
     run_cwd: str | None = None,
     worktree: dict[str, Any] | None = None,
@@ -450,8 +452,10 @@ async def start_job(
     A caller that cannot start a job gets ``JobRefused`` carrying the dict run_agent returns
     for the same refusal. ``priority`` and ``calibration`` are the caller's (router design
     §4, §10: a calibration probe is a background job with ``calibration = 1``); ``admit`` is
-    validated and not stored yet (the queue story reads it). ``mcp_servers``, ``thinking`` and
-    ``effort`` are handed to run_job, which puts them on the session's options. ``resume_session``,
+    validated and not stored yet (the queue story reads it). ``mcp_servers``, ``thinking``,
+    ``effort``, ``strict_mcp_config`` and ``setting_sources`` are handed to run_job, which puts
+    them on the session's options (the last two: None keeps today's behaviour, the SDK default
+    and the config's sources; a calibration probe passes True and []). ``resume_session``,
     ``run_cwd`` and ``worktree`` carry a resumed job's state; run_agent owns that preamble.
     """
     if priority not in ("urgent", "normal", "background"):
@@ -546,6 +550,8 @@ async def start_job(
             mcp_servers=mcp_servers or {},
             thinking=thinking,
             effort=effort,
+            strict_mcp_config=strict_mcp_config,
+            setting_sources=setting_sources,
         )
     )
     return job

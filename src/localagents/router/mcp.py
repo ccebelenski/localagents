@@ -10,9 +10,11 @@ is a model reading the answer, not a stack trace."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -248,24 +250,55 @@ async def preflight(
     }
 
 
+# Calibration runs started in the background by this server process. The set keeps the tasks
+# referenced (Python may garbage-collect an unreferenced task mid-flight); a task that ends
+# discards itself. A run outlives the tool call that started it and drives on to its own end.
+_RUN_TASKS: set[asyncio.Task] = set()
+
+
+def _open_run_of(conn, endpoint: str) -> str | None:
+    """The id of this endpoint's unfinished run when a live process holds its lock, else None.
+    A stale lock (the holder crashed) is not an open run: a fresh call will resume that run and
+    take the lock over, which is what a crashed run's resume is."""
+    from localagents.router import calibrate as calibrate_mod
+
+    r = conn.execute(
+        "SELECT r.id FROM calibration_runs r JOIN scorecard_rows s ON s.id = r.row_id"
+        " WHERE s.endpoint_name = ? AND r.status = 'running'"
+        " ORDER BY r.started DESC, r.rowid DESC LIMIT 1", (endpoint,)).fetchone()
+    if r is None:
+        return None
+    return r["id"] if calibrate_mod.lock_held(r["id"]) else None
+
+
 @mcp.tool()
 async def calibrate(
     endpoint: str,
     tier: str = "core",
     reset: bool = False,
     estimate_only: bool = False,
+    keep_going: bool = False,
 ) -> dict[str, Any]:
     """Run a tier of the calibration set against an endpoint, the same runner as the CLI.
 
-    The estimate is printed first; then every probe is a background, calibration-marked job
-    and the report lines are collected into the reply. A run that completes ends with a
-    scorecard pass, so the row has cells at once. `estimate_only` stops after the estimate and
-    writes no run. A router entry or an unknown endpoint answers its refusal dict.
+    A run is far longer than a tool call should block: the call starts it as a background
+    task of this server and answers at once with the run id and the estimate line. Progress
+    reads back through the scorecard tool's `latest_run`. A second call while a run of that
+    endpoint is live answers ``run_in_progress`` with the open run's id (the runner's lock
+    file is the cross-process backstop). `estimate_only` stays synchronous: it stops after
+    the estimate and writes no run. A router entry or an unknown endpoint answers its refusal
+    dict. The report lines go to the server's stderr: a background run's caller is long gone,
+    and stdout carries this server's protocol.
     """
     from localagents import server
     from localagents.router import calibrate as calibrate_mod
 
     lines: list[str] = []
+
+    def report(line: str) -> None:
+        lines.append(line)
+        print(line, file=sys.stderr, flush=True)
+
     try:
         reg = Registry.load()
     except Exception as e:  # a config file is operator input; every failure answers
@@ -277,20 +310,64 @@ async def calibrate(
         return {"error": "not_calibratable",
                 "message": f"endpoint {endpoint!r} is a router; a router entry is not calibratable"}
     try:
+        conn = _db()
+        if not estimate_only:
+            open_run = _open_run_of(conn, endpoint)
+            if open_run is not None:  # a live process already drives this endpoint
+                return {"error": "run_in_progress", "run_id": open_run}
         await server.shim.start()
         server.store.describe_server(config=str(getattr(reg, "path", None) or "") or None,
                                      transport="calibrate")
         server._ensure_sampler()
-        result = await calibrate_mod.run(reg, server.store, _db(), endpoint, tier=tier,
-                                         reset=reset, estimate_only=estimate_only,
-                                         report=lines.append)
+
+        if estimate_only:
+            # it stops after the estimate and opens no run: nothing to wait for in the background
+            result = await calibrate_mod.run(reg, server.store, conn, endpoint, tier=tier,
+                                             reset=reset, estimate_only=True,
+                                             keep_going=keep_going, report=report)
+        else:
+            opened: asyncio.Future = asyncio.get_running_loop().create_future()
+
+            def on_open(run_id: str) -> None:
+                if not opened.done():
+                    opened.set_result(("opened", run_id))
+
+            async def drive() -> None:
+                try:
+                    result = await calibrate_mod.run(reg, server.store, conn, endpoint,
+                                                     tier=tier, reset=reset,
+                                                     estimate_only=estimate_only,
+                                                     keep_going=keep_going, report=report,
+                                                     on_open=on_open)
+                except Exception as e:  # the tool answers a dict, never a stack trace
+                    if not opened.done():
+                        opened.set_result(("failed", f"{type(e).__name__}: {e}"))
+                    return
+                if not opened.done():
+                    # a refusal or the estimate stop: nothing opened, the answer is the return
+                    opened.set_result(("returned", result))
+
+            task = asyncio.create_task(drive())
+            _RUN_TASKS.add(task)
+            task.add_done_callback(_RUN_TASKS.discard)
+            kind, value = await opened
+            if kind == "opened":
+                return {"run_id": value, "status": "started",
+                        "estimate": next((ln for ln in lines if ln.startswith("estimate:")),
+                                         None)}
+            if kind == "failed":
+                return {"error": "calibrate_failed", "message": value}
+            result = value
     except Exception as e:  # the tool answers a dict, never a stack trace
         return {"error": "calibrate_failed", "message": f"{type(e).__name__}: {e}"}
-    if result in ("unknown_endpoint", "not_calibratable", "model_unavailable", "endpoint_busy"):
+    if result == "run_in_progress":  # the runner's cross-process lock answered, not our pre-check
+        return {"error": "run_in_progress", "run_id": _open_run_of(conn, endpoint) or None}
+    if result in ("unknown_endpoint", "not_calibratable", "model_unavailable", "endpoint_busy",
+                  "no_probes"):
         return {"error": result, "lines": lines}
     if result == "estimate":
         return {"run_id": None, "status": "estimate", "lines": lines}
-    row = _db().execute("SELECT status FROM calibration_runs WHERE id = ?", (result,)).fetchone()
+    row = conn.execute("SELECT status FROM calibration_runs WHERE id = ?", (result,)).fetchone()
     return {"run_id": result, "status": row["status"] if row is not None else "unknown",
             "lines": lines}
 
@@ -300,6 +377,28 @@ def _cell_dict(cell) -> dict[str, Any]:
             "estimate": cell.estimate, "count": cell.count,
             "probes_n": cell.probes_n, "jobs_n": cell.jobs_n, "thin": cell.thin,
             "pass_id": cell.pass_id, "defs_version": cell.defs_version}
+
+
+def _latest_run(conn, row_id: int) -> dict[str, Any] | None:
+    """The row's newest run with its tally, so an operator (or a model) can follow a run
+    started by the calibrate tool without joining the result table. ``planned`` counts every
+    probe the tier carried, the ones planned-skipped before the run opened included; the
+    skipped tally counts both those and any probe skipped later."""
+    r = conn.execute(
+        "SELECT id, tier, status, plan, started, finished FROM calibration_runs"
+        " WHERE row_id = ? ORDER BY started DESC, rowid DESC LIMIT 1", (row_id,)).fetchone()
+    if r is None:
+        return None
+    doc = json.loads(r["plan"])
+    statuses = [x["status"] for x in conn.execute(
+        "SELECT status FROM calibration_results WHERE run_id = ?", (r["id"],))]
+    planned_skips = len(doc.get("skipped", []))
+    return {"id": r["id"], "tier": r["tier"], "status": r["status"],
+            "planned": len(doc.get("probes", [])) + planned_skips,
+            "pass": statuses.count("pass"), "fail": statuses.count("fail"),
+            "skipped": statuses.count("skipped") + planned_skips,
+            "unreliable": statuses.count("unreliable"),
+            "started": r["started"], "finished": r["finished"]}
 
 
 def _history(conn, row_id: int) -> list[dict[str, Any]]:
@@ -318,7 +417,9 @@ async def scorecard(
     recompute: bool = False,
 ) -> dict[str, Any]:
     """The scorecard's live rows: identity, set version, speed factor, core completeness, the
-    two notices, the row's facts and every cell of its latest pass.
+    two notices, the row's facts, its latest calibration run (id, tier, status, planned and
+    the pass/fail/skipped/unreliable tally — a background run's progress reads here) and every
+    cell of its latest pass.
 
     `endpoint` narrows the rows to that name; `history` adds every pass's cells, so a swap
     reads as a before and after; `recompute` runs a pass over the installed set's labels
@@ -351,6 +452,7 @@ async def scorecard(
                 "core_complete": scorecard_mod.core_complete(conn, row.id),
                 "notices": scorecard_mod.notices(conn, row.id, installed),
                 "facts": row.facts,
+                "latest_run": _latest_run(conn, row.id),
                 "cells": [_cell_dict(c) for c in scorecard_mod.cells(conn, row.id)],
             }
             if history:

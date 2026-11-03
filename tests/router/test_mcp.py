@@ -6,16 +6,22 @@ holding one ``backend: router`` entry; the database is conftest's ``conn``."""
 
 import asyncio
 import copy
+import json
 import os
+import time
 from pathlib import Path
 
 import httpx
 import pytest
 
+from localagents import db
+from localagents.jobs import state_dir
 from localagents.registry import Defaults, Endpoint, Registry
+from localagents.router import calibrate as calibrate_mod
 from localagents.router import decision
 from localagents.router import definitions as defsmod
 from localagents.router import mcp as router
+from localagents.router import scorecard
 
 
 @pytest.fixture
@@ -233,3 +239,121 @@ def test_tool_schemas_list_exactly_the_routers_tools():
     assert [t.name for t in tools] == ["definitions", "preflight", "calibrate", "scorecard"]
     for t in tools:
         assert len(t.description or "") <= 2048, t.name
+
+
+# --- the calibrate tool: the run is a background task of this server ----------------------------
+
+ESTIMATE = "estimate: 1 probes, ~0.5-1.0 min (speed factor 1.00, margin 50%)"
+
+
+def _calibrate_setup(monkeypatch):
+    """A registry with one calibratable endpoint and the server's start-ups pinned to no-ops:
+    the shim and the sampler belong to the real server, not to the tool's answer."""
+    from localagents import server
+
+    ep = Endpoint(name="ep", base_url="http://ep:1/v1", backend="llama.cpp", host="local")
+    reg = Registry(path=None, endpoints={"ep": ep}, defaults=Defaults(), raw={}, local={})
+    monkeypatch.setattr(Registry, "load", staticmethod(lambda path=None: reg))
+
+    async def no_start():
+        return 0
+
+    monkeypatch.setattr(server.shim, "start", no_start)
+    monkeypatch.setattr(server, "_ensure_sampler", lambda: None)
+    monkeypatch.setattr(server.store, "describe_server", lambda **kw: None)
+
+
+def _served_row(conn):
+    eid = db.lookup_id(conn, "endpoints", name="ep", base_url="http://ep:1/v1",
+                       backend="llama.cpp", host="local")
+    mid = db.lookup_id(conn, "models", served_id="served")
+    return scorecard.get_or_create_row(conn, "ep", "served", eid, mid)
+
+
+def _fake_open_run(monkeypatch, row):
+    """A stand-in for ``calibrate.run``: opens the running row and the holder's lock, reports
+    the estimate, announces the opening through ``on_open``, then waits on the returned event
+    -- a run the tool must answer while it is still working."""
+    hold = asyncio.Event()
+
+    async def fake_run(reg, store, conn, endpoint, **kw):
+        run_id = "run-bg"
+        conn.execute(
+            "INSERT INTO calibration_runs (id, row_id, tier, set_version, plan, started, status)"
+            " VALUES (?, ?, 'core', '2026.11', '{\"probes\": [\"alpha\"], \"skipped\": []}',"
+            " ?, 'running')", (run_id, row.id, time.time()))
+        lock_dir = state_dir() / "calibration" / run_id
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        (lock_dir / "lock").write_text(f"{os.getpid()} {time.time()}\n")
+        kw["report"](ESTIMATE)
+        kw["on_open"](run_id)
+        await hold.wait()
+        return run_id
+
+    monkeypatch.setattr(calibrate_mod, "run", fake_run)
+    return hold
+
+
+async def _drain():
+    await asyncio.gather(*list(router._RUN_TASKS))
+
+
+def test_calibrate_tool_starts_a_run_and_returns_at_once(dbconn, monkeypatch):
+    row = _served_row(dbconn)
+    _calibrate_setup(monkeypatch)
+    hold = _fake_open_run(monkeypatch, row)
+
+    async def go():
+        out = await router.calibrate("ep")
+        assert out == {"run_id": "run-bg", "status": "started", "estimate": ESTIMATE}
+        # the open run reads back through the scorecard while it is still working
+        card = await router.scorecard()
+        run = card["rows"][0]["latest_run"]
+        assert run["id"] == "run-bg" and run["status"] == "running" and run["planned"] == 1
+        hold.set()
+        await _drain()
+
+    asyncio.run(go())
+
+
+def test_calibrate_tool_refuses_a_second_run_in_progress(dbconn, monkeypatch):
+    row = _served_row(dbconn)
+    _calibrate_setup(monkeypatch)
+    hold = _fake_open_run(monkeypatch, row)
+
+    async def go():
+        first = await router.calibrate("ep")
+        assert first["status"] == "started"
+        # the pre-check sees the open row whose lock the first task holds
+        second = await router.calibrate("ep")
+        assert second == {"error": "run_in_progress", "run_id": "run-bg"}
+        hold.set()
+        await _drain()
+
+    asyncio.run(go())
+
+
+def test_scorecard_reports_the_latest_run(dbconn):
+    conn = dbconn
+    row = _served_row(conn)
+    eid2 = db.lookup_id(conn, "endpoints", name="ep2", base_url="http://ep2:1/v1",
+                        backend="llama.cpp", host="local")
+    mid = db.lookup_id(conn, "models", served_id="served")
+    scorecard.get_or_create_row(conn, "ep2", "served", eid2, mid)
+    conn.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan,"
+                 " started, finished, status) VALUES ('old', ?, 'core', '2026.10', '{}',"
+                 " 5.0, 6.0, 'complete')", (row.id,))
+    plan = json.dumps({"probes": ["alpha", "beta"], "skipped": [["gamma", "no tool"]]})
+    conn.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan,"
+                 " started, finished, status) VALUES ('new', ?, 'core', '2026.11', ?,"
+                 " 20.0, 22.0, 'complete')", (row.id, plan))
+    conn.execute("INSERT INTO calibration_results (run_id, probe_id, status, seconds)"
+                 " VALUES ('new', 'alpha', 'pass', 5.0)")
+    conn.execute("INSERT INTO calibration_results (run_id, probe_id, status, seconds)"
+                 " VALUES ('new', 'beta', 'unreliable', 5.0)")
+    out = asyncio.run(router.scorecard())
+    by_ep = {r["endpoint_name"]: r for r in out["rows"]}
+    assert by_ep["ep"]["latest_run"] == {
+        "id": "new", "tier": "core", "status": "complete", "planned": 3,
+        "pass": 1, "fail": 0, "skipped": 1, "unreliable": 1, "started": 20.0, "finished": 22.0}
+    assert by_ep["ep2"]["latest_run"] is None

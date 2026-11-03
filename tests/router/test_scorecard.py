@@ -518,3 +518,20 @@ def test_rate_cell_ignores_null_gates(conn):
     # n1: no evaluable gate in either group, so no observation; n2: adherence only
     assert [(o.dimension, o.accepted) for o in scorecard.observations(conn, row.id)] \
         == [("adherence", True)]
+
+
+def test_a_probe_named_with_empty_labels_is_neither_observed_nor_unlabelled_nor_timed(conn):
+    """The facts probe (kind: facts) reaches the pass as ``{"labels": {}, "nominal_s": ...}``:
+    it makes no observation, it is not counted unlabelled (only an id ABSENT from ``probes``
+    is), and its five-job seconds never enter the speed factor."""
+    row = _setup(conn)
+    _probe(conn, row, "facts-thinking", "pass", seconds=300.0)
+    _probe(conn, row, "real-probe", "pass", seconds=20.0)
+    _probe(conn, row, "unknown-probe", "pass", seconds=20.0)
+    probes = {"facts-thinking": {"labels": {}, "nominal_s": 60.0},
+              "real-probe": {"labels": {"complexity": 1, "language": "python"}, "nominal_s": 10.0}}
+    pass_id = scorecard.run_pass(conn, row.id, probes=probes)
+    consts = json.loads(conn.execute("SELECT constants FROM scorecard_passes WHERE id = ?",
+                                     (pass_id,)).fetchone()["constants"])
+    assert consts["unlabelled_probes"] == 1  # unknown-probe only
+    assert scorecard.rows(conn)[0].speed_factor == 2.0  # 20 / 10; the facts 300 / 60 excluded
