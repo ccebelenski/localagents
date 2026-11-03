@@ -212,9 +212,11 @@ a cache hit plus the delta.
 
 An entry with `backend: router` serves no model itself; it picks another endpoint for
 a job from a calibrated scorecard. It needs `decision_url`, the server running the d3
-decision model, and no `base_url`. Routing is being built in stages, so until the
-dispatch story lands a job aimed at one of these entries is refused with
-`not_routable`. [docs/router.md](docs/router.md) has the detail.
+decision model, and no `base_url`. Calibration is built now, and
+`localagents calibrate <endpoint>` runs the core probe set against one endpoint and
+fills its scorecard. Routing is being built in stages, so until the dispatch story
+lands a job aimed at one of these entries is refused with `not_routable`.
+[docs/router.md](docs/router.md) has the detail.
 
 ```yaml
 endpoints:
