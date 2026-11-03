@@ -1,0 +1,91 @@
+# The core tier (calibration set spec §8, §10): what `calibrate` runs when no tier is named.
+# Authored probes ship under fixtures/; their checkers are proven on stub and reference in
+# tests/router/test_probes_judgement.py (spec §11).
+version: "2026.11"
+
+probes:
+  # --- judgement and review (authored) ---
+  - id: judgement-planted-bug
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/judgement-planted-bug, licence: ours}
+    language: python
+    labels: {software_dev: 2, tool_use: 2, computer_use: 0, complexity: 2, specification: 1, context_load: 1, judgement: 2}
+    source_difficulty: null
+    brief: fixtures/judgement-planted-bug/brief.md
+    checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 180
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null
+  - id: judgement-false-premise
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/judgement-false-premise, licence: ours}
+    language: python
+    labels: {software_dev: 2, tool_use: 2, computer_use: 0, complexity: 2, specification: 2, context_load: 1, judgement: 3}
+    source_difficulty: null
+    brief: fixtures/judgement-false-premise/brief.md
+    checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 200
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null
+  - id: judgement-missing-dependency
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/judgement-missing-dependency, licence: ours}
+    language: python
+    labels: {software_dev: 1, tool_use: 1, computer_use: 0, complexity: 1, specification: 1, context_load: 1, judgement: 3}
+    source_difficulty: null
+    brief: fixtures/judgement-missing-dependency/brief.md
+    checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 120
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null
+  - id: judgement-open-decision
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/judgement-open-decision, licence: ours}
+    language: python
+    labels: {software_dev: 2, tool_use: 2, computer_use: 0, complexity: 3, specification: 3, context_load: 1, judgement: 2}
+    source_difficulty: null
+    brief: fixtures/judgement-open-decision/brief.md
+    checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 240
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null
+  - id: review-planted-defect
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/review-planted-defect, licence: ours}
+    language: python
+    labels: {software_dev: 0, tool_use: 1, computer_use: 0, complexity: 2, specification: 1, context_load: 1, judgement: 2}
+    source_difficulty: null
+    brief: fixtures/review-planted-defect/brief.md
+    checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 180
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null
+  - id: review-clean
+    tier: core
+    source: {name: authored, revision: null, path: fixtures/review-clean, licence: ours}
+    language: python
+    labels: {software_dev: 0, tool_use: 1, computer_use: 0, complexity: 2, specification: 1, context_load: 1, judgement: 3}
+    source_difficulty: null
+    brief: fixtures/review-clean/brief.md
+    checker: "python3 $LOCALAGENTS_PROBE_DIR/check.py"
+    checker_proof: {stub: fail, reference: pass}
+    nominal_s: 150
+    nominal_source: estimated
+    spread: {failed_on: []}
+    needs: [python3, git]
+    variant: null

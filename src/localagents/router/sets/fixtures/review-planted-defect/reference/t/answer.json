@@ -1,0 +1,4 @@
+{"findings": [
+  {"file": "budget/summary.py", "line": 16, "kind": "defect",
+   "note": "largest keeps the entry whose month compares greatest (entry[0] > best[0]) instead of whose amount does (entry[1] > best[1]); its docstring says greatest amount."}
+]}

@@ -1,0 +1,1 @@
+{"decision": "jsonfile", "reason": "The note set is small and the values are plain text, so a single JSON file is easy to inspect and back up, while a database would add a schema and a lock file for no query the app actually runs."}
