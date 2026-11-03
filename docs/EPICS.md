@@ -2783,6 +2783,25 @@ cross-model construct-it review each; details in the landing commits and the SDD
 | router 4: `localagents d3 serve`, the router extra, CLI branches | Qwen3.8-27B (91bc0094) | Qwen/ai1 (85a12809) clean | 69acf5f |
 | router 5: `localagents router` (definitions, preflight), docs/router.md | Qwen/ai1 (1f830695 + fix) | DeepSeek (186d3c17), live | 1ec728e |
 | coordinator folds from live smokes | accelerate in the extra (8bb2f75); score criteria as an ordered list (16df2ed) | the final review | |
+
+Phase 2 (calibration), built 2026-11-02 to 2026-11-03 overnight, all landed on main via tools/land.sh
+after a cross-model construct-it review each; the whole-branch review by Opus; the live deliverable
+(a real core run on the reference row) under a scratch store; details in the landing commits and the
+SDD ledger.
+
+| Story | Built by | Reviewed by | Landed |
+| --- | --- | --- | --- |
+| router 6: scorecard rows and identity, evidence reads, the pass | Qwen/ai1 (365834b0) + fix by DeepSeek | Opus (2 Important, 6 minor); re-review Qwen3.8-27B clean | dae75b4 |
+| router 7: capacity in sessions, throughput curve | Qwen/ai2 (7bf12445 + fix) | Opus (1 Critical: a gapped curve) | c1bc722 |
+| router 8: calibration-flagged jobs, start_job, the cal mark | DeepSeek/dgx1-a (fa98b295) | Qwen/ai2 (8bbe9614) clean, DOM smoke | cdf0563 |
+| router 9b: six judgement and review probes | Qwen3.8-27B (7c5b7041 + fix) | Qwen/ai2 (315960d9): the untouched-tree contract | 53226d1 |
+| router 9d: shim thinking/effort levers; adherence, completeness, facts probes | DeepSeek (04713856) | Qwen/ai1 (30ea49a4) clean | 1c40d74 |
+| router 9c: five tool-use probes and the stub MCP server | Qwen/ai1 (97653490) | Qwen3.8-27B (6f2a7327) clean | a139979 |
+| tooling: pytest testpaths, accept.sh scratch anchor | Qwen/ai2 (2a86ffbd) | the coordinator; the final review | 0742523 |
+| router 9a: the calibration runner, loader, `localagents calibrate`, calibrate and scorecard tools | DeepSeek (1d330882 + fix by Qwen) | Qwen/ai1 (5869a4a8) with a live estimate; re-review DeepSeek clean | d8cc8eb |
+| phase-2 fix wave (18 + 2 items from the whole-branch review) | Qwen/ai1 (dd64edaf), Qwen/ai2 (bf37894b) | DeepSeek (ad23bcf0): all addressed, one fold | 3ff5a6f, 57720ad |
+| the measured manifest (the reference row's nominals, reference_tps) | the coordinator, from the live run | | 87051d3 |
+| docs/router.md Calibration, README | Qwen/ai1 (18725cd2 + fix by Qwen/ai2) | blind read DeepSeek (13 overstatements) | 085c23e |
 | final whole-branch review → fix wave (12 items) → scoped re-review | Opus; Qwen/ai1 (e3cc6b27); DeepSeek (498f45fc) all addressed | | 0a0b687, folds c997860 96140cd |
 
 True now: phase 1 complete; phases 2 (calibration) and 3 (routing) wait for the operator's go.

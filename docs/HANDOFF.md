@@ -2,6 +2,33 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
+**2026-11-03, early: router phase 2 BUILT and landed; the live deliverable met.** Main at the commit this
+note rides on; suite 1178 passed 1 skipped; nothing pushed (the feature-complete rule: phases 1-3 together).
+Tasks 6-9 of docs/superpowers/plans/2026-11-02-router.md were built by local lanes in worktrees (Task 9 split
+into 9a runner, 9b/9c/9d probes), each reviewed construct-it by another model, with an Opus whole-branch review
+and a two-lane fix wave; every ruling, deviation and deferred minor is in the SDD ledger
+(`.superpowers/sdd/2026-11-02-router/progress.md`, git-ignored; keep it). What exists: the scorecard
+(src/localagents/router/scorecard.py: rows by endpoint name x served id, the evidence readers over calibration
+results, verdicts and gates, the pass by interval censoring, notices), capacity in sessions and the throughput
+curve (capacity.py), calibration-flagged jobs and `server.start_job` (the cal mark on the status line and the
+monitor), the shim's thinking/effort levers, the calibration runner (calibrate.py: manifest loader, plan,
+estimate, throughput probe, probe jobs in fresh materialised repositories, resume, locks, the facts probe five
+ways, the pass at the end), `localagents calibrate`, the `calibrate` (background) and `scorecard` tools, the
+stub MCP server (stubmcp.py) and fourteen authored probes under src/localagents/router/sets/ with their
+checkers proven on stub and reference by the suite. LIVE: the reference row (the dense 27B on llama.cpp) was
+calibrated end to end under a scratch store (t/live, not the real state dir): 14/14 pass after the fix wave,
+571 s for the first thirteen, cells complexity 3, tool_use 3, computer_use 1, judgement 3, software_dev 2
+(python 2); facts thinking on by default, the switch honoured, effort inert; the manifest now carries that
+row's measured nominals and reference_tps 113.2. The operator's REAL store has no calibration yet: run
+`localagents calibrate <endpoint>` on a quiet box when wanted. Not built: the gates and verdicts of spec §9
+(so completeness, adherence and ceiling cells stay empty), routing itself (`run_agent(model="auto")` is still
+`not_routable`), the benchmark tiers and the build tool. Deferred minors (ledger): `Job.summary()` hides the
+calibration flag; endpoint_requests totals include calibration jobs; the levers note is dropped at the requests
+INSERT; the calibrate tool's run_in_progress names no run id for an incomplete row's lock; a skipped lever's own
+reason is lost; two simultaneous FRESH launches can each open a run; P3 (one high-band accept lifts a cell) and
+whether a reject on an axis labelled 0 should count are the operator's calls. Next: phase 3 (Tasks 10-14:
+selection, the queue, dispatch, feedback, surfaces) on the operator's go, then the retrospective and the push.
+
 **2026-11-02, late: router phase 1 BUILT and landed.** Main at the commit this note rides on; suite
 977 passed, 1 skipped (the live d3 test, run with `LOCALAGENTS_D3_URL`); nothing pushed (the
 operator: "Nothing gets pushed until we're feature complete on the whole"). Phase 1 of
