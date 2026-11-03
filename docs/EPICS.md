@@ -2783,6 +2783,7 @@ cross-model construct-it review each; details in the landing commits and the SDD
 | router 4: `localagents d3 serve`, the router extra, CLI branches | Qwen3.8-27B (91bc0094) | Qwen/ai1 (85a12809) clean | 69acf5f |
 | router 5: `localagents router` (definitions, preflight), docs/router.md | Qwen/ai1 (1f830695 + fix) | DeepSeek (186d3c17), live | 1ec728e |
 | coordinator folds from live smokes | accelerate in the extra (8bb2f75); score criteria as an ordered list (16df2ed) | the final review | |
+| final whole-branch review → fix wave (12 items) → scoped re-review | Opus; Qwen/ai1 (e3cc6b27); DeepSeek (498f45fc) all addressed | | 0a0b687, folds c997860 96140cd |
 
 Phase 2 (calibration), built 2026-11-02 to 2026-11-03 overnight, all landed on main via tools/land.sh
 after a cross-model construct-it review each; the whole-branch review by Opus; the live deliverable
@@ -2802,9 +2803,8 @@ SDD ledger.
 | phase-2 fix wave (18 + 2 items from the whole-branch review) | Qwen/ai1 (dd64edaf), Qwen/ai2 (bf37894b) | DeepSeek (ad23bcf0): all addressed, one fold | 3ff5a6f, 57720ad |
 | the measured manifest (the reference row's nominals, reference_tps) | the coordinator, from the live run | | 87051d3 |
 | docs/router.md Calibration, README | Qwen/ai1 (18725cd2 + fix by Qwen/ai2) | blind read DeepSeek (13 overstatements) | 085c23e |
-| final whole-branch review → fix wave (12 items) → scoped re-review | Opus; Qwen/ai1 (e3cc6b27); DeepSeek (498f45fc) all addressed | | 0a0b687, folds c997860 96140cd |
 
-True now: phase 1 complete; phases 2 (calibration) and 3 (routing) wait for the operator's go.
+True now: phases 1 and 2 complete (the live deliverable met on the reference row under a scratch store; the operator's real store is uncalibrated); phase 3 (routing) waits for the operator's go; nothing pushed until the three phases are feature complete.
 
 ## Epic 4: operations (V2, not scheduled)
 
