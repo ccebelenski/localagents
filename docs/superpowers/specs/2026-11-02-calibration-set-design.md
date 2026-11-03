@@ -137,6 +137,8 @@ whether d3's scores on an axis mean anything against them.
 - **Tests fail first.** The spike's trap: Exercism's `name_test.py` is invisible to unittest's
   default discovery, "NO TESTS RAN", exit 0. Hence the stub run in the manifest.
 
+True-now (phase 2, 2026-11-02): "the diff is empty" is judged against the revision the job started from, which the runner records as `refs/probe/base` and exports as `LOCALAGENTS_PROBE_BASE` (a job that commits cannot hide an edit); a reference solution that must end in a commit ships a `reference.sh` beside `reference/`, run after the overlay by the suite's proof and the build tool alike.
+
 ## 6. Thinking and effort; the definitions; the baseline gate
 
 **Row facts** (recorded by the core run, cheap): one small probe run four ways, thinking on / off
@@ -209,6 +211,8 @@ One YAML per tier under `src/localagents/router/sets/` (`core.yaml`, `medium.yam
 Benchmark instances are fetched at the pinned revision at run time and never vendored; authored
 probes ship under `sets/fixtures/<id>/`. The runner (router plan Task 9) reads this schema; the
 loader validates it (every field present, every checker_proof `{fail, pass}`).
+
+True-now (phase 2, 2026-11-02): the manifest also carries a top-level `reference_tps` (the reference row's single-session speed, null until measured) and two optional probe fields, `nominal_source: estimated | measured` (authored probes ship estimates until the first reference run) and `kind: facts` for the row-facts probe. Authored fixtures live under `sets/fixtures/<id>/` as `brief.md`, `project/`, optional `setup.sh`, `reference/`, optional `reference.sh`, optional `check.py`; the fourteen shipped probes are all authored, the benchmark probes await the build tool.
 
 ## 9. Sources and licences
 
