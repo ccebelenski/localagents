@@ -52,3 +52,9 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.1.1",
 ]
+
+# pytest collects from tests/ only. The calibration set's fixture trees under
+# src/localagents/router/sets/fixtures/<id>/ ship their own small unittest suites; without
+# testpaths a bare `uv run pytest` collects from the repository root and imports those too.
+[tool.pytest.ini_options]
+testpaths = ["tests"]

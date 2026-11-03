@@ -7,9 +7,10 @@
 #
 # Rows: worktree; base (BEHIND main → take files by path, never squash); stash entries; the commits;
 # diff stat and file list; strays outside --files (one per line); package files (pyproject.toml,
-# uv.lock); scratch artefacts in the diff (t/, REPORT.md, *.patch, *.log); raw NUL bytes in changed
-# text files; /tmp in added lines; test functions ADDED by the diff per test file (cross-check the
-# report's claims against this list); --claims: each non-empty line grepped literally in the diff.
+# uv.lock); scratch artefacts in the diff (a root-level t/, REPORT.md/PLAN.md/REVIEW.md anywhere,
+# *.patch, *.log); raw NUL bytes in changed text files; /tmp in added lines; test functions ADDED
+# by the diff per test file (cross-check the report's claims against this list); --claims: each
+# non-empty line grepped literally in the diff.
 # Exit 1 on raw NUL, scratch artefacts, or a NOT FOUND claim; BEHIND is a row, not a refusal.
 set -u
 MAIN=$(git rev-parse --show-toplevel) || exit 1
@@ -38,7 +39,7 @@ if [ -n "$files_list" ]; then
   [ -z "$stray" ] && row strays none || { row strays "OUTSIDE the story's list:"; echo "$stray" | ind; }
 fi
 pk=$(echo "$changed" | grep -E '(^|/)(pyproject\.toml|uv\.lock)$' || true); [ -z "$pk" ] && row package unchanged || row package "CHANGED (a uv add in the worktree? take by path): $pk"
-scratch=$(echo "$changed" | grep -E '(^|/)(t/|REPORT\.md|PLAN\.md|REVIEW\.md)|\.(orig|rej|patch|log)$' || true)
+scratch=$(echo "$changed" | grep -E '^t/|(^|/)(REPORT\.md|PLAN\.md|REVIEW\.md)|\.(orig|rej|patch|log)$' || true)
 [ -z "$scratch" ] && row scratch none || { row scratch "ARTEFACTS in the diff: $scratch"; rc=1; }
 nul=""; for f in $changed; do
   case "$f" in *.png|*.jpg|*.gif|*.ico|*.woff*|*.tar|*.gz|*.zip|*.db|*.sqlite) continue;; esac
