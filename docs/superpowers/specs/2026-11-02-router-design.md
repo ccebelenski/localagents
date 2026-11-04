@@ -223,7 +223,7 @@ background work.
 
 **Never preempt.** A running job is never cancelled for a higher priority arrival.
 **No acceptable row, free or busy:** refuse with `no_acceptable_row` listing each row's
-shortfall; Claude may pass `tolerance` on the call (a per-call override, §12) or name a model.
+shortfall; Claude may pass `tolerance` on the call (a per-call override, §12) or name a model. *(True-now, 2026-11-04: tolerance is RELATIVE, rows within `tolerance` of the best shortfall, so raising it never turns a refusal into a choice; `no_acceptable_row` means every calibrated row was removed by a filter. The absolute reading was ruled out: it would contradict the "unknown cell = zero, route anyway" call.)*
 **Uncalibrated rows are not routed:** filtered with reason `uncalibrated`; still usable by name.
 If no row survives that filter, `auto` refuses with `no_calibrated_row` and the guidance "run
 `localagents calibrate <endpoint>`". **No exploration in traffic:** selection is greedy; a row
