@@ -118,6 +118,17 @@ the chosen row, the priority, whether it was a divert (a free acceptable row tak
 better one) and when (at enqueue or at a later wake), queue position and expected wait at enqueue,
 the pass id whose cells were used, the time admitted, and `truncated`/`resumed` marks.
 
+**Consumer requirement (operator, 2026-11-04; binds Task 12).** A routed job's record names the
+served model and the endpoint it ran on in the same fields a named job uses: `model` is the served
+id, `endpoint` the real endpoint's name, `base_url` the real one; `auto` or the router entry's name
+never stands in those fields. Two acceptance rules read them from the record: a different model
+reviews than the one that built, and the model profiles decide how much to trust a report; a router
+that hid the choice would blind both. The record also carries `routed_by`: the router entry's name
+and the one-line reason the row was chosen (the chosen row's shortfall, or the divert and what it
+diverted from), visible in `list_jobs` and `job_status` without opening the ticket, so a
+retrospective can re-check the profiles against what actually ran. A named job's `routed_by` is
+null.
+
 ## 5. Dimensions
 
 Three groups. The brief's demands and the row's cells are matched axis by axis through the
