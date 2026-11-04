@@ -27,6 +27,13 @@ from claude_agent_sdk import (
 from .derive import EDIT_TOOLS  # the write rule's list is the read rule's (files_touched)
 from .jobs import Job, prune, state_dir
 from .registry import Registry, Resolution, backend_kind, fetch_metrics, metrics_delta
+from .router import feedback
+
+# the tool_calls row stores the command (Bash) or the input JSON cut to this length (spec,
+# story 1.5b; tests/test_tool_calls_db.py pins it). It is a shared fact, not a local detail:
+# router feedback reads a row of exactly this length as truncated, able to have lost a token
+# to the cut, and never as the full record (feedback._tests_gate).
+TOOL_INPUT_CHARS = 120
 
 
 def build_env(res: Resolution, base_url: str) -> dict[str, str]:
@@ -254,7 +261,7 @@ def _apply_message(job: Job, m: Any) -> None:
             elif isinstance(b, ToolUseBlock):
                 short = json.dumps(b.input, default=str)
                 job.log_text(f"[tool] {b.name} {short[:400]}")
-                input_text = short[:120]
+                input_text = short[:TOOL_INPUT_CHARS]
                 if isinstance(b.input, dict):
                     command = b.input.get("command")
                     path = None
@@ -266,7 +273,7 @@ def _apply_message(job: Job, m: Any) -> None:
                     if isinstance(command, str):
                         # spec: a string `command` (Bash) stores the command itself, not the JSON
                         # around it, so the progress line reads "Bash: uv run pytest -q"
-                        input_text = command[:120]
+                        input_text = command[:TOOL_INPUT_CHARS]
                     elif path is not None:
                         # spec: any path-shaped tool (the edit tools and the readers with a
                         # file_path/notebook_path/path — Read, Glob, Grep, LS) stores just the
@@ -382,6 +389,9 @@ async def run_job(
     job.status = "running"
     job.started_at = time.time()
     job.changed()
+    # router 13: the sessions on the endpoint as this one starts (its own row included), the
+    # speed sample's concurrency; never raises
+    sessions_at_start = feedback.note_start(job)
     metrics_before = None
     try:
         # inside the try: a cancel landing in this first await must still run the finally, or
@@ -459,7 +469,7 @@ async def run_job(
         # either cancel is processed — DeepSeek review of 6005f94), and an exception from them
         # is a transcript line, never propagated past the tail.
         job.finished_at = time.time()
-        await _to_the_end(job, _finish(job, res, metrics_before, d.probe_timeout_s), "finish")
+        await _to_the_end(job, _finish(job, res, metrics_before, d.probe_timeout_s, sessions_at_start), "finish")
         # story 1.12: the transcript row is written here — after _finish, so the [metrics] and
         # [worktree]/[worktree-error] lines (and any [cancel] line the finish step absorbed) are
         # in it, and before _done.set()/changed(). A terminal row has its transcript row whenever
@@ -499,9 +509,10 @@ async def _to_the_end(job: Job, aw: Any, what: str) -> None:
         job._log_safe(f"[{what}-error] {type(e).__name__}: {e}")
 
 
-async def _finish(job: Job, res: Resolution, metrics_before: dict[str, float] | None, probe_timeout_s: float) -> None:
-    """The finally's work before the tail: the metrics delta, then the worktree. Each is guarded
-    on its own so a metrics failure still finishes the worktree."""
+async def _finish(job: Job, res: Resolution, metrics_before: dict[str, float] | None, probe_timeout_s: float,
+                  sessions_at_start: int | None = None) -> None:
+    """The finally's work before the tail: the metrics delta, the feedback gates, then the
+    worktree. Each is guarded on its own so a metrics failure still finishes the worktree."""
     if metrics_before:
         # Server-wide counters: with other jobs on the same endpoint the delta is shared.
         # the backend decides the arithmetic: vLLM's prompt_tokens already includes cached
@@ -518,6 +529,11 @@ async def _finish(job: Job, res: Resolution, metrics_before: dict[str, float] | 
         except Exception as e:  # noqa: BLE001
             job.metrics = None
             job._log_safe(f"[metrics-error] {type(e).__name__}: {e}")
+    # router 13 (design §9): gates and the speed sample, evidence only (on_finish never raises
+    # and never moves the status or error). After the metrics, whose generate_tps the sample
+    # reads; before finish_worktree, which removes an unchanged tree: the diff gates read the
+    # tree as the session left it, so "could not read" is never confused with "nothing changed".
+    await feedback.on_finish(job, res, sessions=sessions_at_start)
     try:
         await asyncio.to_thread(finish_worktree, job)
     except Exception as e:  # noqa: BLE001

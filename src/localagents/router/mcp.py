@@ -24,6 +24,7 @@ from mcp.server.mcpserver import MCPServer
 from localagents import db
 from localagents.registry import Endpoint, Registry
 from localagents.router import definitions as defsmod
+from localagents.router import feedback
 from localagents.router import scorecard as scorecard_mod
 from localagents.router.decision import (
     BriefUnresolved,
@@ -35,9 +36,9 @@ from localagents.router.decision import (
 INSTRUCTIONS = (
     "Command and control for the localagents router: read and edit the dimension definitions "
     "(every edit through a dry run over briefs), preflight a brief to see the scores d3 gives "
-    "it right now, start and resume a calibration run (calibrate), and read the scorecard "
-    "(scorecard). Nothing on this surface dispatches work; jobs run through the localagents "
-    "server."
+    "it right now, start and resume a calibration run (calibrate), read the scorecard "
+    "(scorecard), and record your verdict on a finished job (verdict). Nothing on this surface "
+    "dispatches work; jobs run through the localagents server."
 )
 
 # §4's priorities; routing itself (which of these admits where) is a later story
@@ -463,13 +464,52 @@ async def scorecard(
         return _database_error(e)
 
 
+@mcp.tool()
+async def verdict(
+    job_id: str,
+    accepted: bool,
+    dimensions: dict | None = None,
+    correction: dict | None = None,
+) -> dict[str, Any]:
+    """Record your verdict on a finished job: evidence for the scorecard's next pass, never a
+    cell (a pass is run by `scorecard` with `recompute`).
+
+    `accepted` is the job-level verdict. `dimensions` optionally asserts it per axis
+    (software_dev, tool_use, computer_use, complexity, judgement): 1 accepted, -1 rejected,
+    0 as the job-level verdict; an axis the ticket left undetermined adds no observation and is
+    listed in `no_observation`. `correction` optionally gives the brief's true scores
+    ({dimension: band or option}) when d3 mis-scored it; it is logged with the ticket's
+    definitions version. One verdict per job: a second replaces the first. A job run on a
+    named model has no ticket: its brief is scored by d3 now so its demand bands exist. Answers
+    `recorded` with the row's notices, or a refusal dict that wrote nothing.
+    """
+    from localagents.router import calibrate as calibrate_mod
+
+    try:
+        reg = Registry.load()
+    except Exception as e:  # a config file is operator input; every failure answers
+        return {"error": "config_error", "message": f"{type(e).__name__}: {e}"}
+    try:
+        set_version = calibrate_mod.load_set().version
+    except Exception:  # noqa: BLE001 -- a malformed manifest only silences the set-upgrade notice
+        set_version = None
+    client = _client()
+    try:
+        return await feedback.apply_verdict(_db(), reg, job_id, accepted, dimensions, correction,
+                                            client=client, set_version=set_version)
+    except (sqlite3.Error, db.SchemaError, json.JSONDecodeError) as e:
+        return _database_error(e)
+    finally:
+        await client.aclose()
+
+
 def main(argv: list[str] | None = None) -> None:
     import argparse
 
     ap = argparse.ArgumentParser(
         prog="localagents router",
         description="the router's command-and-control MCP server (definitions, preflight, "
-                    "calibrate, scorecard); nothing here dispatches work",
+                    "calibrate, scorecard, verdict); nothing here dispatches work",
     )
     ap.add_argument("--config", help="path to models.yaml (or set LOCALAGENTS_CONFIG)")
     ap.add_argument("--transport", default="stdio", choices=["stdio"],

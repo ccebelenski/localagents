@@ -233,10 +233,10 @@ def test_preflight_pointer_brief_missing_is_brief_unresolved(dbconn, monkeypatch
 
 
 def test_tool_schemas_list_exactly_the_routers_tools():
-    """Phase 1 shipped definitions and preflight; router 9a adds calibrate and scorecard.
-    Descriptions stay under Claude Code's cap."""
+    """Phase 1 shipped definitions and preflight; router 9a adds calibrate and scorecard,
+    router 13 verdict. Descriptions stay under Claude Code's cap."""
     tools = router.mcp._tool_manager.list_tools()
-    assert [t.name for t in tools] == ["definitions", "preflight", "calibrate", "scorecard"]
+    assert [t.name for t in tools] == ["definitions", "preflight", "calibrate", "scorecard", "verdict"]
     for t in tools:
         assert len(t.description or "") <= 2048, t.name
 
