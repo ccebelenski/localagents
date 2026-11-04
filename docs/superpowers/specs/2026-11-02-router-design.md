@@ -343,6 +343,12 @@ Three consumer asks come with them, binding for phase 3:
   caused the queue wait or the divert, so a retrospective can tell a capacity wait from a routing
   choice; null otherwise.
 
+**True-now (2026-11-04, from Task 14a as built).** A job's queue entry PERSISTS after its
+session ends: nothing deletes it (`queue.remove` has no caller outside the drop paths); every
+reader filters on the job's status, so occupancy and order are unaffected, and the entry is the
+record of `forced` and of the wait after the fact. One row per job, as `jobs` itself grows. Where
+§7 above reads as if entries were removed at session end, this is what the code does.
+
 **Coordinator question (this project's coordinator, 2026-11-04; pending the consumer's answer and the
 operator's call).** The pairing rule, a different model reviews than the one that built, has no
 voice in a routed dispatch: the only exclusion is the operator's per-endpoint `exclude:` (a
