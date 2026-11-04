@@ -42,6 +42,19 @@ A checkout that is a git worktree refuses the default state directory, so a test
 server or a probe run from one cannot touch your real database and job directories:
 set `XDG_STATE_HOME` (and `LOCALAGENTS_DB`) to a directory of its own.
 
+The routing smoke needs a live fleet but not much of one. Calibrate one small endpoint
+(`localagents calibrate <name>`), add a `router` entry naming a `decision_url`, start
+`localagents d3 serve` next to the `localagents` server, register the router command
+server as a second MCP server (`localagents router`), and submit one job with
+`run_agent(model="<entry name>")`. The finished record names the chosen row's endpoint
+and model and carries `routed_by` with the one-line reason. On the router server,
+`explain <job_id>` answers with the ticket behind the choice and `queue` shows the
+endpoints' occupancy. To watch a wait, submit a second job while the first holds a
+one-slot endpoint: its record reads `queued` with the row it waits on, `job_status`
+carries the position and the expected wait, and it admits and runs when the first
+finishes. A hand drop from the `queue` tool on such a waiting job closes it as
+`dropped` with a null `started_at` and the cause in `error`.
+
 ## Where things live
 
 | file | what |
@@ -54,6 +67,7 @@ set `XDG_STATE_HOME` (and `LOCALAGENTS_DB`) to a directory of its own.
 | `jobs.py` | job records: the `jobs` and `mcp_servers` rows, the job directory and transcript, retention pruning, the startup lost-job mark |
 | `derive.py` | read-time derivations over the `requests`/`tool_calls` rows: usage totals, per-tool counts, the last tool, the whole `job_status` dict for a row |
 | `status.py` | the status-line renderer: reads every live server's jobs from the shared database; `localagents statusline` runs it without importing the server |
+| `router/` | the routing package, holding the d3 server, brief scoring, selection, the queue, the job gates and verdicts, and the command tools; `docs/router.md` explains the parts |
 | `agents/local-agent.md` | Claude Code subagent that relays one job and reports its record; the fallback where auto-backgrounding is off |
 
 A note on `agents/local-agent.md`: the frontmatter must be valid YAML, so quote the

@@ -214,9 +214,9 @@ An entry with `backend: router` serves no model itself; it picks another endpoin
 a job from a calibrated scorecard. It needs `decision_url`, the server running the d3
 decision model, and no `base_url`. Calibration is built now, and
 `localagents calibrate <endpoint>` runs the core probe set against one endpoint and
-fills its scorecard. Routing is being built in stages, so until the dispatch story
-lands a job aimed at one of these entries is refused with `not_routable`.
-[docs/router.md](docs/router.md) has the detail.
+fills its scorecard. A job aimed at one of these entries is routed. The brief is
+scored and a calibrated row is chosen. The job record reports that row and the
+reason for the choice. [docs/router.md](docs/router.md) has the detail.
 
 ```yaml
 endpoints:
