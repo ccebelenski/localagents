@@ -835,11 +835,10 @@ def job_detail(conn: sqlite3.Connection, job_id: str, now: float | None = None) 
     row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if row is None:
         return None
+    # router 8: the job page's `cal` tag rides summary_from_row's `calibration` (router 12
+    # added it, with priority and routed_by, to both readers); the snapshot entry carries it
+    # for the live header.
     d = derive.summary_from_row(conn, row, now=now)
-    # router 8: the job page's `cal` tag. summary_from_row leaves the router columns out until
-    # a story adds them to both readers (jobs.Job._SUMMARY_HIDDEN), so the detail body carries
-    # the flag itself; the snapshot entry carries it for the live header.
-    d["calibration"] = bool(row["calibration"])
     d["requests"] = [
         {"path": r["path"], "t": r["t"], "http_status": r["http_status"], "ms": r["ms"], "gen_ms": r["gen_ms"],
          "tokens": {"input": r["input_tokens"], "output": r["output_tokens"],

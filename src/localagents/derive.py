@@ -200,6 +200,10 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "dump": bool(row["dump"]),
         "log_events": bool(row["log_events"]),
         "context": row["context"],
+        # router 12: shown on both sides (Job._SUMMARY_HIDDEN no longer hides them)
+        "priority": row["priority"],
+        "calibration": bool(row["calibration"]),
+        "routed_by": json.loads(row["routed_by"]) if row["routed_by"] is not None else None,
         "metrics": None if all(row[c] is None for c in _METRICS_COLUMNS) else {c: row[c] for c in _METRICS_COLUMNS},
         # the spec's read-time derivations (the in-memory duplicates story 1.5b removed from Job)
         "usage": usage_totals(conn, job_id),

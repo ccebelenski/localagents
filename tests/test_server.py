@@ -740,3 +740,468 @@ def test_wait_jobs_counts_a_repeated_id_once(reg, monkeypatch):
     assert ctx.reports and ctx.reports[-1][1] == 1  # total = number of distinct jobs
     running = asyncio.run(server.wait_jobs([_prev_job().id] * 2, timeout_s=0))
     assert running["outcome"] == "timeout" and len(running["running"]) == 1
+
+
+# --- router 12: model=auto routes, every job passes admission, tickets ------------------------
+# docs/superpowers/specs/2026-11-02-router-design.md §4 (the dispatch path, the ticket, the
+# "Consumer requirement"), §6, §7 (queues, "Accepted", "Decided" 2026-11-04), §14. A queued
+# job's task waits inside the asyncio.run that started it, so each scenario runs in ONE loop:
+# a loop's close cancels a task still waiting, and a cancel while queued drops the job.
+
+STRONG = {"software_dev": 4, "tool_use": 4, "computer_use": 4, "complexity": 4, "judgement": 4,
+          "completeness": 4, "adherence": 4}
+WEAK = {"software_dev": 1, "tool_use": 1, "computer_use": 1, "complexity": 1, "judgement": 1,
+        "completeness": 4, "adherence": 4}
+
+
+def _row_with_cells(conn, endpoint, served, cells):
+    """A scorecard row with a complete core run and one pass of these cells (rebuilt here from
+    tests/router/test_dispatch.py, never imported: ruling (o))."""
+    from localagents import db
+    from localagents.router import definitions, scorecard
+
+    eid = db.lookup_id(conn, "endpoints", name=endpoint, base_url=f"http://{endpoint}:8080",
+                       backend="llama.cpp", host="local")
+    mid = db.lookup_id(conn, "models", served_id=served)
+    row = scorecard.get_or_create_row(conn, endpoint, served, eid, mid)
+    conn.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan, started, status)"
+                 " VALUES (?, ?, 'core', '2026.11', '{}', 1.0, 'complete')", (db.new_uuid(), row.id))
+    pass_id = db.new_uuid()
+    conn.execute("INSERT INTO scorecard_passes (id, row_id, at, constants, observations)"
+                 " VALUES (?, ?, 2.0, '{}', 0)", (pass_id, row.id))
+    version = definitions.load(conn).version
+    for dimension, estimate in cells.items():
+        conn.execute("INSERT INTO scorecard_cells (pass_id, dimension, language, estimate, count,"
+                     " probes_n, jobs_n, thin, defs_version) VALUES (?, ?, '', ?, 6, 6, 0, 0, ?)",
+                     (pass_id, dimension, estimate, version))
+    return row.id
+
+
+@pytest.fixture
+def routed(monkeypatch, tmp_path):
+    """The fleet of the `reg` fixture plus the router entry `auto`; one slot per endpoint, a
+    131k window per served id; `first` is a weak row and `second` a strong one, so a brief
+    demanding software_dev 3 routes to second x big-model. d3 is a faked dispatch.score that
+    counts its calls. run_job never runs, so an admitted job holds its slot."""
+    import copy
+    from types import SimpleNamespace
+
+    from localagents.router import definitions, dispatch
+    from localagents.router.decision import BriefScores
+
+    endpoints = {n: Endpoint(name=n, base_url=f"http://{n}:8080", backend="llama.cpp") for n in SERVING}
+    endpoints["auto"] = Endpoint(name="auto", base_url="", backend="router",
+                                 decision_url="http://d3.test:8766")
+    r = Registry(path=None, endpoints=endpoints, defaults=Defaults(), raw={}, local={})
+    facts = {n: {"up": True, "models": list(m), "context": {m[0]: 131_072},
+                 "slots": {"total": 1, "busy": 0}} for n, m in SERVING.items()}
+
+    async def probe(self, ep):
+        if ep.is_router:
+            return {"up": True, "models": [ep.name], "router": True}
+        return copy.deepcopy(facts[ep.name])
+
+    scored = []
+
+    async def fake_score(client, url, model, text, defs, **kw):
+        scored.append(text)
+        values = {"software_dev": 3, "complexity": 2, "tool_use": 2}
+        undetermined = {d for d in definitions.DIMENSIONS if d not in values}
+        return BriefScores(values, {d: 0.9 for d in values}, undetermined, False, {}, defs.version)
+
+    async def no_run(*a, **kw):
+        return None
+
+    async def no_start():
+        return 0
+
+    monkeypatch.setattr(Registry, "probe", probe)
+    monkeypatch.setattr(server, "_reg", lambda: r)
+    monkeypatch.setattr(server, "run_job", no_run)
+    monkeypatch.setattr(server.shim, "start", no_start)
+    monkeypatch.setattr(dispatch, "score", fake_score)
+    monkeypatch.setattr(dispatch, "POLL_S", 0.01)
+    conn = server.store.conn
+    rows = {"first": _row_with_cells(conn, "first", "default-model", WEAK),
+            "second": _row_with_cells(conn, "second", "big-model", STRONG)}
+    return SimpleNamespace(reg=r, facts=facts, scored=scored, conn=conn, rows=rows)
+
+
+def _ticket_row(job_id):
+    return server.store.conn.execute("SELECT * FROM router_tickets WHERE job_id = ?", (job_id,)).fetchone()
+
+
+def test_run_agent_auto_records_a_ticket_and_the_real_endpoint(routed, tmp_path):
+    """§4 step 5: the routed job's record is created on the real endpoint with a
+    router_tickets row naming the chosen row; job_status carries the ticket's summary."""
+    out = asyncio.run(server.run_agent(task="build the parser", model="auto", cwd=str(tmp_path)))
+    assert out.get("error") is None, out
+    assert out["endpoint"] == "second" and out["model"] == "big-model"
+    t = _ticket_row(out["id"])
+    assert t is not None and t["chosen_row"] == routed.rows["second"] and t["divert"] == 0
+    rows = {r["row_id"]: r for r in json.loads(t["rows"])}
+    assert set(rows) == set(routed.rows.values())
+    assert json.loads(t["flags"])["priority"] == "normal"
+    status = asyncio.run(server.job_status(out["id"]))
+    assert status["ticket"]["chosen"] == "second x big-model"
+    assert status["ticket"]["divert"] is False and status["ticket"]["admitted"] is not None
+    assert routed.scored == ["build the parser"]
+
+
+def test_run_agent_auto_record_names_served_model_endpoint_and_routed_by(routed, tmp_path):
+    """Consumer requirement (§4): model/endpoint/base_url are the real row's, never 'auto' or
+    the router entry's name; routed_by names the router and the one-line reason; a named job's
+    routed_by is None; both are visible in list_jobs rows, in-process and from the database."""
+    out = asyncio.run(server.run_agent(task="build the parser", model="auto", cwd=str(tmp_path)))
+    assert (out["model"], out["endpoint"], out["base_url"]) == ("big-model", "second", "http://second:8080")
+    assert "auto" not in (out["model"], out["endpoint"], out["base_url"])
+    assert out["routed_by"]["router"] == "auto" and out["routed_by"]["pool"] is None
+    assert out["routed_by"]["reason"].startswith("shortfall 0.00 on second x big-model")
+    named = asyncio.run(server.run_agent(task="t", model="default-model", cwd=str(tmp_path)))
+    assert named["routed_by"] is None and named["endpoint"] == "first"
+    for rows in (asyncio.run(server.list_jobs()), asyncio.run(server.list_jobs(all=True))):
+        by_id = {r["id"]: r for r in rows}
+        assert by_id[out["id"]]["routed_by"] == out["routed_by"]
+        assert by_id[out["id"]]["model"] == "big-model" and by_id[out["id"]]["endpoint"] == "second"
+        assert by_id[named["id"]]["routed_by"] is None
+
+
+def test_run_agent_auto_brief_unresolved_creates_no_job(routed, tmp_path):
+    """§4 step 1, §14: a pointer brief whose file is missing is brief_unresolved and no job
+    record exists, in memory or in the database; d3 was never asked."""
+    out = asyncio.run(server.run_agent(task="cat missing.md and follow it", model="auto",
+                                       cwd=str(tmp_path)))
+    assert out["error"] == "brief_unresolved"
+    assert server.store.jobs == {}
+    assert server.store.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    assert routed.scored == []
+
+
+def test_run_agent_named_model_queues_when_sessions_are_full_and_force_skips(reg, tmp_path):
+    """§7 "Directly named jobs pass the same gate": the reg fixture's endpoint has one session
+    (unknown capacity), the first job holds it (run_job never runs), the second waits in our
+    queue at position 1, and admit='force' skips the wait with an admitted, forced entry."""
+    async def go():
+        first = await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        second = await server.run_agent(task="b", model="default-model", cwd=str(tmp_path))
+        forced = await server.run_agent(task="c", model="default-model", cwd=str(tmp_path),
+                                        admit="force")
+        entries = {r["job_id"]: r for r in server.store.conn.execute("SELECT * FROM queue_entries")}
+        return first, second, forced, entries, server.store.get(second["id"])._task.done()
+
+    first, second, forced, entries, second_done = asyncio.run(go())
+    assert entries[first["id"]]["admitted"] is not None and entries[first["id"]]["forced"] == 0
+    assert entries[second["id"]]["admitted"] is None and second_done is False
+    assert second["status"] == "queued" and second["queue"]["position"] == 1
+    assert entries[forced["id"]]["admitted"] is not None and entries[forced["id"]]["forced"] == 1
+    assert forced["queue"] is None
+
+
+def test_forced_job_record_says_forced(reg, tmp_path):
+    """RULE (design §7: "``admit: force`` ... still writes an admitted entry, so it is counted;
+    the record says it forced"): a forced job's summary (``list_jobs``/``job_status``, in
+    process and read back from the row) shows ``forced: true`` beside the queue facts, and a
+    named forced job — which has no ticket — says it too; the ticket's ``flags.forced`` stays."""
+    async def go():
+        forced = await server.run_agent(task="pin", model="default-model", cwd=str(tmp_path),
+                                        admit="force")
+        plain = await server.run_agent(task="wait", model="default-model", cwd=str(tmp_path))
+        job = server.store.get(forced["id"])
+        job.status, job.finished_at = "succeeded", time.time()   # over: no queue block either
+        job.changed()
+        return (forced, plain, await server.job_status(forced["id"]),
+                await server.job_status(plain["id"]), await server.list_jobs(),
+                await server.list_jobs(all=True))
+
+    forced, plain, status, plain_status, listed, listed_all = asyncio.run(go())
+    assert status["status"] == "succeeded" and status["queue"] is None
+    assert status["forced"] is True
+    assert plain_status["status"] == "queued" and plain_status["forced"] is False
+    assert {r["id"]: r for r in listed}[forced["id"]]["forced"] is True
+    assert {r["id"]: r for r in listed_all}[forced["id"]]["forced"] is True
+    assert {r["id"]: r for r in listed_all}[plain["id"]]["forced"] is False
+
+
+def test_run_agent_admit_now_returns_would_queue_and_creates_no_job(routed, tmp_path):
+    """§4: admit='now' is "run it or tell me": the chosen row cannot admit at once, so the call
+    returns would_queue with the position, the expected wait, the alternatives that could admit
+    now and (routed) the ticket, and creates no job."""
+    async def go():
+        held = await server.run_agent(task="a", model="big-model", cwd=str(tmp_path))
+        before = server.store.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        named = await server.run_agent(task="b", model="big-model", cwd=str(tmp_path), admit="now")
+        auto = await server.run_agent(task="c", model="auto", cwd=str(tmp_path), admit="now")
+        after = server.store.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        return held, named, auto, before, after
+
+    held, named, auto, before, after = asyncio.run(go())
+    assert held.get("error") is None
+    for out in (named, auto):
+        assert out["error"] == "would_queue", out
+        assert out["position"] == 1 and out["expected_wait_s"] > 0
+        assert isinstance(out["alternatives"], list)
+    assert named["ticket"] is None
+    assert auto["ticket"]["chosen"] == "second x big-model"
+    # the weak row on `first` is free: it could admit now, listed as not acceptable
+    assert [(a["endpoint"], a["acceptable"]) for a in auto["alternatives"]] == [("first", False)]
+    assert before == after == 1
+
+
+def test_stalled_session_raises_a_notice_and_is_not_cancelled(reg, tmp_path, monkeypatch):
+    """§7 "Stalled sessions": a wake scans this process's running admitted jobs; one with no
+    progress for STALL_S gets its endpoint probed, a [stalled] line and a notice, and is
+    never cancelled."""
+    from localagents.router import dispatch
+
+    monkeypatch.setattr(dispatch, "POLL_S", 0.01)
+
+    async def go():
+        first = await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        job = server.store.get(first["id"])
+        job.status, job.started_at = "running", time.time() - dispatch.STALL_S - 60
+        job.changed()
+        await server.run_agent(task="b", model="default-model", cwd=str(tmp_path))  # queues: a wake runs
+        await asyncio.sleep(0.1)
+        return job
+
+    job = asyncio.run(go())
+    transcript = Path(job.log_dir, "transcript.txt").read_text()
+    assert "[stalled] stalled: no progress for 16 min, endpoint up" in transcript
+    assert transcript.count("[stalled]") == 1   # one notice per stall, not one per wake
+    assert job.last_activity == "stalled: no progress for 16 min, endpoint up"
+    assert job.status == "running" and not job._task.cancelled()
+
+
+def test_run_agent_bad_priority_is_a_dict_error(reg):
+    """§4: a bad priority or admit is bad_argument, a dict, before any job exists."""
+    out = asyncio.run(server.run_agent(task="t", priority="whenever"))
+    assert out["error"] == "bad_argument" and "priority" in out["message"]
+    out = asyncio.run(server.run_agent(task="t", admit="later"))
+    assert out["error"] == "bad_argument" and "admit" in out["message"]
+    assert server.store.jobs == {}
+
+
+def test_job_status_shows_queue_position_while_queued(reg, tmp_path):
+    """job_status of a queued job carries priority and queue {position, expected_wait_s}; an
+    admitted job's queue is None."""
+    async def go():
+        first = await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        second = await server.run_agent(task="b", model="default-model", cwd=str(tmp_path),
+                                        priority="urgent")
+        return await server.job_status(first["id"]), await server.job_status(second["id"])
+
+    first, second = asyncio.run(go())
+    assert first["queue"] is None and first["priority"] == "normal"
+    assert second["status"] == "queued" and second["priority"] == "urgent"
+    assert second["queue"]["position"] == 1 and second["queue"]["expected_wait_s"] > 0
+
+
+def test_ticket_records_position_at_enqueue(routed, tmp_path):
+    """RULE (design §4, the ticket's contents): the ticket carries ``position`` at enqueue
+    beside ``est_wait_s`` — 1 for the head of the queue, None when the row admitted the job at
+    once (it never waited, so it has no queue position) — and ``ticket_summary`` surfaces both.
+    A forced job was admitted at once, so its position is None, and its ticket still says
+    ``flags.forced``. (The divert's position is checked in tests/router/test_dispatch.py.)"""
+    from localagents.router import dispatch
+
+    async def go():
+        await server.run_agent(task="hold", model="big-model", cwd=str(tmp_path))
+        queued = await server.run_agent(task="build the parser", model="auto", cwd=str(tmp_path))
+        ticket = dispatch.read_ticket(server.store.conn, queued["id"])
+        status = await server.job_status(queued["id"])
+        # admitted at once (admit='force'): it never waited, so it has no queue position
+        forced = await server.run_agent(task="forced build", model="auto", cwd=str(tmp_path),
+                                        admit="force")
+        forced_ticket = dispatch.read_ticket(server.store.conn, forced["id"])
+        forced_status = await server.job_status(forced["id"])
+        return queued, ticket, status, forced_ticket, forced_status
+
+    queued, ticket, status, forced_ticket, forced_status = asyncio.run(go())
+    assert queued["status"] == "queued" and queued["endpoint"] == "second"
+    assert ticket["position"] == 1 and ticket["est_wait_s"] > 0
+    assert status["ticket"]["position"] == 1
+    assert status["ticket"]["est_wait_s"] == ticket["est_wait_s"]
+    assert status["queue"]["position"] == 1
+    assert forced_ticket["admitted"] is not None and forced_ticket["position"] is None
+    assert forced_ticket["flags"]["forced"] is True
+    assert forced_status["forced"] is True
+
+
+def test_resume_with_router_id_stays_on_its_row(routed, tmp_path):
+    """§4: resume_job of a routed job with the router's name as model resumes on the same row
+    (no new scoring), and the ticket is copied with flags.resumed."""
+    async def go():
+        prev = await server.run_agent(task="build the parser", model="auto", cwd=str(tmp_path))
+        job = server.store.get(prev["id"])
+        job.session_id, job.status = "sess-r", "succeeded"
+        job._done.set()
+        job.changed()
+        nxt = await server.run_agent(task="go on", model="auto", resume_job=prev["id"])
+        return prev, nxt
+
+    prev, nxt = asyncio.run(go())
+    assert nxt.get("error") is None, nxt
+    assert (nxt["model"], nxt["endpoint"]) == (prev["model"], prev["endpoint"]) == ("big-model", "second")
+    assert routed.scored == ["build the parser"]   # resume never rescores
+    t = _ticket_row(nxt["id"])
+    assert t["chosen_row"] == routed.rows["second"]
+    assert json.loads(t["flags"])["resumed"] is True
+    assert nxt["routed_by"]["router"] == "auto"
+
+
+def test_cancel_removes_the_queue_entry(reg, tmp_path):
+    """§14: "A queued job cancelled: the entry is removed, nothing was sent."""
+    async def go():
+        await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        second = await server.run_agent(task="b", model="default-model", cwd=str(tmp_path))
+        assert server.store.conn.execute("SELECT 1 FROM queue_entries WHERE job_id = ?",
+                                         (second["id"],)).fetchone() is not None
+        return second, await server.cancel_job(second["id"])
+
+    second, out = asyncio.run(go())
+    assert server.store.conn.execute("SELECT 1 FROM queue_entries WHERE job_id = ?",
+                                     (second["id"],)).fetchone() is None
+    assert out["status"] == "dropped" and "note" not in out
+
+
+def test_run_agent_auto_avoid_job_excludes_the_builders_model(routed, tmp_path):
+    """§7 "Decided": avoid_job filters every row serving that job's served id (any endpoint),
+    lists the filter in the ticket and names it in routed_by.reason when it bound the choice."""
+    async def go():
+        builder = await server.run_agent(task="t", model="big-model", cwd=str(tmp_path), admit="force")
+        review = await server.run_agent(task="review the diff", model="auto", cwd=str(tmp_path),
+                                        avoid_job=builder["id"], tolerance=2.0)
+        return builder, review
+
+    builder, review = asyncio.run(go())
+    assert review.get("error") is None, review
+    assert review["model"] == "default-model" and review["endpoint"] == "first"
+    rows = {r["row_id"]: r for r in json.loads(_ticket_row(review["id"])["rows"])}
+    assert rows[routed.rows["second"]]["filtered"] == "avoid_job"
+    assert "avoid_job excluded second x big-model" in review["routed_by"]["reason"]
+
+
+def test_avoid_job_naming_the_named_model_is_bad_argument(reg, tmp_path):
+    """§7 "Decided": a named model whose served id is the avoided job's is bad_argument; so is
+    an avoid_job that names no job."""
+    async def go():
+        builder = await server.run_agent(task="t", model="big-model", cwd=str(tmp_path))
+        same = await server.run_agent(task="r", model="big-model", cwd=str(tmp_path),
+                                      avoid_job=builder["id"])
+        unknown = await server.run_agent(task="r", model="big-model", cwd=str(tmp_path),
+                                         avoid_job="no-such-job")
+        other = await server.run_agent(task="r", model="default-model", cwd=str(tmp_path),
+                                       avoid_job=builder["id"])
+        return same, unknown, other
+
+    same, unknown, other = asyncio.run(go())
+    assert same["error"] == "bad_argument" and "big-model" in same["message"]
+    assert unknown["error"] == "bad_argument" and "no-such-job" in unknown["message"]
+    assert other.get("error") is None and other["model"] == "default-model"
+
+
+def test_cancel_while_queued_is_dropped_with_started_at_null(reg, tmp_path):
+    """§7 "Accepted": a job that leaves the queue without a session is `dropped`, error
+    `cancelled while queued`, started_at null, settled; the row says the same."""
+    async def go():
+        await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        second = await server.run_agent(task="b", model="default-model", cwd=str(tmp_path))
+        return await server.cancel_job(second["id"])
+
+    out = asyncio.run(go())
+    assert (out["status"], out["error"], out["started_at"]) == ("dropped", "cancelled while queued", None)
+    assert out["finished_at"] is not None
+    row = server.store.conn.execute("SELECT status, error, started_at FROM jobs WHERE id = ?",
+                                    (out["id"],)).fetchone()
+    assert tuple(row) == ("dropped", "cancelled while queued", None)
+    assert server.store.get(out["id"]).settled
+
+
+def test_row_down_at_admission_is_dropped_with_ticket_and_guidance(routed, tmp_path):
+    """§4 step 6 and §7 "Accepted": the routed head of a queue finds its endpoint down when its
+    turn comes: dropped, error row_down, started_at null; the record carries the ticket and the
+    guidance "resubmit; the brief is rescored"."""
+    async def go():
+        await server.run_agent(task="a", model="big-model", cwd=str(tmp_path))   # holds second
+        queued = await server.run_agent(task="build the parser", model="auto", cwd=str(tmp_path))
+        assert queued["status"] == "queued" and queued["queue"]["position"] == 1
+        routed.facts["second"] = {"up": False, "models": [], "error": "connection refused"}
+        job = server.store.get(queued["id"])
+        await asyncio.wait_for(job._done.wait(), 5)
+        return await server.job_status(queued["id"])
+
+    out = asyncio.run(go())
+    assert (out["status"], out["error"], out["started_at"]) == ("dropped", "row_down", None)
+    assert out["ticket"]["chosen"] == "second x big-model"
+    assert out["ticket"]["guidance"] == "resubmit; the brief is rescored"
+
+
+def test_wait_s_is_armed_at_admission_not_enqueue(reg, tmp_path, monkeypatch):
+    """§7 "Accepted" (the clock): the blocking call keeps waiting while the job is queued, its
+    progress line reads `queued #n, ~m min`, and wait_s counts from the admission."""
+    from localagents.router import dispatch
+
+    monkeypatch.setattr(dispatch, "POLL_S", 0.01)
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+    ctx = _Ctx()
+
+    async def go():
+        first = await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        call = asyncio.create_task(server.run_agent(task="b", model="default-model",
+                                                    cwd=str(tmp_path), wait_s=0.3, ctx=ctx))
+        await asyncio.sleep(0.6)   # twice wait_s since the enqueue: still blocking
+        still = not call.done()
+        holder = server.store.get(first["id"])
+        holder.status = "succeeded"
+        holder.changed()
+        dispatch.notify()
+        freed = time.monotonic()
+        out = await asyncio.wait_for(call, 5)
+        return still, out, time.monotonic() - freed
+
+    still, out, after_free = asyncio.run(go())
+    assert still is True
+    assert out["status"] == "queued" and out["queue"] is None   # admitted; run_job never ran
+    assert 0.25 <= after_free < 2.0   # the wait ran its 0.3 s from the admission
+    assert any(re.fullmatch(r"queued #1, ~\d+ min", m or "") for _, _, m in ctx.reports), ctx.reports
+
+
+def test_routed_by_pool_when_pool_cap_blocked(routed, tmp_path):
+    """§7 "Accepted": with both endpoints in pool `gpu` (max_concurrent 1) and the pool's one
+    session held on `first`, the routed job queues for second although second itself is free:
+    routed_by.pool names the pool, and the entry's blocked_by says pool."""
+    routed.reg.pools = {"gpu": {"max_concurrent": 1}}
+    for n in ("first", "second"):
+        routed.reg.endpoints[n].pool = "gpu"
+
+    async def go():
+        await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))   # holds the pool
+        out = await server.run_agent(task="build the parser", model="auto", cwd=str(tmp_path))
+        # read inside the loop: its close cancels the waiting task, which drops the job
+        entry = server.store.conn.execute("SELECT blocked_by FROM queue_entries WHERE job_id = ?",
+                                          (out["id"],)).fetchone()
+        return out, entry
+
+    out, entry = asyncio.run(go())
+    assert out["status"] == "queued" and out["endpoint"] == "second"
+    assert out["routed_by"]["pool"] == "gpu"
+    assert entry["blocked_by"] == "pool"
+
+
+def test_summary_shows_priority_calibration_routed_by(reg, tmp_path):
+    """The phase-2 deferral closes (§13, plan Task 1's ruling): priority, calibration and
+    routed_by are in summary() and summary_from_row alike; the ids and levers stay hidden."""
+    from localagents import derive
+
+    out = asyncio.run(server.run_agent(task="t", model="big-model", cwd=str(tmp_path),
+                                       priority="background"))
+    assert (out["priority"], out["calibration"], out["routed_by"]) == ("background", False, None)
+    job = server.store.get(out["id"])
+    row = server.store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job.id,)).fetchone()
+    from_row = derive.summary_from_row(server.store.conn, row)
+    for key in ("priority", "calibration", "routed_by"):
+        assert job.summary()[key] == from_row[key]
+    for hidden in ("mcp_server_id", "endpoint_id", "model_id", "levers", "gates"):
+        assert hidden not in out and hidden not in from_row
+    listed = {r["id"]: r for r in asyncio.run(server.list_jobs(all=True))}
+    assert listed[job.id]["priority"] == "background"

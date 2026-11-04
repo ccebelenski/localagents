@@ -138,7 +138,7 @@ def test_definitions_dry_run_without_briefs_is_no_briefs(dbconn, monkeypatch):
     assert defsmod.load(dbconn).version == 1
 
 
-def test_preflight_scores_only_in_phase_one(dbconn, monkeypatch):
+def test_preflight_scores_echoes_priority_and_decides(dbconn, monkeypatch):
     _router_registry(monkeypatch)
     seen = {}
 
@@ -151,7 +151,10 @@ def test_preflight_scores_only_in_phase_one(dbconn, monkeypatch):
 
     monkeypatch.setattr(router, "score", fake)
     out = asyncio.run(router.preflight(task="fix the parser", priority="background"))
-    assert out == {
+    # router 12 (pin moved): the phase-1 score keys stay as they were, and the decision dispatch
+    # would take now rides beside them; with no real endpoint there is no row to choose
+    assert {k: out[k] for k in ("scores", "confidences", "undetermined", "truncated",
+                                "defs_version", "priority")} == {
         "scores": {"complexity": 2, "language": "python"},
         "confidences": {"complexity": 0.9, "language": 0.9},
         "undetermined": sorted(set(defsmod.DIMENSIONS) - {"complexity", "language"}),
@@ -159,6 +162,7 @@ def test_preflight_scores_only_in_phase_one(dbconn, monkeypatch):
         "defs_version": 1,
         "priority": "background",
     }
+    assert out["chosen"] is None and out["decision"]["reason"] == "no_calibrated_row"
     # the entry's decision_* fields are the client's arguments; priority echoes, default normal
     assert (seen["url"], seen["model"]) == ("http://d3.test:8765", "d3-test")
     assert seen["timeout_s"] == 5.0 and seen["max_tokens"] == 100
@@ -234,9 +238,10 @@ def test_preflight_pointer_brief_missing_is_brief_unresolved(dbconn, monkeypatch
 
 def test_tool_schemas_list_exactly_the_routers_tools():
     """Phase 1 shipped definitions and preflight; router 9a adds calibrate and scorecard,
-    router 13 verdict. Descriptions stay under Claude Code's cap."""
+    router 13 verdict, router 12 explain and queue. Descriptions stay under Claude Code's cap."""
     tools = router.mcp._tool_manager.list_tools()
-    assert [t.name for t in tools] == ["definitions", "preflight", "calibrate", "scorecard", "verdict"]
+    assert [t.name for t in tools] == ["definitions", "preflight", "calibrate", "scorecard", "verdict",
+                                       "explain", "queue"]
     for t in tools:
         assert len(t.description or "") <= 2048, t.name
 
@@ -357,3 +362,162 @@ def test_scorecard_reports_the_latest_run(dbconn):
         "id": "new", "tier": "core", "status": "complete", "planned": 3,
         "pass": 1, "fail": 0, "skipped": 1, "unreliable": 1, "started": 20.0, "finished": 22.0}
     assert by_ep["ep2"]["latest_run"] is None
+
+
+# --- router 12: the full preflight, explain, queue (design §11) --------------------------------
+
+def _fleet_registry(monkeypatch, pools=None):
+    """The router entry plus two real endpoints, one slot each; probes answer from `facts`."""
+    entry = Endpoint(name="auto", base_url="", backend="router", decision_url="http://d3.test:8765")
+    endpoints = {"auto": entry}
+    facts = {}
+    for name, served in (("first", "model-a"), ("second", "model-b")):
+        endpoints[name] = Endpoint(name=name, base_url=f"http://{name}:8080", backend="llama.cpp")
+        facts[name] = {"up": True, "models": [served], "context": {served: 131_072},
+                       "slots": {"total": 1, "busy": 0}}
+    reg = Registry(path=None, endpoints=endpoints, defaults=Defaults(), raw={}, local={},
+                   pools=pools or {})
+    monkeypatch.setattr(Registry, "load", staticmethod(lambda path=None: reg))
+
+    async def probe(self, ep):
+        if ep.is_router:
+            return {"up": True, "models": [ep.name], "router": True}
+        return copy.deepcopy(facts[ep.name])
+
+    monkeypatch.setattr(Registry, "probe", probe)
+    return reg, facts
+
+
+def _row(conn, endpoint, served, cells):
+    eid = db.lookup_id(conn, "endpoints", name=endpoint, base_url=f"http://{endpoint}:8080",
+                       backend="llama.cpp", host="local")
+    mid = db.lookup_id(conn, "models", served_id=served)
+    row = scorecard.get_or_create_row(conn, endpoint, served, eid, mid)
+    conn.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan, started, status)"
+                 " VALUES (?, ?, 'core', '2026.11', '{}', 1.0, 'complete')", (db.new_uuid(), row.id))
+    pass_id = db.new_uuid()
+    conn.execute("INSERT INTO scorecard_passes (id, row_id, at, constants, observations)"
+                 " VALUES (?, ?, 2.0, '{}', 0)", (pass_id, row.id))
+    version = defsmod.load(conn).version
+    for dimension, estimate in cells.items():
+        conn.execute("INSERT INTO scorecard_cells (pass_id, dimension, language, estimate, count,"
+                     " probes_n, jobs_n, thin, defs_version) VALUES (?, ?, '', ?, 6, 6, 0, 0, ?)",
+                     (pass_id, dimension, estimate, version))
+    return row.id
+
+
+_STRONG = {d: 4 for d in ("software_dev", "tool_use", "computer_use", "complexity", "judgement",
+                          "completeness", "adherence")}
+
+
+def _fake_score(monkeypatch, values):
+    async def fake(client, url, model, text, defs, **kw):
+        undetermined = {d for d in defsmod.DIMENSIONS if d not in values}
+        return decision.BriefScores(dict(values), {d: 0.9 for d in values}, undetermined, False,
+                                    {}, defs.version)
+
+    monkeypatch.setattr(router, "score", fake)
+
+
+def test_preflight_returns_chosen_endpoint_and_served_id(dbconn, monkeypatch):
+    """§7 "Decided": preflight returns what dispatch would decide now (the Decision as a dict)
+    plus chosen {endpoint, served_id}, so a brief can be sized to the model; avoid_job filters
+    that job's served id the same way run_agent does; nothing is created."""
+    _fleet_registry(monkeypatch)
+    _fake_score(monkeypatch, {"software_dev": 3, "complexity": 2})
+    a = _row(dbconn, "first", "model-a", {**_STRONG, "software_dev": 2})
+    b = _row(dbconn, "second", "model-b", _STRONG)
+    out = asyncio.run(router.preflight(task="build the parser"))
+    assert out["chosen"] == {"endpoint": "second", "served_id": "model-b"}
+    d = out["decision"]
+    assert d["reason"] is None and d["divert"] is False and d["queue_for"] is None
+    assert d["chosen_reason"].startswith("shortfall 0.00 on second x model-b")
+    assert {c["row_id"] for c in d["considered"]} == {a, b}
+    jobs_before = dbconn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+
+    # avoid_job: a finished job that ran on model-b moves the choice to model-a
+    eid = db.lookup_id(dbconn, "endpoints", name="second", base_url="http://second:8080",
+                       backend="llama.cpp", host="local")
+    mid = db.lookup_id(dbconn, "models", served_id="model-b")
+    dbconn.execute("INSERT INTO jobs (id, endpoint_id, model_id, status, created_at)"
+                   " VALUES ('builder', ?, ?, 'succeeded', 1.0)", (eid, mid))
+    out = asyncio.run(router.preflight(task="build the parser", avoid_job="builder"))
+    assert out["chosen"] == {"endpoint": "first", "served_id": "model-a"}
+    assert {c["row_id"]: c["filtered"] for c in out["decision"]["considered"]}[b] == "avoid_job"
+    assert asyncio.run(router.preflight(task="t", avoid_job="nope"))["error"] == "bad_argument"
+    assert dbconn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == jobs_before + 1
+
+
+def test_explain_returns_the_ticket_and_routed_by(monkeypatch):
+    """§11 explain: the ticket (§4) of a routed job, with the record's routed_by and real
+    endpoint; a named job has no ticket, an unknown id is unknown_job."""
+    from localagents import jobs
+    from localagents.router import dispatch
+
+    store = jobs.JobStore()
+    monkeypatch.setattr(router, "_db", lambda: store.conn)
+    reg, _facts = _fleet_registry(monkeypatch)
+    monkeypatch.setattr(dispatch, "score", lambda *a, **kw: _score_now({"software_dev": 2}))
+    _row(store.conn, "second", "model-b", _STRONG)
+
+    async def go():
+        routed = await dispatch.route(reg, store.conn, reg.endpoints["auto"], "t", "/w", "normal")
+        res = routed.resolution
+        job = dispatch.new_job(store, priority="normal", routed=routed, task="t",
+                               model=res.served_model, endpoint=res.endpoint.name,
+                               base_url=res.endpoint.url, cwd="/w", run_cwd="/w",
+                               isolation="none", backend=res.endpoint.backend,
+                               host=res.endpoint.host, context=res.context)
+        return job, await router.explain(job.id)
+
+    job, out = asyncio.run(go())
+    assert out["job_id"] == job.id and out["endpoint"] == "second" and out["model"] == "model-b"
+    assert out["routed_by"]["router"] == "auto"
+    assert out["ticket"]["chosen_row"] is not None and out["ticket"]["scores"]["values"] == {"software_dev": 2}
+    named = dispatch.new_job(store, priority="normal", task="t", model="model-a", endpoint="first",
+                             base_url="http://first:8080", cwd="/w", run_cwd="/w",
+                             isolation="none", backend="llama.cpp", host="local")
+    assert asyncio.run(router.explain(named.id))["error"] == "no_ticket"
+    assert asyncio.run(router.explain("nope"))["error"] == "unknown_job"
+    store.close()
+
+
+async def _score_now(values):
+    undetermined = {d for d in defsmod.DIMENSIONS if d not in values}
+    return decision.BriefScores(dict(values), {d: 0.9 for d in values}, undetermined, False, {}, 1)
+
+
+def test_queue_lists_waiting_and_running_and_drops(monkeypatch):
+    """§11 queue: per endpoint, the sessions and live facts, our running sessions and the
+    queued entries in order with positions and expected waits; drop(job_id) removes an entry
+    by hand and a still-queued job becomes dropped ("dropped by the queue tool")."""
+    from localagents import jobs
+    from localagents.router import dispatch
+
+    store = jobs.JobStore()
+    monkeypatch.setattr(router, "_db", lambda: store.conn)
+    _fleet_registry(monkeypatch)
+
+    def named(task, forced=False):
+        return dispatch.new_job(store, priority="normal", forced=forced, task=task, model="model-a",
+                                endpoint="first", base_url="http://first:8080", cwd="/w",
+                                run_cwd="/w", isolation="none", backend="llama.cpp", host="local",
+                                context=131_072)
+
+    holder, waiting = named("a", forced=True), named("b")
+    holder.status = "running"
+    holder.changed()
+    out = asyncio.run(router.queue(endpoint="first"))
+    [first] = out["endpoints"]
+    assert first["endpoint"] == "first" and first["sessions"]["capacity"] == 1
+    assert first["sessions"]["ours_running"] == 1
+    assert [r["job_id"] for r in first["running"]] == [holder.id]
+    assert [(q["job_id"], q["position"]) for q in first["queued"]] == [(waiting.id, 1)]
+    assert first["queued"][0]["expected_wait_s"] > 0
+    assert first["facts"]["up"] is True
+    dropped = asyncio.run(router.queue(drop=waiting.id))
+    assert dropped == {"dropped": True, "job_id": waiting.id}
+    row = store.conn.execute("SELECT status, error FROM jobs WHERE id = ?", (waiting.id,)).fetchone()
+    assert tuple(row) == ("dropped", "dropped by the queue tool")
+    assert asyncio.run(router.queue(drop=waiting.id)) == {"dropped": False, "job_id": waiting.id}
+    store.close()

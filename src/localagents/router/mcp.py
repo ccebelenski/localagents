@@ -1,7 +1,8 @@
 """The router's command-and-control MCP surface (docs/superpowers/specs/2026-11-02-router-design.md
-§11), served by ``localagents router`` as a second, small MCP server. Phase 1 builds two of the
-spec's tools: ``definitions`` (get, set, dry run) and a score-only ``preflight``; the rest arrive
-with the routing stories. Nothing on this surface dispatches work.
+§11), served by ``localagents router`` as a second, small MCP server: ``definitions`` (get, set,
+dry run), ``preflight`` (what dispatch would decide now, router 12), ``calibrate``,
+``scorecard``, ``verdict``, ``explain`` (a job's ticket) and ``queue`` (the queues per endpoint,
+and the hand ``drop``). Nothing on this surface dispatches work.
 
 The router entry is the config's first ``backend: router`` endpoint; its ``decision_*`` fields are
 the d3 client's arguments. The database connection is opened once per process, lazily, the way
@@ -24,7 +25,8 @@ from mcp.server.mcpserver import MCPServer
 from localagents import db
 from localagents.registry import Endpoint, Registry
 from localagents.router import definitions as defsmod
-from localagents.router import feedback
+from localagents.router import dispatch, feedback
+from localagents.router import queue as queue_mod
 from localagents.router import scorecard as scorecard_mod
 from localagents.router.decision import (
     BriefUnresolved,
@@ -35,13 +37,15 @@ from localagents.router.decision import (
 
 INSTRUCTIONS = (
     "Command and control for the localagents router: read and edit the dimension definitions "
-    "(every edit through a dry run over briefs), preflight a brief to see the scores d3 gives "
-    "it right now, start and resume a calibration run (calibrate), read the scorecard "
-    "(scorecard), and record your verdict on a finished job (verdict). Nothing on this surface "
-    "dispatches work; jobs run through the localagents server."
+    "(every edit through a dry run over briefs), preflight a brief to see what dispatch would "
+    "decide right now (the scores, every row's shortfall or filter, the chosen endpoint and "
+    "served id), start and resume a calibration run (calibrate), read the scorecard "
+    "(scorecard), record your verdict on a finished job (verdict), read a routed job's ticket "
+    "(explain), and read or hand-drop the queues (queue). Nothing on this surface dispatches "
+    "work; jobs run through the localagents server."
 )
 
-# §4's priorities; routing itself (which of these admits where) is a later story
+# §4's priorities (select.PRIORITIES is the same tuple)
 PRIORITIES = ("urgent", "normal", "background")
 
 mcp = MCPServer("localagents-router", instructions=INSTRUCTIONS)
@@ -205,21 +209,25 @@ async def preflight(
     task: str,
     priority: str = "normal",
     cwd: str | None = None,
+    avoid_job: str | None = None,
 ) -> dict[str, Any]:
-    """Score a brief with d3 and report what the router would see, creating no job.
+    """What dispatch would decide for a brief right now; no job is created.
 
-    Phase 1 returns the scores only: the band or choice per determined dimension (`scores`),
-    the model's confidence in each answer (`confidences`), the axes left out for sitting under
-    their confidence bar (`undetermined` — neutral to routing, §6), the `truncated` mark, the
-    definitions version, and the `priority` echoed back (urgent | normal | background).
-    Selection, capacity and queue answers arrive with the routing story. A pointer brief
-    ("cat <path> and follow it") is read first, against `cwd` or this server's cwd.
+    The scores (`scores` per determined dimension, `confidences`, `undetermined` axes, neutral
+    to routing, the `truncated` mark, `defs_version`), the `priority` echoed (urgent | normal |
+    background), the `decision` (every row in `considered` with its shortfall or the filter
+    that removed it, the chosen row, a divert, the row it would queue for with the position and
+    expected wait, the one-line reason, or the refusal `reason`), and `chosen` {endpoint,
+    served_id} or None, so a brief can be sized to the model. `avoid_job` filters the model
+    that job ran on, as run_agent does. A pointer brief ("cat <path> and follow it") is read
+    first, against `cwd` or this server's cwd.
     """
     if priority not in PRIORITIES:
         return {"error": "bad_argument",
                 "message": f"priority must be one of {', '.join(PRIORITIES)}"}
     try:
-        ep = _router_entry()
+        reg = Registry.load()
+        ep = next((e for e in reg.endpoints.values() if e.is_router and not e.invalid), None)
     except Exception as e:  # every config failure answers, never raises
         return {"error": "config_error", "message": f"{type(e).__name__}: {e}"}
     if ep is None:
@@ -231,8 +239,12 @@ async def preflight(
         return e.to_dict()
     try:
         defs = defsmod.load(_db())
+        avoided = dispatch.served_id_of(_db(), avoid_job) if avoid_job is not None else None
     except (sqlite3.Error, db.SchemaError, json.JSONDecodeError) as e:
         return _database_error(e)
+    if avoid_job is not None and avoided is None:
+        return {"error": "bad_argument",
+                "message": f"avoid_job names no job with a recorded model: '{avoid_job}'"}
     client = _client()
     try:
         got = await score(client, ep.decision_url, ep.decision_model, text, defs,
@@ -241,6 +253,11 @@ async def preflight(
         return e.to_dict()
     finally:
         await client.aclose()
+    try:
+        view = await dispatch.decide(reg, _db(), ep, text, got, priority, avoid_served_id=avoided)
+    except (sqlite3.Error, db.SchemaError, json.JSONDecodeError) as e:
+        return _database_error(e)
+    chosen = view.decision.chosen
     return {
         "scores": got.values,
         "confidences": got.confidences,
@@ -248,6 +265,9 @@ async def preflight(
         "truncated": got.truncated,
         "defs_version": got.defs_version,
         "priority": priority,
+        "decision": dispatch.decision_dict(view),
+        "chosen": ({"endpoint": chosen.row.endpoint_name, "served_id": chosen.row.served_id}
+                   if chosen is not None else None),
     }
 
 
@@ -503,13 +523,72 @@ async def verdict(
         await client.aclose()
 
 
+@mcp.tool()
+async def explain(job_id: str) -> dict[str, Any]:
+    """A job's routing ticket (design §4): the dimension scores with confidences and the
+    undetermined axes, every row with its shortfall or the filter that removed it, the chosen
+    row, the priority, a divert and when, the wait expected at enqueue, the pass whose cells
+    were used, the admission, and the truncated/resumed/stalled/row_down marks; with the
+    record's real endpoint, model and `routed_by`. A job named directly has no ticket (until a
+    verdict scores it) and answers `no_ticket`."""
+    try:
+        conn = _db()
+        row = conn.execute(
+            "SELECT j.id, j.status, j.error, j.routed_by, e.name AS endpoint, e.base_url,"
+            " m.served_id FROM jobs j LEFT JOIN endpoints e ON e.id = j.endpoint_id"
+            " LEFT JOIN models m ON m.id = j.model_id WHERE j.id = ?", (job_id,)).fetchone()
+        if row is None:
+            return {"error": "unknown_job", "message": f"unknown job '{job_id}'"}
+        ticket = dispatch.read_ticket(conn, job_id)
+    except (sqlite3.Error, db.SchemaError) as e:
+        return _database_error(e)
+    if ticket is None:
+        return {"error": "no_ticket",
+                "message": f"job {job_id} was named directly: no routing decision was made"}
+    try:
+        routed_by = json.loads(row["routed_by"]) if row["routed_by"] is not None else None
+    except (TypeError, ValueError):
+        routed_by = None
+    return {"job_id": job_id, "status": row["status"], "error": row["error"],
+            "model": row["served_id"], "endpoint": row["endpoint"], "base_url": row["base_url"],
+            "routed_by": routed_by, "ticket": ticket}
+
+
+@mcp.tool()
+async def queue(endpoint: str | None = None, drop: str | None = None) -> dict[str, Any]:
+    """The queues (design §7, §11): per real endpoint (or the one named), the sessions
+    (capacity, ours running, foreign), the pool, our running sessions, the queued entries in
+    order with positions and expected waits, and the live probe. `drop` (a job id) removes a
+    stale or stuck entry by hand instead: a still-queued job becomes `dropped` ("dropped by the
+    queue tool"); a running session keeps its status and stops being counted."""
+    try:
+        conn = _db()
+        if drop is not None:
+            return {"dropped": queue_mod.drop(conn, drop), "job_id": drop}
+    except (sqlite3.Error, db.SchemaError) as e:
+        return _database_error(e)
+    try:
+        reg = Registry.load()
+    except Exception as e:  # a config file is operator input; every failure answers
+        return {"error": "config_error", "message": f"{type(e).__name__}: {e}"}
+    eps = [e for e in reg.endpoints.values() if not e.is_router]
+    if endpoint is not None:
+        eps = [e for e in eps if e.name == endpoint]
+        if not eps:
+            return {"error": "unknown_endpoint", "message": f"no real endpoint named {endpoint!r}"}
+    try:
+        return {"endpoints": [await dispatch.queue_view(reg, conn, e) for e in eps]}
+    except (sqlite3.Error, db.SchemaError) as e:
+        return _database_error(e)
+
+
 def main(argv: list[str] | None = None) -> None:
     import argparse
 
     ap = argparse.ArgumentParser(
         prog="localagents router",
         description="the router's command-and-control MCP server (definitions, preflight, "
-                    "calibrate, scorecard, verdict); nothing here dispatches work",
+                    "calibrate, scorecard, verdict, explain, queue); nothing here dispatches work",
     )
     ap.add_argument("--config", help="path to models.yaml (or set LOCALAGENTS_CONFIG)")
     ap.add_argument("--transport", default="stdio", choices=["stdio"],

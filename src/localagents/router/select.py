@@ -315,7 +315,7 @@ def select(scores: BriefScores, candidates: list[Candidate], priority: str, tole
     undetermined = _undetermined(scores, unproven)
     considered: list[Considered] = []
     survivors: list[tuple[Candidate, float, float, int]] = []   # cand, shortfall, speed, index
-    avoided: list[str] = []
+    avoided: list[tuple[Candidate, str]] = []   # the row and its label, filtered by avoid_job
     for index, cand in enumerate(candidates):
         why = _filter(cand, load_tokens, calibrated, brief_files, avoid_served_id)
         speed = _predicted_speed(cand)
@@ -323,7 +323,7 @@ def select(scores: BriefScores, candidates: list[Candidate], priority: str, tole
                            speed, cand.queued_ahead)
         considered.append(entry)
         if why == "avoid_job":
-            avoided.append(_label(cand))
+            avoided.append((cand, _label(cand)))
         if why is not None:
             continue
         entry.shortfall = shortfall(scores, cand, unproven)
@@ -353,11 +353,24 @@ def select(scores: BriefScores, candidates: list[Candidate], priority: str, tole
     best_line = f"shortfall {acceptable[0][1]:.2f} on {_label(best)}; best of {len(survivors)}"
     if tie_break:
         best_line += "; tie broken by predicted speed, then queue"
-    suffix = f"; avoid_job excluded {', '.join(avoided)}" if avoided else ""
+
+    def suffix(chosen_shortfall: float) -> str:
+        """Amendment 2: name the avoid_job filter only when it bound the choice. An avoided
+        row is named when its shortfall, scored as if the filter were not there, would have
+        ranked at or above the chosen row's (it would have been chosen or tied); a row another
+        filter would still remove could not have been chosen, so it stays silent. Either way
+        the ``considered`` table lists it as ``avoid_job``."""
+        names = []
+        for cand, label in avoided:
+            if _filter(cand, load_tokens, calibrated, brief_files, None) is not None:
+                continue   # unfiltered by avoid_job, another filter still removes it
+            if round(shortfall(scores, cand, unproven), _PLACES) <= round(chosen_shortfall, _PLACES):
+                names.append(label)
+        return f"; avoid_job excluded {', '.join(names)}" if names else ""
 
     if _can_admit(best, priority):
         return Decision(best, False, None, None, considered, undetermined, tie_break,
-                        None, best_line + suffix)
+                        None, best_line + suffix(acceptable[0][1]))
 
     cause, cause_words = _blocked_by(best, priority)
     free = [s for s in acceptable[1:] if _can_admit(s[0], priority)]
@@ -378,6 +391,6 @@ def select(scores: BriefScores, candidates: list[Candidate], priority: str, tole
         line = (f"divert: {_label(take[0])} free (shortfall {take[1]:.2f}),"
                 f" {_label(best)} busy ({cause_words})")
         return Decision(take[0], True, None, None, considered, undetermined, tie_break,
-                        cause, line + suffix)
+                        cause, line + suffix(take[1]))
     return Decision(best, False, best, None, considered, undetermined, tie_break, cause,
-                    f"{best_line}; queued ({cause_words}){suffix}")
+                    f"{best_line}; queued ({cause_words}){suffix(acceptable[0][1])}")

@@ -131,6 +131,10 @@ class Job:
     priority: str = "normal"  # urgent|normal|background
     calibration: bool = False
     gates: dict[str, Any] | None = None
+    # router 12 (design §4 "Consumer requirement"): {"router": <entry name>, "reason": <the one
+    # line>, "pool": <pool name or None>} for a job the router placed; None for a named job.
+    # The job's model/endpoint/base_url are always the real row's, never the router entry's.
+    routed_by: dict[str, Any] | None = None
     # usage, tool_calls, files_touched, ctx_tokens, gen_tps were the duplicated values story
     # 1.5b removed: the rows carry them, summary()/derive compute them at read time.
     # database identity (set by JobStore.new; NULL-ish defaults so a Job built directly still works)
@@ -142,6 +146,13 @@ class Job:
     # request; not a column (the requests row notes what was applied) and not in summary()
     levers: dict[str, Any] | None = None
     _task: asyncio.Task | None = field(default=None, repr=False)
+    # router 12: set once the job's queue entry is admitted (the blocking wait's clock starts
+    # there, design §7 "Accepted"); the routing context a queued routed job's wakes re-apply;
+    # the latest expected wait a wake computed; the last progress moment a stall notice named
+    _admitted: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    _route: Any = field(default=None, repr=False)
+    _queue_estimate: float | None = field(default=None, repr=False)
+    _stall_seen: float | None = field(default=None, repr=False)
     _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)  # the store's db connection
     _pending_tools: dict[str, int] = field(default_factory=dict, repr=False)  # tool_use_id -> rowid of its tool_calls row (spec write rule)
@@ -151,12 +162,12 @@ class Job:
     _METRIC_COLUMNS = derive._METRICS_COLUMNS
     _METRIC_COUNTERS = _METRIC_COLUMNS[:3]  # generated_tokens, prompt_tokens_processed, prompt_tokens_cached
     # storage details: summary()/job_status shows the job, and the id identifies it; the id
-    # columns resolve to model/endpoint/base_url there (DeepSeek review of 1.2). The router 1
-    # columns join them for the parity contract test_summary_and_summary_from_row_agree pins:
-    # derive.summary_from_row is a fixed dict that does not read them yet, so summary() must
-    # not grow keys it cannot match until a later story adds them to both sides.
-    _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id", "priority", "calibration",
-                       "gates", "levers")
+    # columns resolve to model/endpoint/base_url there (DeepSeek review of 1.2). gates stays
+    # hidden (the scorecard's evidence, not the job's state) and levers is runtime-only.
+    # priority, calibration and routed_by are shown since router 12 (the phase-2 deferral:
+    # derive.summary_from_row reads them too, so the parity contract
+    # test_summary_and_summary_from_row_agree pins still holds).
+    _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id", "gates", "levers")
 
     def changed(self) -> None:
         """This job's visible state moved: write the new state to its row. The status line reads
@@ -193,7 +204,8 @@ class Job:
                        compactions = ?, context = ?, generated_tokens = ?,
                        prompt_tokens_processed = ?,
                        prompt_tokens_cached = ?, cache_hit_ratio = ?, prompt_tps = ?,
-                       generate_tps = ?, spec_decode_acceptance = ?, worktree = ?, gates = ?
+                       generate_tps = ?, spec_decode_acceptance = ?, worktree = ?, gates = ?,
+                       routed_by = ?
                        WHERE id = ?""",
                     (self.status, self.started_at, self.finished_at, time.time(), self.session_id,
                      self.result, self.error, self.last_activity, self.num_turns,
@@ -201,6 +213,7 @@ class Job:
                      *met,
                      json.dumps(self.worktree) if self.worktree is not None else None,
                      json.dumps(self.gates) if self.gates is not None else None,
+                     json.dumps(self.routed_by) if self.routed_by is not None else None,
                      self.id),
                 )
         except sqlite3.Error as e:
@@ -326,6 +339,8 @@ class Job:
         }
         if d["worktree"] is not None:  # a copy: the caller must not hold the job's own dict (story 1.9 item 1)
             d["worktree"] = dict(d["worktree"])
+        if d["routed_by"] is not None:  # the same copy rule (router 12)
+            d["routed_by"] = dict(d["routed_by"])
         start = self.started_at or self.created_at  # None only for a hand-built Job: 0, as summary_from_row
         d["elapsed_s"] = round((self.finished_at or time.time()) - start, 1) if start is not None else 0
         d["task"] = derive._truncate(self.task)  # the row summary's own cut
@@ -443,7 +458,12 @@ class JobStore:
 
     # backend and host are required keywords: the endpoints row is keyed on all four values, and
     # a forgotten call site must fail here, not write a wrong endpoints row (DeepSeek review of 1.2)
-    def new(self, *, backend: str, host: str, **kw: Any) -> Job:
+    def new(self, *, backend: str, host: str,
+            on_insert: Callable[[sqlite3.Connection, Job], None] | None = None, **kw: Any) -> Job:
+        """Record one job. ``on_insert`` (router 12) runs inside the same transaction, after the
+        jobs row is written: the queue entry and a routed job's ticket go in with the job or not
+        at all, so no job row can exist without its entry (a job without its entry would be
+        counted by nothing and admitted by nothing)."""
         jid = db.new_uuid()
         created_at = kw.setdefault("created_at", time.time())
         # open the database (and this server's row) before anything is made on disk: a failed
@@ -467,14 +487,18 @@ class JobStore:
                 self.conn.execute(
                     """INSERT INTO jobs (id, mcp_server_id, endpoint_id, model_id, task, cwd,
                                          isolation, status, created_at, updated, dump, log_events, worktree,
-                                         context, num_turns, last_activity, priority, calibration)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         context, num_turns, last_activity, priority, calibration,
+                                         routed_by)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (jid, self.server_id, endpoint_id, model_id, job.task, job.cwd, job.isolation,
                      job.status, created_at, time.time(), 1 if job.dump else 0, 1 if job.log_events else 0,
                      json.dumps(job.worktree) if job.worktree is not None else None,
                      job.context, job.num_turns, job.last_activity,
-                     job.priority, 1 if job.calibration else 0),
+                     job.priority, 1 if job.calibration else 0,
+                     json.dumps(job.routed_by) if job.routed_by is not None else None),
                 )
+                if on_insert is not None:
+                    on_insert(self.conn, job)
         except BaseException:
             # the job cannot be recorded, so the call fails loudly — but cleanly (story 1.7
             # item 5): no orphan directory, and no in-memory job the database never saw. Any

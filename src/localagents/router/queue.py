@@ -95,20 +95,29 @@ def occupancy(conn: sqlite3.Connection, endpoint_ids: list[int], now: float) -> 
     return row[0]
 
 
+def insert_entry(conn: sqlite3.Connection, job_id: str, endpoint_id: int, owner_server: str,
+                 priority: str, forced: bool = False, *, now: float | None = None) -> None:
+    """``enqueue``'s INSERT inside the CALLER's transaction (router 12: ``JobStore.new`` writes
+    the job row and its entry in one, so a job never exists without its entry)."""
+    if priority not in PRIORITY_RANK:
+        raise ValueError(f"priority must be one of {', '.join(PRIORITY_RANK)}; got {priority!r}")
+    now = time.time() if now is None else now
+    conn.execute(
+        "INSERT INTO queue_entries (job_id, endpoint_id, owner_server, priority_rank, enqueued,"
+        " admitted, forced) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (job_id, endpoint_id, owner_server, PRIORITY_RANK[priority], now,
+         now if forced else None, 1 if forced else 0),
+    )
+
+
 def enqueue(conn: sqlite3.Connection, job_id: str, endpoint_id: int, owner_server: str,
             priority: str, forced: bool = False, *, now: float | None = None) -> None:
     """Write the job's entry. ``forced`` (``admit: force``, §7) skips the wait but still writes
     an admitted entry, so it is counted. ``now`` is the arrival (default: the wall clock)."""
     if priority not in PRIORITY_RANK:
         raise ValueError(f"priority must be one of {', '.join(PRIORITY_RANK)}; got {priority!r}")
-    now = time.time() if now is None else now
     with db.immediate(conn):
-        conn.execute(
-            "INSERT INTO queue_entries (job_id, endpoint_id, owner_server, priority_rank, enqueued,"
-            " admitted, forced) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (job_id, endpoint_id, owner_server, PRIORITY_RANK[priority], now,
-             now if forced else None, 1 if forced else 0),
-        )
+        insert_entry(conn, job_id, endpoint_id, owner_server, priority, forced, now=now)
 
 
 def _mark_stale(conn: sqlite3.Connection, endpoint_ids: list[int], now: float) -> None:

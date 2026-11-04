@@ -1299,8 +1299,10 @@ def _keys(obj, out):
 
 # router 8: the router design's §10 calibration flag rides the snapshot's running_job entry
 # and the job detail body. The monitor spec §5a predates it and this lane may not edit docs/,
-# so the field is allowed by name here; the §5a text catches up in its own doc pass.
-ROUTER_JOB_KEYS = {"calibration"}
+# so the field is allowed by name here; the §5a text catches up in its own doc pass. Router 12
+# (pin moved): summary_from_row carries priority and routed_by too (design §4 "Consumer
+# requirement", §13), so the job detail body emits them; same reason, same allowance.
+ROUTER_JOB_KEYS = {"calibration", "priority", "routed_by"}
 
 
 def test_spec_5a_names_every_key_the_routes_emit(client, dbpath):

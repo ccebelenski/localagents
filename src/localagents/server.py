@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import json
+import math
 import os
 import shutil
 import sqlite3
@@ -20,6 +21,9 @@ from mcp.server.mcpserver import Context, MCPServer
 from . import db, derive, jobs, status
 from .jobs import Job, JobStore, oldest_first, prune, state_dir
 from .registry import ModelUnavailable, Registry, config_path, local_path
+from .router import dispatch
+from .router import queue as router_queue
+from .router.decision import BriefUnresolved, DecisionUnavailable
 from .runner import run_job
 from .shim import Shim
 
@@ -161,6 +165,14 @@ def _progress_reporter(ctx: Context | None):
         msg = f"{job.status}: {elapsed}s, {job.num_turns} turns"
         try:
             conn = store.conn
+            # router 12 (design §7): a job waiting in our queue says where it stands instead
+            queued = dispatch.queued_line(conn, job) if job.status == "queued" else None
+            if queued is not None:
+                try:
+                    await ctx.report_progress(elapsed, None, queued)
+                except Exception:  # a client without progress support must not break the wait
+                    pass
+                return
             msg += f", {derive.tool_call_count(conn, job.id)} tool calls"
             errors = derive.error_count(conn, job.id)
             if errors:
@@ -422,6 +434,53 @@ class JobRefused(Exception):
         self.reply = reply
 
 
+def _bad(message: str) -> JobRefused:
+    return JobRefused({"error": "bad_argument", "message": message})
+
+
+async def _route(reg: Registry, router_ep: Any, task: str, work: str, priority: str,
+                 tolerance: float | None, avoided: str | None) -> "dispatch.Routed":
+    """§4 steps 1-4 for a job aimed at the router entry; every refusal is a JobRefused carrying
+    the dict run_agent returns (no job exists yet)."""
+    client = _d3_client()
+    try:
+        return await dispatch.route(reg, store.conn, router_ep, task, work, priority, tolerance,
+                                    avoid_served_id=avoided, client=client)
+    except BriefUnresolved as e:
+        raise JobRefused(e.to_dict()) from e
+    except DecisionUnavailable as e:
+        raise JobRefused(e.to_dict()) from e
+    except dispatch.NoRoute as e:
+        raise JobRefused(e.to_dict()) from e
+    except (sqlite3.Error, db.SchemaError, json.JSONDecodeError) as e:
+        raise JobRefused(_database_error(e)) from e
+    finally:
+        if client is not None:
+            await client.aclose()
+
+
+def _d3_client() -> httpx.AsyncClient | None:
+    """The d3 client's transport for a routed run_agent; None lets route() open and close its
+    own (a seam for tests, like router.mcp._client)."""
+    return None
+
+
+async def _queue_then_run(job: Job, reg: Registry, res: Any, admitted: bool,
+                          run_kw: dict[str, Any]) -> None:
+    """The job's task: the queue first (design §7: admission sits before the session, so the
+    runner's ``timeout_s`` wraps the session only), then run_job. A job that leaves the queue
+    without a session never reaches run_job; admit_or_wait has settled it. Every session that
+    ends here wakes this process's queued jobs."""
+    try:
+        if not admitted:
+            res = await dispatch.admit_or_wait(store, store.conn, job, reg)
+            if res is None:
+                return
+        await run_job(job, reg, res, **run_kw)
+    finally:
+        dispatch.notify()
+
+
 async def start_job(
     task: str,
     model: str | None = None,
@@ -437,6 +496,9 @@ async def start_job(
     priority: str = "normal",
     calibration: bool = False,
     admit: str = "queue",
+    tolerance: float | None = None,
+    avoid_job: str | None = None,
+    copy_ticket_from: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
     thinking: bool | None = None,
     effort: str | None = None,
@@ -446,60 +508,113 @@ async def start_job(
     run_cwd: str | None = None,
     worktree: dict[str, Any] | None = None,
 ) -> Job:
-    """Record one job and start its task: run_agent's dispatch between the tool's arguments
-    and the running job (router 8).
+    """Record one job, pass it through admission and start its task: run_agent's dispatch
+    between the tool's arguments and the running job (router 8, router 12).
 
     A caller that cannot start a job gets ``JobRefused`` carrying the dict run_agent returns
-    for the same refusal. ``priority`` and ``calibration`` are the caller's (router design
-    §4, §10: a calibration probe is a background job with ``calibration = 1``); ``admit`` is
-    validated and not stored yet (the queue story reads it). ``mcp_servers``, ``thinking``,
-    ``effort``, ``strict_mcp_config`` and ``setting_sources`` are handed to run_job, which puts
-    them on the session's options (the last two: None keeps today's behaviour, the SDK default
-    and the config's sources; a calibration probe passes True and []). ``resume_session``,
-    ``run_cwd`` and ``worktree`` carry a resumed job's state; run_agent owns that preamble.
+    for the same refusal. A job aimed at the router entry (``model`` or ``endpoint`` naming it,
+    or ``defaults.model``) is routed (design §4): the brief is scored and a REAL row chosen; the
+    record names that row's endpoint and served id and carries ``routed_by`` and a ticket. Every
+    job, routed or named, gets a queue entry in the transaction that records it, and one
+    admission attempt here before its task starts; a job that cannot admit waits in its task
+    (``dispatch.admit_or_wait``) and the runner starts only at admission. ``admit``: ``queue``
+    waits, ``now`` refuses with ``would_queue`` and creates no job, ``force`` writes an admitted
+    entry and skips the wait (§7). ``avoid_job`` filters that job's served id from the routed
+    choice and refuses a named model serving it (§7 "Decided"). ``copy_ticket_from`` is a
+    resumed routed job's previous job (its ticket is copied, marked resumed). ``priority`` and
+    ``calibration`` are the caller's (§4, §10); ``mcp_servers``, ``thinking``, ``effort``,
+    ``strict_mcp_config`` and ``setting_sources`` are handed to run_job; ``resume_session``,
+    ``run_cwd`` and ``worktree`` carry a resumed job's state, run_agent owns that preamble.
     """
     if priority not in ("urgent", "normal", "background"):
-        raise JobRefused({"error": "bad_argument",
-                          "message": "priority must be 'urgent', 'normal' or 'background'"})
+        raise _bad("priority must be 'urgent', 'normal' or 'background'")
     if admit not in ("queue", "now", "force"):
-        raise JobRefused({"error": "bad_argument", "message": "admit must be 'queue', 'now' or 'force'"})
+        raise _bad("admit must be 'queue', 'now' or 'force'")
+    if tolerance is not None and (isinstance(tolerance, bool) or not isinstance(tolerance, (int, float))
+                                  or not math.isfinite(tolerance) or tolerance < 0):
+        raise _bad("tolerance must be a number of 0 or more")
 
     reg = _reg()
-    # M1: a named router entry answers not_routable before resolve. resolve probes the fleet,
-    # and with the d3 server down that probe buries the true answer (routing is not built yet)
-    # under a misleading "no endpoint serving 'auto'". `defaults.model` naming a router entry
-    # is the same case (the re-review of the fix wave): read it here too. The post-resolve
-    # guard below stays as the net.
+    work = str(Path(cwd or os.getcwd()).expanduser().resolve())
+    avoided = None
+    if avoid_job is not None:
+        try:
+            avoided = dispatch.served_id_of(store.conn, avoid_job)
+        except (sqlite3.Error, db.SchemaError) as e:
+            raise JobRefused(_database_error(e)) from e
+        if avoided is None:
+            raise _bad(f"avoid_job names no job with a recorded model: '{avoid_job}'")
+
+    # A router entry named by model, by endpoint, or by defaults.model routes the job (the M1
+    # guard's reading, before resolve: resolve probes the fleet for nothing).
     pinned = reg.endpoints.get(endpoint) if endpoint else None
     wanted = model or getattr(reg.defaults, "model", None)
     named_router = pinned if pinned is not None and pinned.is_router else (
         reg.endpoints.get(wanted) if wanted and wanted in reg.endpoints else None)
+    routed = None
     if named_router is not None and named_router.is_router:
-        raise JobRefused({
-            "error": "not_routable",
-            "message": f"endpoint '{named_router.name}' is a router; routing is not built yet, name a model",
-            "guidance": GUIDANCE,
-        })
+        if named_router.invalid:
+            raise JobRefused({"error": "model_unavailable",
+                              "message": f"router entry '{named_router.name}' is not usable: "
+                                         f"{named_router.invalid}. Fix models.yaml.",
+                              "guidance": GUIDANCE})
+        routed = await _route(reg, named_router, task, work, priority, tolerance, avoided)
+        res = routed.resolution
+    else:
+        try:
+            res = await reg.resolve(model=model, endpoint=endpoint)
+        except ModelUnavailable as e:
+            raise JobRefused({**e.to_dict(), "guidance": GUIDANCE}) from e
+        if res.endpoint.is_router:
+            # resolve answers a router entry only when it was named, which the branch above
+            # took: kept as the net, so a router entry never reaches the runner as an endpoint
+            raise JobRefused({"error": "not_routable",
+                              "message": f"endpoint '{res.endpoint.name}' is a router; name it as "
+                                         "model to route a job",
+                              "guidance": GUIDANCE})
+        if avoided is not None and res.served_model == avoided:
+            raise _bad(f"model '{res.served_model}' is the one avoid_job {avoid_job} ran on; name "
+                       "another model, or route with model='auto'")
+
+    # the admission facts, read before the record (probes outside any transaction, §7)
+    now = time.time()
     try:
-        res = await reg.resolve(model=model, endpoint=endpoint)
-    except ModelUnavailable as e:
-        raise JobRefused({**e.to_dict(), "guidance": GUIDANCE}) from e
-    if res.endpoint.is_router:
-        # routing is a later story; refuse before the shim starts and before new(), so no job
-        # record is left `queued` for good (review of 1.7, finding 4, same reasoning)
-        raise JobRefused({
-            "error": "not_routable",
-            "message": f"endpoint '{res.endpoint.name}' is a router; routing is not built yet, name a model",
-            "guidance": GUIDANCE,
-        })
+        if routed is not None:
+            facts = routed.facts
+        else:
+            facts = await dispatch.endpoint_facts(reg, store.conn, res.endpoint, res.served_model, now)
+        copied = None
+        routed_by = None
+        if copy_ticket_from is not None and routed is None:
+            prev = dispatch.read_ticket(store.conn, copy_ticket_from)
+            if prev is not None:
+                copied = dispatch.resumed_ticket(prev, copy_ticket_from)
+                prev_job = store.jobs.get(copy_ticket_from)
+                routed_by = prev_job.routed_by if prev_job is not None else None
+        if admit == "now":
+            if routed is not None and routed.decision.queue_for is not None:
+                q = routed.decision.queue_for
+                raise JobRefused(dispatch.would_queue(q.queued_ahead + 1, q.expected_wait_s,
+                                                      dispatch.alternatives(routed.decision), routed.ticket))
+            if routed is None:
+                admits, position, wait = dispatch.named_wait(store.conn, facts, priority, now)
+                if not admits:
+                    raise JobRefused(dispatch.would_queue(position, wait, [], copied))
+    except (sqlite3.Error, db.SchemaError, json.JSONDecodeError) as e:
+        raise JobRefused(_database_error(e)) from e
 
     # Everything that can raise runs before new() or cannot raise after it: a job that exists
     # without its task stays `queued` for good (review of 1.7, finding 4). The shim serves every
     # job and does not depend on this one, so it starts first.
     await shim.start()
-    work = str(Path(cwd or os.getcwd()).expanduser().resolve())
     try:
-        job = store.new(
+        # the jobs row, its queue entry and a routed job's ticket: one transaction (router 12)
+        job = dispatch.new_job(
+            store,
+            priority=priority,
+            forced=admit == "force",
+            routed=routed,
+            copy_ticket=copied,
             task=task,
             model=res.served_model,
             endpoint=res.endpoint.name,
@@ -513,8 +628,8 @@ async def start_job(
             dump=reg.defaults.dump_requests,
             log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",
             context=res.context,
-            priority=priority,
             calibration=calibration,
+            **({"routed_by": routed_by} if routed is None and routed_by is not None else {}),
         )
     except (sqlite3.Error, db.SchemaError) as e:
         # a refusal like the others, not a bare tool error: the SDK keeps an exception's text out
@@ -522,6 +637,35 @@ async def start_job(
         # The store opens lazily, so this new() is often the first use and a newer-schema file
         # raises db.SchemaError (a RuntimeError) here too — the guard must take it (1.9a review)
         raise JobRefused({"error": "database_error", "message": f"the job could not be recorded: {e}"}) from e
+    job._route = routed
+    # Nothing between new() and create_task may raise: each step below is guarded, and a failed
+    # first admission leaves the job to its task's loop, never without a task.
+    admitted = admit == "force"
+    if admitted:
+        job._log_safe("[queue] admitted at once: admit='force' (the entry is counted)")
+    else:
+        try:
+            admitted = dispatch.try_admit_now(store.conn, job, facts, time.time())
+            if not admitted:
+                dispatch.note_queued(store.conn, job, facts, time.time())
+        except Exception as e:  # noqa: BLE001 -- the loop retries what this attempt could not do
+            job._log_safe(f"[queue-error] first admission: {type(e).__name__}: {e}")
+    if not admitted and admit == "now":
+        # the check above saw room and another admission took it first: the caller asked not to
+        # wait, so the job leaves the queue (dropped, never ran) and the call says would_queue
+        try:
+            dropped = router_queue.mark_dropped(store.conn, job.id, "would_queue", time.time())
+        except Exception as e:  # noqa: BLE001
+            job._log_safe(f"[queue-error] admit='now' drop: {type(e).__name__}: {e}")
+            dropped = False
+        if dropped:
+            job.status, job.error, job.finished_at = "dropped", "would_queue", time.time()
+            job._done.set()
+            reply = dispatch.would_queue(1, job._queue_estimate,
+                                         dispatch.alternatives(routed.decision) if routed else [],
+                                         routed.ticket if routed else copied)
+            reply["message"] += f"; another admission took the slot first (job {job.id} is dropped)"
+            raise JobRefused(reply)
     global _shim_port_recorded
     if not _shim_port_recorded and shim.port:
         # Nothing between new() and create_task may raise: a job without its task stays `queued`
@@ -537,24 +681,39 @@ async def start_job(
     levers = {k: v for k, v in (("thinking", thinking), ("effort", effort)) if v is not None}
     if levers:
         job.levers = levers
-    job._task = asyncio.create_task(
-        run_job(
-            job, reg, res,
-            permission_mode=permission_mode,
-            max_turns=max_turns,
-            allowed_tools=allowed_tools,
-            system_prompt_append=system_prompt_append,
-            resume_session=resume_session,
-            timeout_s=timeout_s,
-            shim_base_url=shim.base_url_for(job.id),
-            mcp_servers=mcp_servers or {},
-            thinking=thinking,
-            effort=effort,
-            strict_mcp_config=strict_mcp_config,
-            setting_sources=setting_sources,
-        )
-    )
+    job._task = asyncio.create_task(_queue_then_run(job, reg, res, admitted, dict(
+        permission_mode=permission_mode,
+        max_turns=max_turns,
+        allowed_tools=allowed_tools,
+        system_prompt_append=system_prompt_append,
+        resume_session=resume_session,
+        timeout_s=timeout_s,
+        shim_base_url=shim.base_url_for(job.id),
+        mcp_servers=mcp_servers or {},
+        thinking=thinking,
+        effort=effort,
+        strict_mcp_config=strict_mcp_config,
+        setting_sources=setting_sources,
+    )))
     return job
+
+
+async def _wait_admitted(job: Job, ctx: Context | None) -> None:
+    """The blocking wait's queue phase (design §7 "Accepted"): wait while the job is queued,
+    with no deadline (the caller's own cancel bounds it; ``admit='now'`` is the way not to
+    wait), reporting ``queued #n, ~m min`` every progress interval. Returns at the admission or
+    when the job settled without one (dropped, lost)."""
+    report = _progress_reporter(ctx)
+    while not job._admitted.is_set() and not job.settled:
+        waits = [asyncio.ensure_future(job._admitted.wait()), asyncio.ensure_future(job._done.wait())]
+        try:
+            done, _ = await asyncio.wait(waits, timeout=jobs.PROGRESS_INTERVAL_S,
+                                         return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for f in waits:
+                f.cancel()
+        if not done and report is not None:
+            await report(job)
 
 
 @mcp.tool()
@@ -571,36 +730,41 @@ async def run_agent(
     system_prompt_append: str | None = None,
     resume_job: str | None = None,
     timeout_s: int | None = None,
+    priority: str = "normal",
+    admit: str = "queue",
+    tolerance: float | None = None,
+    avoid_job: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Delegate a task to an agent on a local model and (with `wait_s`) wait for the result.
 
     The agent is a headless Claude Code session (Read/Edit/Write/Glob/Grep/Bash, project
-    CLAUDE.md, same working tree) whose API calls go to the local endpoint. Write the task like a
-    brief for a capable but junior engineer: what to do, where, how to verify, what to report.
+    CLAUDE.md, same working tree) on the local endpoint. Write the task like a brief for a
+    capable but junior engineer: what to do, where, how to verify, what to report.
 
     Args:
       task: The brief. Be explicit; local models follow less implicit context than Claude.
-      model: A served model id, glob or fuzzy name (see list_models). Default: `defaults.model`
-        from models.yaml if set, else whatever the first live endpoint is serving.
-      endpoint: Force a specific endpoint; with no `model`, uses whatever it is serving.
-      cwd: Working directory (default: this server's cwd, i.e. the current project).
-      isolation: "none" (work in cwd) or "worktree" (fresh git worktree on branch
-        local-agent/<job id>, kept only if the agent changed something; see job.worktree).
-      wait_s: If > 0, block up to this many seconds and return the final record, else return
-        the job id at once. Pass the job's timeout: Claude Code backgrounds a long call and
-        delivers the record as a task notification; progress is reported every minute.
-        Use for every job, swarms included.
+      model: Served id, glob or fuzzy name (list_models), or a router entry's name to route
+        (the record names the real endpoint and model, plus `routed_by`).
+      endpoint: Force an endpoint; with no `model`, uses whatever it serves.
+      cwd: Working directory (default: this server's cwd).
+      isolation: "none" or "worktree" (a git worktree on local-agent/<job id>, kept only if
+        changed; see job.worktree).
+      wait_s: If > 0, block and return the final record, else the job id at once. A job
+        waiting for a session stays `queued` and the wait goes on (`queued #n, ~m min`);
+        wait_s counts from admission, like timeout_s. Pass the job's timeout: Claude Code
+        backgrounds a long call and delivers the record as a task notification. Use for every
+        job, swarms included.
       permission_mode: acceptEdits (default) | bypassPermissions | default | plan.
-      max_turns: Cap on agent turns (default from models.yaml).
-      allowed_tools: Override auto-approved tools.
-      system_prompt_append: Extra instructions appended to the Claude Code system prompt.
-      resume_job: Continue a previous job's session with `task` as the next message (same
-        server process only; the store is in memory — job_status, job_log and
-        list_jobs(all=True) read any server's jobs instead). Runs on that job's model,
-        endpoint, cwd and isolation unless `model` is given; a removed worktree is recreated
-        at its base. Refused while that job runs.
-      timeout_s: Wall-clock cap for the job.
+      max_turns: Turn cap. allowed_tools: Override auto-approved tools.
+      system_prompt_append: Appended to the system prompt.
+      resume_job: Continue a job's session with `task` (same server process), on its model,
+        endpoint, cwd and isolation unless a real `model` is given. Refused while it runs.
+      timeout_s: Wall-clock cap for the session, from admission.
+      priority: urgent | normal | background.
+      admit: queue | now (would_queue, no job, instead of waiting) | force (skip the wait).
+      tolerance: Routed: shortfall distance from the best row that is acceptable.
+      avoid_job: A job id whose model routing must not pick (a named one is refused).
     """
     if isolation not in ("none", "worktree"):
         return {"error": "bad_argument", "message": "isolation must be 'none' or 'worktree'"}
@@ -611,6 +775,7 @@ async def run_agent(
     run_cwd = work
     resume_session = None
     worktree: dict[str, Any] | None = None
+    copy_from = None
     if resume_job:
         try:
             prev = store.get(resume_job)
@@ -637,26 +802,37 @@ async def run_agent(
             isolation = "none"
             if not Path(run_cwd).is_dir():
                 return {"error": "bad_argument", "message": f"cwd of job {resume_job} no longer exists: {run_cwd}"}
+        # design §4: the session's prefix cache lives on the row that ran it, so a router name
+        # passed as model is ignored and the job resumes on that row, its ticket copied
+        try:
+            named = _reg().endpoints.get(model) if model else None
+        except Exception:  # noqa: BLE001 -- a config start_job will read again and answer
+            named = None
+        if named is not None and named.is_router:
+            model = None
+            endpoint = None if endpoint == named.name else endpoint
         # Continue on the model that ran the session, not on whatever is the default now.
         if model is None:
             model, endpoint = prev.model, endpoint or prev.endpoint
+            copy_from = prev.id
 
     try:
-        # priority and calibration are run_agent's defaults (this tool admits no calibration
-        # probe; the calibration runner calls start_job directly)
         job = await start_job(
             task, model=model, endpoint=endpoint, cwd=work, isolation=isolation,
             permission_mode=permission_mode, max_turns=max_turns,
             allowed_tools=allowed_tools, system_prompt_append=system_prompt_append,
             timeout_s=timeout_s, resume_session=resume_session, run_cwd=run_cwd,
-            worktree=worktree,
+            worktree=worktree, priority=priority, admit=admit, tolerance=tolerance,
+            avoid_job=avoid_job, copy_ticket_from=copy_from,
         )
     except JobRefused as e:
         return e.reply
     if wait_s > 0:
+        # wait_s from the admission (design §7 "Accepted"): the queue phase first, unbounded
+        await _wait_admitted(job, ctx)
         await store.wait(job.id, wait_s, progress=_progress_reporter(ctx))
     try:
-        return job.summary()
+        return _job_summary(job)
     except (sqlite3.Error, db.SchemaError) as e:
         # the final record's derive reads are reads too: their failure is the database's
         # problem, not the caller's traceback (story 1.9a row 1)
@@ -676,7 +852,7 @@ async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = Non
         job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx))
         # inside the guard: the summary()'s own derive reads are reads like the wait's
         # (story 1.9 item 6, made true here by 1.9a row 1 — it sat after the try)
-        return job.summary()
+        return _job_summary(job)
     except KeyError as e:
         return await _wait_or_unknown(job_id, e, timeout_s, ctx)
     except (sqlite3.Error, db.SchemaError) as e:
@@ -773,7 +949,7 @@ async def wait_jobs(
             if jid in store.jobs:
                 j = store.jobs[jid]
                 if j.settled:
-                    done.append(j.summary())
+                    done.append(_job_summary(j))
                 else:
                     # elapsed from the timestamps (summary()'s formula, None-settled 0.0
                     # included — story 1.9 item 2), not a whole summary's db reads
@@ -812,12 +988,43 @@ def _database_error(e: Exception) -> dict[str, Any]:
     return {"error": "database_error", "message": f"the database could not be read: {e}"}
 
 
+def _routing_extras(job_id: str, status: str, job: Job | None = None) -> dict[str, Any]:
+    """router 12: ``queue`` {position, expected_wait_s} while the job waits in our queue (None
+    once admitted or over), ``forced`` (its queue entry was written by ``admit='force'``, §7
+    "the record says it forced"; beside the queue facts so a named job, which has no ticket,
+    says it too) and ``ticket``, the routing decision's summary (None for a named job). Read
+    from the database for any server's job; the estimate is this process's latest wake's for
+    its own jobs, else the ticket's wait at enqueue."""
+    conn = store.conn
+    ticket = dispatch.read_ticket(conn, job_id)
+    entry = conn.execute("SELECT forced FROM queue_entries WHERE job_id = ?", (job_id,)).fetchone()
+    waiting = None
+    if status == "queued":
+        try:
+            position = router_queue.position(conn, job_id, time.time())
+        except KeyError:
+            position = 0  # no entry: a job recorded before router 12, or by hand
+        if position:
+            est = job._queue_estimate if job is not None else None
+            if est is None and ticket is not None:
+                est = ticket.get("est_wait_s")
+            waiting = {"position": position, "expected_wait_s": est}
+    return {"queue": waiting, "forced": bool(entry["forced"]) if entry is not None else False,
+            "ticket": dispatch.ticket_summary(ticket)}
+
+
+def _job_summary(job: Job, include_result: bool = True) -> dict[str, Any]:
+    """An in-process job's summary() with the routing extras (_row_summary adds the same)."""
+    return {**job.summary(include_result=include_result), **_routing_extras(job.id, job.status, job)}
+
+
 def _row_summary(row: Any, include_result: bool = True) -> dict[str, Any]:
     """derive.summary_from_row, but a row it cannot read (another writer's garbled worktree
     JSON, say) answers with what the row does say plus ``row_error``, never an exception: one
     bad row must not break list_jobs(all=True) for every caller."""
     try:
-        return derive.summary_from_row(store.conn, row, include_result=include_result)
+        return {**derive.summary_from_row(store.conn, row, include_result=include_result),
+                **_routing_extras(row["id"], row["status"])}
     except (json.JSONDecodeError, TypeError, ValueError, KeyError) as e:
         # only what a row another writer mangled can raise; anything else is a bug in this
         # code and must propagate, not hide behind row_error (review of 1.8). A sqlite3.Error is
@@ -835,7 +1042,7 @@ async def job_status(job_id: str) -> dict[str, Any]:
     Reads any localagents server's job: an in-process job gets its live summary, otherwise
     the row and its read-time derivations from the shared database."""
     try:
-        return store.get(job_id).summary()
+        return _job_summary(store.get(job_id))
     except KeyError as e:
         try:
             row = store.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -864,7 +1071,7 @@ async def list_jobs(
     if not all:
         try:
             mine = [j for j in sorted(store.jobs.values(), key=oldest_first) if include_finished or not j.done]
-            return [j.summary(include_result=False) for j in (mine[-limit:] if limit > 0 else mine)]
+            return [_job_summary(j, include_result=False) for j in (mine[-limit:] if limit > 0 else mine)]
         except (sqlite3.Error, db.SchemaError) as e:
             # every in-process summary() read the rows too (story 1.9 item 6)
             return _database_error(e)
@@ -943,18 +1150,32 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
 
 @mcp.tool()
 async def cancel_job(job_id: str) -> dict[str, Any]:
-    """Cancel a running job (kills the headless Claude session)."""
+    """Cancel a running job (kills the headless Claude session).
+
+    A job still waiting in the queue leaves it without a session: `dropped`, error
+    `cancelled while queued`, started_at null."""
     try:
         job = store.get(job_id)
     except KeyError as e:
         return _foreign_or_unknown(job_id, e)
     if not job.done and job._task:
+        if job.status == "queued" and not job._admitted.is_set():
+            # router 12: a job waiting in our queue leaves it without a session, here and now
+            # (design §7 "Accepted": dropped, "cancelled while queued"): a task cancelled before
+            # its first step never runs a line of its loop, so the drop cannot be left to it
+            dispatch.end_queued(store.conn, job, dispatch.CANCELLED_WHILE_QUEUED)
         job._task.cancel()
+        if job.status == "queued":
+            await asyncio.sleep(0)  # let the cancel land
+            if job._task.done() and not job.settled:
+                # admitted, but the task was cancelled before run_job's first line: no session
+                # was ever started, so it is the same never-ran drop
+                dispatch.end_queued(store.conn, job, dispatch.CANCELLED_WHILE_QUEUED)
     # a done job whose finally is still finishing its worktree gets the same wait as a cancelled
     # one: the record handed back is the settled one, with kept/note (DeepSeek review of 6005f94)
     await store.wait(job_id, 15)
     try:
-        out = job.summary()
+        out = _job_summary(job)
     except (sqlite3.Error, db.SchemaError) as e:
         # the record cancel_job waited for cannot be built: answer database_error, not the
         # exception (story 1.9a row 1)

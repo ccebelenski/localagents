@@ -281,16 +281,31 @@ def test_list_models_router_entry_has_context_range_and_local_complete_skips_it(
     assert posts == ["http://real1:8080/v1/messages"]
 
 
+def _d3_unreachable(monkeypatch):
+    """router 12: run_agent on the router entry scores the brief with d3; the tests never reach
+    a real d3 server (the operator's box may run one on the default port): the client's
+    transport refuses every connection."""
+    def refuse(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    monkeypatch.setattr(server, "_d3_client",
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(refuse)))
+
+
 def test_run_agent_on_a_router_entry_is_refused_before_a_job_exists(monkeypatch):
-    """The dispatch story is not built yet: run_agent returns `not_routable` before
-    store.new(), so no job is recorded and nothing is left `queued` for good."""
+    """Router 12 (pin moved: the dispatch story is built, so `not_routable` is gone): a router
+    entry routes the job, and with d3 unreachable the answer is model_unavailable with the
+    d3 guidance (design §4, §14), before store.new(): no job is recorded and nothing is left
+    `queued` for good."""
     real = Endpoint(name="real", base_url="http://127.0.0.1:8080", backend="vllm")
     reg = Registry(path=None, endpoints={"auto": _router(), "real": real},
                    defaults=Defaults(), raw={}, local={})
     monkeypatch.setattr(Registry, "probe", _fake_probe())
     monkeypatch.setattr(server, "_reg", lambda: reg)
+    _d3_unreachable(monkeypatch)
     out = asyncio.run(server.run_agent(task="x", model="auto"))
-    assert out["error"] == "not_routable"
+    assert out["error"] == "model_unavailable" and out["reason"] == "down"
+    assert out["guidance"] == "name a model, or check the d3 server"
     assert server.store.jobs == {}
 
 
@@ -307,10 +322,13 @@ def test_run_agent_on_a_router_entry_is_refused_even_when_d3_is_down(monkeypatch
 
     monkeypatch.setattr(Registry, "probe", down)
     monkeypatch.setattr(server, "_reg", lambda: reg)
+    _d3_unreachable(monkeypatch)
     for kwargs in ({"model": "auto"}, {"endpoint": "auto"}):  # named either way
         out = asyncio.run(server.run_agent(task="x", **kwargs))
-        assert out["error"] == "not_routable"
-        assert "'auto'" in out["message"]
+        # router 12 (pin moved): the true answer is now the d3 server's, never "no endpoint
+        # serving 'auto'"; the guard still reads the config, not the router entry's probe
+        assert out["error"] == "model_unavailable" and out["reason"] == "down"
+        assert "d3 server" in out["message"]
     assert server.store.jobs == {}
 
 
@@ -326,8 +344,11 @@ def test_run_agent_with_defaults_model_naming_a_router_is_refused_even_when_d3_i
 
     monkeypatch.setattr(Registry, "probe", down)
     monkeypatch.setattr(server, "_reg", lambda: reg)
+    _d3_unreachable(monkeypatch)
     out = asyncio.run(server.run_agent(task="x"))
-    assert out["error"] == "not_routable"
+    # router 12 (pin moved): `defaults: {model: auto}` routes like a named router entry
+    assert out["error"] == "model_unavailable" and out["reason"] == "down"
+    assert "d3 server" in out["message"]
     assert server.store.jobs == {}
 
 

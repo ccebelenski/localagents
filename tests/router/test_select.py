@@ -347,6 +347,30 @@ def test_avoid_served_id_filters_first_and_is_listed():
     assert only.chosen is None and only.reason == "no_acceptable_row"
 
 
+def test_reason_names_avoid_job_only_when_it_bound_the_choice():
+    """RULE (brief amendment 2, §7 "Decided"): the reason sentence names a filter only when it
+    changed the outcome: an avoided row is named only if its shortfall (scored as if not
+    filtered) would have ranked at or above the chosen row's, i.e. it would have been chosen or
+    tied; otherwise the ticket's ``considered`` table still lists it as filtered but the
+    one-line reason stays silent about it."""
+    # the avoided row is weak: the other row wins on shortfall whether or not it was filtered
+    weak = _cand(_row(1, "box1", "builder"),
+                 _cells(sd=1, tu=1, cu=1, cx=1, completeness=1, adherence=1))
+    strong = _cand(_row(2, "box2", "reviewer"), _cells())
+    d = _select(_scores({"software_dev": 4}), [weak, strong], avoid_served_id="builder",
+                tolerance=0.1)
+    assert d.chosen is strong
+    assert [c.filtered for c in d.considered] == ["avoid_job", None]
+    assert "avoid_job" not in d.chosen_reason
+    # the avoided row is strong: unfiltered it would have won, so the reason names the filter
+    builder = _cand(_row(3, "box3", "builder"), _cells())
+    lesser = _cand(_row(4, "box4", "reviewer"), _cells(tu=3))
+    d2 = _select(SCORES_TU4, [builder, lesser], avoid_served_id="builder", tolerance=0.1)
+    assert d2.chosen is lesser
+    assert [c.filtered for c in d2.considered] == ["avoid_job", None]
+    assert "avoid_job excluded box3 x builder" in d2.chosen_reason
+
+
 def test_pool_blocked_row_queues_with_wait_cause_pool():
     # the best row has a free session of its own, but its pool is full
     a = _cand(_row(1, "dgx1-a", "best"), _cells(), pool="dgx1", pool_admits=False, wait=100.0)

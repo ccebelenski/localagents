@@ -85,9 +85,16 @@ def test_run_agent_answers_database_error_when_its_final_summary_cannot_be_read(
     class FakeReg:
         defaults = SimpleNamespace(dump_requests=False, log_events=False, probe_timeout_s=1.0)
         endpoints = {"e": ep}
+        pools: dict = {}  # router 12 (pin moved): admission reads the facts and the pool
 
         async def resolve(self, model=None, endpoint=None):
             return Resolution(ep, "served-model")
+
+        async def probe(self, endpoint):
+            return {"up": True, "models": ["served-model"]}
+
+        def pool_members(self, name):
+            return []
 
     async def fake_run_job(job, *a, **kw):
         job.status = "succeeded"

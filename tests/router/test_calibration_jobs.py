@@ -9,6 +9,7 @@ run_agent's tool returns; run_agent stays a tool with the same answers."""
 import asyncio
 from pathlib import Path
 
+import httpx
 import pytest
 
 from localagents import jobs, server
@@ -74,8 +75,15 @@ def test_run_agent_still_returns_refusals_as_dicts(monkeypatch):
     auto = Endpoint(name="auto", base_url="", backend="router", decision_url="http://127.0.0.1:8766")
     r = Registry(path=None, endpoints={"auto": auto, "real": real}, defaults=Defaults(), raw={}, local={})
     monkeypatch.setattr(server, "_reg", lambda: r)
+
+    def refuse(request):  # never a real d3 server (the operator's box may run one on 8766)
+        raise httpx.ConnectError("connection refused", request=request)
+
+    monkeypatch.setattr(server, "_d3_client",
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(refuse)))
     out = asyncio.run(server.run_agent(task="x", model="auto"))
-    assert out["error"] == "not_routable" and "'auto'" in out["message"]
+    # router 12 (pin moved): routing is built; d3 unreachable is model_unavailable, a dict
+    assert out["error"] == "model_unavailable" and "d3 server" in out["message"]
     assert server.store.jobs == {}
 
 
