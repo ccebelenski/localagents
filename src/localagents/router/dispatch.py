@@ -56,6 +56,12 @@ CANCELLED_WHILE_QUEUED = "cancelled while queued"
 ROW_DOWN = "row_down"
 MODEL_UNAVAILABLE = "model_unavailable"
 ENTRY_REMOVED = "its queue entry was removed while it was queued"
+# the in-memory word for a queued job whose loop was cancelled by the server's exit, not by
+# cancel_job (fix wave 3, N1): the row is left `queued` for the stale-owner rule
+SERVER_EXITED_WHILE_QUEUED = "server exited while queued"
+# admit='now' whose pre-check saw room and whose claim, a moment later, did not (fix wave 3, D5:
+# the pre-check is try_admit's own predicate, so only a real race between them reaches this)
+ADMIT_NOW_LOST_RACE = "admit='now': another admission took the slot between the check and the claim"
 # what a row_down record tells the coordinator to do (§4 step 6: no automatic re-route)
 ROW_DOWN_GUIDANCE = "resubmit; the brief is rescored"
 CALIBRATE_GUIDANCE = "run `localagents calibrate <endpoint>`, or name a model"
@@ -234,9 +240,9 @@ def _band(scores_text: str | None) -> int | None:
 def _sessions(conn: sqlite3.Connection, endpoint_id: int, now: float) -> list[Session]:
     """Our sessions on the endpoint (queue.occupancy's set) with their start and ticket band."""
     rows = conn.execute(
-        "SELECT j.started_at, q.admitted, t.scores FROM queue_entries q JOIN jobs j ON j.id = q.job_id"
-        " JOIN mcp_servers s ON s.id = q.owner_server LEFT JOIN router_tickets t ON t.job_id = q.job_id"
-        f" WHERE q.endpoint_id = ? AND q.admitted IS NOT NULL AND j.status IN ('queued', 'running')"
+        "SELECT j.started_at, q.admitted, t.scores" + queue.LIVE_FROM +
+        " LEFT JOIN router_tickets t ON t.job_id = q.job_id"
+        " WHERE j.status IN ('queued', 'running') AND q.endpoint_id = ? AND q.admitted IS NOT NULL"
         f" AND {queue._LIVE} ORDER BY q.admitted",
         (endpoint_id, now - SERVER_LIVE_S)).fetchall()
     return [Session(r["started_at"] if r["started_at"] is not None else r["admitted"], _band(r["scores"]))
@@ -248,9 +254,9 @@ def _waiting(conn: sqlite3.Connection, endpoint_id: int, now: float) -> list[sql
     their tickets' scores."""
     return conn.execute(
         "SELECT q.job_id, q.priority_rank, q.enqueued, q.blocked_by, q.rowid AS entry_rowid,"
-        " t.scores, t.est_wait_s FROM queue_entries q JOIN jobs j ON j.id = q.job_id"
-        " JOIN mcp_servers s ON s.id = q.owner_server LEFT JOIN router_tickets t ON t.job_id = q.job_id"
-        f" WHERE q.endpoint_id = ? AND q.admitted IS NULL AND j.status = 'queued' AND {queue._LIVE}"
+        " t.scores, t.est_wait_s" + queue.LIVE_FROM +
+        " LEFT JOIN router_tickets t ON t.job_id = q.job_id"
+        f" WHERE j.status = 'queued' AND q.endpoint_id = ? AND q.admitted IS NULL AND {queue._LIVE}"
         " ORDER BY q.priority_rank, q.enqueued, q.rowid",
         (endpoint_id, now - SERVER_LIVE_S)).fetchall()
 
@@ -262,16 +268,16 @@ def _entry_key(r: sqlite3.Row) -> tuple:
 
 def _ahead(conn: sqlite3.Connection, endpoint_id: int | None, rank: int, now: float,
            own_job: str | None) -> list[sqlite3.Row]:
-    """The waiting entries this job stands behind: behind its own entry when it is queued here
-    (amendment 7a: a wake never counts the job's own entry), else as a new arrival of ``rank``
-    (every waiting entry of the same or a higher priority)."""
+    """The waiting entries this job stands behind: those before its own waiting entry's key in
+    queue order, on whichever endpoint the entry is (amendment 7a: a wake never counts the
+    job's own entry; fix wave 3: a queued job that moves keeps its arrival, so on another row it
+    stands where ``try_admit`` will see it), else as a new arrival of ``rank`` (every waiting
+    entry of the same or a higher priority)."""
     if endpoint_id is None:
         return []
     waiting = _waiting(conn, endpoint_id, now)
-    own = next((w for w in waiting if w["job_id"] == own_job), None)
-    if own is not None:
-        return [w for w in waiting if _entry_key(w) < _entry_key(own)]
-    return [w for w in waiting if w["priority_rank"] <= rank and w["job_id"] != own_job]
+    key = queue.arrival_key(conn, own_job, queue_priority(rank), now)
+    return [w for w in waiting if w["job_id"] != own_job and _entry_key(w) < key]
 
 
 def _exclusion(ep: Endpoint, scores: BriefScores, unproven: frozenset[str]) -> str | None:
@@ -331,11 +337,19 @@ def _candidate(conn: sqlite3.Connection, row: scorecard.Row, cells: list, f: Fac
         return Candidate(row=row, cells=cells, capacity=None, ours_running=0, queued_ahead=0,
                          window=None, expected_wait_s=None, excluded_by=None)
     ahead = _ahead(conn, f.endpoint_id, rank, now, own_job)
+    pool_admits = f.pool_admits
+    if f.pool_cap is not None:
+        # fix wave 3 (D5): the pool half of try_admit's predicate, the strict-order clause too:
+        # an earlier entry anywhere in the pool that waits on the pool holds this one
+        key = queue.arrival_key(conn, own_job, queue_priority(rank), now)
+        pool_admits = queue.pool_room(
+            f.pool_cap, queue.occupancy(conn, f.pool_ids or [], now),
+            queue.pool_blocked_ahead(conn, f.pool_ids or [], key, now, own_job))
     cand = Candidate(
         row=row, cells=cells, capacity=f.capacity, ours_running=f.ours, queued_ahead=len(ahead),
         window=(f.probe.get("context") or {}).get(row.served_id), expected_wait_s=None,
         excluded_by=_exclusion(f.endpoint, scores, unproven), pool=f.pool,
-        pool_admits=f.pool_admits,
+        pool_admits=pool_admits,
         running=_sessions(conn, f.endpoint_id, now) if f.endpoint_id is not None else [],
         ahead_bands=[_band(a["scores"]) for a in ahead],
         queued_higher=sum(1 for a in ahead if a["priority_rank"] < rank))
@@ -553,6 +567,9 @@ def read_ticket(conn: sqlite3.Connection, job_id: str) -> dict | None:
             t[k] = None
             bad.append(k)
     t["divert"] = bool(t["divert"])
+    if t["flags"] is not None and not isinstance(t["flags"], dict):
+        t["flags"] = None   # valid JSON that is not an object is as unreadable (fix wave 3, N6)
+        bad.append("flags")
     if t["flags"] is None:
         t["flags"] = {}
     if bad:
@@ -564,16 +581,47 @@ def read_ticket(conn: sqlite3.Connection, job_id: str) -> dict | None:
     return t
 
 
-def resumed_ticket(prev: dict, prev_job: str) -> dict:
+# the previous job's own marks: what happened to IT (a stall, a force, a drop, a divert or a move
+# at its wake, its queue place), never part of the decision a resumed job inherits (fix wave 3, D4)
+_NOT_INHERITED = ("stalled", "forced", "row_down", "diverted_from", "divert_at_wake", "moved_from",
+                  "position", "admitted", "unreadable")
+
+
+def resumed_ticket(prev: dict, prev_job: str, *, priority: str | None = None) -> dict:
     """§4: a resumed routed job keeps its row; the ticket is copied, marked ``resumed``, and
-    admitted again at the new job's own admission."""
+    admitted again at the new job's own admission. It keeps the decision it inherits (scores,
+    rows, chosen row, pass, definitions version, the reason line) and drops the previous job's
+    own marks (``_NOT_INHERITED``, and its divert, divert moment and wait estimate: this job did
+    not divert or wait yet); ``priority`` is the NEW call's, and ``forced`` comes from the new
+    call's ``admit`` (``new_job`` writes it), so ``explain`` and the summary agree."""
     t = json.loads(json.dumps(prev))
-    t["flags"] = {**(t.get("flags") or {}), "resumed": True, "resumed_from": prev_job}
+    flags = {k: v for k, v in (t.get("flags") if isinstance(t.get("flags"), dict) else {}).items()
+             if k not in _NOT_INHERITED}
+    flags.update(resumed=True, resumed_from=prev_job)
+    flags.pop("est_wait_default", None)
+    if priority is not None:
+        flags["priority"] = priority
+    t["flags"] = flags
     t["admitted"] = None
-    # the previous job's queue position says nothing about where this one will stand
+    # the previous job's queue position and wait say nothing about where this one will stand
     t["position"] = None
+    t["est_wait_s"] = None
+    t["divert"], t["divert_at"] = False, None
     t.pop("unreadable", None)
     return t
+
+
+def _flags_of(text: str | None) -> dict:
+    """A ticket's flags column as a dict: empty for none, and for a column another writer
+    garbled (not JSON, or not an object) ``{"unreadable": True}`` (fix wave 3, N6: read like
+    ``read_ticket`` reads it, never an exception on the admission path)."""
+    if not text:
+        return {}
+    try:
+        flags = json.loads(text)
+    except (TypeError, ValueError):
+        return {"unreadable": True}
+    return flags if isinstance(flags, dict) else {"unreadable": True}
 
 
 def _merge_flags(conn: sqlite3.Connection, job_id: str, **flags: Any) -> None:
@@ -582,12 +630,7 @@ def _merge_flags(conn: sqlite3.Connection, job_id: str, **flags: Any) -> None:
         r = conn.execute("SELECT flags FROM router_tickets WHERE job_id = ?", (job_id,)).fetchone()
         if r is None:
             return
-        try:
-            current = json.loads(r["flags"]) if r["flags"] else {}
-        except (TypeError, ValueError):
-            current = {}
-        if not isinstance(current, dict):
-            current = {}
+        current = _flags_of(r["flags"])
         current.update(flags)
         conn.execute("UPDATE router_tickets SET flags = ? WHERE job_id = ?", (json.dumps(current), job_id))
 
@@ -687,12 +730,15 @@ def estimate(conn: sqlite3.Connection, job: Job, facts: Facts, scores: BriefScor
 
 def named_wait(conn: sqlite3.Connection, facts: Facts, priority: str, now: float) -> tuple[bool, int, float | None]:
     """For a named job not yet recorded (``admit: now``): (admits at once, the position it would
-    take, the expected wait there). Admits when the endpoint has room, the pool has room, and
-    nobody of the same or a higher priority waits ahead."""
+    take, the expected wait there). Admits by ``queue.room``, the predicate ``try_admit``
+    applies (fix wave 3, D1): the endpoint has room for this priority (the bottleneck slot is
+    background's), the pool has room, and nobody of the same or a higher priority waits
+    ahead."""
     row = _live_row(conn, facts.endpoint.name, facts.served_id) or _bare_row(facts.endpoint, facts.served_id)
     cand = _candidate(conn, row, [], facts, BriefScores({}, {}, set(), False, {}, 0),
                       queue.PRIORITY_RANK[priority], now, None, UNPROVEN)
-    admits = facts.capacity.admits(facts.ours) and facts.pool_admits and cand.queued_ahead == 0
+    admits = queue.room(facts.capacity, facts.ours, priority, ahead=cand.queued_ahead,
+                        pool_admits=cand.pool_admits)
     return admits, cand.queued_ahead + 1, _finite(cand.expected_wait_s)
 
 
@@ -832,10 +878,17 @@ def _drop_row_down(conn: sqlite3.Connection, job: Job, why: str, now: float) -> 
     end_queued(conn, job, error, now)
 
 
-def _last_progress(conn: sqlite3.Connection, job: Job) -> float | None:
-    """The job's last forward progress: its start, its last request, its last tool call."""
+def _last_progress(conn: sqlite3.Connection, job: Job, now: float | None = None) -> float | None:
+    """The job's last forward progress: its start, its last request, its last tool call. An
+    OPEN tool call (``finished`` null: a 16-minute pytest still running) is activity NOW (fix
+    wave 3, N4): the session is waiting on its own work, not stalled, so ``now`` (default the
+    wall clock) is returned while any tool call of the job is open."""
+    open_call = conn.execute("SELECT 1 FROM tool_calls WHERE job_id = ? AND finished IS NULL LIMIT 1",
+                             (job.id,)).fetchone()
+    if open_call is not None:
+        return time.time() if now is None else now
     req = conn.execute("SELECT MAX(t) FROM requests WHERE job_id = ?", (job.id,)).fetchone()[0]
-    tool = conn.execute("SELECT MAX(COALESCE(finished, t)) FROM tool_calls WHERE job_id = ?",
+    tool = conn.execute("SELECT MAX(finished) FROM tool_calls WHERE job_id = ?",
                         (job.id,)).fetchone()[0]
     moments = [x for x in (job.started_at, req, tool) if x is not None]
     return max(moments) if moments else None
@@ -846,45 +899,80 @@ async def stall_scan(store: JobStore, conn: sqlite3.Connection, reg: Registry, n
     their endpoint probed, a ``[stalled]`` line, the notice as ``last_activity`` (until the next
     message replaces it) and, routed, ``flags.stalled`` on the ticket. One notice per stall;
     nothing is cancelled. Every admission wake calls it, and so does every sampler tick (fold
-    2): a stalled session goes unnoticed while nothing is queued behind it on the wake alone."""
+    2): a stalled session goes unnoticed while nothing is queued behind it on the wake alone.
+
+    Fix wave 3 (N3): a routed job's ticket flag is written FIRST and guarded like the row_down
+    one; ``_stall_seen`` (one notice per stall) is set only once that write succeeded, so a
+    failed write is retried by the next scan instead of losing the flag for good. Each job is
+    scanned under its own guard: one job's failure (the flag write, the probe, its record) is a
+    logged line and never stops the scan over the others."""
     for j in list(store.jobs.values()):
         if j.status != "running" or j._conn is None:
             continue
-        last = _last_progress(conn, j)
-        if last is None or now - last < STALL_S or j._stall_seen == last:
-            continue
-        ep = reg.endpoints.get(j.endpoint)
-        up = False
-        if ep is not None:
-            up = bool((await reg.probe(ep)).get("up"))
-        text = f"stalled: no progress for {int((now - last) // 60)} min, endpoint {'up' if up else 'down'}"
-        j._stall_seen = last
-        j._log_safe(f"[stalled] {text}")
-        j.last_activity = text
-        j.changed()
-        if j.routed_by is not None:
+        try:
+            await _stall_one(conn, j, reg, now)
+        except Exception as e:  # noqa: BLE001 -- one job's failure never stops the scan
+            j._log_safe(f"[queue-error] stall scan: {type(e).__name__}: {e}")
+
+
+async def _stall_one(conn: sqlite3.Connection, j: Job, reg: Registry, now: float) -> None:
+    """``stall_scan`` for one running job (its docstring has the rules)."""
+    last = _last_progress(conn, j, now)
+    if last is None or now - last < STALL_S or j._stall_seen == last:
+        return
+    ep = reg.endpoints.get(j.endpoint)
+    up = False
+    if ep is not None:
+        up = bool((await reg.probe(ep)).get("up"))
+    text = f"stalled: no progress for {int((now - last) // 60)} min, endpoint {'up' if up else 'down'}"
+    if j.routed_by is not None:
+        try:
             _merge_flags(conn, j.id, stalled={"at": now, "last_progress": last, "endpoint_up": up,
                                               "notice": text})
+        except Exception as e:  # noqa: BLE001 -- retried by the next scan: _stall_seen not set
+            j._log_safe(f"[queue-error] stall flag: {type(e).__name__}: {e}")
+            return
+    j._stall_seen = last
+    j._log_safe(f"[stalled] {text}")
+    j.last_activity = text
+    j.changed()
 
 
 async def _reapply(conn: sqlite3.Connection, job: Job, reg: Registry, routed: Routed,
                    facts: Facts, now: float) -> Facts | None:
-    """§6 step 5 at a wake: the policy re-applied with the current waits. A divert to another
-    row moves the entry and the record (endpoint, served id, window, routed_by) and the ticket
-    records it and when; anything else leaves the job where it is (no re-route, §4 step 6)."""
+    """§6 step 5 at a wake: the policy re-applied with the current waits. A QUEUED job moves to
+    whichever acceptable row the policy chooses now whenever that row can admit it now (fix
+    wave 3, D2): a divert to a lesser free row, and equally a return to the best row once it
+    frees, so a job that diverted is never pinned to the lesser row while the best one idles.
+    §4's no-re-route is about ADMITTED jobs: an entry already admitted never moves (checked
+    inside the move's transaction). A decision that queues (the chosen row cannot admit now)
+    leaves the job where it is.
+
+    A move rewrites the record (endpoint, served id, window, routed_by) and the ticket (chosen
+    row, the rows table, the pass, the position on the new row, ``flags.moved_from`` naming the
+    row it left); a true divert also writes ``divert``/``divert_at`` and the ``diverted_from``
+    and ``divert_at_wake`` marks, and a return to the best row clears them (the ticket then
+    describes where the job stands; ``moved_from`` keeps where it came from). The entry keeps
+    its original ``enqueued``: the job has waited since it arrived, so on the new row it stands
+    by that arrival, not behind everything that came while it waited elsewhere (the review's
+    N8; ``_ahead`` reads the same key so the decision and ``try_admit`` agree)."""
     view = await decide(reg, conn, routed.router_ep, routed.text, routed.scores, job.priority,
                         routed.tolerance, avoid_served_id=routed.avoid_served_id, own_job=job.id,
                         now=now, probes={job.endpoint: facts.probe})
     d = view.decision
     current = routed.ticket.get("chosen_row")
-    if d.chosen is None or not d.divert or d.chosen.row.id == current:
+    if d.chosen is None or d.queue_for is not None or d.chosen.row.id == current:
         return None
     f = view.facts[d.chosen.row.id]
     ep, served = f.endpoint, d.chosen.row.served_id
     res = Resolution.make(ep, served, f.probe)
     pool = _pool_of(view)
     routed_by = {"router": routed.router_ep.name, "reason": d.chosen_reason, "pool": pool}
+    divert = bool(d.divert)
     with db.immediate(conn):
+        entry = conn.execute("SELECT admitted FROM queue_entries WHERE job_id = ?", (job.id,)).fetchone()
+        if entry is None or entry["admitted"] is not None:
+            return None   # admitted (never moves) or the entry is gone: the next wake reads why
         eid = db.lookup_id(conn, "endpoints", name=ep.name, base_url=ep.url, backend=ep.backend,
                            host=ep.host)
         mid = db.lookup_id(conn, "models", served_id=served)
@@ -900,17 +988,23 @@ async def _reapply(conn: sqlite3.Connection, job: Job, reg: Registry, routed: Ro
         # row's); stored among the flags like insert_ticket stores it, lifted by read_ticket
         position = queue.position(conn, job.id, now)
         r = conn.execute("SELECT flags FROM router_tickets WHERE job_id = ?", (job.id,)).fetchone()
-        flags = json.loads(r["flags"]) if r is not None and r["flags"] else {}
-        flags.update(reason=d.chosen_reason, diverted_from=current, wait_cause=d.wait_cause,
-                     pool=pool, divert_at_wake=True, position=position)
+        flags = _flags_of(r["flags"] if r is not None else None)
+        flags.update(reason=d.chosen_reason, wait_cause=d.wait_cause, pool=pool,
+                     position=position, moved_from=current)
+        if divert:
+            flags.update(diverted_from=current, divert_at_wake=True)
+        else:
+            flags.pop("diverted_from", None)
+            flags.pop("divert_at_wake", None)
         pass_ids = {c.pass_id for c in d.chosen.cells}
-        conn.execute("UPDATE router_tickets SET chosen_row = ?, divert = 1, divert_at = ?, rows = ?,"
+        conn.execute("UPDATE router_tickets SET chosen_row = ?, divert = ?, divert_at = ?, rows = ?,"
                      " pass_id = ?, flags = ? WHERE job_id = ?",
-                     (d.chosen.row.id, now, json.dumps(view.rows),
-                      next(iter(pass_ids)) if len(pass_ids) == 1 else None, json.dumps(flags), job.id))
+                     (d.chosen.row.id, 1 if divert else 0, now if divert else None,
+                      json.dumps(view.rows), next(iter(pass_ids)) if len(pass_ids) == 1 else None,
+                      json.dumps(flags), job.id))
     job.endpoint, job.model, job.base_url, job.context = ep.name, served, ep.url, res.context
     job.endpoint_id, job.model_id, job.routed_by = eid, mid, routed_by
-    routed.ticket.update(chosen_row=d.chosen.row.id, divert=True, divert_at=now,
+    routed.ticket.update(chosen_row=d.chosen.row.id, divert=divert, divert_at=now if divert else None,
                          position=position)
     routed.decision, routed.resolution, routed.pool, routed.view = d, res, pool, view
     job._log_safe(f"[queue] {d.chosen_reason} (re-applied at a wake)")
@@ -968,7 +1062,17 @@ async def admit_or_wait(store: JobStore, conn: sqlite3.Connection, job: Job, reg
     admitted (a divert at a wake changes it), or None when the job left the queue without a
     session (dropped, lost, cancelled while queued); the job is then settled. A wake that
     raises is logged and retried: an exception never ends the loop or leaves the job queued
-    without its task. A cancel (cancel_job) drops the job: ``cancelled while queued``."""
+    without its task.
+
+    A cancel splits two ways (fix wave 3, N1). ``cancel_job`` sets ``job._cancel_requested``
+    before it cancels the task: the operator asked, so the job is ``dropped``, ``cancelled
+    while queued``, in the row and in memory. Any other CancelledError is the server leaving
+    (its loop closing, stdio gone): nobody asked to end the job, so the ROW is left ``queued``
+    with its entry, for the stale-owner rule to settle once this server's heartbeat stops (the
+    next live server's sweep marks it ``lost`` with its existing words, and its admission skips
+    the entry meanwhile); writing "cancelled" there would put a cancel nobody made in the
+    shared record. In memory the job is settled ``dropped`` with ``server exited while queued``
+    so a caller still waiting on it in this process is told what happened, not left hanging."""
     routed = routed if routed is not None else job._route
     ev = asyncio.Event()
     _WAKERS.add(ev)
@@ -989,7 +1093,13 @@ async def admit_or_wait(store: JobStore, conn: sqlite3.Connection, job: Job, reg
             if got is not False:
                 return got
     except asyncio.CancelledError:
-        end_queued(conn, job, CANCELLED_WHILE_QUEUED)
+        if job._cancel_requested:
+            end_queued(conn, job, CANCELLED_WHILE_QUEUED)
+        elif not job.settled:
+            job.status, job.error, job.finished_at = "dropped", SERVER_EXITED_WHILE_QUEUED, time.time()
+            job._log_safe(f"[queue] {SERVER_EXITED_WHILE_QUEUED}; the row stays queued for the"
+                          " stale-owner rule")
+            job._done.set()   # no changed(): the row is not this exit's to write
         return None
     finally:
         _WAKERS.discard(ev)
@@ -1015,10 +1125,9 @@ async def queue_view(reg: Registry, conn: sqlite3.Connection, ep: Endpoint,
     if f.endpoint_id is not None:
         for r in conn.execute(
                 "SELECT q.job_id, q.admitted, q.forced, j.status, j.started_at, j.priority,"
-                " m.served_id FROM queue_entries q JOIN jobs j ON j.id = q.job_id"
-                " JOIN mcp_servers s ON s.id = q.owner_server LEFT JOIN models m ON m.id = j.model_id"
-                f" WHERE q.endpoint_id = ? AND q.admitted IS NOT NULL"
-                f" AND j.status IN ('queued', 'running') AND {queue._LIVE} ORDER BY q.admitted",
+                " m.served_id" + queue.LIVE_FROM + " LEFT JOIN models m ON m.id = j.model_id"
+                " WHERE j.status IN ('queued', 'running') AND q.endpoint_id = ?"
+                f" AND q.admitted IS NOT NULL AND {queue._LIVE} ORDER BY q.admitted",
                 (f.endpoint_id, now - SERVER_LIVE_S)).fetchall():
             running.append({"job_id": r["job_id"], "status": r["status"], "model": r["served_id"],
                             "priority": r["priority"], "admitted": r["admitted"],

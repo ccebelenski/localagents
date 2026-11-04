@@ -273,7 +273,10 @@ def observations(conn, row_id, probes=None, errors=None) -> list[Observation]:
             " JOIN jobs j ON j.id = v.job_id"
             " JOIN endpoints e ON e.id = j.endpoint_id"
             " JOIN models m ON m.id = j.model_id"
-            " WHERE e.name = ? AND m.served_id = ?", (row.endpoint_name, row.served_id)):
+            # fix wave 3 (D3): a job that never had a session is no evidence, whatever verdict
+            # a row written before apply_verdict refused one carries (fail-closed)
+            " WHERE e.name = ? AND m.served_id = ? AND j.started_at IS NOT NULL",
+            (row.endpoint_name, row.served_id)):
         scores = _decode(v["scores"])
         if not isinstance(scores, dict):
             _note_unreadable(errors, ("ticket", v["job_id"]))
@@ -572,7 +575,9 @@ def _evidence_items(conn, row, since) -> int:
             " JOIN jobs j ON j.id = v.job_id"
             " JOIN endpoints e ON e.id = j.endpoint_id"
             " JOIN models m ON m.id = j.model_id"
-            " WHERE e.name = ? AND m.served_id = ?", (row.endpoint_name, row.served_id)):
+            # the verdicts observations() reads: a sessionless job's verdict is no item (D3)
+            " WHERE e.name = ? AND m.served_id = ? AND j.started_at IS NOT NULL",
+            (row.endpoint_name, row.served_id)):
         if v["at"] > since:
             n += 1
     for j in conn.execute(

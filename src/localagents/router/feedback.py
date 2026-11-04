@@ -507,9 +507,12 @@ async def apply_verdict(conn, reg, job_id: str, accepted: bool, dimensions: dict
     ``flags.scored_at_verdict``, the row being the one that ran it. ``correction`` logs a
     ``category_corrections`` row at the ticket's definitions version (the next verdict's
     correction replaces it; a verdict without one leaves it). Every refusal is a dict and
-    writes nothing. Async: the d3 scoring is an HTTP call."""
+    writes nothing. A job that never had a session (``started_at`` null: dropped, lost or
+    cancelled while queued) takes no verdict, ``no_session`` (fix wave 3, D3): nothing ran, so
+    there is no work to judge and no evidence about its row. Async: the d3 scoring is an HTTP
+    call."""
     job = conn.execute(
-        "SELECT j.id, j.task, j.cwd, j.status, e.name AS endpoint_name, m.served_id"
+        "SELECT j.id, j.task, j.cwd, j.status, j.started_at, e.name AS endpoint_name, m.served_id"
         " FROM jobs j LEFT JOIN endpoints e ON e.id = j.endpoint_id"
         " LEFT JOIN models m ON m.id = j.model_id WHERE j.id = ?", (job_id,)).fetchone()
     if job is None:
@@ -517,6 +520,10 @@ async def apply_verdict(conn, reg, job_id: str, accepted: bool, dimensions: dict
     if job["status"] not in TERMINAL_STATUSES:
         return {"error": "job_not_finished",
                 "message": f"job {job_id} is {job['status']}; a verdict is on a finished job"}
+    if job["started_at"] is None:
+        return {"error": "no_session",
+                "message": f"job {job_id} is {job['status']} and never had a session; a verdict"
+                           " judges work a session did, and there was none"}
     if not isinstance(accepted, bool):
         return _bad("accepted must be true or false")
     problem = _check_dimensions(dimensions)

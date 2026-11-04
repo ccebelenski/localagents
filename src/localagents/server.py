@@ -732,7 +732,7 @@ async def start_job(
         if copy_ticket_from is not None and routed is None:
             prev = dispatch.read_ticket(store.conn, copy_ticket_from)
             if prev is not None:
-                copied = dispatch.resumed_ticket(prev, copy_ticket_from)
+                copied = dispatch.resumed_ticket(prev, copy_ticket_from, priority=priority)
                 prev_job = store.jobs.get(copy_ticket_from)
                 routed_by = prev_job.routed_by if prev_job is not None else None
         if admit == "now":
@@ -795,20 +795,23 @@ async def start_job(
         except Exception as e:  # noqa: BLE001 -- the loop retries what this attempt could not do
             job._log_safe(f"[queue-error] first admission: {type(e).__name__}: {e}")
     if not admitted and admit == "now":
-        # the check above saw room and another admission took it first: the caller asked not to
-        # wait, so the job leaves the queue (dropped, never ran) and the call says would_queue
+        # the check above (try_admit's own predicate, fix wave 3) saw room and another admission
+        # took it first: the caller asked not to wait, so the job leaves the queue (dropped,
+        # never ran) and the call says would_queue
         try:
-            dropped = router_queue.mark_dropped(store.conn, job.id, "would_queue", time.time())
+            dropped = router_queue.mark_dropped(store.conn, job.id, dispatch.ADMIT_NOW_LOST_RACE,
+                                                time.time())
         except Exception as e:  # noqa: BLE001
             job._log_safe(f"[queue-error] admit='now' drop: {type(e).__name__}: {e}")
             dropped = False
         if dropped:
-            job.status, job.error, job.finished_at = "dropped", "would_queue", time.time()
+            job.status, job.error, job.finished_at = "dropped", dispatch.ADMIT_NOW_LOST_RACE, time.time()
             job._done.set()
             reply = dispatch.would_queue(1, job._queue_estimate,
                                          dispatch.alternatives(routed.decision) if routed else [],
                                          routed.ticket if routed else copied)
-            reply["message"] += f"; another admission took the slot first (job {job.id} is dropped)"
+            reply["message"] += (f"; another admission took the slot between the check and the claim"
+                                 f" (job {job.id} is dropped)")
             raise JobRefused(reply)
     global _shim_port_recorded
     if not _shim_port_recorded and shim.port:
@@ -1303,6 +1306,9 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
     except KeyError as e:
         return _foreign_or_unknown(job_id, e)
     if not job.done and job._task:
+        # fix wave 3 (N1): this cancel is the operator's, so the queue loop's CancelledError
+        # writes `cancelled while queued`; a cancel without the mark is the server exiting
+        job._cancel_requested = True
         if job.status == "queued" and not job._admitted.is_set():
             # router 12: a job waiting in our queue leaves it without a session, here and now
             # (design §7 "Accepted": dropped, "cancelled while queued"): a task cancelled before

@@ -12,6 +12,7 @@ import heapq
 import math
 from dataclasses import dataclass, field
 
+from localagents.router import queue
 from localagents.router.capacity import Capacity
 from localagents.router.decision import BriefScores
 from localagents.router.scorecard import Cell, Row, software_dev_for
@@ -275,17 +276,13 @@ def _predicted_speed(cand: Candidate) -> float | None:
     return cap.curve.predict(cand.ours_running + foreign + 1)
 
 
-def _endpoint_admits(cand: Candidate, priority: str) -> bool:
-    """§7's sessions rule, and §6's bottleneck rule: the session that would be the curve's
-    bottleneck is admitted only for background work."""
-    cap = cand.capacity
-    if not cap.admits(cand.ours_running):
-        return False
-    return priority == "background" or not cap.bottleneck_slot(cand.ours_running)
-
-
 def _can_admit(cand: Candidate, priority: str) -> bool:
-    return _endpoint_admits(cand, priority) and cand.pool_admits
+    """``queue.room``, the predicate ``try_admit`` applies (fix wave 3, D1): §7's sessions
+    rule, §6's bottleneck rule (the session that would be the curve's bottleneck is admitted
+    only for background work), the head of the endpoint's queue (``queued_ahead``), and the
+    pool (``pool_admits``, ``queue.pool_room``'s answer)."""
+    return queue.room(cand.capacity, cand.ours_running, priority, ahead=cand.queued_ahead,
+                      pool_admits=cand.pool_admits)
 
 
 def _label(cand: Candidate) -> str:
@@ -298,9 +295,11 @@ def _blocked_by(cand: Candidate, priority: str) -> tuple[str, str]:
     if not cand.pool_admits:
         return "pool", f"pool {cand.pool}" if cand.pool else "pool"
     cap = cand.capacity
-    if cap.admits(cand.ours_running) and priority != "background":
+    if not cap.admits(cand.ours_running):
+        return "endpoint", "endpoint busy"
+    if not queue.endpoint_room(cap, cand.ours_running, priority):
         return "endpoint", "bottleneck slot"
-    return "endpoint", "endpoint busy"
+    return "endpoint", "behind the queue"
 
 
 def select(scores: BriefScores, candidates: list[Candidate], priority: str, tolerance: float,

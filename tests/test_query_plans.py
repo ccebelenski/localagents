@@ -138,15 +138,58 @@ def test_e3_list_all_branch_still_walks_created_at(conn):
     assert any("SCAN jobs USING INDEX jobs_created_at" in d for d in plan), plan
 
 
-def test_queue_head_seeks_queue_entries_dispatch(conn):
-    """Router 11 (design §13: "The query plans for the queue head ... are pinned in
-    tests/test_query_plans.py like the existing ones"): an endpoint's waiting entries, in
-    order, are a seek of ``queue_entries_dispatch`` (endpoint_id, admitted, priority_rank,
-    enqueued) that also yields the order (the index ends in the rowid tie-break), never a
-    walk of the queue's history or a sort."""
+def _queue_history(c, finished=20_000):
+    """``finished`` jobs that ran and ended, each with the admitted entry it keeps (entries
+    persist after their jobs, ruling 184), a few servers (most stopped), one queued job waiting
+    and one running admitted; then ANALYZE, so the planner reads real statistics."""
+    eid = db.lookup_id(c, "endpoints", name="e", base_url="http://e", backend="vllm", host="e")
+    assert eid == 1
+    c.execute("BEGIN")
+    for i in range(8):
+        c.execute("INSERT INTO mcp_servers (id, pid, started, updated, stopped) VALUES (?, 1, 1.0, 1.0, ?)",
+                  (f"s{i}", None if i == 0 else 2.0))
+    for i in range(finished):
+        jid = f"h{i}"
+        c.execute("INSERT INTO jobs (id, status, created_at, started_at, finished_at, updated)"
+                  " VALUES (?, 'succeeded', ?, ?, ?, ?)", (jid, i, i, i + 1, i + 1))
+        c.execute("INSERT INTO queue_entries (job_id, endpoint_id, owner_server, priority_rank,"
+                  " enqueued, admitted) VALUES (?, 1, 's0', 1, ?, ?)", (jid, i, i))
+    c.execute("INSERT INTO queue_entries (job_id, endpoint_id, owner_server, priority_rank, enqueued,"
+              " admitted) VALUES ('j8', 1, 's0', 1, 170.0, NULL)")
+    c.execute("INSERT INTO queue_entries (job_id, endpoint_id, owner_server, priority_rank, enqueued,"
+              " admitted) VALUES ('j7', 1, 's0', 1, 160.0, 161.0)")
+    c.execute("COMMIT")
+    c.execute("ANALYZE")
+
+
+def test_queue_live_reads_drive_from_job_status(conn):
+    """Fix wave 3 (P1; moves router 11's pin, which asserted a seek of queue_entries_dispatch:
+    that index's range is the endpoint's whole admitted history once entries persist): every
+    read of LIVE queue entries — the waiting head (``_WAITING_SQL``), ``occupancy`` and
+    ``_mark_stale`` — drives from ``jobs.status IN ('queued','running')`` through
+    ``jobs_status_finished_at`` and joins queue_entries by its primary key: never ``SCAN q``
+    and never ``SCAN j``, after ANALYZE over 20k finished entries. The waiting head's sort is
+    over the waiting few."""
     from localagents.router import queue
 
-    plan = _plan(conn, queue._WAITING_SQL, (1, 1000.0))
-    assert any("SEARCH q USING INDEX queue_entries_dispatch (endpoint_id=? AND admitted=?)" in d
-               for d in plan), plan
-    assert not any("TEMP B-TREE" in d for d in plan), plan
+    _queue_history(conn)
+    plans = {"waiting": _plan(conn, queue._WAITING_SQL, (1, 0.0)),
+             "occupancy": _plan(conn, queue._occupancy_sql(1), (1, 0.0)),
+             "mark_stale": _plan(conn, queue._stale_sql(1), (1, 0.0))}
+    for name, plan in plans.items():
+        assert any("SEARCH j USING INDEX jobs_status_finished_at (status=?)" in d for d in plan), (name, plan)
+        assert any("SEARCH q USING INDEX sqlite_autoindex_queue_entries_1 (job_id=?)" in d
+                   for d in plan), (name, plan)
+        assert not any(d.startswith("SCAN q") or d.startswith("SCAN j") for d in plan), (name, plan)
+
+
+def test_queue_live_reads_select_the_live_rows(conn):
+    """The rewritten statements still answer what they did: the one waiting entry, the one
+    admitted running session, and no stale job (s0 is live at now = 0)."""
+    from localagents.router import queue
+
+    _queue_history(conn)
+    assert [r["job_id"] for r in conn.execute(queue._WAITING_SQL, (1, 0.0))] == ["j8"]
+    assert conn.execute(queue._occupancy_sql(1), (1, 0.0)).fetchone()[0] == 1
+    assert conn.execute(queue._stale_sql(1), (1, 0.0)).fetchall() == []
+    assert [r["job_id"] for r in conn.execute(queue._stale_sql(1), (1, 5.0))] == ["j8"]

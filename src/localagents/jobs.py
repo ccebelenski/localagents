@@ -153,6 +153,9 @@ class Job:
     _route: Any = field(default=None, repr=False)
     _queue_estimate: float | None = field(default=None, repr=False)
     _stall_seen: float | None = field(default=None, repr=False)
+    # fix wave 3 (N1): cancel_job asked for this job's cancel; any other CancelledError in the
+    # queue loop is the server exiting, which leaves the row for the stale-owner rule
+    _cancel_requested: bool = field(default=False, repr=False)
     _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)  # the store's db connection
     _pending_tools: dict[str, int] = field(default_factory=dict, repr=False)  # tool_use_id -> rowid of its tool_calls row (spec write rule)
