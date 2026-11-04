@@ -303,6 +303,28 @@ blocking wait**: `run_agent(wait_s)` covers queue plus run, the progress line sa
 ~m min`, and a wait that ends while the job is still queued returns the non-final record with
 its position, as it does today for a running job.
 
+**Consumer questions (operator, relaying another session, 2026-11-04; answers pending the operator's
+call at the phase-3 go).** *(1) Where the clock starts.* Settled by the design as it stands: a
+queued job has the distinct state `queued` (§4 step 5) and `timeout_s` runs from admission, because
+`admit_or_wait` sits in `start_job` before `create_task` (plan Task 12) and the runner's cap wraps
+only the session (`asyncio.wait_for(consume(), timeout_s)`); a brief sized to finish in 90 minutes
+is never killed for waiting 40. OPEN: the blocking `wait_s` covers queue plus run (above), so the
+consumer's rule `wait_s = timeout_s` no longer guarantees seeing the finish; a call that expires
+while the job is queued returns the non-final record with its position and expected wait.
+Proposal: both clocks start at admission — `wait_s` counts from admission too, the call keeps
+blocking while queued and reports `queued #n, ~m min`, and a caller that will not wait uses
+`admit: now`. The cost is an unbounded block on a deep queue, bounded by the caller's own cancel.
+*(2) Who honours the box rules.* The capacity model counts SESSIONS per endpoint, caps them by
+`max_concurrent`, and keeps the brief's context load out of admission (§7), so "one big-context
+job per box" is encoded only when the operator sets `max_concurrent: 1` on that entry. Not encoded
+at all: rules that span endpoints — two endpoints on one host (dgx1, dgx1-a, dgx1-lcpp share a
+GPU), and boxes that share a UPS. Proposal: an optional `pool: <name>` on real entries; admission
+counts occupancy across every endpoint in the pool and `max_concurrent` may be set on the pool
+(a `pools:` block in `models.yaml`); a UPS is a pool with `max_concurrent: 1`. The router should be
+the one that honours them: the hand-honoured version reads the depth at preflight and submits
+later, and two sessions dispatching at once both see depth zero. The depth stays visible either
+way (`preflight`, `queue`, `list_models` `sessions`/`queued`, the status line).
+
 **Exposed** per real endpoint on `list_models`, the status line and the monitor's endpoint data:
 `sessions` (capacity, ours running, foreign), `queued` (count, head priority), predicted speed at
 current occupancy, curve state (prior | probed | refined, with the point count).
