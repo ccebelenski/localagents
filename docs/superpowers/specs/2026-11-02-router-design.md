@@ -343,6 +343,20 @@ Three consumer asks come with them, binding for phase 3:
   caused the queue wait or the divert, so a retrospective can tell a capacity wait from a routing
   choice; null otherwise.
 
+**Coordinator question (this project's coordinator, 2026-11-04; pending the consumer's answer and the
+operator's call).** The pairing rule, a different model reviews than the one that built, has no
+voice in a routed dispatch: the only exclusion is the operator's per-endpoint `exclude:` (a
+dimension filter, above) and `run_agent` gains priority, admit and tolerance but nothing per call.
+So a review dispatch, half the jobs of a lane process, stays hand-named, or the coordinator reads
+the builder's record and passes the reviewer back as a named model. Proposal: `run_agent` gains
+`avoid_job: str | None`, the id of a finished job; the router filters that job's row (its served id
+on any endpoint, since the rule is about the model, not the box) with reason `avoid_job` listed
+in the ticket, and `routed_by.reason` names it when it bound the choice. A served-id list
+(`avoid: [..]`) would do the same but copies ids by hand; the job id is the shape of the rule and
+of the acceptance record. A named `model` with `avoid_job` naming that model's own row is
+`bad_argument`. Also asked: `preflight` returns the chosen served id, so a brief can still be
+sized to the model when a coordinator wants to (the hints' caps are per model).
+
 **Exposed** per real endpoint on `list_models`, the status line and the monitor's endpoint data:
 `sessions` (capacity, ours running, foreign), `queued` (count, head priority), predicted speed at
 current occupancy, curve state (prior | probed | refined, with the point count).
