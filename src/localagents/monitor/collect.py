@@ -72,16 +72,23 @@ async def tick(reg: Any, conn: sqlite3.Connection, ep: Endpoint, endpoint_id: in
     its reason suffixed by `` (during a gap)`` and still no rate (ruling A, 2026-10-29). The
     first probe of an endpoint writes no event (a cold start is not a transition).
 
+    A router entry (router 14a, design §4) is ticked as a router: ``Registry.probe`` asks its
+    decision server's ``/health``, no ``/metrics`` is fetched (it has no base URL of its own),
+    its row names no served model (its "model" is its own name, never a served id) and carries
+    no figures (``rows.probe_to_rows(router=True)``); up/down transitions are still events.
+
     The tick's database work is one transaction: a failure anywhere inside the ``immediate()``
     block (a row, an event) rolls the whole tick back — a probes row is never stored without its
     counters/hardware rows, and no event is stored for a tick whose rows did not commit."""
+    router = ep.is_router
     probe = await reg.probe(ep)
     up = bool(probe.get("up"))
-    doc = await fetch_metrics_doc(ep, reg.defaults.probe_timeout_s) if up else None
+    doc = await fetch_metrics_doc(ep, reg.defaults.probe_timeout_s) if up and not router else None
     models = probe.get("models") or []
     with db.immediate(conn):
-        model_id = db.lookup_id(conn, "models", served_id=models[0]) if up and models else None
-        r = rows.probe_to_rows(endpoint_id, model_id, probe, doc, now)
+        model_id = (db.lookup_id(conn, "models", served_id=models[0])
+                    if up and models and not router else None)
+        r = rows.probe_to_rows(endpoint_id, model_id, probe, doc, now, router=router)
         last = conn.execute(_PREVIOUS_PROBE, (endpoint_id,)).fetchone()
         prev = conn.execute(_PREVIOUS_COUNTERS, (endpoint_id,)).fetchone()
         probe_id = rows.insert(conn, r)
@@ -237,10 +244,13 @@ async def run(
             await _sleep_or_stop(stop, retention_every_s)
 
     eps = list(endpoints)
-    # host -> its endpoints in config order: the node fallback is asked per host (story 3.1b)
+    # host -> its endpoints in config order: the node fallback is asked per host (story 3.1b).
+    # Real endpoints only (router 14a, design §4): a router entry's decision server says nothing
+    # about the host it is filed under, and it has no base URL to take the address from
     hosts: dict[str, list[Endpoint]] = {}
     for ep in eps:
-        hosts.setdefault(ep.host, []).append(ep)
+        if not ep.is_router:
+            hosts.setdefault(ep.host, []).append(ep)
 
     async def one(ep: Endpoint) -> None:
         kind = backend_kind(ep.backend)
@@ -259,7 +269,7 @@ async def run(
                 # the node fallback (story 3.1b): this probe timed out — ask the port-22
                 # connect for the host (at most once a minute, stored as a host_probes row)
                 host_class = conn.execute(_PROBE_HOST_BY_ID, (probe_id,)).fetchone()[0]
-                if host_class == "unknown":
+                if host_class == "unknown" and not ep.is_router:
                     try:
                         await maybe_probe_host(conn, hosts[ep.host], now())
                     except Exception as e:  # noqa: BLE001 — a failed ask is one line; the

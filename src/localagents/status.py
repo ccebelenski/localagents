@@ -23,6 +23,9 @@ from . import db, derive
 
 KEEP_FINISHED_S = 120.0  # a finished job stays on the line this long
 MAX_ACTIVITY = 60
+# jobs.SERVER_LIVE_S (the queue's liveness window): this module imports stdlib plus db/derive
+# only, so the value is restated here and tests/test_status.py pins the two equal
+QUEUE_LIVE_S = 60.0
 
 
 def short_model(served_id: str) -> str:
@@ -43,25 +46,38 @@ def fmt_elapsed(seconds: float) -> str:
     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
 
-def load_summary(probe: dict[str, Any]) -> str | None:
+def with_queued(text: str | None, queued: int) -> str | None:
+    """The endpoint's load text with the ``q<n>`` token after it when n jobs wait in our
+    queue there (router 14a, design §7 "Exposed"): ``1/1 slots 1 wait q2``, where ``wait`` is
+    the server's own count and ``q2`` ours. The token alone when there is no load text; the
+    text unchanged when nothing waits."""
+    if not queued:
+        return text
+    return f"{text} q{queued}" if text else f"q{queued}"
+
+
+def load_summary(probe: dict[str, Any], queued: int = 0) -> str | None:
     """Compact endpoint load from a registry probe: ``1/1 slots`` (llama.cpp; strata adds
-    ``2 wait`` when requests are queued) or ``2 run 1 wait kv 34%`` (vLLM). None when the probe
-    carries neither."""
+    ``2 wait`` when requests are queued) or ``2 run 1 wait kv 34%`` (vLLM), then ``q<n>`` when
+    ``queued`` jobs wait in our queue (``with_queued``). None when there is none of these.
+
+    The sampler stores this text without the token (it passes no ``queued``): ``collect``
+    counts the queue when the line renders, so the count is never a sample old."""
     slots = probe.get("slots") or {}
     load = probe.get("load") or {}
+    out: str | None = None
     if "busy" in slots and "total" in slots:
         out = f"{slots['busy']}/{slots['total']} slots"
         if load.get("requests_waiting"):  # strata reports its queue depth beside the slots
             out += f" {load['requests_waiting']} wait"
-        return out
-    if "requests_running" in load:
+    elif "requests_running" in load:
         parts = [f"{load['requests_running']} run"]
         if load.get("requests_waiting"):
             parts.append(f"{load['requests_waiting']} wait")
         if load.get("kv_cache_usage") is not None:
             parts.append(f"kv {round(100 * load['kv_cache_usage'])}%")
-        return " ".join(parts)
-    return None
+        out = " ".join(parts)
+    return with_queued(out, queued)
 
 
 def my_owner() -> int | None:
@@ -101,6 +117,17 @@ def _job_root(j: sqlite3.Row) -> str | None:
         if isinstance(worktree, dict) and isinstance(worktree.get("path"), str) and worktree["path"]:
             return worktree["path"]
     return j["cwd"]
+
+
+# the waiting entries per endpoint name (router/queue.py's _WAITING_SQL set, counted): one
+# parameter, now - QUEUE_LIVE_S
+_QUEUED_SQL = (
+    "SELECT e.name, COUNT(*) AS n FROM queue_entries q JOIN jobs j ON j.id = q.job_id"
+    " JOIN mcp_servers s ON s.id = q.owner_server JOIN endpoints e ON e.id = q.endpoint_id"
+    " WHERE q.admitted IS NULL AND j.status = 'queued'"
+    " AND s.stopped IS NULL AND s.updated IS NOT NULL AND s.updated >= ?"
+    " GROUP BY e.name"
+)
 
 
 def collect(now: float | None = None, conn: sqlite3.Connection | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
@@ -171,6 +198,11 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
             ).fetchall()
             if r["load"]
         }
+        # router 14a: the jobs waiting in our queue per endpoint name, any live session's (the
+        # queue's own waiting set: not admitted, job still queued, owner beating), added to the
+        # load text here so the token is as fresh as the line
+        for r in conn.execute(_QUEUED_SQL, (now - QUEUE_LIVE_S,)).fetchall():
+            loads[r["name"]] = with_queued(loads.get(r["name"]), r["n"])
         out.sort(key=lambda e: e.get("started_at") or 0)
         return out, loads
     finally:
@@ -263,7 +295,7 @@ def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ",
     """One line for the status bar, or an empty string when no live server has jobs to show.
 
     Jobs of this Claude Code session (same ``owner`` pid) are shown in full, followed by the load
-    of the endpoints they run on; other sessions' jobs are folded into ``+N other``, because the
+    of the endpoints they run or wait on (with our queue's ``q<n>``); other sessions' jobs are folded into ``+N other``, because the
     boxes are shared and knowing one is busy matters even when the job isn't yours.
 
     It must never print a traceback: the database is somebody else's process's file, so a
@@ -280,7 +312,9 @@ def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ",
         owner = my_owner()
     mine, others = _split_by_owner(entries, owner)
     parts = [render_entry(e, now) for e in mine]
-    for name in dict.fromkeys(e["endpoint"] for e in mine if e.get("status") == "running" and e.get("endpoint")):
+    # router 14a: a queued job's endpoint shows too, so the line says what it waits behind
+    for name in dict.fromkeys(e["endpoint"] for e in mine
+                              if e.get("status") in ("running", "queued") and e.get("endpoint")):
         if loads.get(name):
             parts.append(f"{name} {loads[name]}")
     if others:

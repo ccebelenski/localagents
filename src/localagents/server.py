@@ -23,6 +23,7 @@ from .jobs import Job, JobStore, oldest_first, prune, state_dir
 from .registry import ModelUnavailable, Registry, config_path, local_path
 from .router import dispatch
 from .router import queue as router_queue
+from .router import scorecard
 from .router.decision import BriefUnresolved, DecisionUnavailable
 from .runner import run_job
 from .shim import Shim
@@ -87,6 +88,76 @@ def _reg() -> Registry:
 
 # ---------------------------------------------------------------- models
 
+async def _exposed_endpoints(reg: Registry, conn: sqlite3.Connection, probes: dict[str, dict],
+                             now: float) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Router 14a (design §7 "Exposed", "Accepted"): every real endpoint's admission facts as
+    the queue reads them, from the probes already taken (no second probe, nothing inside a
+    transaction), and the declared pools. Per endpoint: ``sessions`` (capacity, ours, foreign;
+    the capacity model of its first served id), ``queue`` (the waiting entries and the head's
+    priority), ``predicted_speed`` (the curve at the session a new job would be, ours + foreign
+    + 1; None when the endpoint is down and no session can start), ``curve_state`` and
+    ``pool`` with ``pool_sessions`` when the pool is declared. A pool's ``used`` is the sum
+    over its members of ours plus foreign, the count its cap is compared with."""
+    per: dict[str, dict] = {}
+    used: dict[str, int] = {}
+    for n, e in reg.endpoints.items():
+        if e.is_router:
+            continue
+        probe = probes[n]
+        served = (probe.get("models") or [""])[0]
+        f = await dispatch.endpoint_facts(reg, conn, e, served, now, probes=probes)
+        cap = f.capacity
+        foreign = max(0, cap.requests_running - f.ours)
+        waiting = router_queue.waiting(conn, f.endpoint_id, now) if f.endpoint_id is not None else []
+        per[n] = {
+            "sessions": {"capacity": cap.sessions_capacity, "ours": f.ours, "foreign": foreign},
+            "queue": {"count": len(waiting),
+                      "head_priority": (dispatch.queue_priority(waiting[0]["priority_rank"])
+                                        if waiting else None)},
+            "predicted_speed": (round(cap.curve.predict(f.ours + foreign + 1), 3)
+                                if probe.get("up") else None),
+            "curve_state": {"state": cap.curve.state, "points": cap.curve.n},
+            "pool": f.pool,
+        }
+        if f.pool is not None:
+            used[f.pool] = used.get(f.pool, 0) + f.ours + foreign
+    pools = {name: {"cap": spec["max_concurrent"],
+                    "members": [m.name for m in reg.pool_members(name)],
+                    "used": used.get(name, 0)}
+             for name, spec in reg.pools.items()}
+    for d in per.values():
+        if d["pool"] is not None:
+            d["pool_sessions"] = {"cap": pools[d["pool"]]["cap"], "used": pools[d["pool"]]["used"]}
+    return per, pools
+
+
+def _exposed_router(conn: sqlite3.Connection, pools: dict[str, dict]) -> dict[str, Any]:
+    """Router 14a (design §4, §8 "Notices, not triggers"): the router entry's scorecard facts.
+    ``calibrated_rows`` are the live rows with a complete core run; ``notices`` the rows whose
+    notices are not empty, each with them; ``pools`` every declared pool. A probe set that
+    cannot be read is named as ``probe_set_error``: the set-upgrade notice needs its version,
+    so the listing says it could not look rather than reading as no notice."""
+    from .router import calibrate
+
+    out: dict[str, Any] = {}
+    try:
+        installed = calibrate.load_set().version
+    except Exception as e:  # noqa: BLE001  the manifest is operator input: named, never raised
+        installed = None
+        out["probe_set_error"] = f"{type(e).__name__}: {e}"
+    live = scorecard.rows(conn)
+    out["calibrated_rows"] = [{"endpoint": r.endpoint_name, "served_id": r.served_id}
+                              for r in live if scorecard.core_complete(conn, r.id)]
+    notices = []
+    for r in live:
+        got = scorecard.notices(conn, r.id, installed)
+        if got:
+            notices.append({"endpoint": r.endpoint_name, "served_id": r.served_id, "notices": got})
+    out["notices"] = notices
+    out["pools"] = pools
+    return out
+
+
 @mcp.tool()
 async def list_models() -> dict[str, Any]:
     """List configured endpoints with live health and what each is serving right now.
@@ -94,9 +165,16 @@ async def list_models() -> dict[str, Any]:
     Per endpoint: `up`, `models` (served ids), `context` (real per-request window per served id),
     and slot/queue occupancy where the backend exposes it. Anything listed as served is usable
     immediately via `run_agent`; if nothing suitable is up, ask the user to start a model.
+    Every real endpoint also carries our queue's view of it: `sessions` (`capacity`, `ours`,
+    `foreign`), `queue` (`count` waiting, `head_priority`), `predicted_speed` (the throughput
+    curve's fraction of a lone session's speed for the next session there), `curve_state`
+    (`state`: prior | probed | refined, with `points`), and `pool` (its declared pool or null)
+    with `pool_sessions` (`cap`, `used`) when it is in one.
     A `router` entry serves only its own name: it carries `router: True` and the fleet's
     `context_range` — the smallest and largest real windows probed right now — instead of a
-    window of its own.
+    window of its own, plus `calibrated_rows` (endpoint x served id with a complete core
+    calibration), `notices` (per scorecard row) and `pools` (name: cap, members, used).
+    `facts_error` names a database failure that left the queue facts out.
     """
     reg = _reg()
     probes = await reg.probe_all()
@@ -108,20 +186,38 @@ async def list_models() -> dict[str, Any]:
         for w in (probes[n].get("context") or {}).values()
     ]
     context_range = [min(windows), max(windows)] if windows else []
+    # router 14a: the queue's facts, read after every probe; a database failure leaves them out
+    # and says so, and the live listing stands
+    facts_error = None
+    exposed: dict[str, dict] = {}
+    router_facts: dict[str, Any] = {}
+    try:
+        conn = store.conn
+        exposed, pools = await _exposed_endpoints(reg, conn, probes, time.time())
+        router_facts = _exposed_router(conn, pools)
+    except (sqlite3.Error, db.SchemaError) as e:
+        exposed, router_facts = {}, {}
+        facts_error = f"{type(e).__name__}: {e}"
     endpoints = {}
     for n, e in reg.endpoints.items():
         d = {"base_url": e.url, "backend": e.backend, "host": e.host, "notes": e.notes, **probes[n]}
         if e.is_router:
             d["router"] = True
             d["context_range"] = context_range
+            d.update(router_facts)
+        else:
+            d.update(exposed.get(n, {}))
         endpoints[n] = d
-    return {
+    out = {
         "config": str(reg.path),
         "server_cwd": os.getcwd(),
         "default_model": reg.defaults.model,
         "endpoints": endpoints,
         "guidance": GUIDANCE,
     }
+    if facts_error is not None:
+        out["facts_error"] = facts_error
+    return out
 
 
 @mcp.tool()

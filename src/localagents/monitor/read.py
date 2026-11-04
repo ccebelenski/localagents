@@ -430,7 +430,9 @@ def overview(conn: sqlite3.Connection, reg: Any, now: float, window_s: float,
                 configured_ids.append(eid)
             entry, node_input = _endpoint(conn, ep, eid, now, window_s, live)
             entries.append(entry)
-            if node_input is not None:
+            # router 14a (design §4): a router entry's decision server is not the host's
+            # hardware, so its probe is no evidence of the node's state
+            if node_input is not None and not ep.is_router:
                 nodes.append(node_input)
         # the node fallback (story 3.1b): the host's newest host_probes answer within
         # FALLBACK_FRESH_S of now resolves an all-timeout node (spec §4); else unknown stays

@@ -67,9 +67,13 @@ def probe_to_rows(
     probe: dict[str, Any],
     doc: tuple[str, Any] | None,
     t: float,
+    router: bool = False,
 ) -> ProbeRows:
     """The rows for one probe. A down probe is a row with its host class and failure sentence and
-    nothing else (a document passed with it is ignored: a failed probe has no counters). Gauges
+    nothing else (a document passed with it is ignored: a failed probe has no counters). A
+    ``router`` entry's probe (router 14a, design §4: the router entry is not a real endpoint)
+    is its decision server's health: up, host class, error and latency, and no window, slot,
+    request, cache, throughput or idle/busy figure, whatever the dict or document carries. Gauges
     come from the metrics document when it carries them — the parsed counters/gauges, then the
     document's extras; the probe dict's rounded copy (``load``) only when the document does not.
     ``/slots`` occupancy has no document form and always comes from the probe dict."""
@@ -78,6 +82,9 @@ def probe_to_rows(
     row.update(t=t, endpoint_id=endpoint_id, model_id=model_id, up=1 if up else 0,
                host=probe.get("host"), error=None if up else probe.get("error"))
     if not up:
+        return ProbeRows(row, None, None)
+    if router:
+        row["latency_ms"] = _int(probe.get("latency_ms"))
         return ProbeRows(row, None, None)
     parsed, extra = parse_doc(doc)
     load = probe.get("load") if isinstance(probe.get("load"), dict) else {}

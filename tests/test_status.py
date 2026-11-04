@@ -435,6 +435,55 @@ def test_load_summary_shapes():
     assert status.load_summary({"slots": {"total": 4}}) is None  # llama.cpp without /slots enabled
 
 
+def test_status_line_shows_queued_count(monkeypatch, tmp_path):
+    """Router 14a (design §7 "Exposed": the status line shows the queue per real endpoint): a
+    ``q<n>`` token after the endpoint's own load when n jobs wait in OUR queue there, distinct
+    from the server-side ``wait`` count. Waiting means an entry not yet admitted whose job is
+    still queued, from any live session; an admitted entry is a session, not a queued job.
+    The sampler's stored text carries no token: the line counts the queue when it renders."""
+    from localagents.router import queue
+
+    assert status.QUEUE_LIVE_S == jobs.SERVER_LIVE_S  # restated: status.py never imports jobs
+    assert status.load_summary({"slots": {"total": 1, "busy": 1}}, queued=2) == "1/1 slots q2"
+    assert status.load_summary({"slots": {"total": 1, "busy": 1}, "load": {"requests_waiting": 3}},
+                               queued=1) == "1/1 slots 3 wait q1"
+    assert status.load_summary({"load": {"requests_running": 2, "requests_waiting": 1,
+                                         "kv_cache_usage": 0.337}}, queued=2) == "2 run 1 wait kv 34% q2"
+    assert status.load_summary({"up": True, "models": ["m"]}, queued=2) == "q2"
+    assert status.load_summary({"up": True, "models": ["m"]}, queued=0) is None
+
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    running = _new(store, created_at=now - 30)
+    running.status, running.started_at = "running", now - 30
+    running.changed()
+    queue.enqueue(store.conn, running.id, running.endpoint_id, store.server_id, "normal", forced=True)
+    waiting = _new(store, created_at=now - 10)
+    queue.enqueue(store.conn, waiting.id, waiting.endpoint_id, store.server_id, "normal")
+    admitted = _new(store, created_at=now - 8)  # admitted, its task not started yet: a session
+    queue.enqueue(store.conn, admitted.id, admitted.endpoint_id, store.server_id, "normal", forced=True)
+    store.record_endpoint_load({"llamacpp": "1/1 slots 1 wait"})
+    other = jobs.JobStore()  # another live session's job waits in the same queue
+    other.conn.execute("UPDATE mcp_servers SET owner = 4242 WHERE id = ?", (other.server_id,))
+    theirs = _new(other, created_at=now - 5)
+    queue.enqueue(other.conn, theirs.id, theirs.endpoint_id, other.server_id, "background")
+
+    me = _owner()
+    assert status.render(now=now, owner=me) == (
+        "local: ⟳ Qwen3.8-Flash-Next 30s · … Qwen3.8-Flash-Next 10s · … Qwen3.8-Flash-Next 8s · "
+        "llamacpp 1/1 slots 1 wait q2 · +1 other")
+    assert status.render_lines(now=now, owner=me)[0] == "local llamacpp · 1/1 slots 1 wait q2"
+
+    # no load row (the sampler has not written one): the queue alone still shows, and an
+    # endpoint whose jobs of ours are only queued gets its segment on the one-line form too
+    store.conn.execute("DELETE FROM endpoint_load")
+    running.status, running.finished_at = "succeeded", now - 1
+    running.changed()
+    line = status.render(now=now, owner=me)
+    assert line.endswith(" · llamacpp q2 · +1 other"), line
+    assert status.render_lines(now=now, owner=me)[0] == "local llamacpp · q2"
+
+
 def test_shim_usage_feeds_context_and_speed(monkeypatch, tmp_path):
     """The shim's _log records one request row per backend response; the line derives ctx fill
     and speed from the rows alone (story 1.5b: the in-memory note_usage fields are gone)."""

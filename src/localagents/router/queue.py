@@ -190,6 +190,12 @@ def try_admit(conn: sqlite3.Connection, job_id: str, capacity: Capacity, now: fl
         return False
 
 
+def waiting(conn: sqlite3.Connection, endpoint_id: int, now: float) -> list[sqlite3.Row]:
+    """The endpoint's waiting entries in queue order (rows of ``_WAITING_SQL``): what
+    ``list_models`` counts as the endpoint's queue (router 14a)."""
+    return conn.execute(_WAITING_SQL, (endpoint_id, now - SERVER_LIVE_S)).fetchall()
+
+
 def ahead(conn: sqlite3.Connection, job_id: str, now: float) -> list[sqlite3.Row]:
     """The waiting entries in front of this one on its endpoint, in queue order (rows of
     ``_WAITING_SQL``). Empty for an admitted entry or a job that is no longer queued.
