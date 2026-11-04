@@ -189,8 +189,8 @@ know it, the caller passes it.
    a row with nothing shown on an axis "can appear suitable in a competition with an actual
    suitable model", so unknown counts as zero and loses to any row with evidence; calibration,
    not traffic, is how it earns a number), `weight(demand) = demand / 4`, and `penalty(cell) =
-   (4 − cell) / 8` (at most 0.5 each; an unknown completeness or adherence cell counts as 0). Dividing by the determined axes gives the tolerance one scale: 1. *(True-now, 2026-11-04, from Task 10 as built: for this formula 1.0 is one band short at demand 4 on EVERY determined axis; one band short on one axis of n determined is 1/n, since demand-0 axes still count in the divisor.)*0 is about one
-   band short on one axis whatever the brief determines. A row that over-delivers gains nothing,
+   (4 − cell) / 8` (at most 0.5 each; an unknown completeness or adherence cell counts as 0). Dividing by the determined axes gives the tolerance one scale: 1.0 is about one
+   band short on one axis whatever the brief determines. *(True-now, 2026-11-04, from Task 10 as built: for this formula 1.0 is one band short at demand 4 on EVERY determined axis; one band short on one axis of n determined is 1/n, since demand-0 axes still count in the divisor.)* A row that over-delivers gains nothing,
    which is what keeps the biggest model from winning every job.
    **An undetermined axis is neutral.** A dimension whose d3 answer is below the confidence
    threshold for its question type (set in the calibration spec from the probe set; the spike's
