@@ -357,6 +357,14 @@ of the acceptance record. A named `model` with `avoid_job` naming that model's o
 `bad_argument`. Also asked: `preflight` returns the chosen served id, so a brief can still be
 sized to the model when a coordinator wants to (the hints' caps are per model).
 
+**Decided (operator, 2026-11-04: "go with your best knowledge on the avoid_job answer since you're a
+coordinating model also"; "we can refine it later").** `avoid_job` as proposed; the coordinator keeps
+direct access to the real endpoints and names a model when it needs to. Also decided: the `pool:`
+tag and the `pools:` block are accepted now and INERT until declared ("as long as it's ignored
+until needed, otherwise we do self-harm"): an entry's `pool:` naming no `pools:` entry is noted on
+stderr at load and has no effect, never a load or validation error. Phase 3 build method: Opus
+lanes build in parallel in worktrees (the operator's quota), local models review.
+
 **Exposed** per real endpoint on `list_models`, the status line and the monitor's endpoint data:
 `sessions` (capacity, ours running, foreign), `queued` (count, head priority), predicted speed at
 current occupancy, curve state (prior | probed | refined, with the point count).
