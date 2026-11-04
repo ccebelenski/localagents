@@ -2804,7 +2804,27 @@ SDD ledger.
 | the measured manifest (the reference row's nominals, reference_tps) | the coordinator, from the live run | | 87051d3 |
 | docs/router.md Calibration, README | Qwen/ai1 (18725cd2 + fix by Qwen/ai2) | blind read DeepSeek (13 overstatements) | 085c23e |
 
-True now: phases 1 and 2 complete (the live deliverable met on the reference row under a scratch store; the operator's real store is uncalibrated); phase 3 (routing) waits for the operator's go; nothing pushed until the three phases are feature complete.
+Phase 3 (routing), built 2026-11-04 in one day with the operator AFK after the go, Opus lanes
+building in hand-cut worktrees and local models reviewing; all landed on main via tools/land.sh
+after a cross-model construct-it review each; the whole-branch review by Opus; details in the
+landing commits and the SDD ledger. The design took four consumer requirements that day from the
+other coordinator session (the record contract, the clock from admission, the router owns the box
+rules, dropped as never-ran) and one coordinator question (avoid_job); every one is in the spec
+as a dated block.
+
+| Story | Built by | Reviewed by | Landed |
+| --- | --- | --- | --- |
+| router 10: selection (shortfall, filters, the policy table, expected wait, avoid_job, pools) | Opus | DeepSeek/dgx1-a (4bfe4a2e) 0 defects, 1 possible → fold 1 | eb53869 |
+| router 11: the database queue, atomic admission, stale owners; pools; dropped; schema v12 | Opus | Qwen3.8-27B/llamacpp (490012d3) 0 defects, race 0/40; a copy of the real store migrated live | 7396490 |
+| router 13: gates, speed samples, verdicts | Opus | Qwen/ai1 (033dbb83): 1 defect (the 120-char cut) fixed by Qwen (a9114d65) | 5ca2004 |
+| fold 1: bottleneck counts foreign; a thin language cell falls back; a no-file job sets no ceiling | Qwen/ai2 (66ba7596) | the coordinator's read; the whole-branch review | 0304b67 |
+| router 12: run_agent routes model=auto, admission, tickets, explain/queue/preflight | Opus | DeepSeek (d8c7af78): 3 defects, 2 fixed by DeepSeek (d17f6666) + forced-on-record; the third → fold 2 | d49d8c5 |
+| router 14a: exposed facts (sessions, queue, pools, predicted speed; the monitor's router entry) | Opus | DeepSeek (6c58193e) 0 defects | aa82d3b |
+| router 14b: docs/router.md phase 3, CONTRIBUTING smoke, README | Qwen/ai1 (9c228cab + fix 2afbc79e) | blind read Qwen3.8-27B (e913d83b): 2 false, 5 overstated | a00f651 |
+| fold 2: calibration waits from admission; the stall scan on the sampler; endpoint=auto+model refused; the sampler skips queued jobs and repairs a failed drop | Qwen/ai2 (51ad53cb capped, b7089b22) | the coordinator's read; the whole-branch review | 30c2dc8 |
+| whole-branch review → fix wave 3 (11 items) → re-review | Opus review (5 defects, 1 possible, 8 noticed); Opus fix lane; DeepSeek re-review | | 2783870 |
+
+True now (2026-11-04): phases 1, 2 and 3 complete; the router is feature complete pending the operator's own read; `model: auto` routes, queues and explains; the record names the served model and endpoint with routed_by; suite 1298 passed, 1 skipped; nothing pushed (the operator gates the push). The 2026-11-03 line read: phases 1 and 2 complete, phase 3 waits for the go.
 
 ## Epic 4: operations (V2, not scheduled)
 

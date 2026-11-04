@@ -2,6 +2,28 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
+**2026-11-04: router phase 3 BUILT, reviewed and landed; the router is feature complete.** Main at the
+commit this note rides on; suite 1298 passed, 1 skipped; nothing pushed (the operator gates the push: "nothing
+gets pushed until we're feature complete on the whole", now met pending the operator's own read).
+The day: the operator relayed four consumer requirements from the other coordinator session and
+accepted two queue proposals (all in design §4/§7 as dated blocks); said "go" for wave 1 and went
+AFK ("till the work and reviews are done"); Tasks 10-14 were built by Opus lanes in worktrees cut
+BY HAND from main (the Agent tool's isolation=worktree cuts from the pushed tip, 51 commits stale:
+three lanes killed within minutes; rule in the hints and memory), each reviewed construct-it by a
+local model (DeepSeek, the 27B, Qwen Flash), fix rounds by the reviewer's model, two folds on
+local lanes, the docs by Qwen with a blind read by the 27B, then the Opus whole-branch review
+(dbb45b3..30c2dc8: 5 defects, 1 possible, 8 noticed; three of the defects lived BETWEEN modules
+where no per-story review had an oracle) and fix wave 3 on Opus with a DeepSeek re-review. What
+exists now: select.py (the §6 decision), queue.py (the database queue, atomic admission, pools,
+the dropped status, schema v12), dispatch.py (route, the one-transaction job, the admission loop,
+tickets, queue_view, the stall scan), feedback.py (gates, speed samples, verdicts), the exposed
+facts on list_models and the status line, docs/router.md complete. Open (the ledger): N5 (the
+wait_s clock one poll early after a failed admitted-write), N7 (admit=now can return a queued job
+if mark_dropped raises), UNPROVEN has no store, the run_agent description sits at the 2048 cap,
+the operator's real store has no calibration and no pools: block. Next: the operator's read of
+phase 3 (the review's and the ledger's words are the map), the retrospective
+(docs/retros/2026-11-04-router-phase-3.md, drafted), then the push of the whole router arc. Retrospective: docs/retros/2026-11-04-router-phase-3.md.
+
 **2026-11-03, early: router phase 2 BUILT and landed; the live deliverable met.** Main at the commit this
 note rides on; suite 1178 passed 1 skipped; nothing pushed (the feature-complete rule: phases 1-3 together).
 Tasks 6-9 of docs/superpowers/plans/2026-11-02-router.md were built by local lanes in worktrees (Task 9 split
