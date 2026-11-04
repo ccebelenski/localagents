@@ -338,3 +338,85 @@ def test_real_only_with_only_router_entries_names_the_cause():
     reg = Registry(path=None, endpoints={"auto": _router()}, defaults=Defaults(), raw={}, local={})
     with pytest.raises(ModelUnavailable, match="only router entries are configured"):
         asyncio.run(reg.resolve(real_only=True))
+
+
+# --- router 11: pools, operator-written and inert until declared (design §7 "Accepted" and
+# "Decided" 2026-11-04: "as long as it's ignored until needed, otherwise we do self-harm") ---
+
+_POOLED = (
+    "endpoints:\n"
+    "  dgx1:\n"
+    "    base_url: http://127.0.0.1:8000\n"
+    "    backend: vllm\n"
+    "    pool: gpu\n"
+    "  dgx1-lcpp:\n"
+    "    base_url: http://127.0.0.1:8081\n"
+    "    backend: llama.cpp\n"
+    "    pool: gpu\n"
+    "  solo:\n"
+    "    base_url: http://127.0.0.1:8080\n"
+    "    backend: llama.cpp\n"
+)
+
+
+def test_pool_named_but_undeclared_is_noted_and_ignored(tmp_path, capsys):
+    """A ``pool:`` naming no ``pools:`` entry is one line on stderr at load and has no effect:
+    never a load or validation error, the entry stays usable, its pool reads None."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(_POOLED)
+    reg = Registry.load(cfg)
+    err = capsys.readouterr().err
+    assert ("localagents: endpoint 'dgx1': pool 'gpu' is not declared under pools:, ignoring it"
+            in err)
+    assert ("localagents: endpoint 'dgx1-lcpp': pool 'gpu' is not declared under pools:, ignoring it"
+            in err)
+    assert reg.endpoints["dgx1"].pool is None and reg.endpoints["dgx1"].invalid is None
+    assert [e.name for e in reg.real_endpoints()] == ["dgx1", "dgx1-lcpp", "solo"]
+    assert reg.pools == {}
+    assert reg.pool_members("gpu") == []
+
+
+def test_pools_block_is_read_and_members_listed(tmp_path, capsys):
+    """The ``pools:`` block (``{<name>: {max_concurrent: int}}``) is read as written and the
+    members are the entries that name it, in config order; nothing is inferred from the
+    shared host or the ports."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(_POOLED + "pools:\n  gpu:\n    max_concurrent: 1\n  ups:\n    max_concurrent: 2\n")
+    reg = Registry.load(cfg)
+    assert "pool" not in capsys.readouterr().err
+    assert reg.pools == {"gpu": {"max_concurrent": 1}, "ups": {"max_concurrent": 2}}
+    assert [e.name for e in reg.pool_members("gpu")] == ["dgx1", "dgx1-lcpp"]
+    assert reg.pool_members("ups") == []  # declared, nobody in it
+    assert reg.endpoints["dgx1"].pool == "gpu" and reg.endpoints["solo"].pool is None
+
+
+def test_no_pools_block_means_no_pool(tmp_path, capsys):
+    """A config with neither key is today's config: no pool anywhere, nothing printed, and a
+    Registry built directly (the tests' pattern) has an empty pools map too."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text("endpoints:\n  solo:\n    base_url: http://127.0.0.1:8080\n    backend: llama.cpp\n")
+    reg = Registry.load(cfg)
+    assert capsys.readouterr().err == ""
+    assert reg.pools == {} and reg.endpoints["solo"].pool is None
+    assert Registry(path=None, endpoints={}, defaults=Defaults(), raw={}, local={}).pools == {}
+
+
+@pytest.mark.parametrize("block", [
+    "pools:\n  gpu:\n    max_concurrent: \"1\"\n",  # quoted
+    "pools:\n  gpu:\n    max_concurrent: 0\n",
+    "pools:\n  gpu:\n    max_concurrent: true\n",
+    "pools:\n  gpu: {}\n",  # no cap at all
+    "pools:\n  gpu: 1\n",  # not a mapping
+])
+def test_a_pool_with_a_bad_cap_is_noted_and_ignored(tmp_path, capsys, block):
+    """A ``pools:`` entry whose cap is not a whole number of 1 or more is named once on stderr
+    and ignored, never coerced and never an error that takes its members down; its members
+    then belong to no pool."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(_POOLED + block)
+    reg = Registry.load(cfg)
+    err = capsys.readouterr().err
+    assert ("localagents: pool 'gpu': max_concurrent must be a whole number of 1 or more, "
+            "ignoring the pool") in err
+    assert reg.pools == {}
+    assert reg.endpoints["dgx1"].pool is None and reg.endpoints["dgx1"].invalid is None

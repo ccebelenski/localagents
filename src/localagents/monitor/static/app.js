@@ -636,7 +636,7 @@
 
   // 3.7g: the pill is a WORD, so the state never rests on colour alone; succeeded reads "done"
   // (a finished job in a log is done, not a report label), failed and cancelled keep their own
-  // words, and the class is mechanical — pill-<status>, the seven names db.py's status check
+  // words, and the class is mechanical — pill-<status>, the eight names db.py's status check
   // allows, every one styled
   function statusPill(status) {
     var cls = "pill pill-" + status;

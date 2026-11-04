@@ -611,12 +611,128 @@ _V11 = [
 ]
 
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 11.
+# Version 12 (router 11, router-design spec §7 "Accepted" 2026-11-04, §4 "Consumer
+# requirement", §13): ``jobs.routed_by`` (the routing record Task 12 writes; NULL for a job
+# named directly), ``queue_entries.blocked_by`` (why a queued entry waits: ``pool`` when the
+# pool's cap held it, ``endpoint`` when the endpoint's own capacity or the queue order did; NULL
+# when admitted or never evaluated) and ``'dropped'`` in the ``jobs.status`` CHECK (a job that
+# left the queue without a session; ``started_at`` stays NULL).
+#
+# SQLite cannot alter a CHECK, and jobs is referenced by nine tables (requests, tool_calls and
+# transcripts with ON DELETE CASCADE), so the status change is the sqlite.org ALTER TABLE page's
+# "Making Other Kinds Of Table Schema Changes" procedure, its twelve steps as followed here:
+#   1. "If foreign key constraints are enabled, disable them using PRAGMA foreign_keys=OFF."
+#      ``migrate`` does it before its BEGIN (the pragma is a no-op inside a transaction); the
+#      step refuses to run with them on, because DROP TABLE jobs would then be an implicit
+#      DELETE that cascades the requests, tool_calls and transcripts rows away.
+#   2. "Start a transaction." ``migrate``'s ``immediate``.
+#   3. "Remember the format of all indexes, triggers, and views associated with table X." The
+#      index and trigger SQL whose tbl_name is jobs is read from sqlite_master (any index the
+#      operator made by hand comes back too; the 3.9E audit once did). This schema has no views.
+#   4. "Use CREATE TABLE to construct a new table "new_X" that is in the desired revised format
+#      of table X." ``jobs_new``: v11's columns in v11's order with v11's types, NOT NULLs and
+#      defaults, the CHECK gaining 'dropped', and routed_by appended (it lands where an
+#      ALTER TABLE ADD COLUMN would put it, so no separate ALTER is needed).
+#   5. "Transfer content from X into new_X using a statement like: INSERT INTO new_X SELECT
+#      ... FROM X." The rowid is carried too: jobs has a TEXT key, so its rowid is its own
+#      column, and list_jobs and the monitor's tail break created_at ties by it.
+#   6. "Drop the old table X: DROP TABLE X."
+#   7. "Change the name of new_X to X using: ALTER TABLE new_X RENAME TO X." (New to old, never
+#      old out of the way first: the children's REFERENCES jobs(id) text never changes.)
+#   8. "Use CREATE INDEX, CREATE TRIGGER, and CREATE VIEW to reconstruct indexes, triggers, and
+#      views associated with table X." The SQL saved at step 3, replayed.
+#   9. "If any views refer to table X in a way that is affected by the schema change, then drop
+#      those views using DROP VIEW and recreate them." None exist, and no column was renamed.
+#  10. "If foreign key constraints were originally enabled then run PRAGMA foreign_key_check to
+#      verify that the schema change did not break any foreign key constraints." Run before the
+#      rebuild and after it: a violation the file did not already hold raises, which rolls the
+#      whole migration back. A violation an older build left behind is not this change's and
+#      does not wedge every open of the operator's file.
+#  11. "Commit the transaction started in step 2." ``migrate``'s ``immediate``.
+#  12. "If foreign keys constraints were originally enabled, reenable them now." ``migrate``,
+#      in a finally.
+# ``queue_entries.blocked_by`` is a plain ALTER TABLE ADD COLUMN (a CHECK on an added column is
+# allowed; no row holds a value yet).
+_JOBS_V11_COLUMNS = (
+    "id", "mcp_server_id", "endpoint_id", "model_id", "task", "cwd", "isolation", "status",
+    "created_at", "started_at", "finished_at", "updated", "session_id", "result", "error",
+    "last_activity", "num_turns", "context", "generated_tokens", "prompt_tokens_processed",
+    "prompt_tokens_cached", "cache_hit_ratio", "prompt_tps", "generate_tps",
+    "spec_decode_acceptance", "worktree", "dump", "log_events", "compactions", "priority",
+    "calibration", "gates",
+)
+_JOBS_V12 = """CREATE TABLE jobs_new (
+        id            TEXT PRIMARY KEY,
+        mcp_server_id TEXT REFERENCES mcp_servers(id),
+        endpoint_id   INTEGER REFERENCES endpoints(id),
+        model_id      INTEGER REFERENCES models(id),
+        task          TEXT,
+        cwd           TEXT,
+        isolation     TEXT CHECK (isolation IN ('none', 'worktree')),
+        status        TEXT CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timeout', 'lost', 'dropped')),
+        created_at    REAL,
+        started_at    REAL,
+        finished_at   REAL,
+        updated       REAL,
+        session_id    TEXT,
+        result        TEXT,
+        error         TEXT,
+        last_activity TEXT,
+        num_turns     INTEGER,
+        context       INTEGER,
+        generated_tokens        INTEGER,
+        prompt_tokens_processed INTEGER,
+        prompt_tokens_cached    INTEGER,
+        cache_hit_ratio         REAL,
+        prompt_tps              REAL,
+        generate_tps            REAL,
+        spec_decode_acceptance  REAL,
+        worktree      TEXT,
+        dump          INTEGER,
+        log_events    INTEGER,
+        compactions   INTEGER NOT NULL DEFAULT 0,
+        priority      TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('urgent', 'normal', 'background')),
+        calibration   INTEGER NOT NULL DEFAULT 0,
+        gates         TEXT,
+        routed_by     TEXT
+    )"""
+
+
+def _v12(conn: sqlite3.Connection) -> None:
+    if conn.execute("PRAGMA foreign_keys").fetchone()[0]:
+        raise SchemaError(
+            "schema version 12 rebuilds jobs and must run with foreign_keys off (DROP TABLE jobs "
+            "would cascade-delete its requests, tool_calls and transcripts rows); migrate() turns "
+            "them off before its transaction"
+        )
+    before = {tuple(r) for r in conn.execute("PRAGMA foreign_key_check")}
+    saved = [r[0] for r in conn.execute(
+        "SELECT sql FROM sqlite_master WHERE tbl_name = 'jobs' AND type IN ('index', 'trigger')"
+        " AND sql IS NOT NULL ORDER BY rowid"
+    ).fetchall()]
+    conn.execute(_JOBS_V12)
+    cols = ", ".join(_JOBS_V11_COLUMNS)
+    conn.execute(f"INSERT INTO jobs_new (rowid, {cols}) SELECT rowid, {cols} FROM jobs")
+    conn.execute("DROP TABLE jobs")
+    conn.execute("ALTER TABLE jobs_new RENAME TO jobs")
+    for sql in saved:
+        conn.execute(sql)
+    conn.execute("ALTER TABLE queue_entries ADD COLUMN blocked_by TEXT"
+                 " CHECK (blocked_by IN ('pool', 'endpoint'))")
+    broken = {tuple(r) for r in conn.execute("PRAGMA foreign_key_check")} - before
+    if broken:
+        raise SchemaError(f"schema version 12 would break foreign keys: {sorted(broken)[:5]}")
+
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 12.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5), _v6,
-    _statements(_V7), _statements(_V8), _v9, _statements(_V10), _statements(_V11),
+    _statements(_V7), _statements(_V8), _v9, _statements(_V10), _statements(_V11), _v12,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
+# the steps that rebuild a table other tables reference: migrate() runs a pending one with
+# foreign keys off (the sqlite.org procedure's step 1, which a transaction cannot do)
+FOREIGN_KEYS_OFF_STEPS = frozenset({_v12})
 
 
 def _version(conn: sqlite3.Connection) -> int:
@@ -638,13 +754,24 @@ def migrate(conn: sqlite3.Connection) -> None:
             f"database schema version {v} is newer than this localagents knows ({SCHEMA_VERSION}); "
             "upgrade localagents or point LOCALAGENTS_DB at another file"
         )
-    with immediate(conn):
-        v = _version(conn)
-        if v > SCHEMA_VERSION:  # another process upgraded it between the two reads
-            raise SchemaError(f"database schema version {v} is newer than this localagents knows ({SCHEMA_VERSION})")
-        for n in range(v, SCHEMA_VERSION):
-            MIGRATIONS[n](conn)
-            conn.execute(f"PRAGMA user_version = {n + 1}")
+    # a pending table rebuild needs foreign keys off, and the pragma only takes effect outside
+    # a transaction; the version read above can only be older than the one re-read inside, so
+    # this turns them off whenever the locked loop might run such a step
+    fk_off = any(MIGRATIONS[n] in FOREIGN_KEYS_OFF_STEPS for n in range(v, SCHEMA_VERSION))
+    fk_was_on = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    if fk_off and fk_was_on:
+        conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        with immediate(conn):
+            v = _version(conn)
+            if v > SCHEMA_VERSION:  # another process upgraded it between the two reads
+                raise SchemaError(f"database schema version {v} is newer than this localagents knows ({SCHEMA_VERSION})")
+            for n in range(v, SCHEMA_VERSION):
+                MIGRATIONS[n](conn)
+                conn.execute(f"PRAGMA user_version = {n + 1}")
+    finally:
+        if fk_off and fk_was_on:
+            conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _set_wal(conn: sqlite3.Connection) -> None:

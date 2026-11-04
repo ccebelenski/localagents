@@ -158,6 +158,11 @@ class Endpoint:
     # strings of the form "dimension >= n" ("complexity >= 3"), read off the brief's scores —
     # an endpoint carrying one is skipped as a candidate whenever its condition holds
     exclude: list[str] = field(default_factory=list)
+    # router 11 (design §7 "Accepted" 2026-11-04): the operator's name for the hardware this
+    # entry shares with others (a GPU behind several endpoints, a UPS behind several boxes).
+    # Inert until declared: a name with no ``pools:`` entry is noted at load and reset to None.
+    # Never inferred from hosts, ports or probes.
+    pool: str | None = None
     # the problem validate() found on this entry, or None. I2: the server re-reads the config
     # on every call, so one bad entry is marked (load prints it) rather than raising into every
     # running job; a marked entry probes down, is never a resolution candidate, and is not real.
@@ -213,6 +218,9 @@ class Registry:
     defaults: Defaults
     raw: dict[str, Any]  # hand-written file, read-only
     local: dict[str, Any]  # models.local.yaml, written by register_*
+    # router 11: models.yaml's optional ``pools:`` block, ``{<name>: {"max_concurrent": n}}``,
+    # the declared pools with a usable cap only (``_read_pools``); empty when there is no block
+    pools: dict[str, dict] = field(default_factory=dict)
 
     # ---------- loading ----------
     @classmethod
@@ -224,13 +232,52 @@ class Registry:
         endpoints = {name: cls._build_endpoint(name, cfg or {}) for name, cfg in merged_endpoints.items()}
         defaults = Defaults(**{**(raw.get("defaults") or {}), **(local.get("defaults") or {})})
         # A leftover ``models:`` section from older configs is ignored: served models are discovered.
-        reg = cls(path=path, endpoints=endpoints, defaults=defaults, raw=raw, local=local)
+        pools, refused = cls._read_pools(raw.get("pools"))
+        reg = cls(path=path, endpoints=endpoints, defaults=defaults, raw=raw, local=local, pools=pools)
         reg.validate()
         for ep in endpoints.values():
             if ep.invalid:
                 print(f"localagents: endpoint '{ep.name}': {ep.invalid}, ignored until fixed",
                       file=sys.stderr)
+            # a non-string (a YAML list, a number) is no pool name, and a list is unhashable
+            if ep.pool is not None and (not isinstance(ep.pool, str) or ep.pool not in pools):
+                # inert until declared (the operator, 2026-11-04: "as long as it's ignored until
+                # needed, otherwise we do self-harm"): a note, never an invalid entry. A pool the
+                # block declared with an unusable cap was named once by _read_pools already.
+                if not isinstance(ep.pool, str) or ep.pool not in refused:
+                    print(f"localagents: endpoint '{ep.name}': pool '{ep.pool}' is not declared "
+                          "under pools:, ignoring it", file=sys.stderr)
+                ep.pool = None
         return reg
+
+    @staticmethod
+    def _read_pools(block: Any) -> tuple[dict[str, dict], set]:
+        """models.yaml's ``pools:`` block as ``({name: {"max_concurrent": n}}, refused names)``.
+        Read from the hand-written file only: pools encode GPU sharing and the UPS, which only
+        the operator knows (design §7 "Accepted"), and the sidecar is written by a tool. A pool
+        whose cap is not a whole number of 1 or more is named once on stderr and left out, never
+        coerced (``max_concurrent: "1"`` is a typo, as on an entry) and never an error that
+        takes its members down; its members then belong to no pool."""
+        if block is None:
+            return {}, set()
+        if not isinstance(block, dict):
+            print("localagents: pools: must map pool names to {max_concurrent: n}, ignoring it",
+                  file=sys.stderr)
+            return {}, set()
+        pools: dict[str, dict] = {}
+        refused: set = set()
+        for name, cfg in block.items():
+            cap = cfg.get("max_concurrent") if isinstance(cfg, dict) else None
+            if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
+                print(f"localagents: pool '{name}': max_concurrent must be a whole number of 1 or "
+                      "more, ignoring the pool", file=sys.stderr)
+                refused.add(name)
+                continue
+            for k in cfg:
+                if k != "max_concurrent":
+                    print(f"localagents: pool '{name}': ignoring unknown key '{k}'", file=sys.stderr)
+            pools[name] = {"max_concurrent": cap}
+        return pools, refused
 
     @staticmethod
     def _build_endpoint(name: str, cfg: dict) -> Endpoint:
@@ -446,6 +493,13 @@ class Registry:
         names = list(self.endpoints)
         results = await asyncio.gather(*(self.probe(self.endpoints[n]) for n in names))
         return dict(zip(names, results))
+
+    def pool_members(self, name: str) -> list[Endpoint]:
+        """The entries whose ``pool:`` is ``name``, in config order: the endpoints one pool's
+        cap counts sessions across (router 11). Invalid entries stay members: a session admitted
+        while the entry was good still occupies the shared hardware. Router entries hold no
+        sessions and are never members. An undeclared name has no members (load reset them)."""
+        return [e for e in self.endpoints.values() if e.pool == name and not e.is_router]
 
     def real_endpoints(self) -> list[Endpoint]:
         """The entries that serve ``/v1/messages`` themselves, in config order.

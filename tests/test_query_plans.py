@@ -45,7 +45,8 @@ _LIST_LIVE_SQL_OLD = (
 @pytest.fixture
 def conn(tmp_path):
     """A fresh current-schema file with a handful of jobs rows inserted by hand (the columns
-    are _V1's). Row shape per the 3.9E probes: six finished, one running, one queued."""
+    are _V1's). Row shape per the 3.9E probes: six finished, one running, one queued (and, since
+    router 11, one dropped)."""
     c = db.open_db(tmp_path / "plans.db")
     rows = [
         # id, status, created_at, started_at, finished_at
@@ -57,6 +58,8 @@ def conn(tmp_path):
         ("j6", "cancelled", 150.0, 240.0, 260.0),
         ("j7", "running", 160.0, 200.0, None),
         ("j8", "queued", 170.0, None, None),
+        # router 11 (schema v12): left the queue without a session, never started
+        ("j9", "dropped", 180.0, None, 181.0),
     ]
     for jid, status, created, started, finished in rows:
         c.execute(
@@ -115,13 +118,15 @@ def test_e3_live_only_branch_seeks_the_status_index(conn):
 
 
 def test_e3_rewritten_predicate_selects_the_same_rows(conn):
-    """The rewrite is sound: the CHECK in ``_V1`` admits exactly seven statuses and
-    ``_TERMINAL_STATUSES`` names five of them, so ``status IN ('queued','running')`` and
-    ``status NOT IN (<the five terminal>)`` select the same rows (a NULL status passes neither,
-    in both forms)."""
+    """The rewrite is sound: the status CHECK admits exactly eight statuses (``_V1``'s seven,
+    and ``dropped`` since schema v12) and ``_TERMINAL_STATUSES`` names six of them, so
+    ``status IN ('queued','running')`` and ``status NOT IN (<the six terminal>)`` select the
+    same rows (a NULL status passes neither, in both forms)."""
+    assert server._TERMINAL_STATUSES == ("succeeded", "failed", "cancelled", "timeout", "lost", "dropped")
     new = {r["id"] for r in conn.execute("SELECT id FROM jobs WHERE status IN ('queued', 'running')")}
     old = {r["id"] for r in conn.execute(
-        "SELECT id FROM jobs WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'timeout', 'lost')")}
+        "SELECT id FROM jobs WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'timeout', 'lost',"
+        " 'dropped')")}
     assert new == old == {"j7", "j8"}
 
 
@@ -131,3 +136,17 @@ def test_e3_list_all_branch_still_walks_created_at(conn):
     left it alone."""
     plan = _plan(conn, server._LIST_JOBS_SQL[True], (50,))
     assert any("SCAN jobs USING INDEX jobs_created_at" in d for d in plan), plan
+
+
+def test_queue_head_seeks_queue_entries_dispatch(conn):
+    """Router 11 (design §13: "The query plans for the queue head ... are pinned in
+    tests/test_query_plans.py like the existing ones"): an endpoint's waiting entries, in
+    order, are a seek of ``queue_entries_dispatch`` (endpoint_id, admitted, priority_rank,
+    enqueued) that also yields the order (the index ends in the rowid tie-break), never a
+    walk of the queue's history or a sort."""
+    from localagents.router import queue
+
+    plan = _plan(conn, queue._WAITING_SQL, (1, 1000.0))
+    assert any("SEARCH q USING INDEX queue_entries_dispatch (endpoint_id=? AND admitted=?)" in d
+               for d in plan), plan
+    assert not any("TEMP B-TREE" in d for d in plan), plan

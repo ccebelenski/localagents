@@ -532,3 +532,18 @@ def test_status_collect_excludes_calibration_jobs_from_counts(monkeypatch, tmp_p
         "  ⟳ cal Qwen3.8-Flash-Next 20s · 40 t/s",
         "+1 job in another session",
     ]
+
+
+def test_every_status_has_a_mark_and_the_monitor_legend_is_the_same_map():
+    """Router 11: ``dropped`` joins the statuses, so the mark map covers every status the
+    jobs CHECK admits (queued, running and every terminal one) and the monitor's browser copy
+    (``job.js``'s ``var MARK``, "the status bar's marks (status.py MARK)") says the same thing
+    character for character."""
+    import json
+    import re
+
+    assert set(status.MARK) == {"queued", "running", *jobs.TERMINAL_STATUSES}
+    js = (Path(status.__file__).parent / "monitor" / "static" / "job.js").read_text()
+    literal = re.search(r"var MARK = (\{[^}]*\});", js).group(1)
+    legend = json.loads(re.sub(r"(\w+):", r'"\1":', literal))
+    assert legend == status.MARK

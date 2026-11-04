@@ -237,7 +237,7 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .job-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
 .job-name { font-weight: 600; font-size: 16.5px; }
 .status { font-size: 13px; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; white-space: nowrap; }
-.status-queued, .status-cancelled { color: var(--muted); }
+.status-queued, .status-cancelled, .status-dropped { color: var(--muted); }
 .status-lost { color: var(--warning); border-color: var(--warning); }
 .status-running { color: var(--accent); border-color: var(--accent); }
 .status-succeeded { color: var(--good); border-color: var(--good); }
@@ -328,7 +328,7 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .pill { display: inline-block; font-size: 12px; font-weight: 600; line-height: 1.5;
   padding: 0 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
 .pill-running { color: var(--accent); border-color: var(--accent); }
-.pill-queued { color: var(--muted); border-color: var(--border); }
+.pill-queued, .pill-dropped { color: var(--muted); border-color: var(--border); }
 .pill-succeeded { color: var(--good); border-color: var(--good); }
 .pill-failed, .pill-cancelled { color: var(--critical); border-color: var(--critical); }
 .pill-timeout, .pill-lost { color: var(--warning); border-color: var(--warning); }

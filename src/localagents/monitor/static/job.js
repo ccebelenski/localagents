@@ -28,10 +28,11 @@
   var SVGNS = "http://www.w3.org/2000/svg";
 
   // the status bar's marks (status.py MARK): one character per status
-  var MARK = { queued: "…", running: "⟳", succeeded: "✓", failed: "✗", timeout: "⏱", cancelled: "∅", lost: "†" };
+  var MARK = { queued: "…", running: "⟳", succeeded: "✓", failed: "✗", timeout: "⏱", cancelled: "∅", lost: "†", dropped: "↓" };
   var STATUS_CLASSES = {
     queued: "status-queued", running: "status-running", succeeded: "status-succeeded",
     failed: "status-failed", timeout: "status-timeout", cancelled: "status-cancelled", lost: "status-lost",
+    dropped: "status-dropped",
   };
   // tool mark colours: deterministic per tool name over the overview's palette; an error mark
   // is the critical colour, never a tool colour

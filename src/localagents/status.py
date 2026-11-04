@@ -178,7 +178,10 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
             conn.close()
 
 
-MARK = {"queued": "…", "running": "⟳", "succeeded": "✓", "failed": "✗", "timeout": "⏱", "cancelled": "∅", "lost": "†"}
+# dropped (router 11): a job that left the queue without ever running; the down arrow reads as
+# "fell off the queue", is one cell wide in every terminal font, and is no other status's mark
+MARK = {"queued": "…", "running": "⟳", "succeeded": "✓", "failed": "✗", "timeout": "⏱", "cancelled": "∅", "lost": "†",
+        "dropped": "↓"}
 
 
 def _n(count: int, noun: str) -> str:

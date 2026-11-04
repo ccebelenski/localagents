@@ -82,7 +82,15 @@ PROGRESS_INTERVAL_S = 60.0
 
 # The statuses that mean the job is over: Job.done reads it, and so do the server's row reads
 # (server._TERMINAL_STATUSES is this tuple) — one list, so the two can never disagree.
-TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "timeout", "lost")
+# ``dropped`` (router 11, design §7 "Accepted"): the job left the queue without a session; its
+# ``error`` names the cause and ``started_at`` stays null.
+TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "timeout", "lost", "dropped")
+
+# A server's heartbeat (``mcp_servers.updated``) is fresh this long: the spec's Liveness window.
+# ``mark_lost_jobs`` reads it, and so does the router queue's stale-owner rule (design §7: "the
+# store's liveness window (the one mark_lost_jobs uses)"), which imports it rather than keep a
+# second 60. status.collect and monitor.read keep their own copies of the same number.
+SERVER_LIVE_S = 60.0
 
 
 def oldest_first(job: "Job") -> tuple[bool, float]:
@@ -101,7 +109,7 @@ class Job:
     cwd: str
     run_cwd: str
     isolation: str
-    status: str = "queued"  # queued|running|succeeded|failed|cancelled|timeout
+    status: str = "queued"  # queued|running|succeeded|failed|cancelled|timeout|lost|dropped
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
@@ -533,7 +541,7 @@ class JobStore:
                     " JOIN jobs j ON j.mcp_server_id = s.id"
                     " WHERE j.status IN ('queued', 'running')"
                     "   AND (s.stopped IS NOT NULL OR s.updated IS NULL OR s.updated < ?)",
-                    (now - 60,),
+                    (now - SERVER_LIVE_S,),
                 ).fetchall()
                 if r["stopped"] is not None or r["pid"] is None or not db.pid_alive(r["pid"], strict=True)
             ]

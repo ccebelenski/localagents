@@ -57,7 +57,10 @@ COLUMNS = {
              "spec_decode_acceptance", "worktree", "dump", "log_events", "compactions",
              # version 10 (router 1): ALTER ADD COLUMN appends; priority is the caller's,
              # calibration marks a probe job, gates is the gate feed's verdicts
-             "priority", "calibration", "gates"],
+             "priority", "calibration", "gates",
+             # version 12 (router 11): the rebuild keeps v11's columns in order and appends the
+             # routing record (Task 12 fills it; design §4 "Consumer requirement")
+             "routed_by"],
     "requests": ["job_id", "path_id", "t", "http_status", "ms", "gen_ms", "stream", "input_tokens",
                  "output_tokens", "cache_read_tokens", "cache_creation_tokens", "messages", "tools", "bytes",
                  "moved_system", "folded_text", "context_exceeded", "error"],
@@ -73,7 +76,9 @@ COLUMNS = {
                         "jobs_n", "thin", "defs_version"],
     "endpoint_capacity": ["endpoint_id", "kind", "curve", "state", "points", "updated"],
     "queue_entries": ["job_id", "endpoint_id", "owner_server", "priority_rank", "enqueued",
-                      "admitted", "forced"],
+                      "admitted", "forced",
+                      # version 12 (router 11): why a queued entry waits (pool | endpoint)
+                      "blocked_by"],
     "router_tickets": ["job_id", "defs_version", "pass_id", "scores", "rows", "chosen_row",
                        "divert", "divert_at", "est_wait_s", "admitted", "flags"],
     "verdicts": ["job_id", "accepted", "dimensions", "at"],
@@ -122,12 +127,14 @@ def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     version-7 step (3.9E audit finding E1: jobs_finished_at), the version-8 step (story 1.11:
     transcripts), the version-9 step (3.10f-1: jobs.name dropped) and the version-10 step
     (router 1, router-design spec §13: the router's tables and jobs' priority, calibration and
-    gates) and the version-11 step (router 1 review M7: the ticket's, cell's and correction's
-    references, rebuilt in place), so it comes up at version 11 with them."""
+    gates), the version-11 step (router 1 review M7: the ticket's, cell's and correction's
+    references, rebuilt in place) and the version-12 step (router 11: jobs.routed_by,
+    queue_entries.blocked_by, the status CHECK's 'dropped'), so it comes up at version 12
+    with them."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
-    assert db.SCHEMA_VERSION == 11 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    assert db.SCHEMA_VERSION == 12 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -738,7 +745,7 @@ def test_v10_creates_the_router_tables_with_not_null_keys(dbfile):
     the spec leaves optional are nullable: a ticket predates its choice and predates the pass
     it cites, a skipped probe never had a job."""
     conn = db.open_db()
-    assert db.SCHEMA_VERSION == 11 == len(db.MIGRATIONS)
+    assert db.SCHEMA_VERSION == 12 == len(db.MIGRATIONS)
     assert ROUTER_TABLES <= _names(conn, "table")
     nullable_refs, refs = set(), {}
     for table in sorted(ROUTER_TABLES):
@@ -873,6 +880,173 @@ def test_v11_declares_the_three_references(dbfile):
         conn.execute("INSERT INTO scorecard_cells (pass_id, dimension, language, estimate, count,"
                      " thin, defs_version) VALUES ('p1', 'tool_use', '', 1.0, 1.0, 0, 99)")
     conn.close()
+
+
+# version 12 (router 11): the nine tables whose job_id references jobs(id); the rebuild of jobs
+# must hand each of them its parent back untouched (grep 'REFERENCES jobs' src/localagents/db.py)
+JOBS_CHILDREN = ("requests", "tool_calls", "transcripts", "queue_entries", "router_tickets",
+                 "verdicts", "category_corrections", "speed_samples", "calibration_results")
+
+
+def _v11_file(path: Path, *, orphan: bool = False) -> None:
+    """A file as router 1 left it: every step through version 11 ran, user_version says 11,
+    and one row sits in every table that references jobs, with its parents. The two jobs carry
+    explicit, non-adjacent rowids (``list_jobs`` and the monitor's tail break created_at ties
+    by rowid, so the rebuild must keep them), and jobs carries an index written by hand, as the
+    3.9E audit once did, so the rebuild is tested against what a real file can hold.
+    ``orphan`` adds a tool_calls row whose job never existed: a violation the file already had."""
+    raw = sqlite3.connect(path)
+    for step in db.MIGRATIONS[:11]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 11")
+    raw.execute("CREATE INDEX jobs_by_hand ON jobs(session_id)")
+    raw.execute("INSERT INTO mcp_servers (id, pid, started, updated) VALUES ('s1', 1, 1.0, 1.0)")
+    ep = db.lookup_id(raw, "endpoints", name="ai1", base_url="http://ai1:8080", backend="strata",
+                      host="ai1", now=1.0)
+    m = db.lookup_id(raw, "models", served_id="Qwen3.8-Flash-Next")
+    p = db.lookup_id(raw, "paths", path="/v1/messages")
+    raw.execute("INSERT INTO jobs (rowid, id, mcp_server_id, endpoint_id, model_id, task, cwd, isolation,"
+                " status, created_at, started_at, finished_at, updated, session_id, result, num_turns,"
+                " worktree, compactions, priority, calibration, gates)"
+                " VALUES (7, 'j1', 's1', ?, ?, 'the task', '/w', 'worktree', 'succeeded', 10.0, 11.0,"
+                " 20.0, 20.0, 'sess', 'done', 4, '{\"root\": \"/w\"}', 2, 'urgent', 1, '{\"g\": 1}')",
+                (ep, m))
+    raw.execute("INSERT INTO jobs (rowid, id, mcp_server_id, endpoint_id, model_id, status, created_at)"
+                " VALUES (3, 'j2', 's1', ?, ?, 'queued', 10.0)", (ep, m))
+    raw.execute("INSERT INTO dimension_definitions (version, document, created) VALUES (1, '{}', 1.0)")
+    raw.execute("INSERT INTO scorecard_rows (endpoint_name, served_id, endpoint_id, model_id, created)"
+                " VALUES ('ai1', 'qwen', ?, ?, 1.0)", (ep, m))
+    row_id = raw.execute("SELECT id FROM scorecard_rows").fetchone()[0]
+    raw.execute("INSERT INTO scorecard_passes (id, row_id, at, constants, observations)"
+                " VALUES ('p1', ?, 1.0, '{}', 0)", (row_id,))
+    raw.execute("INSERT INTO calibration_runs (id, row_id, tier, set_version, plan, started, status)"
+                " VALUES ('r1', ?, 'core', '1', '[]', 1.0, 'complete')", (row_id,))
+    raw.execute("INSERT INTO requests (job_id, path_id, t, http_status) VALUES ('j1', ?, 12.0, 200)", (p,))
+    raw.execute("INSERT INTO tool_calls (job_id, t, tool, tool_use_id) VALUES ('j1', 12.0, 'Read', 'tu1')")
+    raw.execute("INSERT INTO transcripts (job_id, text, bytes, written) VALUES ('j1', 'line', 4, 20.0)")
+    raw.execute("INSERT INTO queue_entries (job_id, endpoint_id, owner_server, priority_rank, enqueued)"
+                " VALUES ('j2', ?, 's1', 1, 10.0)", (ep,))
+    raw.execute("INSERT INTO router_tickets (job_id, defs_version, pass_id, scores, rows, chosen_row, divert)"
+                " VALUES ('j1', 1, 'p1', '{}', '[]', ?, 0)", (row_id,))
+    raw.execute("INSERT INTO verdicts (job_id, accepted, at) VALUES ('j1', 1, 21.0)")
+    raw.execute("INSERT INTO category_corrections (id, job_id, brief, scored, corrected, defs_version, at)"
+                " VALUES (1, 'j1', 'the brief', '{}', '{}', 1, 21.0)")
+    raw.execute("INSERT INTO speed_samples (job_id, endpoint_id, sessions, generate_tps, at)"
+                " VALUES ('j1', ?, 1, 55.5, 20.0)", (ep,))
+    raw.execute("INSERT INTO calibration_results (run_id, probe_id, job_id, status, seconds)"
+                " VALUES ('r1', 'probe-a', 'j1', 'pass', 9.0)")
+    if orphan:
+        raw.execute("INSERT INTO tool_calls (job_id, t, tool) VALUES ('ghost', 1.0, 'Bash')")
+    raw.commit()
+    raw.close()
+
+
+def _dump(path: Path) -> dict:
+    """Every jobs row with its rowid, every child row, jobs' columns and indexes: the facts the
+    rebuild must carry, read on a plain connection (no Row factory, so rows compare as tuples)."""
+    raw = sqlite3.connect(path)
+    try:
+        return {
+            "jobs": raw.execute("SELECT rowid, * FROM jobs ORDER BY rowid").fetchall(),
+            "children": {t: raw.execute(f"SELECT rowid, * FROM {t} ORDER BY rowid").fetchall()
+                         for t in JOBS_CHILDREN},
+            "info": raw.execute("PRAGMA table_info(jobs)").fetchall(),
+            "indexes": raw.execute("SELECT name, sql FROM sqlite_master WHERE type = 'index'"
+                                   " AND tbl_name = 'jobs' ORDER BY name").fetchall(),
+            "fk_check": raw.execute("PRAGMA foreign_key_check").fetchall(),
+        }
+    finally:
+        raw.close()
+
+
+def test_v12_jobs_status_check_admits_dropped(dbfile):
+    """Router 11 (design §7 "Accepted"): ``dropped`` is a status the CHECK admits beside the
+    seven, nothing else is; ``queue_entries.blocked_by`` takes pool, endpoint or NULL."""
+    conn = db.open_db()
+    conn.execute("INSERT INTO jobs (id, status) VALUES ('d', 'dropped')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO jobs (id, status) VALUES ('bad', 'dropped-ish')")
+    conn.execute("INSERT INTO mcp_servers (id) VALUES ('s1')")
+    ep = db.lookup_id(conn, "endpoints", name="e", base_url="http://e", backend="vllm", host="e")
+    ins = ("INSERT INTO queue_entries (job_id, endpoint_id, owner_server, priority_rank, enqueued,"
+           " blocked_by) VALUES (?, ?, 's1', 1, 1.0, ?)")
+    for i, why in enumerate(("pool", "endpoint", None)):
+        conn.execute("INSERT INTO jobs (id, status) VALUES (?, 'queued')", (f"q{i}",))
+        conn.execute(ins, (f"q{i}", ep, why))
+    conn.execute("INSERT INTO jobs (id, status) VALUES ('q9', 'queued')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(ins, ("q9", ep, "order"))
+    assert conn.execute("SELECT routed_by FROM jobs WHERE id = 'd'").fetchone()[0] is None
+    conn.close()
+
+
+def test_v12_rebuild_keeps_every_referencing_row_and_fk_check_is_clean(dbfile):
+    """The sqlite.org generic procedure on a referenced table: a v11 file holding a row in
+    every table that references jobs opens at version 12 with every row intact (jobs' rowids
+    included), jobs column for column as it was plus routed_by, its indexes (the hand-made one
+    too) back, ``PRAGMA foreign_key_check`` empty, foreign keys enforced again on the
+    connection, and the references still live and still cascading where they did."""
+    _v11_file(dbfile)
+    before = _dump(dbfile)
+    assert before["fk_check"] == []
+    assert all(len(rows) == 1 for rows in before["children"].values())  # a row in each
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1  # restored after the step
+    conn.close()
+    after = _dump(dbfile)
+    assert after["fk_check"] == []
+    assert after["children"]["queue_entries"] == [r + (None,) for r in before["children"]["queue_entries"]]
+    for t in JOBS_CHILDREN:
+        if t != "queue_entries":  # blocked_by appended there, NULL on the old row
+            assert after["children"][t] == before["children"][t], t
+    assert after["jobs"] == [r + (None,) for r in before["jobs"]]  # routed_by NULL, rowids kept
+    assert [r[0] for r in after["jobs"]] == [3, 7]
+    assert after["info"][:-1] == before["info"]  # type, NOT NULL, default, pk: column for column
+    assert after["info"][-1] == (len(before["info"]), "routed_by", "TEXT", 0, None, 0)
+    assert after["indexes"] == before["indexes"]
+    assert "jobs_by_hand" in {r[0] for r in after["indexes"]}
+    raw = sqlite3.connect(dbfile)
+    jobs_sql = raw.execute("SELECT sql FROM sqlite_master WHERE name = 'jobs'").fetchone()[0]
+    raw.close()
+    assert "'dropped'" in jobs_sql and "jobs_new" not in jobs_sql
+
+    conn = db.open_db()
+    with pytest.raises(sqlite3.IntegrityError):  # a reference to the rebuilt table is live
+        conn.execute("INSERT INTO verdicts (job_id, accepted, at) VALUES ('ghost', 1, 1.0)")
+    fks = {r["table"]: r for r in conn.execute("PRAGMA foreign_key_list(requests)")}
+    assert fks["jobs"]["on_delete"] == "CASCADE"
+    for t in JOBS_CHILDREN:  # every child still names jobs, never the swap's temporary name
+        assert "jobs" in {r["table"] for r in conn.execute(f"PRAGMA foreign_key_list({t})")}, t
+    conn.close()
+
+
+def test_v12_step_refuses_to_run_with_foreign_keys_on(dbfile):
+    """With foreign keys on, DROP TABLE jobs is an implicit DELETE: requests, tool_calls and
+    transcripts would cascade away. The step refuses instead of running (``migrate`` turns
+    them off outside the transaction, the procedure's step 1), and the file is untouched."""
+    _v11_file(dbfile)
+    raw = sqlite3.connect(dbfile, isolation_level=None)
+    raw.execute("PRAGMA foreign_keys = ON")
+    raw.execute("BEGIN IMMEDIATE")
+    with pytest.raises(db.SchemaError, match="foreign_keys"):
+        db.MIGRATIONS[11](raw)
+    raw.execute("ROLLBACK")
+    assert raw.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 1
+    raw.close()
+
+
+def test_v12_tolerates_a_violation_the_file_already_had(dbfile):
+    """The procedure's foreign_key_check proves the change broke nothing: it compares against
+    the file's own check taken before the rebuild, so an orphan row an older build left behind
+    does not wedge every open of the file (the operator's database is opened on every call)."""
+    _v11_file(dbfile, orphan=True)
+    before = _dump(dbfile)["fk_check"]
+    assert len(before) == 1 and before[0][0] == "tool_calls"
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    conn.close()
+    assert _dump(dbfile)["fk_check"] == before
 
 
 def _fake_proc(monkeypatch, files):

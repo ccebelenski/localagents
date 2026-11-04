@@ -182,7 +182,7 @@ def _server_live(row: sqlite3.Row, now: float) -> bool:
 
 # story 3.7g: the snapshot's jobs list is the page's Recent jobs log — live jobs first, then a
 # capped tail of finished ones. Terminal is jobs.py's ``done`` check: every status that is not
-# queued or running (succeeded, failed, cancelled, timeout, lost).
+# queued or running (succeeded, failed, cancelled, timeout, lost, dropped).
 LIVE_STATUSES = ("queued", "running")
 KEEP_FINISHED = 10  # the log's finished tail (the page's "then the last 10 finished" note)
 
