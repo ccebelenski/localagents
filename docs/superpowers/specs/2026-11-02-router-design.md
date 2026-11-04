@@ -325,6 +325,24 @@ the one that honours them: the hand-honoured version reads the depth at prefligh
 later, and two sessions dispatching at once both see depth zero. The depth stays visible either
 way (`preflight`, `queue`, `list_models` `sessions`/`queued`, the status line).
 
+**Accepted (2026-11-04).** Both proposals adopted: the consumer side accepted them and the operator
+relayed the acceptance; the operator may reverse either in a line before Task 11 is dispatched.
+Three consumer asks come with them, binding for phase 3:
+- *A job that leaves the queue without a session is `dropped`*, a new terminal status beside
+  `cancelled`, `failed` and `timeout`, with `error` naming the cause: `cancelled while queued`,
+  `row_down` (the admission re-probe found the row down, re-served or re-windowed; named jobs
+  `model_unavailable`), or `dropped by the queue tool`. `started_at` stays null. Acceptance sorts
+  every non-success into never-ran, ran-and-failed or capped from the record alone: `dropped` is
+  never-ran without reading the ticket. The sentences above and in §4 that say such a job "fails
+  with `row_down`" now mean this status; the spec text is kept.
+- *Pool and entry configuration is the operator's.* `pool:` on an entry and the `pools:` block
+  encode GPU sharing and the UPS, which neither the coordinator nor the router can learn; nothing
+  infers a pool from hosts, ports or probes (the same rule as `backend:`), and a missing `pools:`
+  block means no pool.
+- *`routed_by` names the pool* (`routed_by.pool`) when a pool cap, not the endpoint's own capacity,
+  caused the queue wait or the divert, so a retrospective can tell a capacity wait from a routing
+  choice; null otherwise.
+
 **Exposed** per real endpoint on `list_models`, the status line and the monitor's endpoint data:
 `sessions` (capacity, ours running, foreign), `queued` (count, head priority), predicted speed at
 current occupancy, curve state (prior | probed | refined, with the point count).
