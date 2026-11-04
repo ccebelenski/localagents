@@ -371,7 +371,10 @@ def _ceiling(conn, row, thin_below, errors=None):
         count += 1
         if j["finished_at"] is None:
             continue  # no finish time: it cannot be a cap, and cannot be placed under one
-        if gates.get("not_capped") is True:
+        if gates.get("not_capped") is True and int(files_n) >= 1:
+            # a read-only job (a review that committed nothing) says nothing about how many
+            # files the row can carry: it counts above but carries no reading, as the 0 on
+            # the capped side already does
             jobs.append((int(files_n), j["finished_at"]))
         elif gates.get("not_capped") is False and int(files_n) >= 1:
             # a cap that committed nothing (a timeout before any file) says at what count
@@ -532,10 +535,13 @@ def cells(conn, row_id, pass_id=None) -> list[Cell]:
 
 
 def software_dev_for(cells, language) -> Cell | None:
-    """The language's cell when it carries evidence, else the aggregate cell (``''``)."""
+    """The language's cell when it carries evidence — count > 0 AND an estimate, since a
+    thin cell reads as unknown downstream and costs the full demand — else the aggregate
+    cell (``''``)."""
     if language:
         for c in cells:
-            if c.dimension == "software_dev" and c.language == language and c.count > 0:
+            if (c.dimension == "software_dev" and c.language == language
+                    and c.count > 0 and c.estimate is not None):
                 return c
     for c in cells:
         if c.dimension == "software_dev" and c.language == "":

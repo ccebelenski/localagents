@@ -158,6 +158,28 @@ def test_prior_llamacpp_bottlenecks_at_two_vllm_does_not():
     assert not Capacity("pooled", 3, curve=vl).bottleneck_slot(1)
 
 
+def test_bottleneck_slot_counts_foreign_sessions():
+    """The session this job would become is the same occupancy ``admits`` counts — ours +
+    foreign + 1, foreign = max(0, requests_running - ours) — so a box holding one foreign
+    session admits our normal job as the session AFTER it, not the first. The old ours-only
+    arithmetic read ours + 1 and checked no bottleneck at all."""
+    ll = prior_curve("llamacpp")
+    cap = Capacity("partitioned", 3, requests_running=1, curve=ll)
+    assert cap.admits(0)                 # 0 ours + 1 foreign = 1 of 3: room for the job
+    assert cap.bottleneck_slot(0)        # it enters as the 2nd session: background only
+    # a curve that bottlenecks at 3 only (2*0.85 = 1.7 clears the line, 3*0.2 does not):
+    # one of ours plus one foreign, the job enters as the 3rd session — the old
+    # arithmetic read the 2nd and said no bottleneck
+    mid = Curve({1: 1.0, 2: 0.85, 3: 0.2}, "refined", 3)
+    mixed = Capacity("pooled", 4, requests_running=2, curve=mid)
+    assert mixed.admits(1)               # 1 ours + 1 foreign = 2 of 4
+    assert mixed.bottleneck_slot(1)      # the 3rd session, not the 2nd
+    # every live request ours: the foreign term is 0 and the reading is what it always was
+    ours = Capacity("partitioned", 3, requests_running=2, curve=ll)
+    assert ours.bottleneck_slot(2)       # the 3rd session: the rule held from 2 on
+    assert not Capacity("partitioned", 3, requests_running=0, curve=ll).bottleneck_slot(0)
+
+
 def test_refine_from_samples():
     """§7: median generate_tps per concurrency, normalised to the concurrency-1 median,
     MERGED onto the prior (a concurrency with no sample yet keeps the prior's point);

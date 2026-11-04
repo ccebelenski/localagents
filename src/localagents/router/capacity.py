@@ -126,9 +126,12 @@ class Capacity:
         return ours_running + foreign < self.sessions_capacity
 
     def bottleneck_slot(self, ours_running: int) -> bool:
-        """The next admission would be the (ours_running + 1)-th concurrent session: on a row
-        whose curve bottlenecks there, §6 admits it only for background work."""
-        return self.curve.bottleneck_at(ours_running + 1)
+        """The session this job would become joins our sessions and the foreign ones at the
+        same occupancy ``admits`` counts — ours + foreign + 1 — and on a row whose curve
+        bottlenecks there, §6 admits it only for background work: the box already holds a
+        session that is not ours, and it is as much a neighbor to this job as ours are."""
+        foreign = max(0, self.requests_running - ours_running)
+        return self.curve.bottleneck_at(ours_running + foreign + 1)
 
 
 def from_probe(ep: Endpoint, probe: dict, served_id: str, curve: Curve) -> Capacity:

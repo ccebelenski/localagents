@@ -262,6 +262,24 @@ def test_language_none_feeds_only_the_aggregate_cell(conn):
     assert scorecard.software_dev_for(sd, "none").language == ""
 
 
+def test_software_dev_for_skips_a_thin_language_cell(conn):
+    """A language cell carries evidence only with count > 0 AND an estimate: a thin cell
+    (count > 0, estimate None) handed to selection reads as unknown there, charging the
+    full demand where the aggregate cell knows the row's real estimate."""
+    row = _setup(conn)
+    probes = {}
+    for i in range(3):   # three aggregate accepts: the aggregate clears MIN_COUNT
+        _probe(conn, row, f"a{i}", "pass", started=100.0 + i)
+        probes[f"a{i}"] = {"labels": {"software_dev": 3}, "nominal_s": 60.0}
+    _probe(conn, row, "py0", "pass", started=103.0)   # one python job: a thin language cell
+    probes["py0"] = {"labels": {"software_dev": 2, "language": "python"}, "nominal_s": 60.0}
+    scorecard.run_pass(conn, row.id, probes=probes)
+    py = _cell(conn, row.id, "software_dev", "python")
+    assert (py.count, py.estimate) == (1.0, None)     # evidence seen, no estimate yet
+    chosen = scorecard.software_dev_for(scorecard.cells(conn, row.id), "python")
+    assert chosen.language == "" and chosen.estimate == 3.0   # the aggregate, with its 3
+
+
 def test_served_id_change_archives_and_return_revives(conn):
     row = _setup(conn, served_id="qwen-a")
     scorecard.archive_stale_rows(conn, "qwen", ["qwen-b"], "served id changed")
@@ -505,6 +523,36 @@ def test_ceiling_recovers_after_a_cap(conn):
     cell = _cell(conn, row.id, "ceiling")
     assert cell.estimate == 12.0         # the 0-file cap constrains nothing; the 12 stands
     assert cell.count == 12.0            # every job carrying files_n, capped or not
+
+
+def test_ceiling_ignores_uncapped_jobs_that_changed_nothing(conn):
+    """An uncapped job that changed no file (a read-only review: not_capped True, files_n 0)
+    says nothing about how many files the row can carry: it adds no reading — as the capped
+    side already treats its 0 — but still counts toward count, the raw jobs carrying
+    files_n. A row of read-only reviews alone must have no ceiling estimate, not the 0.0
+    that filters the row for every brief that names a file."""
+    row = _setup(conn, name="zero", served_id="z")
+
+    def gates(not_capped, files_n):
+        return {"tests": None, "stop_rule": None, "not_capped": not_capped,
+                "no_tmp": None, "files_within": None, "lint": None, "files_n": files_n}
+
+    for i in range(3):   # three read-only reviews: counted, but no reading
+        _job(conn, f"ro{i}", row.endpoint_id, row.model_id, finished_at=100.0 + i,
+             gates=gates(True, 0))
+    _job(conn, "seven", row.endpoint_id, row.model_id, finished_at=200.0, gates=gates(True, 7))
+    scorecard.run_pass(conn, row.id)
+    cell = _cell(conn, row.id, "ceiling")
+    assert cell.estimate == 7.0          # the one job that touched files carries the reading
+    assert cell.count == 4.0             # the read-only jobs still count as evidence seen
+
+    only = _setup(conn, name="zero", served_id="z2")
+    for i in range(3):
+        _job(conn, f"ro2{i}", only.endpoint_id, only.model_id, finished_at=100.0 + i,
+             gates=gates(True, 0))
+    scorecard.run_pass(conn, only.id)
+    none = _cell(conn, only.id, "ceiling")
+    assert none.estimate is None and none.count == 3.0   # no reading: no ceiling filter
 
 
 def test_rate_cell_ignores_null_gates(conn):

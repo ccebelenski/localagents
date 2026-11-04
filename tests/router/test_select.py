@@ -114,6 +114,17 @@ def test_unknown_cell_costs_the_full_demand():
     assert d.chosen is evidence
 
 
+def test_select_thin_language_cell_falls_back_to_the_aggregate():
+    # a python cell with evidence seen but no estimate yet (count > 0, below MIN_COUNT):
+    # selection reads the aggregate's 3 against the demand-4 brief, not the unknown-cell
+    # 4.0 the thin cell used to cost
+    thin = _cell("software_dev", None, count=1.0, language="python")
+    cand = _cand(_row(1), _cells(sd=3, extra=[thin]))
+    scores = _scores({"software_dev": 4, "language": "python"})
+    # aggregate estimate 3 against demand 4: gap 1 * weight 1.0, the rate cells are clean
+    assert shortfall(scores, cand) == pytest.approx(1.0)
+
+
 def test_penalties_from_completeness_and_adherence():
     assert penalty(None) == 0.5
     assert penalty(_cell("completeness", 4.0)) == 0.0
