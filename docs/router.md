@@ -245,7 +245,9 @@ acceptable too. `tolerance` is an absolute distance in shortfall units, and its 
 is 0.5. A tie goes to the faster predicted speed, then to fewer jobs already queued
 there, and the order the scorecard's rows come back in decides the rest. Only a
 background job may take the session slot where the endpoint's capacity curve says its
-sessions begin to slow.
+sessions begin to slow. That rule holds at admission for named jobs too. On a two-slot box
+whose curve slows at the second session, a second named job of normal priority waits for the
+first to finish, a background job takes the slot, and `admit: force` takes it regardless.
 
 ### The ticket
 
