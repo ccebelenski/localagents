@@ -88,6 +88,11 @@ def _fake_job(store, jid, transcript, tmp_path, *, status="succeeded",
                    isolation="none", status=status, started_at=started, finished_at=finished,
                    num_turns=num_turns)
     job.log_dir = str(log_dir)
+    if job.done:
+        # a fake that claims a terminal status claims a finished session: `_done` is what
+        # `settled` reads, and fold 2's admission wait returns on a settled job — without
+        # this a terminal fake waits for an admission that can never come.
+        job._done.set()
     store.jobs[jid] = job
     if getattr(store, "_conn", None) is not None:
         # a calibration_results row references its job (the real job row exists in the database)
@@ -948,6 +953,59 @@ def test_environment_failure_is_skipped_not_failed(conn, probes, monkeypatch, tm
     assert asyncio.run(one("timeout")).status == "fail"  # stays a fail as now
     # a failed job WITH a result is a real attempt: the checker still decides it
     assert asyncio.run(one("failed", result="some output")).status == "fail"
+
+
+def test_calibrate_wait_counts_from_admission(conn, probes, monkeypatch, tmp_path):
+    """§7 "Accepted" (the clock): both clocks start at admission. A probe job queued behind
+    another session must not spend its timeout waiting in the queue: the wait begins when the
+    job is admitted (run_agent's mechanism, server._wait_admitted then store.wait), not at
+    enqueue. And a probe job dropped before it was admitted (the reference row went down)
+    measured nothing: skipped with the drop's own reason, like cancelled and lost."""
+    ep = _endpoint()
+    reg = FakeRegistry({"ep": ep}, probe={"up": True, "models": ["served"]})
+    store = _store(conn)
+    admitted_at_wait: list[bool] = []
+
+    async def one(job, settle):
+        async def background():
+            await asyncio.sleep(0.05)   # a session ahead of it in the queue
+            settled = settle(job)       # the settles are plain or coroutine functions
+            if inspect.isawaitable(settled):
+                await settled
+
+        async def start_job(**kw):
+            asyncio.create_task(background())
+            return job
+
+        class Store:
+            async def wait(self, jid, timeout_s):
+                admitted_at_wait.append(job._admitted.is_set())
+                await job._done.wait()
+                return job
+
+        monkeypatch.setattr(calibrate.server, "start_job", start_job)
+        return await calibrate.run_probe_job(
+            reg, Store(), conn, ep, "served", probes["facts"], tmp_path / "run", 30.0)
+
+    async def admit_then_finish(job):
+        job._admitted.set()
+        await asyncio.sleep(0.05)
+        job.status, job.started_at, job.finished_at = "succeeded", time.time(), time.time()
+        job._done.set()
+
+    queued = _fake_job(store, "job-admit", "", tmp_path, status="queued",
+                       started=None, finished=None)
+    outcome = asyncio.run(one(queued, admit_then_finish))
+    assert admitted_at_wait == [True]   # the wait began at the admission, not at the enqueue
+    assert outcome.status == "pass"
+
+    # a probe job dropped before admission measures nothing: skipped with that reason
+    dropped = _fake_job(store, "job-row-down", "", tmp_path, status="dropped",
+                        started=None, finished=None)
+    dropped.error = "row_down"
+    dropped._done.set()
+    outcome = asyncio.run(one(dropped, lambda job: None))
+    assert outcome.status == "skipped" and outcome.reason == "row_down"
 
 
 def test_materialize_failure_is_skipped(conn, probes, installed, monkeypatch, tmp_path):

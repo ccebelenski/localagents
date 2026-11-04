@@ -972,6 +972,138 @@ def test_stalled_session_raises_a_notice_and_is_not_cancelled(reg, tmp_path, mon
     assert job.status == "running" and not job._task.cancelled()
 
 
+def test_stall_notice_fires_with_an_empty_queue(reg, tmp_path):
+    """Fold 2 (§7 "Stalled sessions"): the scan ran only inside the admission wake, so a
+    stalled session went unnoticed while nothing was queued behind it. It rides the sampler's
+    periodic tick now: the notice arrives with an empty queue, once, and nothing is cancelled."""
+
+    from localagents.router import dispatch
+
+    async def go():
+        first = await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        job = server.store.get(first["id"])
+        job.status, job.started_at = "running", time.time() - dispatch.STALL_S - 60
+        job.changed()
+        assert not server.store.conn.execute(
+            "SELECT 1 FROM queue_entries WHERE admitted IS NULL").fetchone()  # nothing queued
+        await server._sample_tick()
+        return job
+
+    job = asyncio.run(go())
+    transcript = Path(job.log_dir, "transcript.txt").read_text()
+    assert "[stalled] stalled: no progress for 16 min, endpoint up" in transcript
+    assert transcript.count("[stalled]") == 1
+    assert job.status == "running" and not job._task.cancelled()
+
+
+def test_sampler_skips_queued_jobs(reg, tmp_path, monkeypatch):
+    """Fold 2: the sampler treated every not-done job as running and probed a waiting job's
+    endpoint every LOAD_SAMPLE_S while it waited. It samples running sessions only; a queued
+    job's endpoint is probed by its own admission wake, not by the sampler."""
+    probed: list[str] = []
+    canned = Registry.probe   # the reg fixture's canned probe
+
+    async def probe(self, ep):
+        probed.append(ep.name)
+        return await canned(self, ep)
+
+    monkeypatch.setattr(Registry, "probe", probe)
+
+    async def go():
+        a = await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        b = await server.run_agent(task="b", model="big-model", cwd=str(tmp_path))
+        job_a = server.store.get(a["id"])
+        job_a.status = "running"   # a session on `first`; `second` is free, so b admitted
+        job_a.changed()
+        probed.clear()             # what is left: the tick's own probes
+        await server._sample_tick()
+        return b
+
+    b = asyncio.run(go())
+    assert b["status"] == "queued"   # admitted, but no session has run: the sampler must not probe it
+    assert probed == ["first"]
+
+
+def test_sampler_repairs_a_settled_job_whose_drop_write_failed(reg, tmp_path, monkeypatch):
+    """Fold 2 (Task 12 review, probe 4B): a `mark_dropped` that failed at the drop (a locked
+    database) left the row `queued` and the queue entry alive while the job settled `dropped`
+    in memory and the caller was told so. The phantom entry is the head of its endpoint's
+    queue and blocked every later entry, capacity freed or not, and nothing repaired it in
+    this process. The sampler's tick now retries the drop writes of this process's settled
+    jobs: the row and the entry are repaired and the entry behind the phantom admits."""
+    import sqlite3
+
+    from localagents import db
+    from localagents.router import dispatch
+
+    # c's wake must see the freed head within the test's wait: its loop polls on POLL_S
+    # unless a wake reaches it, and the notify below can miss it (the task registers its
+    # waker on its first step) — pace the poll like the stall tests do (fold 2 construction).
+    monkeypatch.setattr(dispatch, "POLL_S", 0.01)
+
+    broken = {"on": False}
+    real_immediate = db.immediate
+
+    def maybe_locked(conn):
+        """The locked database at the drop: every immediate write raises while the flag is
+        up (the same sqlite3.OperationalError a real lock raises); reads are untouched."""
+        if broken["on"]:
+            raise sqlite3.OperationalError("database is locked")
+        return real_immediate(conn)
+
+    monkeypatch.setattr(db, "immediate", maybe_locked)
+
+    async def go():
+        first = await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        b = await server.run_agent(task="b", model="default-model", cwd=str(tmp_path))  # queues
+        broken["on"] = True                       # the drop's writes both fail (locked database)
+        rec = await server.cancel_job(b["id"])    # the caller is told it dropped
+        broken["on"] = False
+        row = server.store.conn.execute("SELECT status FROM jobs WHERE id = ?",
+                                        (b["id"],)).fetchone()
+        entry = server.store.conn.execute("SELECT 1 FROM queue_entries WHERE job_id = ?",
+                                          (b["id"],)).fetchone()
+        job_b = server.store.get(b["id"])
+        # the phantom HEAD blocks everything behind it even after the slot frees (proven below)
+        c = await server.run_agent(task="c", model="default-model", cwd=str(tmp_path))
+        await server._sample_tick()               # this process repairs its own settled jobs
+        row_after = server.store.conn.execute("SELECT status FROM jobs WHERE id = ?",
+                                              (b["id"],)).fetchone()
+        entry_after = server.store.conn.execute("SELECT 1 FROM queue_entries WHERE job_id = ?",
+                                                (b["id"],)).fetchone()
+        holder = server.store.get(first["id"])
+        holder.status, holder.finished_at = "succeeded", time.time()
+        holder.changed()                          # the slot is free
+        dispatch.notify()
+        await asyncio.sleep(0.3)                  # c's wake admits it now the phantom is gone
+        admitted = server.store.conn.execute("SELECT admitted FROM queue_entries WHERE job_id = ?",
+                                             (c["id"],)).fetchone()["admitted"]
+        return rec, row, entry, job_b, row_after, entry_after, admitted
+
+    rec, row, entry, job_b, row_after, entry_after, admitted = asyncio.run(go())
+    assert rec["status"] == "dropped" and rec["error"] == "cancelled while queued"
+    assert row["status"] == "queued" and entry is not None   # the defect: the phantom stands
+    assert job_b.status == "dropped" and job_b.settled
+    assert row_after["status"] == "dropped" and entry_after is None   # repaired by the tick
+    assert "[queue-repair]" in Path(job_b.log_dir, "transcript.txt").read_text()
+    assert admitted is not None                   # and the entry behind it admits now
+
+
+def test_endpoint_auto_with_a_named_model_is_bad_argument(routed, tmp_path):
+    """Fold 2: a router entry named as `endpoint` together with a real `model` was silently
+    ignored (the router won). It is a contradiction now: bad_argument, naming both. The
+    router named as `endpoint` alone still routes exactly like `model=<router>`."""
+    out = asyncio.run(server.run_agent(task="t", endpoint="auto", model="default-model",
+                                       cwd=str(tmp_path)))
+    assert out["error"] == "bad_argument"
+    assert "auto" in out["message"] and "default-model" in out["message"]
+    assert server.store.jobs == {}
+    out = asyncio.run(server.run_agent(task="build the parser", endpoint="auto",
+                                       cwd=str(tmp_path)))
+    assert out.get("error") is None, out
+    assert out["endpoint"] == "second" and out["model"] == "big-model"
+
+
 def test_run_agent_bad_priority_is_a_dict_error(reg):
     """§4: a bad priority or admit is bad_argument, a dict, before any job exists."""
     out = asyncio.run(server.run_agent(task="t", priority="whenever"))

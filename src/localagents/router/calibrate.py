@@ -471,6 +471,12 @@ async def run_probe_job(reg, store, conn, ep, served_id, probe: Probe, run_dir, 
     except server.JobRefused as e:
         return ProbeOutcome("skipped", 0.0, str(e.reply.get("error") or e), None)
 
+    # §7 "Accepted" (the clock), fold 2: both clocks start at admission — the run_agent
+    # blocking wait's own mechanism (`_wait_admitted` then `store.wait`). A probe job queued
+    # behind a session must not spend its timeout in the queue: the result wait begins when
+    # the job is admitted (and a job that settled without ever admitting falls straight
+    # through to the skip check below with its settle's words).
+    await server._wait_admitted(job, None)
     max_running = 0
     wait_task = asyncio.create_task(store.wait(job.id, timeout_s + 60))
     while True:
@@ -495,10 +501,11 @@ async def run_probe_job(reg, store, conn, ep, served_id, probe: Probe, run_dir, 
     seconds = 0.0
     if job.started_at is not None and job.finished_at is not None:
         seconds = float(job.finished_at - job.started_at)
-    # a job the environment took down (failed with nothing to show), cancelled, or lost to a
-    # server exit measures nothing: skipped with the environment's own words as the reason,
-    # and a skipped probe is retried on resume. timeout and tail_capped stay fail.
-    if (job.status == "failed" and not job.result) or job.status in ("cancelled", "lost"):
+    # a job the environment took down (failed with nothing to show), cancelled, lost to a
+    # server exit, or dropped before its session (row down at admission, folded 2) measures
+    # nothing: skipped with the environment's own words as the reason, and a skipped probe is
+    # retried on resume. timeout and tail_capped stay fail.
+    if (job.status == "failed" and not job.result) or job.status in ("cancelled", "lost", "dropped"):
         return ProbeOutcome("skipped", seconds, job.error or job.status, job.id)
     if max_running > 1:
         return ProbeOutcome("unreliable", seconds, "foreign load", job.id)

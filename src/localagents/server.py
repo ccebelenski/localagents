@@ -351,25 +351,66 @@ _sampler: asyncio.Task | None = None
 _shim_port_recorded = False  # shim.port is the process's: describe_server(shim_port=...) runs once
 
 
+async def _sample_tick() -> None:
+    """One sampler tick (fold 2): heartbeat this server's row (jobs or not: the status line
+    reads liveness from it); probe the endpoints of RUNNING sessions only — a queued job is
+    not a running session, its endpoint is probed by its own admission wake, not here — and
+    write the compact load text to endpoint_load (idle servers write no load rows: old ones
+    age out by ``updated``); run the stall scan here (§7 "Stalled sessions": once per stall
+    episode, nothing cancelled), independent of the queue, so a stalled session is flagged
+    even while nothing is queued behind it; and repair this process's settled jobs whose drop
+    write failed at the drop, before the phantom queue entry blocks its endpoint for good."""
+    store.heartbeat()
+    running = [j for j in store.jobs.values() if j.status == "running"]
+    reg = _reg()
+    if running:
+        loads: dict[str, str] = {}
+        for name in dict.fromkeys(j.endpoint for j in running):
+            ep = reg.endpoints.get(name)
+            if ep is None:
+                continue
+            text = status.load_summary(await reg.probe(ep))
+            if text:
+                loads[name] = text
+        store.record_endpoint_load(loads)
+    await dispatch.stall_scan(store, store.conn, reg, time.time())
+    _repair_settled_drops()
+
+
+def _repair_settled_drops() -> None:
+    """Fold 2 (Task 12 review, probe 4B): a drop whose writes failed (a locked database at
+    the moment of the drop) settled the job `dropped` in memory and told the caller so, but
+    left the row `queued` and the queue entry alive — a phantom that heads its endpoint's
+    queue and blocks every later entry, capacity freed or not. This process repairs its own
+    settled jobs: every job it holds that is `dropped` and settled in memory but whose row
+    still reads `queued` (or still has a queue entry) gets its `mark_dropped` retried with
+    the error it settled with. A foreign job is the other server's (or a restart's) to
+    repair; the retry never raises — the next tick tries again."""
+    conn = store.conn
+    for j in list(store.jobs.values()):
+        if j.status != "dropped" or not j.settled or j._conn is None:
+            continue
+        try:
+            row = conn.execute("SELECT status FROM jobs WHERE id = ?", (j.id,)).fetchone()
+            entry = conn.execute("SELECT 1 FROM queue_entries WHERE job_id = ?",
+                                 (j.id,)).fetchone()
+        except (sqlite3.Error, db.SchemaError):  # the database is having its own bad day
+            continue
+        if row is None or (row["status"] != "queued" and entry is None):
+            continue  # no phantom: the drop's writes landed, or another process ended the row
+        try:
+            router_queue.mark_dropped(conn, j.id, j.error or "dropped", time.time())
+            j._log_safe(f"[queue-repair] retried the failed drop: {j.error or 'dropped'}")
+            dispatch.notify()  # a blocked head may have freed: the waiting loops wake now
+        except Exception as e:  # noqa: BLE001 -- the tick must not die on a locked database
+            j._log_safe(f"[queue-repair] retry failed: {type(e).__name__}: {e}")
+
+
 async def _sample_endpoint_load() -> None:
-    """Every LOAD_SAMPLE_S: heartbeat this server's row (jobs or not: the status line reads
-    liveness from it), and while jobs run also probe their endpoints and write the compact load
-    text to endpoint_load. Idle servers write no load rows: old ones age out by ``updated``."""
+    """The LOAD_SAMPLE_S loop around one tick: the tick itself never takes the server down."""
     while True:
         try:
-            store.heartbeat()
-            running = [j for j in store.jobs.values() if not j.done]
-            if running:
-                reg = _reg()
-                loads: dict[str, str] = {}
-                for name in dict.fromkeys(j.endpoint for j in running):
-                    ep = reg.endpoints.get(name)
-                    if ep is None:
-                        continue
-                    text = status.load_summary(await reg.probe(ep))
-                    if text:
-                        loads[name] = text
-                store.record_endpoint_load(loads)
+            await _sample_tick()
         except Exception:  # noqa: BLE001  the status bar must never take the server down
             pass
         await asyncio.sleep(LOAD_SAMPLE_S)
@@ -644,6 +685,13 @@ async def start_job(
     # A router entry named by model, by endpoint, or by defaults.model routes the job (the M1
     # guard's reading, before resolve: resolve probes the fleet for nothing).
     pinned = reg.endpoints.get(endpoint) if endpoint else None
+    # fold 2: a router entry named as `endpoint` routes the job itself, so a real `model`
+    # named alongside it was silently ignored (the router won). It is a contradiction: refuse,
+    # naming both. The router named as `endpoint` alone routes exactly like `model=<router>`.
+    if pinned is not None and pinned.is_router and model and model != pinned.name:
+        raise _bad(f"endpoint '{pinned.name}' is a router entry: it routes the job itself, so a "
+                   f"real model cannot be named with it (model '{model}'). Pass the router as "
+                   "endpoint alone (or as model), or name one model with a real endpoint.")
     wanted = model or getattr(reg.defaults, "model", None)
     named_router = pinned if pinned is not None and pinned.is_router else (
         reg.endpoints.get(wanted) if wanted and wanted in reg.endpoints else None)
@@ -834,15 +882,15 @@ async def run_agent(
 ) -> dict[str, Any]:
     """Delegate a task to an agent on a local model and (with `wait_s`) wait for the result.
 
-    The agent is a headless Claude Code session (Read/Edit/Write/Glob/Grep/Bash, project
-    CLAUDE.md, same working tree) on the local endpoint. Write the task like a brief for a
-    capable but junior engineer: what to do, where, how to verify, what to report.
+    The agent is a headless Claude Code session (same tools, project CLAUDE.md, same working
+    tree). Write the task like a brief for a junior engineer: what to do, where, how to verify.
 
     Args:
       task: The brief. Be explicit; local models follow less implicit context than Claude.
       model: Served id, glob or fuzzy name (list_models), or a router entry's name to route
         (the record names the real endpoint and model, plus `routed_by`).
-      endpoint: Force an endpoint; with no `model`, uses whatever it serves.
+      endpoint: Force an endpoint; with no `model`, uses whatever it serves. A router entry
+        routes alone; a real `model` with it is bad_argument.
       cwd: Working directory (default: this server's cwd).
       isolation: "none" or "worktree" (a git worktree on local-agent/<job id>, kept only if
         changed; see job.worktree).

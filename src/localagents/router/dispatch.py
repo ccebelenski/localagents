@@ -841,11 +841,12 @@ def _last_progress(conn: sqlite3.Connection, job: Job) -> float | None:
     return max(moments) if moments else None
 
 
-async def _stall_scan(store: JobStore, conn: sqlite3.Connection, reg: Registry, now: float) -> None:
+async def stall_scan(store: JobStore, conn: sqlite3.Connection, reg: Registry, now: float) -> None:
     """§7 "Stalled sessions": this process's running sessions with no progress for STALL_S get
     their endpoint probed, a ``[stalled]`` line, the notice as ``last_activity`` (until the next
     message replaces it) and, routed, ``flags.stalled`` on the ticket. One notice per stall;
-    nothing is cancelled."""
+    nothing is cancelled. Every admission wake calls it, and so does every sampler tick (fold
+    2): a stalled session goes unnoticed while nothing is queued behind it on the wake alone."""
     for j in list(store.jobs.values()):
         if j.status != "running" or j._conn is None:
             continue
@@ -932,7 +933,7 @@ async def _wake(store: JobStore, conn: sqlite3.Connection, job: Job, reg: Regist
         end_queued(conn, job, ENTRY_REMOVED)
         return True
     now = time.time()
-    await _stall_scan(store, conn, reg, now)
+    await stall_scan(store, conn, reg, now)
     ep = reg.endpoints.get(job.endpoint)
     if ep is None:
         why: str | None = f"endpoint {job.endpoint} is no longer in the config"
