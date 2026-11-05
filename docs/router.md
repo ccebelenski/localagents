@@ -39,6 +39,22 @@ router` in a checkout): torch, transformers and accelerate.
 localagents d3 serve   # 127.0.0.1:8766, the pinned vllm-sr/d3-mini
 ```
 
+Nothing installs the weights; the first start does. `d3 serve` loads the checkpoint with
+transformers, which downloads it from the Hugging Face Hub when the cache does not hold it:
+about 9 GB, two safetensors files and the model's own runtime code, into `$HF_HOME/hub`
+(`~/.cache/huggingface/hub` when `HF_HOME` is unset). Every later start reads it from there.
+So the first start of a new box needs the network and takes as long as the download; no
+Hub account is needed for this checkpoint. A box without network gets the cache seeded by
+hand, from a connected machine with the same extra installed:
+
+```bash
+hf download vllm-sr/d3-mini --revision <the sha `localagents d3 serve --help` shows as the default>
+```
+
+then the `hub/models--vllm-sr--d3-mini` directory copied under the offline box's `HF_HOME`,
+or `HF_HOME` pointed at storage both can see. The pinned revision keeps the checkpoint from
+drifting under the scorecard; a copy of that snapshot directory is the whole backup.
+
 Loading the weights takes a while, and `/health` reports it: `{"ok": false,
 "loading": true}` until the model is resident, then the model id and device. `localagents
 d3 serve --help` lists the flags for model, revision, device, host and port. A machine

@@ -101,7 +101,10 @@ start() {
                 return 1 ;;
         esac
     done
-    echo "localagents d3: still loading after ${HEALTH_WAIT_S}s (pid $pid kept; tools/d3.sh status to watch)" >&2
+    # a first start on a new box is downloading the checkpoint (about 9 GB, docs/router.md
+    # "Starting d3"), which no wait this short covers: the server is left running for it
+    echo "localagents d3: still loading after ${HEALTH_WAIT_S}s (pid $pid kept; a first start may be" \
+         "downloading the ~9 GB checkpoint; tools/d3.sh status or log to watch; D3_HEALTH_WAIT_S raises the wait)" >&2
     return 1
 }
 
