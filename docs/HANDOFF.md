@@ -18,8 +18,9 @@ names the level that decided. Also: `localagents --help` lists every subcommand;
 documented; the health-wait guard. Open (the retrospective's list): N5, N7, the lost-reason strings, the expected
 wait as a static prior, the unreliable rule blind to harness-host load, UNPROVEN without a store, the row-identity
 gap behind model aliases (proposal recorded), the benchmark tiers and build tool, a read-only calibration readout,
-d3 latency/depth on the monitor, a systemd unit; no `pools:` block. Next: a NEW epic, shaped by the operator;
-the push stays held. Retrospective: docs/retros/2026-11-04-router-live-test.md (the operator's line: "real-ground
+d3 latency/depth on the monitor, a systemd unit; no `pools:` block. Next: a NEW epic, shaped by the operator, and the operator named why the push is held: "nobody can use the
+product without real calibration - otherwise it's just a dumb router" (a clean install's calibration must
+separate models: the benchmark set). Retrospective: docs/retros/2026-11-04-router-live-test.md (the operator's line: "real-ground
 truth beats canned tests").
 
 **2026-11-04: router phase 3 BUILT, reviewed and landed; the router is feature complete.** Main at the
