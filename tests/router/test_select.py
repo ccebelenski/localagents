@@ -279,6 +279,31 @@ def test_all_undetermined_falls_to_tie_break():
     assert _select(_scores(), [worse, better]).tie_break is False
 
 
+def test_idle_rows_tie_break_on_the_measured_speed_factor_not_row_order():
+    """The first live routed job (2026-11-04): four idle calibrated rows tied at the same
+    shortfall, every curve read 1.0, and row order chose. The row's speed factor (median
+    actual/nominal; bigger is slower) divides the curve's prediction, so the slower row listed
+    FIRST loses to the faster one, the ticket shows the divided speeds, and the reason names
+    predicted speed as the level that decided. A row without a factor keeps the curve."""
+    slow = _row(1, "dgx", "deepseek"); slow.speed_factor = 1.84
+    fast = _row(2, "llamacpp", "qwen-27b"); fast.speed_factor = 0.94
+    bare = _row(3, "strata", "flash")   # speed_factor None
+    d = _select(_scores(), [_cand(slow, _cells()), _cand(fast, _cells()), _cand(bare, _cells())])
+    assert d.tie_break is True and d.chosen.row is fast
+    assert _by_row(d)[1].predicted_speed == pytest.approx(1 / 1.84)
+    assert _by_row(d)[2].predicted_speed == pytest.approx(1 / 0.94)
+    assert _by_row(d)[3].predicted_speed == pytest.approx(1.0)
+    assert d.chosen_reason.endswith("; tie broken by predicted speed")
+    # a busy fast row (second slot at 0.68) still beats an idle slow one: 0.68/0.94 > 1/1.84
+    busy_fast = _cand(fast, _cells(), capacity=_cap(2, running=1, curve=Curve({1: 1.0, 2: 0.68})), ours=1)
+    d2 = _select(_scores(), [_cand(slow, _cells()), busy_fast], priority="background")
+    assert d2.chosen.row is fast
+    assert _by_row(d2)[2].predicted_speed == pytest.approx(0.68 / 0.94)
+    # a zero or negative factor is not a divisor: the curve's reading stands
+    odd = _row(4, "odd", "m"); odd.speed_factor = 0.0
+    assert _by_row(_select(_scores(), [_cand(odd, _cells())]))[4].predicted_speed == pytest.approx(1.0)
+
+
 # --- expected wait (§6, "Expected wait") ----------------------------------------------------------
 
 def test_expected_wait_per_slot_and_overrun_floor():
@@ -429,7 +454,12 @@ def test_chosen_reason_is_one_line():
     assert q.chosen_reason == "shortfall 0.00 on llamacpp x qwen-27b; best of 1; queued (endpoint busy)"
     # a tie says the tie-break decided
     t = _select(_scores(), [_cand(_row(5, "x", "m"), _cells()), _cand(_row(6, "y", "n"), _cells())])
-    assert t.chosen_reason.endswith("; tie broken by predicted speed, then queue")
+    assert t.chosen_reason.endswith("; tie broken by predicted speed, then queue, then row order")
+    # the level that decided is the one named: equal speed, a queue difference
+    t2 = _select(_scores(), [_cand(_row(7, "x", "m"), _cells(), queued=1),
+                             _cand(_row(8, "y", "n"), _cells())])
+    assert t2.chosen.row.id == 8
+    assert t2.chosen_reason.endswith("; tie broken by predicted speed, then queue")
     # a refusal has a reason and no sentence
     r = _select(_scores(), [a], calibrated=set())
     assert r.reason == "no_calibrated_row" and r.chosen_reason is None

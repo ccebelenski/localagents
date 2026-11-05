@@ -203,6 +203,7 @@ know it, the caller passes it.
    decides and the ticket says so.
 3. **Acceptable set:** rows within `tolerance` of the best shortfall.
 4. **Ties** break by predicted speed at the row's current load (§7), then by fewer queued.
+   *(True-now, 2026-11-04, the first live routed job: the predicted speed is the curve's reading at that load DIVIDED BY the row's measured speed factor (§8, median actual over nominal seconds; a bigger factor is a slower row). The curve alone reads 1.0 for every idle row, so four idle calibrated rows tied on shortfall fell to config order, which the design never named as a rule; the operator: "the config order shouldn't ever matter because we never said it did". A row without a factor keeps the curve's reading. The ticket's reason names the level that decided: predicted speed, then queue, then row order.)*
 5. **Priority policy**, applied at enqueue AND re-applied at every wake while the job is queued
    (a normal job that queued on a five-minute estimate behind a job now overrunning by an hour
    diverts when its expected wait crosses the threshold; the ticket records when):

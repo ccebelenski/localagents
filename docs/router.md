@@ -262,7 +262,7 @@ the brief's demand on the axis. Thin completeness and adherence add a penalty. A
 the row has shown nothing on counts at the brief's full demand. The best row is always
 acceptable. A row whose shortfall sits at most `tolerance` above the best one is
 acceptable too. `tolerance` is an absolute distance in shortfall units, and its default
-is 0.5. A tie goes to the faster predicted speed, then to fewer jobs already queued
+is 0.5. A tie goes to the faster predicted speed, the capacity curve's reading at the load the job would add divided by the row's measured speed factor (so two idle rows separate by the speed calibration measured, and a row with no factor yet reads the curve alone), then to fewer jobs already queued
 there, and the order the scorecard's rows come back in decides the rest. Only a
 background job may take the session slot where the endpoint's capacity curve says its
 sessions begin to slow. That rule holds at admission for named jobs too. On a two-slot box

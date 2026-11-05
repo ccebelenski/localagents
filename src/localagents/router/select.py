@@ -267,13 +267,22 @@ def _filter(cand: Candidate, load_tokens: int | None, calibrated, brief_files: i
 
 
 def _predicted_speed(cand: Candidate) -> float | None:
-    """The curve's prediction for the session this job would be: our sessions plus the
-    foreign ones (§7's occupancy), plus this one."""
+    """The curve's prediction for the session this job would be (our sessions plus the
+    foreign ones, §7's occupancy, plus this one), divided by the row's measured speed factor
+    when it has one. The curve alone reads 1.0 for every idle row, so an idle fleet tied by
+    shortfall fell to row order (the first live routed job, 2026-11-04; §6 True-now): the
+    speed factor is calibration's one cross-row speed reading, median actual over nominal
+    seconds, so a bigger factor is a slower row and divides the prediction down. A row
+    without a factor (not yet calibrated, a bare row) keeps the curve's reading."""
     cap = cand.capacity
     if cap is None:
         return None
     foreign = max(0, cap.requests_running - cand.ours_running)
-    return cap.curve.predict(cand.ours_running + foreign + 1)
+    curve = cap.curve.predict(cand.ours_running + foreign + 1)
+    factor = cand.row.speed_factor
+    if factor is not None and factor > 0:
+        return curve / factor
+    return curve
 
 
 def _can_admit(cand: Candidate, priority: str) -> bool:
@@ -341,7 +350,19 @@ def select(scores: BriefScores, candidates: list[Candidate], priority: str, tole
     # the caller's order settles anything left so the same input always picks the same row
     survivors.sort(key=lambda s: (round(s[1], _PLACES), -s[2], s[0].queued_ahead, s[3]))
     best_short = round(survivors[0][1], _PLACES)
-    tie_break = sum(1 for s in survivors if round(s[1], _PLACES) == best_short) > 1
+    tied = [s for s in survivors if round(s[1], _PLACES) == best_short]
+    tie_break = len(tied) > 1
+    # the reason names the level that actually decided (2026-11-04: a reason that always said
+    # "predicted speed, then queue" hid that row order had decided an idle fleet's first job)
+    tie_level = None
+    if tie_break:
+        top, nxt = tied[0], tied[1]
+        if round(top[2], _PLACES) != round(nxt[2], _PLACES):
+            tie_level = "predicted speed"
+        elif top[0].queued_ahead != nxt[0].queued_ahead:
+            tie_level = "predicted speed, then queue"
+        else:
+            tie_level = "predicted speed, then queue, then row order"
     # the best row is always acceptable, whatever tolerance a caller passes
     acceptable = [s for s in survivors
                   if round(s[1] - survivors[0][1], _PLACES) <= max(tolerance, 0.0)]
@@ -351,7 +372,7 @@ def select(scores: BriefScores, candidates: list[Candidate], priority: str, tole
     best = acceptable[0][0]
     best_line = f"shortfall {acceptable[0][1]:.2f} on {_label(best)}; best of {len(survivors)}"
     if tie_break:
-        best_line += "; tie broken by predicted speed, then queue"
+        best_line += f"; tie broken by {tie_level}"
 
     def suffix(chosen_shortfall: float) -> str:
         """Amendment 2: name the avoid_job filter only when it bound the choice. An avoided
