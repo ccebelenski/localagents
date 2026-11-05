@@ -229,6 +229,17 @@ True-now (phase 2, 2026-11-02): the manifest also carries a top-level `reference
 A source enters the build only with its licence confirmed and recorded in the manifest; the
 procedure skips an unconfirmed source and says so.
 
+**Decided (operator, 2026-11-04 evening, shaping Epic 6).** Licences are apportioned, not inherited:
+"We carry the licenses for the parts we use unless that is forbidden (I didn't see any restrictions
+beyond the usual GPL virus). A simple license file for each set we use items from retain their
+licenses and it does not cover the entire project." So: the project stays MIT (its LICENSE file);
+each source whose items enter a set gets its own licence file beside the set (`sets/LICENSES/<source>`
+or equivalent), carrying that source's licence text and the pinned revision; a source whose licence
+would reach past its own items (copyleft) does not enter; "confirmed" in the sentence above means
+the source's licence is one of these apportionable kinds and its file is in place. Benchmark instances
+are still fetched at the pinned revision at run time and never vendored (§8), so the files cover the
+checkers, labels and any adapted text we ship, and name where the data comes from.
+
 ## 10. Tiers
 
 - **core**: §3 families + kept Polyglot/LiveCodeBench/HumanEval probes + the thinking/effort facts
