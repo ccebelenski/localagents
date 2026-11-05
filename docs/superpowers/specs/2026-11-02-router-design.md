@@ -129,6 +129,30 @@ diverted from), visible in `list_jobs` and `job_status` without opening the tick
 retrospective can re-check the profiles against what actually ran. A named job's `routed_by` is
 null.
 
+**Consumer live acceptance (the consumer coordinator session, relayed by the operator, 2026-11-04
+evening, after phase 3 landed and the real store was calibrated).** Verbatim: "Approved for use,
+with two steering defects you should know about before anyone relies on the refusals. Seven
+read-only probes ran from a hand-cut worktree, now removed; main is untouched." Passed: routing
+(the record holds the served id, the real endpoint and base URL, `routed_by` with router name,
+reason and pool, and a full ticket, "all visible in the job list without opening anything");
+steering by served id plus endpoint and by endpoint alone, both with `routed_by: null`;
+`avoid_job` on a routed job ("the review-pairing lever: avoid the builder's job and a different
+model reviews"); the queue (`admit: now` → `would_queue` with position and expected wait and no
+job; a queued job's elapsed and timeout counted from admission). Findings: (1) "`model: auto` plus
+`endpoint: ai2` was not refused. The forced endpoint was silently dropped and the job routed to
+llamacpp. ... Silent loss of a steering argument is the one outcome I cannot detect at dispatch."
+(job ff8db6cb) — a defect, fixed the same evening: the mirror of fold 2's refusal. (2)
+"`avoid_job` naming a steered job was not refused as documented. It excluded that job's model
+instead, which is a reasonable behaviour, but the doc and the code disagree." (job d95e6809) —
+the code is the rule (this section: "the id of a finished job", any job); the tool text's "a named
+one is refused" meant a named MODEL and read as a named JOB; the text was rewritten. (3) "The queue
+estimate is a static prior. It said 14 seconds behind a session that was sleeping and the real wait
+was 83 seconds. The final record drops the queue fields, so the wait is only derivable from
+created_at to started_at. Fine for me." — known (§6 expected wait reads band medians; the
+deferred list). Lane note from the consumer: "the Qwen 27B talked itself out of a brief I had worded
+as 'should be refused' and declined to run the sentinel" — a probe brief never states the verdict
+it expects (the hints).
+
 ## 5. Dimensions
 
 Three groups. The brief's demands and the row's cells are matched axis by axis through the

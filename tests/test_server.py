@@ -1104,6 +1104,21 @@ def test_endpoint_auto_with_a_named_model_is_bad_argument(routed, tmp_path):
     assert out["endpoint"] == "second" and out["model"] == "big-model"
 
 
+def test_model_auto_with_a_forced_real_endpoint_is_bad_argument(routed, tmp_path):
+    """The consumer's live acceptance (2026-11-04, job ff8db6cb): `model=auto` with a real
+    `endpoint` forced beside it silently dropped the endpoint and routed. The mirror of fold
+    2's case, and the same contradiction: bad_argument naming both, no job. The router named
+    as `model` alone still routes."""
+    out = asyncio.run(server.run_agent(task="t", model="auto", endpoint="second",
+                                       cwd=str(tmp_path)))
+    assert out["error"] == "bad_argument"
+    assert "auto" in out["message"] and "second" in out["message"]
+    assert server.store.jobs == {}
+    out = asyncio.run(server.run_agent(task="build the parser", model="auto", cwd=str(tmp_path)))
+    assert out.get("error") is None, out
+    assert out["routed_by"]["router"] == "auto"
+
+
 def test_run_agent_bad_priority_is_a_dict_error(reg):
     """§4: a bad priority or admit is bad_argument, a dict, before any job exists."""
     out = asyncio.run(server.run_agent(task="t", priority="whenever"))

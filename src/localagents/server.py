@@ -695,6 +695,15 @@ async def start_job(
     wanted = model or getattr(reg.defaults, "model", None)
     named_router = pinned if pinned is not None and pinned.is_router else (
         reg.endpoints.get(wanted) if wanted and wanted in reg.endpoints else None)
+    # the consumer's live acceptance (2026-11-04, job ff8db6cb): the mirror case, a router
+    # named as `model` with a REAL `endpoint` forced beside it, silently dropped the endpoint
+    # and routed. Same contradiction, same answer: refuse, naming both. A steering argument
+    # is never lost in silence.
+    if (named_router is not None and named_router.is_router and pinned is not None
+            and not pinned.is_router):
+        raise _bad(f"model '{named_router.name}' is a router entry: it picks the endpoint itself, "
+                   f"so a real endpoint cannot be forced with it (endpoint '{pinned.name}'). Route "
+                   "with the router alone, or name one model with a real endpoint.")
     routed = None
     if named_router is not None and named_router.is_router:
         if named_router.invalid:
@@ -886,32 +895,32 @@ async def run_agent(
     """Delegate a task to an agent on a local model and (with `wait_s`) wait for the result.
 
     The agent is a headless Claude Code session (same tools, project CLAUDE.md, same working
-    tree). Write the task like a brief for a junior engineer: what to do, where, how to verify.
+    tree). Write the task like a brief for a junior engineer: what, where, how to verify.
 
     Args:
-      task: The brief. Be explicit; local models follow less implicit context than Claude.
+      task: The brief; be explicit, local models follow less implicit context than Claude.
       model: Served id, glob or fuzzy name (list_models), or a router entry's name to route
         (the record names the real endpoint and model, plus `routed_by`).
-      endpoint: Force an endpoint; with no `model`, uses whatever it serves. A router entry
-        routes alone; a real `model` with it is bad_argument.
+      endpoint: Force an endpoint (no `model`: whatever it serves). A router entry routes
+        alone: a real `model` or a real `endpoint` beside it is bad_argument.
       cwd: Working directory (default: this server's cwd).
       isolation: "none" or "worktree" (a git worktree on local-agent/<job id>, kept only if
-        changed; see job.worktree).
+        changed).
       wait_s: If > 0, block and return the final record, else the job id at once. A job
-        waiting for a session stays `queued` and the wait goes on (`queued #n, ~m min`);
-        wait_s counts from admission, like timeout_s. Pass the job's timeout: Claude Code
-        backgrounds a long call and delivers the record as a task notification. Use for every
-        job, swarms included.
+        waiting for a session stays `queued` (`queued #n, ~m min`); wait_s counts from
+        admission, like timeout_s. Pass the job's timeout: Claude Code backgrounds a long call
+        and delivers the record as a task notification. Use for every job, swarms included.
       permission_mode: acceptEdits (default) | bypassPermissions | default | plan.
       max_turns: Turn cap. allowed_tools: Override auto-approved tools.
       system_prompt_append: Appended to the system prompt.
-      resume_job: Continue a job's session with `task` (same server process), on its model,
-        endpoint, cwd and isolation unless a real `model` is given. Refused while it runs.
+      resume_job: Continue a job's session with `task` on its model, endpoint, cwd and
+        isolation unless a real `model` is given. Refused while it runs.
       timeout_s: Wall-clock cap for the session, from admission.
       priority: urgent | normal | background.
       admit: queue | now (would_queue, no job, instead of waiting) | force (skip the wait).
       tolerance: Routed: shortfall distance from the best row that is acceptable.
-      avoid_job: A job id whose model routing must not pick (a named one is refused).
+      avoid_job: A job id, routed or named; routing never picks its model, and naming
+        that model beside it is bad_argument.
     """
     if isolation not in ("none", "worktree"):
         return {"error": "bad_argument", "message": "isolation must be 'none' or 'worktree'"}

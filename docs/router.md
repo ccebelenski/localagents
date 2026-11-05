@@ -231,8 +231,9 @@ run_agent(task="refactor the parser", model="auto")
 
 The example entry's name is a model name, and `model="auto"` routes the job. Naming the
 entry in `endpoint` or setting it as `defaults.model` does the same thing. Naming it in
-`endpoint` together with a real `model` is refused with `bad_argument`, because the two
-arguments ask for different rows. The brief is resolved first, pointer files read in, d3
+`endpoint` together with a real `model`, or as `model` together with a real `endpoint`, is
+refused with `bad_argument`, because the two arguments ask for different rows and a
+steering argument must never be dropped in silence. The brief is resolved first, pointer files read in, d3
 scores it, and a real row is chosen from the scorecard cells, the live facts (what a
 fresh probe of each endpoint answers right now) and the queue. The job record then names
 the chosen row's endpoint, model and base_url the way a directly-named job does, so a
@@ -310,7 +311,8 @@ dropped id. `force` admits out of order and runs past
 capacity; its record is marked forced, and its session counts against the endpoint and
 any pool like any other. `tolerance` overrides the entry's tolerance for one job and must
 be a number that is zero or greater. `avoid_job` names a job whose served model routing
-must not choose. That model leaves the considered table. Naming that model directly as
+must not choose; the job may itself have been routed or named, the rule is about the model
+it ran on. That model leaves the considered table. Naming that model directly as
 `model` is refused with `bad_argument`, and so is an `avoid_job` whose job has no
 recorded model.
 
