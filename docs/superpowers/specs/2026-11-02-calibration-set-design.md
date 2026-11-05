@@ -223,7 +223,7 @@ True-now (phase 2, 2026-11-02): the manifest also carries a top-level `reference
 | HumanEval | core, two probes | software_dev floor | MIT |
 | SWE-bench Verified, shortest time-to-fix bands | medium | software_dev + tool_use, bands 2–3 | MIT; Docker per instance |
 | Terminal-Bench | medium | tool_use, computer_use | Apache-2.0; Docker |
-| ProgramBench, smallest instances | large | everything at band 4 | MIT (code and data; the operator, 2026-11-04); Docker, linux/amd64, offline container with one route to the model endpoint |
+| ProgramBench, smallest instances | large | everything at band 4 | MIT (code and data; verified by the operator on the GitHub repository under facebookresearch, 2026-11-04); Docker, linux/amd64, offline container with one route to the model endpoint |
 | authored | core | judgement, review, tool_use, adherence, completeness | ours |
 
 A source enters the build only with its licence confirmed and recorded in the manifest; the
