@@ -19,6 +19,12 @@ STATE="${XDG_STATE_HOME:-$HOME/.local/state}/localagents"
 PIDFILE="$STATE/d3.pid"
 LOG="$STATE/d3.log"
 HEALTH_WAIT_S="${D3_HEALTH_WAIT_S:-180}"   # the model load; 22 s on the reference GPU, cold disks slower
+# a positive integer or the default: `seq 1 0` and `seq 1 abc` emit nothing, which would skip the
+# wait loop and report a timeout the server never had (the 27B's read of this script, 2026-11-04)
+case "$HEALTH_WAIT_S" in
+    ''|*[!0-9]*|0) echo "localagents d3: D3_HEALTH_WAIT_S must be a positive integer, got '${HEALTH_WAIT_S}'; using 180" >&2
+                   HEALTH_WAIT_S=180 ;;
+esac
 
 usage() {
     echo "usage: tools/d3.sh start [d3 serve args...] | stop | status | log" >&2
