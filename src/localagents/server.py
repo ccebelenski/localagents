@@ -1419,9 +1419,16 @@ def main() -> None:
     import argparse
 
     ap = argparse.ArgumentParser(prog="localagents")
+    # every subcommand localagents.main dispatches by hand before this parser runs, so that
+    # `localagents --help` lists what works (operator 2026-11-04: calibrate was missing)
     ap.add_argument(
-        "command", nargs="?", default="serve", choices=["serve", "statusline"],
-        help="serve (default): run the MCP server; statusline: print running local jobs for a status bar",
+        "command", nargs="?", default="serve",
+        choices=["serve", "statusline", "smoke", "prune", "seed", "monitor", "d3", "router", "calibrate"],
+        help="serve (default): run the MCP server; statusline: running local jobs for a status bar; "
+             "smoke: the monitor's browser smoke; prune: delete old job directories; "
+             "seed: an offline monitor database from the fixtures; monitor: the monitor page; "
+             "d3: serve the router's decision model; router: the router's MCP server; "
+             "calibrate: run the calibration set on an endpoint (each takes --help)",
     )
     ap.add_argument("--config", help="path to models.yaml (or set LOCALAGENTS_CONFIG)")
     ap.add_argument("--transport", default="stdio", choices=["stdio", "streamable-http", "sse"])
