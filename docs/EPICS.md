@@ -2824,7 +2824,21 @@ as a dated block.
 | fold 2: calibration waits from admission; the stall scan on the sampler; endpoint=auto+model refused; the sampler skips queued jobs and repairs a failed drop | Qwen/ai2 (51ad53cb capped, b7089b22) | the coordinator's read; the whole-branch review | 30c2dc8 |
 | whole-branch review → fix wave 3 (11 items) → re-review | Opus review (5 defects, 1 possible, 8 noticed); Opus fix lane; DeepSeek re-review | | 2783870 |
 
-True now (2026-11-04): phases 1, 2 and 3 complete; the router is feature complete pending the operator's own read; `model: auto` routes, queues and explains; the record names the served model and endpoint with routed_by; suite 1298 passed, 1 skipped; nothing pushed (the operator gates the push). The 2026-11-03 line read: phases 1 and 2 complete, phase 3 waits for the go.
+Live test and close (2026-11-04 evening), on the operator's real store, the operator present; every change
+the coordinator's own under the suite; the consumer coordinator session's acceptance; details in the commits,
+the SDD ledger and docs/retros/2026-11-04-router-live-test.md.
+
+| Step | Who | Result | Landed |
+| --- | --- | --- | --- |
+| the real store migrated to v12 on reconnect; four endpoints calibrated with the shipped core set | the operator | 56/56 probes pass; four routable rows; identical capability cells on every row (the set measured the floor) | |
+| `localagents --help` lists every subcommand | the coordinator, on the operator's report | | b3a9b1b |
+| d3 management: `tools/d3.sh` start/stop/status/log; /health carries the install sentence; the tool install reinstalled with the router extra | the coordinator, on the operator's go; exercised live | the 27B's blind read found the unvalidated wait (true); its setsid claim constructed false | fe55f8e, 5975362 |
+| the weights' first-start download documented, offline seeding | the coordinator, on the operator's question | | 8d22a73 |
+| `auto` added to the operator's models.yaml; first routed job; queue, refusal and dropped cases | the coordinator, at the operator's word | record contract holds live; queued → dropped; admit=now refused | |
+| §6 tie-break: curve ÷ speed factor; the reason names the deciding level | the coordinator, on the ruling "the config order shouldn't ever matter because we never said it did" | | f2c35f4 |
+| the consumer's live acceptance (7 probes): approved; finding 1 a defect, finding 2 the text, finding 3 known | the consumer session, relayed; the coordinator's fixes | | 2e12c3d |
+
+True now (2026-11-04 evening): Epic 5 DONE; live-tested on the real store and accepted by the consumer; nothing pushed ("No push because we are not complete"); what follows is a new epic. The morning line read: phases 1, 2 and 3 complete; the router is feature complete pending the operator's own read; `model: auto` routes, queues and explains; the record names the served model and endpoint with routed_by; suite 1298 passed, 1 skipped; nothing pushed (the operator gates the push). The 2026-11-03 line read: phases 1 and 2 complete, phase 3 waits for the go.
 
 ## Epic 4: operations (V2, not scheduled)
 

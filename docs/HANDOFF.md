@@ -2,6 +2,26 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
+**2026-11-04 evening: the router LIVE-TESTED on the operator's real store and ACCEPTED by the consumer; Epic 5
+DONE.** Main at the commit this note rides on; suite 1301 passed, 1 skipped; nothing pushed ("No push because we
+are not complete, but this epic is done"). The operator ruled the arc could not close on tests alone ("we really
+can't close the arc until we've had a successful test, and then some working truth"), reconnected the server (the
+real store migrated to v12), calibrated the four live endpoints with the shipped core set (56/56 probes pass), and
+the coordinator added the `auto` entry to models.yaml at the operator's word, built `tools/d3.sh` (start, stop,
+status, log) and ran the routed, queued, refused and dropped cases end to end; the consumer coordinator session
+ran seven read-only probes and approved for use with two steering findings, both folded the same evening (a
+router `model` with a forced real `endpoint` is now bad_argument; `avoid_job`'s text says routed or named). Two
+live findings changed the design: the authored probe set gives every row IDENTICAL capability cells (the fleet's
+floor, not the models; the benchmark arc's concrete case), and the §6 tie-break read 1.0 for every idle row so
+config order chose; the predicted speed now divides the curve by the row's measured speed factor and the reason
+names the level that decided. Also: `localagents --help` lists every subcommand; the weights' download is
+documented; the health-wait guard. Open (the retrospective's list): N5, N7, the lost-reason strings, the expected
+wait as a static prior, the unreliable rule blind to harness-host load, UNPROVEN without a store, the row-identity
+gap behind model aliases (proposal recorded), the benchmark tiers and build tool, a read-only calibration readout,
+d3 latency/depth on the monitor, a systemd unit; no `pools:` block. Next: a NEW epic, shaped by the operator;
+the push stays held. Retrospective: docs/retros/2026-11-04-router-live-test.md (the operator's line: "real-ground
+truth beats canned tests").
+
 **2026-11-04: router phase 3 BUILT, reviewed and landed; the router is feature complete.** Main at the
 commit this note rides on; suite 1298 passed, 1 skipped; nothing pushed (the operator gates the push: "nothing
 gets pushed until we're feature complete on the whole", now met pending the operator's own read).
