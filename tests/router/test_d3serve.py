@@ -96,6 +96,27 @@ def test_health_after_load_reports_model_and_device():
         assert r.json() == {"ok": True, "model": MODEL_ID, "device": DEVICE}
 
 
+def test_health_after_a_missing_extra_carries_the_install_sentence():
+    """The loader exits 2 when torch is absent (the CLI path prints the sentence); under the
+    server that exit must not surface as "SystemExit: 2" on /health — the operator reads the
+    same install sentence there (live 2026-11-04)."""
+    def loader():
+        raise SystemExit(2)
+
+    with _client(loader) as c:
+        for _ in range(200):
+            r = c.get("/health")
+            if r.status_code == 503 and r.json().get("loading") is False:
+                break
+            time.sleep(0.01)
+        assert r.status_code == 503
+        body = r.json()
+        assert body["ok"] is False and body["loading"] is False
+        assert body["error"] == d3serve.NO_EXTRA
+        assert "install the router extra" in body["error"]
+        assert "SystemExit" not in body["error"]
+
+
 def test_systemone_passes_state_and_questions_to_the_model():
     fake = FakeModel()
     with _client(lambda: fake) as c:

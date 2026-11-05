@@ -44,6 +44,10 @@ Loading the weights takes a while, and `/health` reports it: `{"ok": false,
 d3 serve --help` lists the flags for model, revision, device, host and port. A machine
 that only runs Claude Code does not need the extra; only the d3 server's host does.
 
+In a checkout, `tools/d3.sh start` runs the same command detached, waits until `/health`
+reports the model resident, and `stop`, `status` and `log` manage it afterwards; the
+`tools/README.md` row says what it needs.
+
 ## Registering the command server
 
 ```bash

@@ -34,6 +34,11 @@ D3_REVISION = "df99bf4ca4418bc6908ee68e9b7479af1f3b8800"
 # truncated — the router entry's decision_max_tokens, §12)
 D3_MAX_CHARS = 60_000
 
+# the sentence a box without the router extra gets, on stderr from the CLI and on /health
+# from the server, so the operator reads the same words in both places
+NO_EXTRA = ("torch/transformers not installed; install the router extra: "
+            "pip install 'localagents[router]'")
+
 # one request at a time: the model is not concurrent, so every system_one call takes this
 # lock. It is module-level: one process serves one model, as the CLI starts it
 _LOCK = threading.Lock()
@@ -54,8 +59,7 @@ def load_model(model_id: str, device: str, revision: str = D3_REVISION):
         import torch  # noqa: F401 — the extra's presence; the model's own .to does the move
         from transformers import AutoModel
     except ImportError:
-        print("localagents d3: torch/transformers not installed; "
-              "install the router extra: pip install 'localagents[router]'", file=sys.stderr)
+        print(f"localagents d3: {NO_EXTRA}", file=sys.stderr)
         raise SystemExit(2)
     return AutoModel.from_pretrained(model_id, trust_remote_code=True, revision=revision).to(device)
 
@@ -88,8 +92,13 @@ def app(model_loader: Callable[[], Any], model_id: str, device: str) -> starlett
     def _load(application: starlette.applications.Starlette) -> None:
         try:
             application.state.model = model_loader()
-        except BaseException as e:  # SystemExit(2) from a missing extra too: the error is
-            # recorded, not a traceback out of a daemon thread
+        except SystemExit:
+            # the loader's missing-extra exit (load_model prints the sentence to stderr and
+            # exits 2 when run from a shell): /health carries the same sentence, not
+            # "SystemExit: 2" (operator, live 2026-11-04)
+            application.state.model_error = NO_EXTRA
+        except BaseException as e:  # a bad revision, no GPU: the error is recorded, not a
+            # traceback out of a daemon thread
             application.state.model_error = f"{type(e).__name__}: {e}"
 
     @asynccontextmanager
