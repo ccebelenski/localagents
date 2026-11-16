@@ -140,7 +140,8 @@ def test_summary_from_row_reads_the_row_and_the_derivations(monkeypatch, tmp_pat
     assert s["tool_calls"] == 2 and s["errors"] == 1
     assert s["tool_counts"] == {"Edit": {"calls": 1, "errors": 1}, "Bash": {"calls": 1, "errors": 0}}
     assert s["last_tool"] == "Bash: ls"
-    assert s["files_touched"] == ["/a.py"]
+    assert s["files_touched"] == []  # the one Edit's result was an error: the tool wrote nothing
+    assert s["diff_files"] is None  # the worktree has no recorded file list: unknown, not []
     assert s["ctx_tokens"] == 1000 and s["gen_tps"] == pytest.approx(40.0)
     for storage in ("mcp_server_id", "endpoint_id", "model_id"):
         assert storage not in s, f"{storage} is a storage detail, not job_status"

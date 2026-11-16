@@ -264,8 +264,11 @@ def test_summary_reads_the_duplicated_values_from_rows(monkeypatch, tmp_path):
     assert s["tool_calls"] == 1 and s["errors"] == 1
     assert s["tool_counts"] == {"Edit": {"calls": 1, "errors": 1}}
     assert s["last_tool"] == "Edit: /a.py"
-    assert s["files_touched"] == ["/a.py"]
+    assert s["files_touched"] == []  # the Edit's result was an error: the tool wrote nothing
     assert s["ctx_tokens"] == 100 and s["gen_tps"] == pytest.approx(5.0)
+    job.record_tool_call(t + 2, "Write", "u2", "/b.py")  # and a call that worked is read back
+    job.record_tool_result("u2", t + 3, False)
+    assert job.summary()["files_touched"] == ["/b.py"]
     gone = ("usage", "tool_calls", "files_touched", "ctx_tokens", "gen_tps")
     assert all(name not in {f.name for f in dataclasses.fields(job)} for name in gone), gone
     assert not hasattr(job, "note_usage")

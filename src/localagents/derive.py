@@ -16,6 +16,11 @@ import time
 # this one copy) and files_touched's read rule
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 
+# the most names a worktree's recorded file list keeps (runner.finish_worktree writes it,
+# diff_files reads it); ``worktree.files_n`` counts them all. A story touches tens of files; a
+# tree that grew a vendored directory would otherwise put thousands into every list_jobs row.
+DIFF_FILES_MAX = 100
+
 # the jobs columns holding the /metrics delta, rebuilt into Job.metrics at read time
 _METRICS_COLUMNS = (
     "generated_tokens", "prompt_tokens_processed", "prompt_tokens_cached",
@@ -32,14 +37,36 @@ def tool_call_count(conn: sqlite3.Connection, job_id: str) -> int:
 
 
 def files_touched(conn: sqlite3.Connection, job_id: str) -> list[str]:
-    """DISTINCT edit-tool ``input`` in first-seen order (dedup keeping the earliest row)."""
+    """DISTINCT edit-tool ``input`` (the path the edit tools were given, as given: relative and
+    absolute forms are not merged) in first-seen order (dedup keeping the earliest row). A call
+    whose result was an error is left out: the tool reported it wrote nothing (the store's
+    failed-only paths are mostly mistyped ones that never existed); a call with no result yet
+    (``is_error`` NULL, still running) stays. Shell writes are never here: see diff_files."""
     marks = ", ".join("?" * len(EDIT_TOOLS))
     rows = conn.execute(
         f"SELECT input FROM tool_calls WHERE job_id = ? AND tool IN ({marks}) AND input IS NOT NULL"
-        " GROUP BY input ORDER BY MIN(t)",
+        " AND COALESCE(is_error, 0) = 0 GROUP BY input ORDER BY MIN(t)",
         (job_id, *EDIT_TOOLS),
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def diff_files(worktree: object) -> list[str] | None:
+    """The worktree diff's file list as the job's finish recorded it (``worktree.files``: every
+    path changed against the base, shell writes included, files git ignores excluded; at most
+    DIFF_FILES_MAX names, ``worktree.files_n`` counts them all). None when it is not known: a
+    job with no worktree (nothing in a shared directory can be attributed to one job), one not
+    finished yet, or one whose diff could not be read. Never an empty list for "unknown"."""
+    files = worktree.get("files") if isinstance(worktree, dict) else None
+    return list(files) if isinstance(files, list) else None
+
+
+def summary_worktree(worktree: object) -> object:
+    """The worktree as a summary shows it: a copy without ``files``, which the summary carries
+    once, as ``diff_files`` (both summaries call this, so they agree)."""
+    if not isinstance(worktree, dict):
+        return worktree
+    return {k: v for k, v in worktree.items() if k != "files"}
 
 
 def ctx_tokens(conn: sqlite3.Connection, job_id: str) -> int | None:
@@ -194,7 +221,8 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "error": row["error"],
         "num_turns": row["num_turns"],
         "compactions": row["compactions"],
-        "worktree": worktree,
+        "worktree": summary_worktree(worktree),
+        "diff_files": diff_files(worktree),
         "last_activity": row["last_activity"],
         "log_dir": str(state_dir() / "jobs" / job_id),
         "dump": bool(row["dump"]),

@@ -24,7 +24,7 @@ from claude_agent_sdk import (
     query,
 )
 
-from .derive import EDIT_TOOLS  # the write rule's list is the read rule's (files_touched)
+from .derive import DIFF_FILES_MAX, EDIT_TOOLS  # the write rule's list is the read rule's (files_touched)
 from .jobs import Job, prune, state_dir
 from .registry import Registry, Resolution, backend_kind, fetch_metrics, metrics_delta
 from .router import feedback
@@ -142,6 +142,33 @@ def _restore_worktree(wt: dict[str, Any]) -> dict[str, Any]:
     return {**wt, "recreated": True}
 
 
+def _diff_names(root: str, base: str) -> list[str] | None:
+    """The staged tree's paths against ``base`` (call between ``add -A`` and the reset), or
+    None when git fails. ``-z`` prints names unquoted, so the bytes are decoded here with
+    ``errors="replace"`` (feedback.read_diff's rule): a non-UTF-8 name cannot raise between the
+    add and the reset and leave the changes staged. ``--no-renames``: a rename is both paths."""
+    try:
+        r = subprocess.run(["git", "diff", "--cached", "--no-renames", "--name-only", "-z", base],
+                           cwd=root, capture_output=True, encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if r.returncode != 0:
+        return None
+    return [n for n in r.stdout.split("\0") if n]
+
+
+def _set_files(wt: dict[str, Any], names: list[str] | None) -> None:
+    """Record the diff's file list on the worktree dict: ``files`` (the first DIFF_FILES_MAX
+    names, git's path order) and ``files_n`` (all of them). None removes both: a list that
+    could not be read is absent, never empty (derive.diff_files reads absent as null)."""
+    if names is None:
+        wt.pop("files", None)
+        wt.pop("files_n", None)
+        return
+    wt["files"] = names[:DIFF_FILES_MAX]
+    wt["files_n"] = len(names)
+
+
 def finish_worktree(job: Job) -> None:
     wt = job.worktree
     if not wt:
@@ -152,6 +179,7 @@ def finish_worktree(job: Job) -> None:
         # of raising. git is told to forget the tree; the branch may hold commits the user
         # wants, so removing it stays the user's call (review of 3.9B, finding B2)
         _git(repo, "worktree", "prune")
+        _set_files(wt, None)  # no tree, no diff to read: the file list is unknown, never empty
         wt.update(kept=False, note=f"the worktree directory was removed while the job ran; "
                                    f"it is left out of git (worktree prune); "
                                    f"branch {wt['branch']} is left in {repo}")
@@ -167,6 +195,7 @@ def finish_worktree(job: Job) -> None:
         failed = st if st.returncode != 0 else hd
         err = " ".join(failed.stderr.split()) or f"exit {failed.returncode}"  # one line
         wt.pop("diffstat", None)  # a previous finish's diffstat is not this tree's truth
+        _set_files(wt, None)  # nor its file list: this diff could not be read
         wt.update(
             kept=True,
             note=(f"git could not read the worktree at {root} ({err}); it is left in place "
@@ -178,6 +207,9 @@ def finish_worktree(job: Job) -> None:
     head = hd.stdout.strip()
     changed = bool(status) or head != wt["base"]
     if not changed:
+        # a clean status at the base commit: the diff against the base is empty, so the file
+        # list is known to be empty whatever the removal below does
+        _set_files(wt, [])
         # each step's return code is read: "removed" is said only when git removed it
         rm = _git(repo, "worktree", "remove", "--force", root)
         if rm.returncode != 0:
@@ -201,15 +233,21 @@ def finish_worktree(job: Job) -> None:
     # runs (a partial add staged something), and every failure is named in the note and a line
     add = _git(root, "add", "-A")
     diff = _git(root, "diff", "--cached", "--stat", wt["base"]) if add.returncode == 0 else None
+    # the diff's own file list (what the record's diff_files shows): every path the job changed
+    # against the base, shell writes included; the diffstat above cuts long paths to ".../"
+    names = _diff_names(root, wt["base"]) if add.returncode == 0 else None
     reset = _git(root, "reset", "-q")
     problems = []
     if add.returncode != 0:
         problems.append(f"git add -A failed ({' '.join(add.stderr.split())}): no diffstat was taken")
     elif diff is not None and diff.returncode != 0:
         problems.append(f"git diff --cached --stat failed ({' '.join(diff.stderr.split())}): no diffstat was taken")
+    if add.returncode == 0 and names is None:
+        problems.append("git diff --cached --name-only failed: no file list was taken")
     if reset.returncode != 0:
         problems.append(f"git reset failed ({' '.join(reset.stderr.split())}): the changes are left staged in the index")
     wt.pop("diffstat", None)  # a previous finish's diffstat is not this tree's truth
+    _set_files(wt, names)
     if add.returncode == 0 and diff is not None and diff.returncode == 0:
         wt["diffstat"] = diff.stdout.strip()
     wt.update(

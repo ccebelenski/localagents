@@ -55,8 +55,8 @@ Workflow:
      use the `local-agent` subagent if installed (a relay; prompt = `model: <served id>`, optional
      header lines, `---`, the brief verbatim), or `run_agent(wait_s=0)` then `wait_job` in-turn.
   3. `cancel_job` stops a job; `list_jobs` / `job_status` / `job_log` follow one.
-  4. Review the work (files_touched, or the worktree diff): local models are less reliable than
-     Claude; treat output as a draft to verify.
+  4. Review the work (`diff_files`: a worktree job's changes, null without one; `files_touched`
+     misses shell writes): local models are less reliable than Claude; treat output as a draft.
 `local_complete`: cheap one-shot generation, no tools (summaries, drafts, classification).
 """
 
@@ -1223,7 +1223,11 @@ def _row_summary(row: Any, include_result: bool = True) -> dict[str, Any]:
 
 @mcp.tool()
 async def job_status(job_id: str) -> dict[str, Any]:
-    """Current status, last activity, files touched, and result (if finished) of a job.
+    """Current status, last activity, files changed, and result (if finished) of a job.
+
+    `diff_files` is the worktree diff's file list, shell writes included (null for a job with
+    no worktree, or before its finish); `files_touched` is only the paths the edit tools were
+    given, so it never sees a file written through the shell.
 
     Reads any localagents server's job: an in-process job gets its live summary, otherwise
     the row and its read-time derivations from the shared database."""

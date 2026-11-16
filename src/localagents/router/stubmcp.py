@@ -144,7 +144,7 @@ async def wait_jobs(job_ids: list[str], timeout_s: int = 1800, mode: str = "all"
 
 @mcp.tool()
 async def job_status(job_id: str) -> dict[str, Any]:
-    """Current status, last activity, files touched, and result (if finished) of a job."""
+    """Current status, last activity, files changed, and result (if finished) of a job."""
     _record("job_status", {"job_id": job_id})
     if job_id == ANSWERED_JOB_ID:
         return copy.deepcopy(CANNED["job_status"])

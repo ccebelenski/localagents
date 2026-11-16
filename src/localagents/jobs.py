@@ -384,8 +384,11 @@ class Job:
             for f in fields(self)
             if not f.name.startswith("_") and f.name not in self._SUMMARY_HIDDEN
         }
-        if d["worktree"] is not None:  # a copy: the caller must not hold the job's own dict (story 1.9 item 1)
-            d["worktree"] = dict(d["worktree"])
+        # a copy: the caller must not hold the job's own dict (story 1.9 item 1); its file list
+        # rides once, as diff_files (derive's two helpers, which summary_from_row calls too)
+        d["diff_files"] = derive.diff_files(self.worktree)
+        if d["worktree"] is not None:
+            d["worktree"] = derive.summary_worktree(d["worktree"])
         if d["routed_by"] is not None:  # the same copy rule (router 12)
             d["routed_by"] = dict(d["routed_by"])
         start = self.started_at or self.created_at  # None only for a hand-built Job: 0, as summary_from_row
