@@ -109,6 +109,37 @@ def oldest_first(job: "Job") -> tuple[bool, float]:
     return (job.created_at is not None, job.created_at or 0.0)
 
 
+def in_queue(job: "Job") -> bool:
+    """The job waits in this process's queue: `queued`, not admitted, and its queue task
+    (server._queue_then_run, which start_job always creates) still alive. Without a live task
+    nothing can admit the job (a task that ended without admitting or settling it; a Job built
+    outside start_job), so a blocking wait's queue phase (wait_through_queue) never outlasts
+    the task that would end it."""
+    return (job.status == "queued" and not job._admitted.is_set()
+            and job._task is not None and not job._task.done())
+
+
+async def wait_through_queue(job: "Job", progress: Callable[["Job"], Awaitable[None]] | None = None,
+                             interval_s: float | None = None) -> None:
+    """A blocking wait's queue phase (design §7 "Accepted"): while the job is in_queue, wait with
+    no deadline (the caller's own cancel bounds it; admit='now' is the way not to wait),
+    awaiting `progress` every interval (the server's reporter says `queued #n, ~m min`). Returns
+    at the admission, at the settle (dropped, cancelled while queued), or when the job's queue
+    task ended without either. JobStore.wait(from_admission=True) runs it before its cap starts."""
+    if interval_s is None:
+        interval_s = PROGRESS_INTERVAL_S  # read at call time so tests can shorten it
+    while in_queue(job):
+        waits = [asyncio.ensure_future(job._admitted.wait()), asyncio.ensure_future(job._done.wait())]
+        try:
+            done, _ = await asyncio.wait([*waits, job._task], timeout=interval_s,
+                                         return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for f in waits:  # never the job's own task: asyncio.wait does not cancel it
+                f.cancel()
+        if not done and progress is not None and in_queue(job):
+            await progress(job)
+
+
 def held_at_cap(job: "Job", wait_start: float, wait_span: float, now: float) -> bool:
     """The wait-cap rule: a blocking wait whose cap passes while the job is already over its
     own session deadline, or done but not yet settled, waits for the settled record (up to
@@ -700,45 +731,34 @@ class JobStore:
         progress: Callable[[list[Job]], Awaitable[None]] | None = None,
         interval_s: float | None = None,
         settle: bool = False,
+        from_admission: bool = False,
     ) -> list[Job]:
-        """Block until every job (`mode="all"`) or at least one (`mode="any"`) finishes, or
-        `timeout_s` passes. Returns the jobs in the order given. Progress as in `wait`.
-
-        With `settle`, the wait-cap rule (held_at_cap) per job: at the cap the jobs held there
-        are waited for (up to SETTLE_BACKSTOP_S) until each has settled, or for "any" until
-        one job has; the jobs still inside their own deadline are not waited for, so "all"
-        returns them unsettled once the held ones have settled, as at a plain cap."""
+        """Each job gets its own `wait` (the one owner of the cap, the queue phase and the
+        settle hold) with the same `timeout_s`, `settle` and `from_admission`; with
+        `from_admission` each job's cap counts from its own admission. `mode="all"` returns
+        when every job's own wait has ended; `mode="any"` as soon as one job has settled, or
+        when every job's own wait has ended without one. Returns the jobs in the order given.
+        With `progress`, it is awaited with the jobs every `interval_s` while the call goes on."""
         jobs = [self.get(j) for j in jids]  # raises KeyError before any waiting
         if interval_s is None:
             interval_s = PROGRESS_INTERVAL_S
-        # settled, not done: the record is handed back only once run_job's finally has run
-        satisfied = (lambda: all(j.settled for j in jobs)) if mode == "all" else (lambda: any(j.settled for j in jobs))
-        start = time.monotonic()
-        end = start + timeout_s
-        held: list[Job] | None = None  # decided once, when the cap passes
-
-        def going() -> bool:
-            return not satisfied() and (held is None or not all(j.settled for j in held))
-
-        while jobs and going():
-            now = time.monotonic()
-            if held is None and now >= end:
-                held = [j for j in jobs if held_at_cap(j, start, timeout_s, now)] if settle else []
-                end = now + SETTLE_BACKSTOP_S  # read at call time so tests can shorten it
-                if not going():
-                    break
-            remaining = end - now
-            if remaining <= 0:
-                break
-            step = min(remaining, interval_s) if progress else remaining
-            pending = [asyncio.ensure_future(j._done.wait()) for j in jobs if not j.settled]
-            try:
-                await asyncio.wait(pending, timeout=step, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                for f in pending:
-                    f.cancel()
-            if progress and going() and time.monotonic() < end:
-                await progress(jobs)
+        pending = {asyncio.ensure_future(self.wait(j.id, timeout_s, interval_s=interval_s, settle=settle,
+                                                   from_admission=from_admission)) for j in jobs}
+        try:
+            # settled, not done: the record is handed back only once run_job's finally has run
+            while pending and not (mode == "any" and any(j.settled for j in jobs)):
+                ended, pending = await asyncio.wait(pending, timeout=interval_s if progress else None,
+                                                    return_when=asyncio.FIRST_COMPLETED)
+                for f in ended:
+                    f.result()  # a wait's own failure is the caller's
+                if not ended and progress is not None:
+                    await progress(jobs)
+        finally:
+            # a cancel of this call, or "any" returning: no per-job wait outlives it
+            for f in pending:
+                f.cancel()
+            if pending:
+                await asyncio.wait(pending)
         return jobs
 
     async def wait(
@@ -748,6 +768,7 @@ class JobStore:
         progress: Callable[[Job], Awaitable[None]] | None = None,
         interval_s: float | None = None,
         settle: bool = False,
+        from_admission: bool = False,
     ) -> Job:
         """Block until the job finishes or `timeout_s` passes; returns the job either way.
 
@@ -755,15 +776,24 @@ class JobStore:
         aborts an MCP tool call that stays silent for its idle window (30 min on stdio, 5 min on
         HTTP), so a long wait has to say something now and then; a progress notification counts.
 
+        With `from_admission` (the wait tools pass it, design §7 "Accepted"), the cap counts from
+        the job's admission: while the job waits in this process's queue (in_queue) the wait goes
+        on with no deadline, `progress` every interval, and `timeout_s` starts once it leaves the
+        queue (admitted, or settled without a session: dropped, cancelled while queued). A job
+        already admitted is waited for `timeout_s` from the call.
+
         With `settle` (the blocking tools pass it), the wait-cap rule: a job held at the cap
         (held_at_cap: its session has ended, is being torn down, or is the one this wait was
         meant to cover) is waited for until it settles or SETTLE_BACKSTOP_S more passes, with
         progress going on; a job whose session is still inside its own deadline comes back at
-        the cap unsettled, as without it. cancel_job's short wait does not pass it.
+        the cap unsettled, as without it. cancel_job passes it with a cap of 0: its wait is the
+        settle hold alone.
         """
         job = self.get(jid)
         if interval_s is None:
             interval_s = PROGRESS_INTERVAL_S  # read at call time so tests can shorten it
+        if from_admission:
+            await wait_through_queue(job, progress, interval_s)
         start = time.monotonic()
         end = start + timeout_s
         held = False

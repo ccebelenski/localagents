@@ -213,7 +213,8 @@ def test_the_backstop_returns_a_teardown_that_never_settles(monkeypatch):
 
 
 def test_without_settle_the_cap_stands(monkeypatch):
-    """cancel_job's short wait does not pass `settle`: its 15 s and its note stay as they were."""
+    """A wait without `settle` (router/calibrate's) returns at its cap: the hold is settle's
+    alone. cancel_job passes it since W2 (2026-11-15)."""
     job = _job(**_armed(70, 60))
 
     async def go():
@@ -309,3 +310,279 @@ def test_wait_job_holds_a_job_past_its_deadline(monkeypatch):
         return await server.wait_job(torn.id, timeout_s=0.1)
 
     assert asyncio.run(go())["status"] == "timeout"
+
+
+# ---- the wait tools count their cap from admission (W1) and cancel_job's settle wait (W2) ----
+# The operator's rule (2026-11-15, match run_agent): a wait tool's cap counts from the job's
+# admission; time in the queue does not spend it; while queued the call reports the same
+# `queued #n, ~m min` line run_agent's does. cancel_job's wait is the settle wait the other
+# tools use (settle=True and SETTLE_BACKSTOP_S), with progress.
+
+
+def _gated_query(monkeypatch):
+    """The first session holds the endpoint until `release` is set, then succeeds; every later
+    session succeeds at once with result `done <task>`."""
+    release = asyncio.Event()
+    from claude_agent_sdk import ResultMessage
+
+    def fake_query(prompt, options):
+        async def session():
+            if prompt == "holder":
+                await release.wait()
+            yield ResultMessage(subtype="success", duration_ms=5, duration_api_ms=4, is_error=False,
+                                num_turns=1, session_id=f"sess-{prompt}", usage=None, result=f"done {prompt}")
+
+        return session()
+
+    monkeypatch.setattr(runner, "query", fake_query)
+    return release
+
+
+class _Lines:
+    """Stand-in for the MCP Context: records every progress message."""
+
+    def __init__(self):
+        self.messages = []
+
+    async def report_progress(self, progress, total=None, message=None):
+        self.messages.append(message)
+
+
+def _queued_behind_a_holder(monkeypatch):
+    from localagents.router import dispatch
+
+    monkeypatch.setattr(dispatch, "POLL_S", 0.01)
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.02)
+    return _gated_query(monkeypatch)
+
+
+def test_wait_job_on_a_queued_job_waits_through_the_queue(live, monkeypatch):
+    """W1: a wait_job on a job queued longer than its cap is still waiting at the cap, reporting
+    the queued line; once the job is admitted and runs, it returns the final record."""
+    import re
+
+    release = _queued_behind_a_holder(monkeypatch)
+    ctx = _Lines()
+
+    async def go():
+        await server.run_agent(task="holder", model="served-model")
+        queued = await server.run_agent(task="b", model="served-model")
+        assert queued["status"] == "queued" and queued["queue"]["position"] == 1
+        call = asyncio.create_task(server.wait_job(queued["id"], timeout_s=0.3, ctx=ctx))
+        await asyncio.sleep(0.6)  # twice the cap, all of it in the queue
+        still = not call.done()
+        release.set()
+        return still, await asyncio.wait_for(call, 5)
+
+    still, out = asyncio.run(go())
+    assert still is True
+    assert any(re.fullmatch(r"queued #1, ~[\d?]+ min", m or "") for m in ctx.messages), ctx.messages
+    assert out["status"] == "succeeded" and out["result"] == "done b"
+
+
+def test_wait_jobs_on_a_queued_job_waits_through_the_queue(live, monkeypatch):
+    """W1 for wait_jobs: the queued job's cap counts from its own admission, so the call is
+    still waiting at the cap and lists the job under done once it has run."""
+    release = _queued_behind_a_holder(monkeypatch)
+
+    async def go():
+        await server.run_agent(task="holder", model="served-model")
+        queued = await server.run_agent(task="b", model="served-model")
+        call = asyncio.create_task(server.wait_jobs([queued["id"]], timeout_s=0.3))
+        await asyncio.sleep(0.6)
+        still = not call.done()
+        release.set()
+        return still, await asyncio.wait_for(call, 5)
+
+    still, out = asyncio.run(go())
+    assert still is True
+    assert out["outcome"] == "all_done" and out["done"][0]["result"] == "done b"
+
+
+def _scaled_waits(monkeypatch, scale=100):
+    """Every store.wait cap divided by `scale`, and the backstop with it: cancel_job's literal
+    15 s becomes 0.15 s and SETTLE_BACKSTOP_S 1.2 s, so a teardown of 0.2 s stands for one of
+    20 s (the SDK's worst case) without the test taking it."""
+    real = server.store.wait
+
+    async def scaled(jid, timeout_s, *a, **kw):
+        return await real(jid, timeout_s / scale, *a, **kw)
+
+    monkeypatch.setattr(server.store, "wait", scaled)
+    monkeypatch.setattr(jobs, "SETTLE_BACKSTOP_S", jobs.SETTLE_BACKSTOP_S / scale)
+
+
+def test_cancel_job_waits_for_a_slow_teardown_to_settle(live, monkeypatch):
+    """W2: the session's close takes longer than cancel_job's old 15 s (at 1/100 scale: 0.2 s
+    against 0.15 s): the reply is the settled `cancelled` record, with no note."""
+    _slow_teardown_query(monkeypatch, teardown_s=0.2)
+    _scaled_waits(monkeypatch)
+
+    async def go():
+        started = await server.run_agent(task="t", model="served-model", timeout_s=60)
+        await asyncio.sleep(0.2)  # the session is running
+        return await server.cancel_job(started["id"])
+
+    out = asyncio.run(go())
+    assert out["status"] == "cancelled" and "note" not in out, out.get("note")
+    assert server.store.get(out["id"]).settled
+
+
+def test_wait_jobs_reports_the_queued_line_for_a_queued_job(live, monkeypatch):
+    """W1: wait_jobs' one progress line gives a queued job the queue's own `queued #n, ~m min`
+    part, as run_agent's and wait_job's lines do."""
+    import re
+
+    release = _queued_behind_a_holder(monkeypatch)
+    ctx = _Lines()
+
+    async def go():
+        await server.run_agent(task="holder", model="served-model")
+        queued = await server.run_agent(task="b", model="served-model")
+        call = asyncio.create_task(server.wait_jobs([queued["id"]], timeout_s=0.3, ctx=ctx))
+        await asyncio.sleep(0.2)
+        release.set()
+        await asyncio.wait_for(call, 5)
+        return queued["id"]
+
+    jid = asyncio.run(go())
+    want = re.compile(rf"0/1 done; {jid}: queued #1, ~[\d?]+ min")
+    assert any(want.fullmatch(m or "") for m in ctx.messages), ctx.messages
+
+
+def test_wait_jobs_any_waits_for_a_queued_job_past_another_jobs_cap(live, monkeypatch):
+    """mode="any", each job's cap from its own admission: a running job reaching its cap
+    unsettled does not end the call while the other job still has its own wait to run; the
+    call ends when that job settles."""
+    release = _queued_behind_a_holder(monkeypatch)
+
+    async def go():
+        holder = await server.run_agent(task="holder", model="served-model")
+        queued = await server.run_agent(task="b", model="served-model")
+        call = asyncio.create_task(server.wait_jobs([holder["id"], queued["id"]], timeout_s=0.3, mode="any"))
+        await asyncio.sleep(0.6)  # the holder's cap passed long ago; the queued job is still queued
+        still = not call.done()
+        release.set()
+        return still, await asyncio.wait_for(call, 5)
+
+    still, out = asyncio.run(go())
+    assert still is True
+    assert out["outcome"] in ("some_done", "all_done") and out["done"]
+
+
+def _foreign_queued(monkeypatch):
+    """Another server's job waiting in its queue: its row `queued`, its entry not admitted,
+    its owner live (the other store's heartbeat)."""
+    from localagents.router import queue as router_queue
+
+    monkeypatch.setattr(server, "FOREIGN_POLL_S", 0.02)
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.05)
+    other = jobs.JobStore()
+    job = other.new(task="theirs", model="m", endpoint="e", base_url="http://e:8080", backend="llama.cpp",
+                    host="local", cwd="/tmp", run_cwd="/tmp", isolation="none")
+    if other.conn.execute("SELECT 1 FROM queue_entries WHERE job_id = ?", (job.id,)).fetchone() is None:
+        router_queue.enqueue(other.conn, job.id, job.endpoint_id, other.server_id, "normal")
+    other.heartbeat()
+    return other, job
+
+
+def test_wait_job_on_another_servers_queued_job_waits_from_its_admission(monkeypatch):
+    """W1, the foreign case: the polled row's queue phase does not spend the cap; once the
+    entry is admitted the cap runs, and the job still running at it comes back `running`."""
+    import re
+
+    other, job = _foreign_queued(monkeypatch)
+    ctx = _Lines()
+
+    async def go():
+        call = asyncio.create_task(server.wait_job(job.id, timeout_s=0.2, ctx=ctx))
+        await asyncio.sleep(0.5)  # past the cap, all of it queued
+        still = not call.done()
+        other.conn.execute("UPDATE queue_entries SET admitted = ? WHERE job_id = ?", (time.time(), job.id))
+        job.status, job.started_at = "running", time.time()
+        job.changed()
+        admitted = time.monotonic()
+        out = await asyncio.wait_for(call, 5)
+        return still, out, time.monotonic() - admitted
+
+    still, out, after = asyncio.run(go())
+    assert still is True
+    assert out["status"] == "running" and 0.15 <= after < 2, after
+    assert any(re.fullmatch(r"queued #1, ~[\d?]+ min", m or "") for m in ctx.messages), ctx.messages
+
+
+def test_wait_job_on_another_servers_job_dropped_while_queued_returns_at_once(monkeypatch):
+    """A job that leaves the queue without a session (dropped) is over: the wait returns its
+    final record at once, whatever is left of the cap."""
+    from localagents.router import queue as router_queue
+
+    other, job = _foreign_queued(monkeypatch)
+
+    async def go():
+        call = asyncio.create_task(server.wait_job(job.id, timeout_s=30))
+        await asyncio.sleep(0.1)
+        router_queue.mark_dropped(other.conn, job.id, "dropped by the queue tool", time.time())
+        return await asyncio.wait_for(call, 2)
+
+    out = asyncio.run(go())
+    assert out["status"] == "dropped" and out["error"] == "dropped by the queue tool"
+
+
+def test_wait_job_on_a_job_cancelled_while_queued_returns_at_once(live, monkeypatch):
+    """This server's job cancelled while queued: dropped, `cancelled while queued`, and the
+    wait hands back that final record at once."""
+    _queued_behind_a_holder(monkeypatch)
+
+    async def go():
+        await server.run_agent(task="holder", model="served-model")
+        queued = await server.run_agent(task="b", model="served-model")
+        call = asyncio.create_task(server.wait_job(queued["id"], timeout_s=30))
+        await asyncio.sleep(0.1)
+        t0 = time.monotonic()
+        await server.cancel_job(queued["id"])
+        out = await asyncio.wait_for(call, 2)
+        return out, time.monotonic() - t0
+
+    out, took = asyncio.run(go())
+    assert (out["status"], out["error"], out["started_at"]) == ("dropped", "cancelled while queued", None)
+    assert took < 1, took
+
+
+def test_a_queue_task_that_ends_without_admitting_ends_the_queue_phase(monkeypatch):
+    """jobs.in_queue: a queued job whose queue task ended without admitting or settling it has
+    nothing left that could admit it; the wait's cap runs from there instead of forever."""
+    job = server.store.new(task="t", model="m", endpoint="e", base_url="http://e:8080", backend="llama.cpp",
+                           host="local", cwd="/tmp", run_cwd="/tmp", isolation="none")
+
+    async def go():
+        async def broken_queue():
+            await asyncio.sleep(0.1)
+            raise RuntimeError("the queue loop died")
+
+        job._task = asyncio.create_task(broken_queue())
+        t0 = time.monotonic()
+        got = await server.store.wait(job.id, 0.1, settle=True, from_admission=True)
+        with pytest.raises(RuntimeError):
+            await job._task
+        return got, time.monotonic() - t0
+
+    got, took = asyncio.run(go())
+    assert got.status == "queued" and not got.settled
+    assert 0.15 <= took < 1, took
+
+
+def test_cancel_job_reports_progress_while_the_teardown_settles(live, monkeypatch):
+    """W2: the settle wait reports progress like the other blocking waits (Claude Code's idle
+    window), and cancel_job takes the MCP context to send it."""
+    monkeypatch.setattr(jobs, "PROGRESS_INTERVAL_S", 0.05)
+    _slow_teardown_query(monkeypatch, teardown_s=0.4)
+    ctx = _Lines()
+
+    async def go():
+        started = await server.run_agent(task="t", model="served-model", timeout_s=60)
+        await asyncio.sleep(0.2)
+        return await server.cancel_job(started["id"], ctx=ctx)
+
+    out = asyncio.run(go())
+    assert out["status"] == "cancelled" and "note" not in out
+    assert len(ctx.messages) >= 3, ctx.messages

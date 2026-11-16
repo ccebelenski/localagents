@@ -13,6 +13,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -310,6 +311,16 @@ async def _report_many(ctx: Context, job_ids: list[str]) -> None:
     could not read show as `?`, one stderr line), never the wait (story 1.9 item 6's rule)."""
     interval_s = jobs.PROGRESS_INTERVAL_S  # read at call time so tests can shorten it
     finished: set[str] = set()  # foreign ids seen terminal: terminal is final
+
+    def waiting(jid: str, j: Job | None) -> str | None:
+        # a queued job's part is the queue's own line (`queued #n, ~m min`), as run_agent's and
+        # wait_job's; a failed read degrades the part to the plain one
+        try:
+            return dispatch.queued_line(store.conn, j) if j is not None else _foreign_queued_line(jid)
+        except (sqlite3.Error, db.SchemaError) as e:
+            print(f"localagents: progress line degraded: {type(e).__name__}: {e}", file=sys.stderr)
+            return None
+
     while True:
         await asyncio.sleep(interval_s)
         foreign = [jid for jid in dict.fromkeys(job_ids) if jid not in store.jobs and jid not in finished]
@@ -321,6 +332,7 @@ async def _report_many(ctx: Context, job_ids: list[str]) -> None:
         for jid, row in rows.items():
             if row is not None and row["status"] in _TERMINAL_STATUSES:
                 finished.add(jid)
+
         done = 0
         parts = []
         for jid in job_ids:
@@ -331,7 +343,9 @@ async def _report_many(ctx: Context, job_ids: list[str]) -> None:
                     continue
                 # the id, the job's one handle since 3.10f-1: the same string list_jobs and the
                 # job directory show
-                parts.append(f"{j.id}: {j.status} {int(_elapsed(j))}s, {j.num_turns} turns")
+                line = waiting(jid, j) if j.status == "queued" else None
+                plain = f"{j.status} {int(_elapsed(j))}s, {j.num_turns} turns"
+                parts.append(f"{j.id}: {line or plain}")
             elif jid in finished:
                 done += 1
             elif rows.get(jid) is None:
@@ -340,7 +354,9 @@ async def _report_many(ctx: Context, job_ids: list[str]) -> None:
                 row = rows[jid]
                 start = row["started_at"] or row["created_at"]  # summary_from_row's elapsed rule
                 elapsed = int(time.time() - start) if start is not None else 0
-                parts.append(f"{jid}: {row['status']} {elapsed}s, {row['num_turns']} turns")
+                line = waiting(jid, None) if row["status"] == "queued" else None
+                plain = f"{row['status']} {elapsed}s, {row['num_turns']} turns"
+                parts.append(f"{jid}: {line or plain}")
         try:
             await ctx.report_progress(done, len(job_ids), "; ".join([f"{done}/{len(job_ids)} done", *parts]))
         except Exception:  # a client without progress support must not break the wait
@@ -479,8 +495,10 @@ async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> d
     `lost` instead of running out the clock. Every jobs.PROGRESS_INTERVAL_S a line with the
     same shape _progress_reporter's has (a failing derive read degrades the line, story 1.9
     item 6) — wait_job's; wait_jobs passes no ctx and _report_many covers every id in one line
-    (review of 1.10, D2). On timeout the row as it stands — status still `running`, the in-process wait's
-    timeout answer's equivalent. No guard inside: every read here is the database's, and the
+    (review of 1.10, D2); while the job waits in its queue the line is the queue's own
+    (_foreign_queued_line) and `timeout_s` has not started: it counts from the admission, as
+    the in-process waits' does. On timeout the row as it stands — status still `running`, the
+    in-process wait's timeout answer's equivalent. No guard inside: every read here is the database's, and the
     caller turns sqlite3.Error/db.SchemaError into database_error.
 
     A terminal row is a settled record because run_job writes the terminal status only in its
@@ -492,7 +510,10 @@ async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> d
     poll_s = FOREIGN_POLL_S  # read at call time so tests can shorten them
     sweep_s = FOREIGN_SWEEP_S
     progress_s = jobs.PROGRESS_INTERVAL_S
-    deadline = time.monotonic() + timeout_s
+    # the cap counts from the job's admission, as in-process (JobStore.wait's from_admission):
+    # armed at the first poll that finds the job not waiting in its queue. The queue phase has
+    # no deadline; the sweep below ends it if the owning server dies (its queued job is `lost`)
+    deadline: float | None = None
     next_sweep = time.monotonic() + sweep_s
     next_progress = time.monotonic() + progress_s
     while True:
@@ -503,8 +524,10 @@ async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> d
             return {"error": "unknown_job", "message": f"unknown job '{job_id}'"}
         if row["status"] in _TERMINAL_STATUSES:
             return _row_summary(row)
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        queued = _foreign_queued_line(job_id) if row["status"] == "queued" else None
+        if deadline is None and queued is None:
+            deadline = time.monotonic() + timeout_s
+        if deadline is not None and deadline - time.monotonic() <= 0:
             return _row_summary(row)
         if time.monotonic() >= next_sweep:
             store.mark_lost_jobs()  # the spec's sweep, this time driven by the wait itself
@@ -512,16 +535,17 @@ async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> d
         if ctx is not None and time.monotonic() >= next_progress:
             start = row["started_at"] or row["created_at"]  # summary_from_row's elapsed rule
             elapsed = int(time.time() - start) if start is not None else 0
-            msg = f"{row['status']}: {elapsed}s, {row['num_turns']} turns"
+            msg = queued or f"{row['status']}: {elapsed}s, {row['num_turns']} turns"
             try:
                 conn = store.conn
-                msg += f", {derive.tool_call_count(conn, job_id)} tool calls"
-                errors = derive.error_count(conn, job_id)
-                if errors:
-                    msg += f", {errors} errors"
-                last = derive.last_tool(conn, job_id)
-                if last:
-                    msg += f"; {last}"
+                if queued is None:
+                    msg += f", {derive.tool_call_count(conn, job_id)} tool calls"
+                    errors = derive.error_count(conn, job_id)
+                    if errors:
+                        msg += f", {errors} errors"
+                    last = derive.last_tool(conn, job_id)
+                    if last:
+                        msg += f"; {last}"
             except (sqlite3.Error, db.SchemaError) as e:
                 # same degrade rule as the in-process progress line: the line says what it can
                 print(f"localagents: progress line degraded: {type(e).__name__}: {e}", file=sys.stderr)
@@ -530,7 +554,16 @@ async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> d
             except Exception:  # a client without progress support must not break the wait
                 pass
             next_progress += progress_s
-        await asyncio.sleep(min(remaining, poll_s))
+        await asyncio.sleep(poll_s if deadline is None else min(deadline - time.monotonic(), poll_s))
+
+
+def _foreign_queued_line(job_id: str) -> str | None:
+    """dispatch.queued_line (the one owner of ``queued #n, ~m min`` and of "is it waiting") for
+    another server's job, read from the shared rows: its Job is not in this process, so the
+    estimate is the ticket's ``est_wait_s`` (dispatch's own fallback), never an in-process one.
+    None when the job is not waiting (admitted, over, or without a queue entry). Raises what its
+    reads raise; every caller is inside a database_error guard or the degrade rule."""
+    return dispatch.queued_line(store.conn, SimpleNamespace(id=job_id, _queue_estimate=None))
 
 
 async def _cancel_and_await(futs: list[asyncio.Future[Any]]) -> None:
@@ -879,21 +912,10 @@ async def start_job(
 
 
 async def _wait_admitted(job: Job, ctx: Context | None) -> None:
-    """The blocking wait's queue phase (design §7 "Accepted"): wait while the job is queued,
-    with no deadline (the caller's own cancel bounds it; ``admit='now'`` is the way not to
-    wait), reporting ``queued #n, ~m min`` every progress interval. Returns at the admission or
-    when the job settled without one (dropped, lost)."""
-    report = _progress_reporter(ctx)
-    while not job._admitted.is_set() and not job.settled:
-        waits = [asyncio.ensure_future(job._admitted.wait()), asyncio.ensure_future(job._done.wait())]
-        try:
-            done, _ = await asyncio.wait(waits, timeout=jobs.PROGRESS_INTERVAL_S,
-                                         return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            for f in waits:
-                f.cancel()
-        if not done and report is not None:
-            await report(job)
+    """The queue phase alone (jobs.wait_through_queue, its one owner), reporting ``queued #n,
+    ~m min``. The wait tools do not call this: store.wait(from_admission=True) runs it before
+    their cap. router/calibrate.py is its last caller."""
+    await jobs.wait_through_queue(job, _progress_reporter(ctx))
 
 
 @mcp.tool()
@@ -1009,8 +1031,7 @@ async def run_agent(
         return e.reply
     if wait_s > 0:
         # wait_s from the admission (design §7 "Accepted"): the queue phase first, unbounded
-        await _wait_admitted(job, ctx)
-        await store.wait(job.id, wait_s, progress=_progress_reporter(ctx), settle=True)
+        await store.wait(job.id, wait_s, progress=_progress_reporter(ctx), settle=True, from_admission=True)
     try:
         return _job_summary(job)
     except (sqlite3.Error, db.SchemaError) as e:
@@ -1023,7 +1044,9 @@ async def run_agent(
 async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = None) -> dict[str, Any]:
     """Block up to `timeout_s` seconds for a job to finish; returns its status/result either way.
 
-    Any server's job: this server's waits on its settle event, another server's is polled from
+    `timeout_s` counts from the job's admission, as run_agent's wait_s: a queued job is waited
+    for through the queue (progress `queued #n, ~m min`) and a job dropped or cancelled there
+    returns at once. Any server's job: this server's waits on its settle event, another server's is polled from
     its row in the shared database (story 1.10); only `cancel_job` and `run_agent(resume_job=)`
     still refuse another server's job. Progress is reported every minute while waiting, so a
     long timeout is safe to pass. At `timeout_s`, this server's job whose session has ended
@@ -1031,7 +1054,8 @@ async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = Non
     working comes back `running`.
     """
     try:
-        job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx), settle=True)
+        job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx), settle=True,
+                               from_admission=True)
         # inside the guard: the summary()'s own derive reads are reads like the wait's
         # (story 1.9 item 6, made true here by 1.9a row 1 — it sat after the try)
         return _job_summary(job)
@@ -1062,6 +1086,8 @@ async def wait_jobs(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Block for several jobs: all finished (mode="all"), first finished (mode="any"), or timeout_s.
+    Each job's timeout_s counts from its own admission (queue time does not spend it): "all"
+    ends when every job is done or past its cap, "any" at the first finish or then.
     Fallback only: prefer one blocking run_agent per job (each notifies on its own finish).
     mode="any" must be re-armed after every return or the rest finish unseen.
     Any server's ids mix (story 1.10): this server's jobs wait on their settle events, another
@@ -1102,16 +1128,20 @@ async def wait_jobs(
         if ctx is not None:
             reporter = asyncio.ensure_future(_report_many(ctx, job_ids))
         if in_process_ids:
-            tasks.append(asyncio.ensure_future(store.wait_many(in_process_ids, timeout_s, mode=mode, settle=True)))
+            tasks.append(asyncio.ensure_future(store.wait_many(in_process_ids, timeout_s, mode=mode, settle=True,
+                                                               from_admission=True)))
         tasks.extend(asyncio.ensure_future(_wait_foreign(jid, timeout_s, None)) for jid in foreign_ids)
-        # mode="any" returns as soon as ANY task finishes; mode="all" waits for all of them.
-        # Every task is internally bounded: _wait_foreign by timeout_s, wait_many by timeout_s
-        # plus its settle hold (jobs.SETTLE_BACKSTOP_S), so the asyncio.wait timeout, past both
-        # by a few seconds, is a belt.
-        await asyncio.wait(
-            tasks, timeout=timeout_s + jobs.SETTLE_BACKSTOP_S + 5,
-            return_when=asyncio.FIRST_COMPLETED if mode == "any" else asyncio.ALL_COMPLETED,
-        )
+        # Each job's cap counts from its own admission (wait_many's per-job waits, and
+        # _wait_foreign's): mode="all" waits for every task; mode="any" until one job is over,
+        # or every task has ended without one (wait_many's own rule, across both kinds). No
+        # timeout here: a queue phase has no deadline, so no fixed belt can bound the call;
+        # every task ends at its job's settle, its cap, or its job leaving the queue.
+        pending = set(tasks)
+        while pending:
+            ended, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED if mode == "any" else asyncio.ALL_COMPLETED)
+            if mode == "any" and any(_a_job_is_over(f) for f in ended):
+                break
     finally:
         # asyncio.wait never cancels its tasks, and a cancel of this call (the client's Esc or
         # request timeout) lands here: every task is cancelled and awaited to the end on every
@@ -1166,6 +1196,18 @@ async def wait_jobs(
     else:
         outcome = "timeout"
     return {"outcome": outcome, "done": done, "running": running}
+
+
+def _a_job_is_over(f: asyncio.Future[Any]) -> bool:
+    """wait_jobs mode="any": an ended wait whose job is over (wait_many returned a settled job,
+    _wait_foreign a terminal row), or that failed or answered an error (the classification
+    after it says which). A wait that only reached its cap is not."""
+    if f.cancelled() or f.exception() is not None:
+        return True
+    got = f.result()
+    if isinstance(got, list):
+        return any(j.settled for j in got)
+    return "status" not in got or got["status"] in _TERMINAL_STATUSES
 
 
 def _database_error(e: Exception) -> dict[str, Any]:
@@ -1339,11 +1381,13 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
 
 
 @mcp.tool()
-async def cancel_job(job_id: str) -> dict[str, Any]:
+async def cancel_job(job_id: str, ctx: Context | None = None) -> dict[str, Any]:
     """Cancel a running job (kills the headless Claude session).
 
     A job still waiting in the queue leaves it without a session: `dropped`, error
-    `cancelled while queued`, started_at null."""
+    `cancelled while queued`, started_at null.
+    Returns the final record once the session's teardown has settled it (seconds, up to
+    2 minutes), with progress meanwhile; one not settled by then carries a `note` saying so."""
     try:
         job = store.get(job_id)
     except KeyError as e:
@@ -1365,8 +1409,12 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
                 # was ever started, so it is the same never-ran drop
                 dispatch.end_queued(store.conn, job, dispatch.CANCELLED_WHILE_QUEUED)
     # a done job whose finally is still finishing its worktree gets the same wait as a cancelled
-    # one: the record handed back is the settled one, with kept/note (DeepSeek review of 6005f94)
-    await store.wait(job_id, 15)
+    # one: the record handed back is the settled one, with kept/note (DeepSeek review of 6005f94).
+    # The wait is the settle hold alone (no cap of its own: 0): a cancelled or done job is held
+    # (held_at_cap) until it settles or jobs.SETTLE_BACKSTOP_S passes, the one owner of how long
+    # a teardown may take (the SDK's close alone can take ~20 s)
+    t0 = time.monotonic()
+    await store.wait(job_id, 0, progress=_progress_reporter(ctx), settle=True)
     try:
         out = _job_summary(job)
     except (sqlite3.Error, db.SchemaError) as e:
@@ -1374,9 +1422,9 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
         # exception (story 1.9a row 1)
         return _database_error(e)
     if not job.settled:
-        # the 15 s wait timed out: say so — the record is mid-finally and may still move
-        # (story 1.9 item 3)
-        out["note"] = "cancel requested; the job had not settled after 15 s"
+        # the settle wait ran out: say so, with the time it waited — the record is mid-finally
+        # and may still move (story 1.9 item 3)
+        out["note"] = f"cancel requested; the job had not settled after {round(time.monotonic() - t0)} s"
     return out
 
 

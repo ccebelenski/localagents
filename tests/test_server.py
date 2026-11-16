@@ -460,19 +460,18 @@ def test_nothing_between_new_and_the_task_can_orphan_a_job(reg, monkeypatch, cap
 
 
 def test_cancel_job_says_when_the_settle_wait_times_out(reg, monkeypatch):
-    """Story 1.9 item 3: cancel_job waited its 15 s and returned the summary as it stood,
-    silently, when the settle never came — the caller could not tell a timed-out cancel from a
-    completed one. The answer carries a note then; a settled cancel does not."""
-    job = _prev_job()  # never settles: _done is not set
+    """Story 1.9 item 3: cancel_job returned the summary as it stood, silently, when the settle
+    never came — the caller could not tell a timed-out cancel from a completed one. The answer
+    carries a note then; a settled cancel does not. Since W2 (2026-11-15) the wait is the
+    settle wait (settle=True, held up to jobs.SETTLE_BACKSTOP_S, shortened here) and the note
+    names the seconds it waited."""
+    monkeypatch.setattr(jobs, "SETTLE_BACKSTOP_S", 1.2)
+    job = _prev_job()
+    job.status = "timeout"  # done, never settles: _done is not set (a hung teardown)
 
-    async def short_wait(jid, timeout_s, progress=None):
-        assert timeout_s == 15  # the note names this exact wait
-        return job
-
-    monkeypatch.setattr(server.store, "wait", short_wait)
     out = asyncio.run(server.cancel_job(job.id))
-    assert out["note"] == "cancel requested; the job had not settled after 15 s"
-    assert out["status"] == "queued" and out["id"] == job.id  # the summary as it stands
+    assert out["note"] == "cancel requested; the job had not settled after 1 s"
+    assert out["status"] == "timeout" and out["id"] == job.id  # the summary as it stands
 
     job._done.set()
     out = asyncio.run(server.cancel_job(job.id))

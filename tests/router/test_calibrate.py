@@ -974,7 +974,9 @@ def test_calibrate_wait_counts_from_admission(conn, probes, monkeypatch, tmp_pat
                 await settled
 
         async def start_job(**kw):
-            asyncio.create_task(background())
+            # the job's queue task, as start_job's _queue_then_run: the queue phase waits while
+            # it is alive (jobs.in_queue), and it is what admits the job
+            job._task = asyncio.create_task(background())
             return job
 
         class Store:
