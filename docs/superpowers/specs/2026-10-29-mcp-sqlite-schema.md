@@ -33,6 +33,9 @@ endpoint_load                       -- the sampler's compact load text, last wri
   endpoint_id INTEGER PRIMARY KEY REFERENCES endpoints(id)   -- superseded by the monitor's probes
   updated     REAL
   load        TEXT                  -- "1/1 slots", "2 run 1 wait kv 34%" (status.load_summary)
+                                    -- True-now 2026-11-15: the sampler writes status.load_sample's JSON
+                                    -- ({"v":2,"sessions":1,"running":0,"waiting":0,"ours":1}); the old
+                                    -- text above is still read (status.read_sample)
 
 models
   id          INTEGER PRIMARY KEY

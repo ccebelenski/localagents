@@ -102,10 +102,10 @@ endpoint plus one row per job (the old one-line form is `localagents statusline
 --one-line`):
 
 ```
-local llamacpp · 1/1 slots
+local llamacpp · 1/1 sessions q1
   ⟳ Qwen3.8-27B 4m00s · 12 calls · 3 files · ctx 41% · 33 t/s · 2 compactions · Bash: uv run pytest -q
   ✓ Qwen3.8-27B 2m00s · 2 files · 3 compactions
-local gpu-server · 1 run kv 31%
+local gpu-server · 1/2 sessions +1 foreign
   ⟳ DeepSeek-V4-Flash 2m00s · 3 calls · ctx 12% · 40 t/s
 +2 jobs in other sessions
 ```
@@ -115,9 +115,15 @@ context window is (`ctx`, from the token usage recorded on every backend request
 tells you how close the agent is to compaction), its recent generation speed, the
 compaction count (compactions mean the window is too small for the job; the harness
 reports each one with a `compact_boundary` message) and its last tool call, folded to
-one line with paths relative to the job's worktree. The load of each endpoint your
-jobs run on rides its header line, probed every ten seconds while jobs run: slots busy
-for llama.cpp, requests running and queued and KV cache fill for vLLM. Finished jobs
+one line with paths relative to the job's worktree. Each header counts sessions, the
+same number the queue admits on. `1/2 sessions` means one job of yours holds one of the
+two sessions the endpoint can carry, whether or not it is generating at that moment (a
+job running its tests holds its session while the server's slot sits idle). `+1 foreign`
+appears when the server reports a request that is not one of yours, `2 wait` when the
+server has requests queued of its own, and `q1` when one job waits in the localagents
+queue for that endpoint. The capacity is probed every ten seconds while jobs run, and
+an endpoint that could not be read shows the session count alone. Queued jobs are
+listed under the running ones in the order they will be admitted. Finished jobs
 stay on the line for two minutes with a check mark (or a cross, clock, null sign or
 dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost), compaction
 count included.
