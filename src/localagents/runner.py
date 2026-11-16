@@ -319,6 +319,7 @@ def _apply_message(job: Job, m: Any) -> None:
         # they count the same turns from two sides and may disagree on the boundaries
         job.num_turns = m.num_turns
         job.result = m.result
+        job._session_over = True  # what follows is the CLI's exit, not more work (jobs.held_at_cap)
         job.log_text(f"[done] subtype={m.subtype} turns={m.num_turns} duration={m.duration_ms}ms")
         if m.is_error or m.subtype != "success":
             job.error = f"{m.subtype}: {m.result or ''}".strip()
@@ -446,7 +447,12 @@ async def run_job(
             async for m in query(prompt=job.task, options=opts):
                 _handle_message(job, m)
 
-        await asyncio.wait_for(consume(), timeout=timeout_s or d.timeout_s)
+        session_timeout = timeout_s or d.timeout_s
+        # the session's own clock, for the blocking waits' cap rule (jobs.held_at_cap): armed
+        # here, after the preamble, so it starts later than a run_agent wait's clock does
+        job._session_timeout_s = float(session_timeout)
+        job._session_deadline = time.monotonic() + session_timeout
+        await asyncio.wait_for(consume(), timeout=session_timeout)
         job.status = "failed" if job.error else "succeeded"
         if job.status == "succeeded" and job.result is None:
             job.error = "session ended without a result message"

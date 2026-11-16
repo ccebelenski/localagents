@@ -80,6 +80,16 @@ def prune(days: int, now: float | None = None, dry_run: bool = False) -> list[Pa
 # How often a blocking wait sends a progress notification (well under Claude Code's idle timeouts).
 PROGRESS_INTERVAL_S = 60.0
 
+# How long a blocking wait goes on past its cap for a job held there (held_at_cap): the end of
+# a session is not instant. The SDK's close waits up to ~20 s (5 s for its write lock, 5 s for
+# the CLI's graceful exit, then SIGTERM +5 s, SIGKILL +5 s; 5.04-5.07 s measured on three
+# timeouts), then run_job's finally runs the after-metrics probe (probe_timeout_s, 2.5 s by
+# default), the feedback gates (git reads, each capped at 60 s, milliseconds in practice) and
+# finish_worktree before it settles; a run_agent wait also covers the preamble the session's
+# clock started after (the metrics probe, the worktree). 120 s holds all of that with margin,
+# and still lets a hung teardown go: past it the wait returns what there is.
+SETTLE_BACKSTOP_S = 120.0
+
 # The statuses that mean the job is over: Job.done reads it, and so do the server's row reads
 # (server._TERMINAL_STATUSES is this tuple) — one list, so the two can never disagree.
 # ``dropped`` (router 11, design §7 "Accepted"): the job left the queue without a session; its
@@ -97,6 +107,33 @@ def oldest_first(job: "Job") -> tuple[bool, float]:
     """Sort key for in-process jobs, oldest first: a None created_at is the oldest, as a NULL
     created_at is in the row listing (review of 1.8, finding 7)."""
     return (job.created_at is not None, job.created_at or 0.0)
+
+
+def held_at_cap(job: "Job", wait_start: float, wait_span: float, now: float) -> bool:
+    """The wait-cap rule: a blocking wait whose cap passes while the job is already over its
+    own session deadline, or done but not yet settled, waits for the settled record (up to
+    SETTLE_BACKSTOP_S); it never hands back `running` for a job whose session has ended or is
+    being torn down. A wait whose cap passes while the session is genuinely still inside its
+    own deadline returns the unsettled record (a caller who asked for less than the job's
+    time is not held).
+
+    Held: the job is done but not settled (run_job's finally is running); its cancel was
+    requested (the session is being torn down); its ResultMessage arrived (the CLI is exiting);
+    the session's deadline has passed (the SDK is closing the CLI, ~5 s, before the runner even
+    writes `timeout`); or the wait began before the session's clock did and asked for at least
+    the session's timeout — run_agent's case: its wait counts from admission, the session's
+    deadline is armed after the preamble, so `wait_s` == `timeout_s` reaches the cap a moment
+    before the deadline it was meant to cover. Times are time.monotonic()."""
+    if job.settled:
+        return False
+    if job.done or job._cancel_requested or job._session_over:
+        return True
+    deadline, span = job._session_deadline, job._session_timeout_s
+    if deadline is None or span is None:
+        return False  # no session yet (queued, or the preamble): the cap stands
+    if now >= deadline:
+        return True
+    return deadline - span >= wait_start and span <= wait_span
 
 
 @dataclass
@@ -156,6 +193,13 @@ class Job:
     # fix wave 3 (N1): cancel_job asked for this job's cancel; any other CancelledError in the
     # queue loop is the server exiting, which leaves the row for the stale-owner rule
     _cancel_requested: bool = field(default=False, repr=False)
+    # the wait-cap rule (see held_at_cap): the session's own clock, set by run_job where it arms
+    # the session's wait_for (time.monotonic(); None until then: queued, or in the preamble),
+    # and its timeout; _session_over once the session's ResultMessage has arrived (what follows
+    # is the CLI's exit and the finally, not more work)
+    _session_deadline: float | None = field(default=None, repr=False)
+    _session_timeout_s: float | None = field(default=None, repr=False)
+    _session_over: bool = field(default=False, repr=False)
     _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)  # the store's db connection
     _pending_tools: dict[str, int] = field(default_factory=dict, repr=False)  # tool_use_id -> rowid of its tool_calls row (spec write rule)
@@ -652,17 +696,35 @@ class JobStore:
         mode: str = "all",
         progress: Callable[[list[Job]], Awaitable[None]] | None = None,
         interval_s: float | None = None,
+        settle: bool = False,
     ) -> list[Job]:
         """Block until every job (`mode="all"`) or at least one (`mode="any"`) finishes, or
-        `timeout_s` passes. Returns the jobs in the order given. Progress as in `wait`."""
+        `timeout_s` passes. Returns the jobs in the order given. Progress as in `wait`.
+
+        With `settle`, the wait-cap rule (held_at_cap) per job: at the cap the jobs held there
+        are waited for (up to SETTLE_BACKSTOP_S) until each has settled, or for "any" until
+        one job has; the jobs still inside their own deadline are not waited for, so "all"
+        returns them unsettled once the held ones have settled, as at a plain cap."""
         jobs = [self.get(j) for j in jids]  # raises KeyError before any waiting
         if interval_s is None:
             interval_s = PROGRESS_INTERVAL_S
         # settled, not done: the record is handed back only once run_job's finally has run
         satisfied = (lambda: all(j.settled for j in jobs)) if mode == "all" else (lambda: any(j.settled for j in jobs))
-        deadline = time.monotonic() + timeout_s
-        while jobs and not satisfied():
-            remaining = deadline - time.monotonic()
+        start = time.monotonic()
+        end = start + timeout_s
+        held: list[Job] | None = None  # decided once, when the cap passes
+
+        def going() -> bool:
+            return not satisfied() and (held is None or not all(j.settled for j in held))
+
+        while jobs and going():
+            now = time.monotonic()
+            if held is None and now >= end:
+                held = [j for j in jobs if held_at_cap(j, start, timeout_s, now)] if settle else []
+                end = now + SETTLE_BACKSTOP_S  # read at call time so tests can shorten it
+                if not going():
+                    break
+            remaining = end - now
             if remaining <= 0:
                 break
             step = min(remaining, interval_s) if progress else remaining
@@ -672,7 +734,7 @@ class JobStore:
             finally:
                 for f in pending:
                     f.cancel()
-            if progress and not satisfied() and time.monotonic() < deadline:
+            if progress and going() and time.monotonic() < end:
                 await progress(jobs)
         return jobs
 
@@ -682,25 +744,40 @@ class JobStore:
         timeout_s: float,
         progress: Callable[[Job], Awaitable[None]] | None = None,
         interval_s: float | None = None,
+        settle: bool = False,
     ) -> Job:
         """Block until the job finishes or `timeout_s` passes; returns the job either way.
 
         With `progress`, it is awaited every `interval_s` while the wait continues. Claude Code
         aborts an MCP tool call that stays silent for its idle window (30 min on stdio, 5 min on
         HTTP), so a long wait has to say something now and then; a progress notification counts.
+
+        With `settle` (the blocking tools pass it), the wait-cap rule: a job held at the cap
+        (held_at_cap: its session has ended, is being torn down, or is the one this wait was
+        meant to cover) is waited for until it settles or SETTLE_BACKSTOP_S more passes, with
+        progress going on; a job whose session is still inside its own deadline comes back at
+        the cap unsettled, as without it. cancel_job's short wait does not pass it.
         """
         job = self.get(jid)
         if interval_s is None:
             interval_s = PROGRESS_INTERVAL_S  # read at call time so tests can shorten it
-        deadline = time.monotonic() + timeout_s
+        start = time.monotonic()
+        end = start + timeout_s
+        held = False
         while not job.settled:  # not job.done: see Job.settled
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            if not held and now >= end:
+                if not (settle and held_at_cap(job, start, timeout_s, now)):
+                    break
+                held = True
+                end = now + SETTLE_BACKSTOP_S  # read at call time so tests can shorten it
+            remaining = end - now
             if remaining <= 0:
                 break
             step = min(remaining, interval_s) if progress else remaining
             try:
                 await asyncio.wait_for(job._done.wait(), timeout=step)
             except asyncio.TimeoutError:
-                if progress and not job.settled and time.monotonic() < deadline:
+                if progress and not job.settled and time.monotonic() < end:
                     await progress(job)
         return job

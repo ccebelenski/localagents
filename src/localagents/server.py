@@ -930,10 +930,10 @@ async def run_agent(
       cwd: Working directory (default: this server's cwd).
       isolation: "none" or "worktree" (a git worktree on local-agent/<job id>, kept only if
         changed).
-      wait_s: If > 0, block and return the final record, else the job id at once. A job
-        waiting for a session stays `queued` (`queued #n, ~m min`); wait_s counts from
-        admission, like timeout_s. Pass the job's timeout: Claude Code backgrounds a long call
-        and delivers the record as a task notification. Use for every job, swarms included.
+      wait_s: If > 0, block (through the queue: `queued #n, ~m min`) and return the final
+        record, else the job id at once. Counts from admission, like timeout_s. Pass the job's
+        timeout (shorter: `running` if the session still works); Claude Code backgrounds a
+        long call, the record arrives as a task notification. Use for every job, swarms included.
       permission_mode: acceptEdits (default) | bypassPermissions | default | plan.
       max_turns: Turn cap. allowed_tools: Override auto-approved tools.
       system_prompt_append: Appended to the system prompt.
@@ -1010,7 +1010,7 @@ async def run_agent(
     if wait_s > 0:
         # wait_s from the admission (design §7 "Accepted"): the queue phase first, unbounded
         await _wait_admitted(job, ctx)
-        await store.wait(job.id, wait_s, progress=_progress_reporter(ctx))
+        await store.wait(job.id, wait_s, progress=_progress_reporter(ctx), settle=True)
     try:
         return _job_summary(job)
     except (sqlite3.Error, db.SchemaError) as e:
@@ -1026,10 +1026,12 @@ async def wait_job(job_id: str, timeout_s: int = 1800, ctx: Context | None = Non
     Any server's job: this server's waits on its settle event, another server's is polled from
     its row in the shared database (story 1.10); only `cancel_job` and `run_agent(resume_job=)`
     still refuse another server's job. Progress is reported every minute while waiting, so a
-    long timeout is safe to pass.
+    long timeout is safe to pass. At `timeout_s`, this server's job whose session has ended
+    or run out of time is waited for until its record is final; one whose session is still
+    working comes back `running`.
     """
     try:
-        job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx))
+        job = await store.wait(job_id, timeout_s, progress=_progress_reporter(ctx), settle=True)
         # inside the guard: the summary()'s own derive reads are reads like the wait's
         # (story 1.9 item 6, made true here by 1.9a row 1 — it sat after the try)
         return _job_summary(job)
@@ -1065,6 +1067,8 @@ async def wait_jobs(
     Any server's ids mix (story 1.10): this server's jobs wait on their settle events, another
     server's are polled from their rows.
     Returns done (final records) and running (ids, status, elapsed). Progress every minute.
+    At timeout_s, this server's jobs whose session has ended or run out of time are waited
+    for until final; jobs whose session is still working come back in running.
     A done job's record is derived from the database: when that read fails, the whole call
     answers database_error — a partial record would be a lie about the jobs it leaves out.
     Likewise a row that disappears mid-wait (nothing deletes job rows; a database rewritten
@@ -1098,12 +1102,14 @@ async def wait_jobs(
         if ctx is not None:
             reporter = asyncio.ensure_future(_report_many(ctx, job_ids))
         if in_process_ids:
-            tasks.append(asyncio.ensure_future(store.wait_many(in_process_ids, timeout_s, mode=mode)))
+            tasks.append(asyncio.ensure_future(store.wait_many(in_process_ids, timeout_s, mode=mode, settle=True)))
         tasks.extend(asyncio.ensure_future(_wait_foreign(jid, timeout_s, None)) for jid in foreign_ids)
         # mode="any" returns as soon as ANY task finishes; mode="all" waits for all of them.
-        # Every task is internally bounded by timeout_s, so the asyncio.wait timeout is a belt.
+        # Every task is internally bounded: _wait_foreign by timeout_s, wait_many by timeout_s
+        # plus its settle hold (jobs.SETTLE_BACKSTOP_S), so the asyncio.wait timeout, past both
+        # by a few seconds, is a belt.
         await asyncio.wait(
-            tasks, timeout=timeout_s,
+            tasks, timeout=timeout_s + jobs.SETTLE_BACKSTOP_S + 5,
             return_when=asyncio.FIRST_COMPLETED if mode == "any" else asyncio.ALL_COMPLETED,
         )
     finally:
