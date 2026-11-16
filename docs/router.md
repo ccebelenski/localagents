@@ -276,7 +276,8 @@ Every routed job stores its decision's reasoning in a ticket, written with the r
 one transaction. It holds d3's scores with confidences, undetermined axes and the
 truncated mark, the definitions version, the pass whose cells were read, the considered
 rows each with its shortfall or filter, the chosen row, the queue position and expected
-wait as they stood at enqueue, and flags carrying the priority, the reason, what caused
+wait as they stood at enqueue (a waiting job's current estimate is on its queue entry,
+refreshed at every wake, and that is the number `job_status` and the `queue` tool show), and flags carrying the priority, the reason, what caused
 the wait, the pool, and later the forced, resumed, stalled and row-down marks. The
 position is absent when the job admitted at once. `job_status` and `list_jobs` carry a
 short summary of the ticket, and `explain` answers with the whole ticket beside the
@@ -448,7 +449,9 @@ let every Claude Code session reconnect to it, and only then add the entry to
 `models.yaml`. The new `Endpoint` ignores unknown keys with a warning, so the next key
 added this way does not repeat the problem.
 
-The state directory's schema is at version 12. The step to it rebuilds the jobs table to
+The state directory's schema is at version 13. The step from 12 adds the queue entry's
+stored wait estimate and the index the wait's job-history read walks; it is an append and
+rebuilds nothing. The step to version 12 rebuilds the jobs table to
 carry routing's columns and gives the queue entries the mark of what they wait on. A
 newer package migrates an older file on first open, and a package older than the file
 refuses to open it with a line naming both versions. Nothing is moved by hand.
