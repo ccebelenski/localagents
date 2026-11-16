@@ -939,8 +939,10 @@ async def stall_scan(store: JobStore, conn: sqlite3.Connection, reg: Registry, n
     """§7 "Stalled sessions": this process's running sessions with no progress for STALL_S get
     their endpoint probed, a ``[stalled]`` line, the notice as ``last_activity`` (until the next
     message replaces it) and, routed, ``flags.stalled`` on the ticket. One notice per stall;
-    nothing is cancelled. Every admission wake calls it, and so does every sampler tick (fold
-    2): a stalled session goes unnoticed while nothing is queued behind it on the wake alone.
+    nothing is cancelled. A session whose reported result background tasks hold open
+    (``Job.held_open``) is waiting on them, not stalled: it gets no notice. Every admission
+    wake calls it, and so does every sampler tick (fold 2): a stalled session goes unnoticed
+    while nothing is queued behind it on the wake alone.
 
     Fix wave 3 (N3): a routed job's ticket flag is written FIRST and guarded like the row_down
     one; ``_stall_seen`` (one notice per stall) is set only once that write succeeded, so a
@@ -958,6 +960,11 @@ async def stall_scan(store: JobStore, conn: sqlite3.Connection, reg: Registry, n
 
 async def _stall_one(conn: sqlite3.Connection, j: Job, reg: Registry, now: float) -> None:
     """``stall_scan`` for one running job (its docstring has the rules)."""
+    if j.held_open:
+        # its result is reported and the harness is waiting on background tasks it knows of: no
+        # requests are expected until they end, and the notice would replace the line that
+        # says so (runner: last_activity)
+        return
     last = _last_progress(conn, j, now)
     if last is None or now - last < STALL_S or j._stall_seen == last:
         return

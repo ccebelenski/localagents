@@ -55,6 +55,48 @@ def activity_line(tool: str, text: str | None) -> str:
     shown = display_input(tool, text)
     return f"{tool}: {shown}" if shown is not None else tool
 
+
+# A session whose result has arrived while background tasks it started are still alive (the
+# 2026-11-15 incident): the harness waits for them and takes another turn, so the job is not
+# over. The most tasks a line names by description (the rest are counted), each description's
+# shown cut, and the prefix every held-open line starts with (held_open reads it back).
+TASKS_NAMED = 3
+TASK_DESCRIPTION_CHARS = 80
+HELD_OPEN_PREFIX = "result reported; "
+
+
+def background_tasks_named(descriptions: list[str]) -> str:
+    """``"1 background task: <d>"``, ``"2 background tasks: <a>; <b>"``, past TASKS_NAMED
+    ``"...; <c> and 2 more"``: the naming the held-open activity line and the runner's
+    timeout error share. Each description is one line, cut to TASK_DESCRIPTION_CHARS."""
+    n = len(descriptions)
+    shown = "; ".join(" ".join(d.split())[:TASK_DESCRIPTION_CHARS] or "(no description)"
+                      for d in descriptions[:TASKS_NAMED])
+    more = f" and {n - TASKS_NAMED} more" if n > TASKS_NAMED else ""
+    return f"{n} background task{'s' if n != 1 else ''}: {shown}{more}"
+
+
+def held_open_line(descriptions: list[str]) -> str:
+    """The runner's last_activity while a reported result waits on background tasks: one line
+    a coordinator reads in job_status, the progress line and the status line. With none left
+    (the last one ended; the harness takes its turn with the outcome next) it says that."""
+    if descriptions:
+        return f"{HELD_OPEN_PREFIX}waiting on {background_tasks_named(descriptions)}"
+    return f"{HELD_OPEN_PREFIX}its background tasks ended"
+
+
+def held_open(last_activity: str | None) -> bool:
+    """The activity text is a held_open_line: the progress lines show it in place of the last
+    tool (the last tool is what started the task, not what the job is doing)."""
+    return bool(last_activity) and last_activity.startswith(HELD_OPEN_PREFIX)
+
+
+def progress_activity(last_activity: str | None, last_tool: str | None) -> str | None:
+    """What a progress line names after its counts: the held-open line while there is one,
+    else the last tool (in-process and foreign waits alike)."""
+    return last_activity if held_open(last_activity) else last_tool
+
+
 # the most names a worktree's recorded file list keeps (runner.finish_worktree writes it,
 # diff_files reads it); ``worktree.files_n`` counts them all. A story touches tens of files; a
 # tree that grew a vendored directory would otherwise put thousands into every list_jobs row.

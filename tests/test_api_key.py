@@ -167,7 +167,7 @@ def test_session_env_never_carries_the_real_key(keyed_reg):
     from localagents.registry import Resolution
 
     res = Resolution.make(keyed_reg.endpoints["ai1"], "ai1-model", {"up": True, "models": ["ai1-model"]})
-    env = build_env(res, "http://127.0.0.1:1/job/x")
+    env = build_env(res, "http://127.0.0.1:1/job/x", keyed_reg.defaults, False)
     assert KEY not in json.dumps(env)
     assert env["ANTHROPIC_API_KEY"] == "local" and env["ANTHROPIC_AUTH_TOKEN"] == "local"
 

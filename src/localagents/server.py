@@ -279,7 +279,9 @@ def _progress_reporter(ctx: Context | None):
             errors = derive.error_count(conn, job.id)
             if errors:
                 msg += f", {errors} errors"
-            last = derive.last_tool(conn, job.id)  # what the agent is doing right now, from the rows
+            # what the agent is doing right now, from the rows; a result held open by background
+            # tasks says that instead (the last tool is what started them)
+            last = derive.progress_activity(job.last_activity, derive.last_tool(conn, job.id))
             if last:
                 msg += f"; {last}"
         except (sqlite3.Error, db.SchemaError) as e:
@@ -547,7 +549,7 @@ async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> d
                     errors = derive.error_count(conn, job_id)
                     if errors:
                         msg += f", {errors} errors"
-                    last = derive.last_tool(conn, job_id)
+                    last = derive.progress_activity(row["last_activity"], derive.last_tool(conn, job_id))
                     if last:
                         msg += f"; {last}"
             except (sqlite3.Error, db.SchemaError) as e:
@@ -705,6 +707,7 @@ async def start_job(
     resume_session: str | None = None,
     run_cwd: str | None = None,
     worktree: dict[str, Any] | None = None,
+    background_tasks: bool | None = None,
 ) -> Job:
     """Record one job, pass it through admission and start its task: run_agent's dispatch
     between the tool's arguments and the running job (router 8, router 12).
@@ -721,7 +724,8 @@ async def start_job(
     choice and refuses a named model serving it (§7 "Decided"). ``copy_ticket_from`` is a
     resumed routed job's previous job (its ticket is copied, marked resumed). ``priority`` and
     ``calibration`` are the caller's (§4, §10); ``mcp_servers``, ``thinking``, ``effort``,
-    ``strict_mcp_config`` and ``setting_sources`` are handed to run_job; ``resume_session``,
+    ``strict_mcp_config``, ``setting_sources`` and ``background_tasks`` are handed to run_job
+    (which resolves a None against the config); ``resume_session``,
     ``run_cwd`` and ``worktree`` carry a resumed job's state, run_agent owns that preamble.
     """
     if priority not in ("urgent", "normal", "background"):
@@ -911,6 +915,7 @@ async def start_job(
         effort=effort,
         strict_mcp_config=strict_mcp_config,
         setting_sources=setting_sources,
+        background_tasks=background_tasks,
     )))
     return job
 
@@ -940,40 +945,42 @@ async def run_agent(
     admit: str = "queue",
     tolerance: float | None = None,
     avoid_job: str | None = None,
+    background_tasks: bool | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Delegate a task to an agent on a local model and (with `wait_s`) wait for the result.
 
-    The agent is a headless Claude Code session (same tools, project CLAUDE.md, same working
-    tree). Write the task like a brief for a junior engineer: what, where, how to verify.
+    A headless Claude Code session (same tools, project CLAUDE.md, working tree): brief it
+    like a junior engineer (what, where, how to verify).
 
     Args:
-      task: The brief; be explicit, local models follow less implicit context than Claude.
+      task: The brief; be explicit, local models infer less than Claude.
       model: Served id, glob or fuzzy name (list_models), or a router entry's name to route
         (the record names the real endpoint and model, plus `routed_by`).
       endpoint: Force an endpoint (no `model`: whatever it serves). A router entry routes
-        alone: a real `model` or a real `endpoint` beside it is bad_argument.
-      cwd: Working directory (default: this server's cwd).
-      isolation: "none" or "worktree" (a git worktree on local-agent/<job id>, kept only if
-        changed).
-      wait_s: If > 0, block (through the queue: `queued #n, ~m min`) and return the final
-        record, else the job id at once. Counts from admission, like timeout_s. Pass the job's
-        timeout (shorter: `running` if the session still works); Claude Code backgrounds a
-        long call, the record arrives as a task notification. Use for every job, swarms included.
-      permission_mode: acceptEdits (default) | bypassPermissions | default | plan.
-      max_turns: Turn cap. allowed_tools: Override auto-approved tools.
-      system_prompt_append: Appended to the system prompt.
+        alone: a real `model` or `endpoint` beside it is bad_argument.
+      cwd: Working directory (default: the server's).
+      isolation: none | worktree (git worktree on local-agent/<job id>, kept only if changed).
+      wait_s: If > 0, block (through the queue: `queued #n, ~m min`) for the final record,
+        else return the job id. Counts from admission, like timeout_s. Pass the job's timeout
+        (shorter: `running` while the session works); Claude Code backgrounds a long call,
+        its record a task notification. Use for every job, swarms included.
+      permission_mode: acceptEdits (default) | bypassPermissions | default | plan. max_turns: Turn cap.
+      allowed_tools: Override auto-approved tools. system_prompt_append: Appended to the system prompt.
       resume_job: Continue a job's session with `task` on its model, endpoint, cwd and
         isolation unless a real `model` is given. Refused while it runs.
-      timeout_s: Wall-clock cap for the session, from admission.
-      priority: urgent | normal | background.
-      admit: queue | now (would_queue, no job, instead of waiting) | force (skip the wait).
-      tolerance: Routed: shortfall distance from the best row that is acceptable.
-      avoid_job: A job id, routed or named; routing never picks its model, and naming
-        that model beside it is bad_argument.
+      timeout_s: Session wall-clock cap, from admission. priority: urgent | normal | background.
+      admit: queue | now (would_queue, no job, no wait) | force (skip the wait).
+      tolerance: Routed: acceptable shortfall distance from the best row.
+      avoid_job: A job id (routed or named); routing never picks its model, naming it too is
+        bad_argument.
+      background_tasks: false (config default): foreground only, the job ends at its result;
+        true allows background commands; a resume keeps its job's.
     """
     if isolation not in ("none", "worktree"):
         return {"error": "bad_argument", "message": "isolation must be 'none' or 'worktree'"}
+    if background_tasks is not None and not isinstance(background_tasks, bool):
+        return {"error": "bad_argument", "message": "background_tasks must be true, false or omitted"}
     work = str(Path(cwd or os.getcwd()).expanduser().resolve())
     if not Path(work).is_dir():
         return {"error": "bad_argument", "message": f"cwd does not exist: {work}"}
@@ -997,6 +1004,10 @@ async def run_agent(
         if not prev.session_id:
             return {"error": "bad_argument", "message": f"job {resume_job} has no session to resume"}
         resume_session = prev.session_id
+        # the resumed session runs as its first run did unless the call says otherwise (None:
+        # the first run never reached run_job, which resolves it: the config's then)
+        if background_tasks is None:
+            background_tasks = prev._background_tasks
         # Continue where the session was. A worktree job keeps its tree: if the tree is gone
         # (removed because the job changed nothing) run_job recreates it at the same path, so
         # the paths the session remembers still resolve.
@@ -1029,7 +1040,7 @@ async def run_agent(
             allowed_tools=allowed_tools, system_prompt_append=system_prompt_append,
             timeout_s=timeout_s, resume_session=resume_session, run_cwd=run_cwd,
             worktree=worktree, priority=priority, admit=admit, tolerance=tolerance,
-            avoid_job=avoid_job, copy_ticket_from=copy_from,
+            avoid_job=avoid_job, copy_ticket_from=copy_from, background_tasks=background_tasks,
         )
     except JobRefused as e:
         return e.reply

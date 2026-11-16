@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import (
+    TERMINAL_TASK_STATUSES,
     AssistantMessage,
     ClaudeAgentOptions,
     ResultMessage,
@@ -26,13 +27,31 @@ from claude_agent_sdk import (
 
 # the write rule's list is the read rule's (files_touched); the stored cuts and the shown form
 # are derive's too (classify_call and feedback read the cut back, last_tool shows the line)
-from .derive import COMMAND_CHARS, DIFF_FILES_MAX, EDIT_TOOLS, TOOL_INPUT_CHARS, activity_line
+from .derive import (COMMAND_CHARS, DIFF_FILES_MAX, EDIT_TOOLS, TOOL_INPUT_CHARS, activity_line,
+                     background_tasks_named, held_open, held_open_line)
 from .jobs import Job, prune, state_dir
-from .registry import Registry, Resolution, backend_kind, fetch_metrics, metrics_delta
+from .registry import Defaults, Registry, Resolution, backend_kind, fetch_metrics, metrics_delta
 from .router import feedback
 
+# A foreground-only session (Defaults.background_tasks, or the run_agent call's own value,
+# false): the tools it never gets whatever the config's disallowed_tools says. The documented
+# switch (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS) leaves Monitor running in the background, and a
+# Monitor watch holds a headless run open past its result.
+FOREGROUND_DISALLOWED = ("Monitor",)
+# ...and the sentence its system prompt gets: the harness itself tells a model whose foreground
+# `sleep` it blocks to "use run_in_background", a parameter this session does not have
+FOREGROUND_NOTE = (
+    "Background tasks are off in this session: the Bash tool has no run_in_background parameter, "
+    "so run every command in the foreground and wait for it to finish; do not start watchers or "
+    "background processes and do not poll with sleep, and give a long command a larger timeout "
+    "(the Bash tool's timeout parameter, up to the maximum it states) instead."
+)
 
-def build_env(res: Resolution, base_url: str) -> dict[str, str]:
+
+def build_env(res: Resolution, base_url: str, defaults: Defaults, background_tasks: bool) -> dict[str, str]:
+    """The session's whole environment. ``background_tasks`` is the job's resolved value
+    (run_job resolves it); false adds the foreground switch and raises the Bash timeouts. The
+    endpoint's own ``env:`` is applied last and wins over all of it."""
     m = res.served_model
     env = {
         "ANTHROPIC_BASE_URL": base_url,
@@ -60,7 +79,14 @@ def build_env(res: Resolution, base_url: str) -> dict[str, str]:
         env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(res.context)
         if res.context < 128000:
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max(8192, res.context // 8))
-    env.update(res.endpoint.env)
+    if not background_tasks:
+        # documented: removes run_in_background from Bash/PowerShell/subagents and stops the
+        # automatic backgrounding of timed-out shell commands; a foreground command is then
+        # killed at its timeout, so the default and the ceiling a model may ask for are raised
+        env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
+        env["BASH_DEFAULT_TIMEOUT_MS"] = str(defaults.bash_timeout_s * 1000)
+        env["BASH_MAX_TIMEOUT_MS"] = str(defaults.bash_max_timeout_s * 1000)
+    env.update(res.endpoint.env)  # last: the endpoint's own env wins
     return env
 
 
@@ -322,9 +348,68 @@ def _handle_message(job: Job, m: Any) -> None:
     job.changed()
 
 
+def _session_goes_on(job: Job) -> None:
+    """A message that means more work after a ResultMessage (the harness re-invoking the
+    session with a background task's outcome: its [init], an assistant turn): the session is
+    not over. Read for every SDK version, task messages or not."""
+    job._after_result = False
+    job._session_over = False
+    if held_open(job.last_activity):
+        # the held-open line is no longer true and the progress lines would keep showing it;
+        # the turn's own messages replace this one as they come
+        job.last_activity = "re-invoked after its result"
+
+
+def _track_task(job: Job, m: SystemMessage) -> None:
+    """The SDK's task lifecycle, read from the raw payload (``m.data``, which the SDK keeps on
+    its typed Task*Message subclasses too, so an SDK that emits only a plain SystemMessage is
+    read the same way): ``task_started`` adds the task, a terminal status on ``task_notification``
+    (completed | failed | stopped) or ``task_updated``'s patch (the SDK's
+    TERMINAL_TASK_STATUSES; a stopped task may report only there) removes it, whatever the
+    status: a failed or stopped task holds nothing open. ``task_progress`` changes nothing. A
+    task is tracked whether or not it was backgrounded: a foreground one ends before the turn's
+    result, so a task alive at a result is one the session left running."""
+    data = m.data or {}
+    tid = str(data.get("task_id") or "")
+    if m.subtype == "task_started":
+        job._tasks[tid] = str(data.get("description") or "")
+        job._session_over = False
+        job.log_text(f"[task] started {tid} ({data.get('task_type') or '?'}): {job._tasks[tid][:200]}")
+        return
+    patch = data.get("patch") if isinstance(data.get("patch"), dict) else {}
+    if m.subtype == "task_notification":
+        status, summary = data.get("status"), data.get("summary")
+    else:  # task_updated
+        status, summary = patch.get("status"), patch.get("error")
+        if status not in TERMINAL_TASK_STATUSES:
+            if tid in job._tasks and isinstance(patch.get("description"), str):
+                job._tasks[tid] = patch["description"]
+            return
+        if tid not in job._tasks:
+            return  # its notification already ended it (or its start was never seen): no second line
+    job._tasks.pop(tid, None)
+    job.log_text(f"[task] {status or 'ended'} {tid}" + (f": {str(summary)[:200]}" if summary else ""))
+    if job._after_result:
+        job.last_activity = held_open_line(list(job._tasks.values()))
+
+
+def _ended_after_result(job: Job, what: str) -> str | None:
+    """The error a timeout or cancel writes when the session had already reported a result:
+    one sentence keeping what happened (when, its error if the result was one, what held it
+    open), so the record never reads as work that did not finish. None with no result."""
+    if job._result_at is None:
+        return None
+    at = round(job._result_at - (job.started_at or job._result_at))
+    err = f" ({job.error[:200].rstrip(': ')})" if job.error else ""  # "error_max_turns:" reads as the subtype
+    held = (f"was still held open by {background_tasks_named(list(job._tasks.values()))}"
+            if job._tasks else "was still running")
+    return f"the session reported a result at {at} s{err} and {held} when {what} ended it"
+
+
 def _apply_message(job: Job, m: Any) -> None:
     job.log_event(_msg_to_dict(m))
     if isinstance(m, AssistantMessage):
+        _session_goes_on(job)
         # 3.7h: the live turn count. One AssistantMessage is one turn, so a running job's
         # num_turns moves while it runs and the Recent jobs log can show it (the column used
         # to read 0 until the job's end). The ResultMessage below still overwrites this with
@@ -382,7 +467,10 @@ def _apply_message(job: Job, m: Any) -> None:
                     job.log_text(f"[result{' ERROR' if b.is_error else ''}] {str(txt)[:300]}")
                     job.record_tool_result(b.tool_use_id, time.time(), b.is_error)
     elif isinstance(m, SystemMessage):
-        if m.subtype == "init":
+        if m.subtype in ("task_started", "task_notification", "task_updated"):
+            _track_task(job, m)
+        elif m.subtype == "init":
+            _session_goes_on(job)
             job.session_id = m.data.get("session_id") or job.session_id
             job.log_text(f"[init] session={job.session_id} model={m.data.get('model')} cwd={m.data.get('cwd')}")
         elif m.subtype == "compact_boundary":
@@ -402,11 +490,18 @@ def _apply_message(job: Job, m: Any) -> None:
         # reconciliation (3.7h): the harness's count wins over the per-message increment —
         # they count the same turns from two sides and may disagree on the boundaries
         job.num_turns = m.num_turns
+        # the record follows the LATEST result (a session re-invoked by a background task's
+        # outcome reports again, and its real answer is the last one): its error too
         job.result = m.result
-        job._session_over = True  # what follows is the CLI's exit, not more work (jobs.held_at_cap)
-        job.log_text(f"[done] subtype={m.subtype} turns={m.num_turns} duration={m.duration_ms}ms")
-        if m.is_error or m.subtype != "success":
-            job.error = f"{m.subtype}: {m.result or ''}".strip()
+        job.error = f"{m.subtype}: {m.result or ''}".strip() if m.is_error or m.subtype != "success" else None
+        job._after_result, job._result_at = True, time.time()
+        # over only with no background task alive: the harness waits for those and takes
+        # another turn with their outcome (jobs.held_at_cap reads this)
+        job._session_over = not job._tasks
+        if job._tasks:
+            job.last_activity = held_open_line(list(job._tasks.values()))
+        job.log_text(f"[done] subtype={m.subtype} turns={m.num_turns} duration={m.duration_ms}ms"
+                     + (f"; held open by {background_tasks_named(list(job._tasks.values()))}" if job._tasks else ""))
 
 
 # ---------------- main entry ----------------
@@ -469,8 +564,14 @@ async def run_job(
     effort: str | None = None,
     strict_mcp_config: bool | None = None,
     setting_sources: list[str] | None = None,
+    background_tasks: bool | None = None,
 ) -> None:
     d = reg.defaults
+    # the job's per-call settings resolve here against the config's defaults (max_turns,
+    # permission_mode, timeout_s below): None is the config's. The resolved value is the job's
+    # own, kept for a resume_job of it (server.run_agent reads it back)
+    background = d.background_tasks if background_tasks is None else background_tasks
+    job._background_tasks = background
     job.status = "running"
     job.started_at = time.time()
     job.changed()
@@ -494,7 +595,10 @@ async def run_job(
                 + (" (recreated at base; the previous tree had been removed)" if job.worktree.get("recreated") else "")
             )
 
-        append = "\n\n".join(s for s in (d.system_prompt_append, system_prompt_append) if s)
+        foreground = () if background else (FOREGROUND_NOTE,)
+        append = "\n\n".join(s for s in (d.system_prompt_append, *foreground, system_prompt_append) if s)
+        disallowed = list(d.disallowed_tools)
+        disallowed += [t for t in (() if background else FOREGROUND_DISALLOWED) if t not in disallowed]
         # router 8: the caller's levers, when it passed one. `thinking` is a bool at that
         # interface and a config object for the SDK; None leaves the field unset, as does a
         # None effort. The shim's translation of either for a local backend is a later story.
@@ -505,11 +609,11 @@ async def run_job(
             levers["effort"] = effort
         opts = ClaudeAgentOptions(
             model=res.served_model,
-            env=build_env(res, shim_base_url),
+            env=build_env(res, shim_base_url, d, background),
             cwd=job.run_cwd,
             permission_mode=permission_mode or d.permission_mode,
             allowed_tools=allowed_tools or d.allowed_tools,
-            disallowed_tools=d.disallowed_tools,
+            disallowed_tools=disallowed,
             max_turns=max_turns or d.max_turns,
             # the caller's setting_sources override the config's (a calibration job passes [],
             # so no ancestor CLAUDE.md or settings reach the session); None keeps the config's
@@ -525,6 +629,7 @@ async def run_job(
         job.log_text(
             f"[start] endpoint={res.endpoint.name} ({res.endpoint.url}) via shim {shim_base_url} "
             f"model={res.served_model} context={res.context or '?'} ({res.context_source or 'unknown'}) cwd={job.run_cwd}"
+            f" background_tasks={'on' if background else 'off'}"
         )
 
         async def consume() -> None:
@@ -543,10 +648,11 @@ async def run_job(
             job.status = "failed"
     except asyncio.TimeoutError:
         job.status = "timeout"
-        job.error = f"exceeded timeout of {timeout_s or d.timeout_s}s"
+        job.error = (_ended_after_result(job, f"the timeout of {timeout_s or d.timeout_s} s")
+                     or f"exceeded timeout of {timeout_s or d.timeout_s}s")
     except asyncio.CancelledError:
         job.status = "cancelled"
-        job.error = "cancelled"
+        job.error = _ended_after_result(job, "a cancel") or "cancelled"
     except Exception as e:  # noqa: BLE001
         job.status = "failed"
         job.error = f"{type(e).__name__}: {e}"

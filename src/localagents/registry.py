@@ -200,6 +200,31 @@ class Defaults:
     dump_requests: bool = False
     log_events: bool = False  # write events.jsonl per job (debugging; env LOCALAGENTS_LOG_EVENTS=1 also enables)
     job_retention_days: int = 7  # delete job directories older than this; 0 disables
+    # the 2026-11-15 incident: a session with a background task outlives its result and holds
+    # its slot to the timeout. False (a run_agent call may say otherwise for its job) runs a
+    # job foreground only: runner.build_env writes CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 and
+    # these two Bash timeouts (BASH_DEFAULT_TIMEOUT_MS / BASH_MAX_TIMEOUT_MS), run_job
+    # disallows Monitor and appends runner.FOREGROUND_NOTE to the system prompt
+    background_tasks: bool = False
+    bash_timeout_s: int = 600
+    bash_max_timeout_s: int = 1800
+
+    def check(self) -> None:
+        """The foreground keys' values: a wrong type or a number under 1 is named on stderr and
+        the key keeps its default, never coerced (``background_tasks: "false"`` is a typo, as
+        ``max_concurrent: "1"`` is on an entry) and never a raise: the server re-reads the
+        config on every call (I2). Registry.load calls it."""
+        base = Defaults()
+        if not isinstance(self.background_tasks, bool):
+            print(f"localagents: defaults: background_tasks must be true or false, got "
+                  f"{self.background_tasks!r}; using {str(base.background_tasks).lower()}", file=sys.stderr)
+            self.background_tasks = base.background_tasks
+        for key in ("bash_timeout_s", "bash_max_timeout_s"):
+            v = getattr(self, key)
+            if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+                print(f"localagents: defaults: {key} must be a whole number of seconds, 1 or more, "
+                      f"got {v!r}; using {getattr(base, key)}", file=sys.stderr)
+                setattr(self, key, getattr(base, key))
 
 
 def local_path(path: Path) -> Path:
@@ -231,6 +256,7 @@ class Registry:
         merged_endpoints = {**(raw.get("endpoints") or {}), **(local.get("endpoints") or {})}
         endpoints = {name: cls._build_endpoint(name, cfg or {}) for name, cfg in merged_endpoints.items()}
         defaults = Defaults(**{**(raw.get("defaults") or {}), **(local.get("defaults") or {})})
+        defaults.check()
         # A leftover ``models:`` section from older configs is ignored: served models are discovered.
         pools, refused = cls._read_pools(raw.get("pools"))
         reg = cls(path=path, endpoints=endpoints, defaults=defaults, raw=raw, local=local, pools=pools)

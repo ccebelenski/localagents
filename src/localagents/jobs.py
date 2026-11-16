@@ -149,7 +149,9 @@ def held_at_cap(job: "Job", wait_start: float, wait_span: float, now: float) -> 
     time is not held).
 
     Held: the job is done but not settled (run_job's finally is running); its cancel was
-    requested (the session is being torn down); its ResultMessage arrived (the CLI is exiting);
+    requested (the session is being torn down); its session is over (a ResultMessage arrived
+    with no background task alive: the CLI is exiting; a result that background tasks hold
+    open is not, the harness takes another turn when they end);
     the session's deadline has passed (the SDK is closing the CLI, ~5 s, before the runner even
     writes `timeout`); or the wait began before the session's clock did and asked for at least
     the session's timeout — run_agent's case: its wait counts from admission, the session's
@@ -226,11 +228,24 @@ class Job:
     _cancel_requested: bool = field(default=False, repr=False)
     # the wait-cap rule (see held_at_cap): the session's own clock, set by run_job where it arms
     # the session's wait_for (time.monotonic(); None until then: queued, or in the preamble),
-    # and its timeout; _session_over once the session's ResultMessage has arrived (what follows
-    # is the CLI's exit and the finally, not more work)
+    # and its timeout; _session_over once a ResultMessage has arrived with no background task
+    # alive (what follows is the CLI's exit and the finally, not more work), false again when
+    # the session goes on (a task starts, the harness re-invokes it)
     _session_deadline: float | None = field(default=None, repr=False)
     _session_timeout_s: float | None = field(default=None, repr=False)
     _session_over: bool = field(default=False, repr=False)
+    # the runner's view of the SDK's task lifecycle (runner._track_task): the tasks started and
+    # not yet seen ending, by task id, with their descriptions; _after_result while the latest
+    # turn boundary is a ResultMessage (no [init] or assistant message since); _result_at the
+    # latest result's time.time(), for the error a timeout or cancel after it writes
+    _tasks: dict[str, str] = field(default_factory=dict, repr=False)
+    _after_result: bool = field(default=False, repr=False)
+    _result_at: float | None = field(default=None, repr=False)
+    # the job's resolved background_tasks (run_job resolves the run_agent value against the
+    # config's default; None until then). Runtime only: no column holds it, so neither summary
+    # shows it (the two summaries agree); the transcript's [start] line names it, and a
+    # resume_job of this job runs with it unless the call passes its own
+    _background_tasks: bool | None = field(default=None, repr=False)
     _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _conn: sqlite3.Connection | None = field(default=None, repr=False)  # the store's db connection
     _pending_tools: dict[str, int] = field(default_factory=dict, repr=False)  # tool_use_id -> rowid of its tool_calls row (spec write rule)
@@ -246,6 +261,13 @@ class Job:
     # derive.summary_from_row reads them too, so the parity contract
     # test_summary_and_summary_from_row_agree pins still holds).
     _SUMMARY_HIDDEN = ("mcp_server_id", "endpoint_id", "model_id", "gates", "levers")
+
+    @property
+    def held_open(self) -> bool:
+        """A result was reported and background tasks the session started are still alive: the
+        harness waits for them (up to its own limit) and takes another turn, so the session is
+        neither over nor working."""
+        return self._after_result and bool(self._tasks)
 
     def changed(self) -> None:
         """This job's visible state moved: write the new state to its row. The status line reads
