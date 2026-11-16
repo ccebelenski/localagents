@@ -387,6 +387,94 @@ def test_throughput_probe_discards_a_warm_up_and_reads_per_session(conn, monkeyp
     assert curve.points[2] > 1.0  # a point above 1.0 is recorded, not clamped to the plausible
 
 
+
+# --- curve-refine fold: the probe runs when the model being calibrated has no probe points -------
+
+def _probe_answers(monkeypatch, seen):
+    """The throughput probe's four completions (warm-up, single at 1000 t/s, a pair at 800):
+    point 2 = 0.8, tps_single = 1000; ``seen`` collects the served id of each call."""
+    answers = [(32, 0.5), (2000, 2.0), (2000, 2.5), (2000, 2.5)]
+
+    async def completion(ep_, served_id, max_tokens):
+        seen.append(served_id)
+        return answers.pop(0)
+
+    monkeypatch.setattr(calibrate, "_completion", completion)
+
+
+def _estimate(conn, lines):
+    return asyncio.run(calibrate.run(_reg(), _store(conn), conn, "ep", estimate_only=True,
+                                     report=lines.append))
+
+
+def test_a_row_a_fold_created_is_still_probed_at_first_calibrate(conn, probes, installed, seam,
+                                                                  monkeypatch):
+    """RULE: the throughput probe runs whenever the endpoint has no PROBE points for the model
+    being calibrated, not only when it has no row. A row the speed-sample fold created (refined,
+    no probe) is probed at the first calibrate: tps_single reaches the speed factor (reference
+    500 over the single's 1000 = 0.50), and the row then carries the probe for this model."""
+    eid, _ = _ids(conn)
+    capacity.save_capacity(conn, eid, "unknown", capacity.Curve(
+        {1: 1.0, 2: 0.3, 3: 0.25}, "refined", 16, frozenset({1, 2}), "served"))
+    installed(probes["alpha"], reference_tps=500.0)
+    seam({"alpha": _outcome()})
+    seen, lines = [], []
+    _probe_answers(monkeypatch, seen)
+    assert _estimate(conn, lines) == "estimate"
+    assert seen == ["served"] * 4
+    assert any("speed factor 0.50" in line for line in lines), lines
+    saved = capacity.load_capacity(conn, eid, "served")
+    assert saved.probe_points("served") == {1: 1.0, 2: 0.8}
+    assert saved.served_id == "served" and saved.state == "probed"
+
+
+def test_a_probe_taken_on_another_model_is_no_probe_for_this_one(conn, probes, installed, seam,
+                                                                 monkeypatch):
+    """RULE: a curve whose probe was taken on another served model has no probe for this one:
+    calibrating for ``served`` over model A's probed row probes again; calibrating again for
+    ``served`` does not. throughput_probe records the served model on the curve it writes."""
+    eid, _ = _ids(conn)
+    capacity.save_capacity(conn, eid, "unknown", capacity.Curve(
+        {1: 1.0, 2: 0.3}, "probed", 2, frozenset({1, 2}), "model-a"))
+    assert capacity.load_capacity(conn, eid).probe_points("served") == {}
+    installed(probes["alpha"])
+    seam({"alpha": _outcome()})
+    seen, lines = [], []
+    _probe_answers(monkeypatch, seen)
+    assert _estimate(conn, lines) == "estimate"
+    assert seen == ["served"] * 4
+    saved = capacity.load_capacity(conn, eid)
+    assert saved.served_id == "served" and saved.points == {1: 1.0, 2: 0.8}
+    assert _estimate(conn, lines) == "estimate"
+    assert seen == ["served"] * 4  # probed for this model now: no second probe
+
+
+def test_a_reprobe_refolds_the_samples_at_once(conn, monkeypatch):
+    """A re-probe over a row the fold refined loses nothing in between: throughput_probe
+    writes the probe's curve and folds the endpoint's samples onto it in the same call, so the
+    samples' point 3 (6 / 40 = 0.15, measured) is back before any reader looks."""
+    eid, mid = _ids(conn)
+    now = time.time()
+    for i in range(capacity.MIN_SAMPLES_PER_POINT):
+        for k, tps in ((1, 40.0), (3, 6.0)):
+            jid = f"s{k}-{i}"
+            conn.execute("INSERT INTO jobs (id, endpoint_id, model_id, status, created_at,"
+                         " started_at, finished_at) VALUES (?, ?, ?, 'succeeded', ?, ?, ?)",
+                         (jid, eid, mid, now - 3600.0, now - 3600.0, now - 3500.0))
+            conn.execute("INSERT INTO speed_samples (job_id, endpoint_id, sessions, generate_tps,"
+                         " at) VALUES (?, ?, ?, ?, ?)", (jid, eid, k, tps, now - 3500.0))
+    ep = _endpoint()
+    reg = FakeRegistry({"ep": ep}, probe={"up": True})
+    seen = []
+    _probe_answers(monkeypatch, seen)
+    curve, tps = asyncio.run(calibrate.throughput_probe(reg, ep, "served", conn))
+    assert curve == capacity.Curve({1: 1.0, 2: 0.8}, "probed", 2, frozenset({1, 2}), "served")
+    saved = capacity.load_capacity(conn, eid, "served")
+    assert saved.points == pytest.approx({1: 1.0, 2: 0.8, 3: 0.15})
+    assert saved.measured == {1, 2, 3} and saved.probe == {1: 1.0, 2: 0.8}
+    assert saved.first_hold() == 3
+
+
 # --- run: estimate, resume, completion, stopping --------------------------------------------------
 
 
@@ -712,7 +800,7 @@ def test_reset_with_estimate_only_or_busy_leaves_the_row(conn, probes, installed
         raise calibrate.EndpointBusy("endpoint 'ep' is serving requests; run when quiet")
 
     monkeypatch.setattr(calibrate, "throughput_probe", busy)
-    monkeypatch.setattr(capacity, "load_capacity", lambda conn, eid: None)
+    monkeypatch.setattr(capacity, "load_capacity", lambda conn, eid, served_id=None: None)
     result = _run(conn, reset=True)
     assert result == "endpoint_busy" and fake.calls == []
     archived = conn.execute("SELECT archived FROM scorecard_rows WHERE id = ?",

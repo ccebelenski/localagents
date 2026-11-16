@@ -6,14 +6,15 @@ KV blocks while it runs tests for ten minutes, so live slot and KV readings say 
 most of a job's life (§7). ``from_probe`` turns a ``Registry.probe`` dict into the three
 capacity models (partitioned / pooled / unknown); ``Curve`` predicts one session's speed at
 the current occupancy — it never refuses, its prediction feeds expected wait, the tie-break
-and §6's bottleneck rule (a measured point only: a prior point predicts and holds nothing); ``refine`` folds the ``speed_samples`` rows every job leaves behind
-back into the curve."""
+and §6's bottleneck rule (a measured point only: a prior point predicts and holds nothing);
+``refine`` is the rule that turns speed samples into measured points, and ``fold_samples`` runs
+it at every sampled job's finish over the endpoint's recent ``speed_samples`` rows."""
 
 import json
 import math
 import statistics
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from localagents import db
 from localagents.registry import Endpoint
@@ -38,6 +39,16 @@ _PRIOR_FALLBACK = {1: 1.0, 2: 0.5}  # the "other" family of the same spec row
 # nothing (``Curve.bottleneck_at``).
 BOTTLENECK_RATIO = 0.75
 
+# When speed samples measure a point (§7 "refined by every job's observed speed"; the rule in
+# ``Curve.refine``). A job's own work moves its speed (context length, tool mix, speculative
+# acceptance: one box's concurrency-1 samples ran 91 to 173 t/s), so one sample measures
+# nothing: a concurrency is measured from this many samples there AND this many at 1.
+MIN_SAMPLES_PER_POINT = 8
+# the newest samples per concurrency the median reads, and how far back a fold looks: a box's
+# flags and drivers change without a record, and the window bounds the fold's read
+SAMPLES_PER_POINT = 20
+SAMPLE_WINDOW_S = 14 * 86_400.0
+
 
 @dataclass
 class Curve:
@@ -53,12 +64,21 @@ class Curve:
     probe writes only what it measured, never a prior point), ``prior`` and ``refined`` mean none
     is (a refined row's points cannot be told apart from the prior it merged onto, and a point
     nobody can show was measured holds nothing). A ``prior`` curve has no measured point
-    whatever it is given, and a key not in ``points`` is dropped."""
+    whatever it is given, and a key not in ``points`` is dropped.
+
+    ``served_id`` is the served model the measured points were taken on (None: not recorded,
+    a row from before the field; the probe does not record it yet). ``probe`` is the throughput
+    probe's own points when a refinement has merged samples over them, kept so every fold
+    re-derives from the probe rather than from its own last answer (None: the points are the
+    probe's when ``state`` is ``probed``, and there is no probe otherwise). Both ride in the
+    JSON beside the points, and only when set."""
 
     points: dict[int, float]
     state: str = "prior"
     n: int = 0
     measured: frozenset[int] | None = None
+    served_id: str | None = None
+    probe: dict[int, float] | None = None
 
     def __post_init__(self) -> None:
         if self.state == "prior":
@@ -109,29 +129,65 @@ class Curve:
         limit = BOTTLENECK_RATIO * self._at(1)
         return any(k * self.points[k] < limit for k in range(2, n + 1) if k in self.measured)
 
+    def probe_points(self, served_id: str | None = None) -> dict[int, float]:
+        """The points the throughput probe measured on this curve: ``probe`` when a refinement
+        kept them, else every point of a ``probed`` curve, else none. For ``served_id``, none
+        when the curve records another served model: a probe taken on one model is no probe
+        for another (a curve that records no model is read as it stands)."""
+        if served_id is not None and self.served_id not in (None, served_id):
+            return {}
+        if self.probe is not None:
+            return dict(self.probe)
+        return dict(self.points) if self.state == "probed" else {}
+
     def refine(self, samples: list[tuple[int, float]]) -> "Curve":
         """§7: the curve is "seeded by a backend-family prior ... refined by every job's
-        observed speed logged with the occupancy beside it" — MERGE, not replacement: the
-        median generate_tps per concurrency (speed_samples rows) normalised by the
-        concurrency-1 median updates the prior's points, keys without samples keep the
-        prior's value, keys with samples take the median ratio, keys beyond the prior appear.
-        Without a concurrency-1 sample there is no baseline to divide by, and the curve
-        comes back unchanged. Provenance: the keys with samples become measured, the keys
-        already measured stay measured, and a key that kept the prior's value stays
-        unmeasured (§6: it predicts and holds nothing)."""
+        observed speed logged with the occupancy beside it" — MERGE onto this curve, which
+        ``fold_samples`` makes the base (the probe's points, else the prior). ``samples`` are
+        (concurrency, generate_tps) pairs. The rule, fail-closed (a point not well measured
+        predicts and holds nothing, §6):
+
+        - a concurrency counts only with at least ``MIN_SAMPLES_PER_POINT`` samples, and the
+          baseline (concurrency 1) needs as many: without it there is nothing to divide by and
+          the curve comes back unchanged;
+        - a counted concurrency k >= 2 takes the median ratio, median(k) / median(1), and
+          becomes measured; a key with too few samples keeps its value and its provenance (a
+          prior point stays a prior point);
+        - a point the throughput probe measured takes the higher of the probe's ratio and the
+          samples': the probe is two requests decoding at once, the worst case a session sees,
+          and a session decodes alongside another only part of its run, so a samples' median
+          below the probe's is the job mix (long contexts decode slower), not the box. Samples
+          can lift a probed point off the line, never push it below the probe;
+        - nothing counted at 2 or above: the curve comes back unchanged (point 1 is the
+          normalisation, 1.0 either way).
+
+        A refined curve keeps the probe's points in ``probe`` and counts in ``n`` the samples
+        behind its counted concurrencies."""
         by_sessions: dict[int, list[float]] = {}
         for sessions, tps in samples:
-            by_sessions.setdefault(sessions, []).append(tps)
-        if 1 not in by_sessions:
+            by_sessions.setdefault(int(sessions), []).append(float(tps))
+        counted = {k: v for k, v in by_sessions.items() if len(v) >= MIN_SAMPLES_PER_POINT}
+        if 1 not in counted:
             return self
-        medians = {k: statistics.median(v) for k, v in by_sessions.items()}
-        if medians[1] <= 0:
+        base = statistics.median(counted[1])
+        if base <= 0:
             return self  # a zero baseline normalises everything away; change nothing
-        base = medians[1]
+        ratios = {k: statistics.median(v) / base for k, v in counted.items() if k >= 2}
+        if not ratios:
+            return self
+        probe = self.probe_points()
         merged = dict(self.points)
-        merged.update({k: m / base for k, m in medians.items()})
-        return Curve({k: merged[k] for k in sorted(merged)}, "refined", len(samples),
-                     frozenset(self.measured) | frozenset(medians))
+        merged.update({k: max(r, probe[k]) if k in probe else r for k, r in ratios.items()})
+        return Curve({k: merged[k] for k in sorted(merged)}, "refined",
+                     sum(len(counted[k]) for k in (1, *ratios)),
+                     frozenset(self.measured) | {1} | frozenset(ratios), self.served_id,
+                     probe or None)
+
+    def first_hold(self) -> int | None:
+        """The concurrency the bottleneck rule first holds at (from there on, §6), or None
+        when no measured point holds."""
+        return next((k for k in range(2, max(self.points, default=1) + 1)
+                     if self.bottleneck_at(k)), None)
 
 
 def prior_curve(kind: str) -> Curve:
@@ -200,39 +256,127 @@ def from_probe(ep: Endpoint, probe: dict, served_id: str, curve: Curve) -> Capac
                     requests_running=int(running), curve=curve, max_concurrent=cap)
 
 
+def _write_capacity(conn, endpoint_id: int, kind: str, curve: Curve, now: float,
+                    by: str | None = None) -> None:
+    """The row write, inside the caller's transaction. The curve JSON carries the points and,
+    beside them, the measured keys (§6's provenance), the served model and the probe's points
+    when the curve has them, and ``by``: the job whose finish refined it, whose transcript has
+    the ``[curve]`` line (the trace from a hold back to its samples; a probe's write has none)."""
+    blob: dict = {"points": {str(k): v for k, v in curve.points.items()},
+                  "measured": sorted(curve.measured)}
+    if curve.served_id is not None:
+        blob["served_id"] = curve.served_id
+    if curve.probe is not None:
+        blob["probe"] = {str(k): v for k, v in curve.probe.items()}
+    if by is not None:
+        blob["by"] = by
+    conn.execute(
+        """INSERT INTO endpoint_capacity (endpoint_id, kind, curve, state, points, updated)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(endpoint_id) DO UPDATE SET
+               kind = excluded.kind, curve = excluded.curve, state = excluded.state,
+               points = excluded.points, updated = excluded.updated""",
+        (endpoint_id, kind, json.dumps(blob), curve.state, curve.n, now),
+    )
+
+
 def save_capacity(conn, endpoint_id: int, kind: str, curve: Curve) -> None:
     """The endpoint's curve row in ``endpoint_capacity``, one immediate transaction
-    (the schema spec's rule: rows only, and the shared connection cannot nest). The curve
-    JSON carries the points and, beside them, the measured keys (§6's provenance)."""
+    (the schema spec's rule: rows only, and the shared connection cannot nest)."""
     with db.immediate(conn):
-        conn.execute(
-            """INSERT INTO endpoint_capacity (endpoint_id, kind, curve, state, points, updated)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(endpoint_id) DO UPDATE SET
-                   kind = excluded.kind, curve = excluded.curve, state = excluded.state,
-                   points = excluded.points, updated = excluded.updated""",
-            (endpoint_id, kind,
-             json.dumps({"points": {str(k): v for k, v in curve.points.items()},
-                         "measured": sorted(curve.measured)}),
-             curve.state, curve.n, time.time()),
-        )
+        _write_capacity(conn, endpoint_id, kind, curve, time.time())
 
 
-def load_capacity(conn, endpoint_id: int) -> Curve | None:
+_CAPACITY_ROW_SQL = "SELECT kind, curve, state, points FROM endpoint_capacity WHERE endpoint_id = ?"
+
+
+def _curve_from(row) -> Curve:
+    blob = json.loads(row["curve"])
+    measured = blob.get("measured")
+    probe = blob.get("probe")
+    return Curve({int(k): float(v) for k, v in blob["points"].items()}, row["state"],
+                 row["points"], None if measured is None else frozenset(int(k) for k in measured),
+                 blob.get("served_id"),
+                 None if probe is None else {int(k): float(v) for k, v in probe.items()})
+
+
+def load_capacity(conn, endpoint_id: int, served_id: str | None = None) -> Curve | None:
     """The stored curve, or None for an endpoint with no curve row yet. A row written before
     the measured field existed reads its provenance from its state (``Curve``'s rule:
-    ``probed`` is all measured, ``refined`` none)."""
-    row = conn.execute(
-        "SELECT curve, state, points FROM endpoint_capacity WHERE endpoint_id = ?",
-        (endpoint_id,),
-    ).fetchone()
+    ``probed`` is all measured, ``refined`` none). Read for ``served_id``, a curve that records
+    ANOTHER served model keeps its values to predict with and has no measured point: a curve
+    measured on one model holds no slot for another (a curve that records none is read as it
+    stands)."""
+    row = conn.execute(_CAPACITY_ROW_SQL, (endpoint_id,)).fetchone()
     if row is None:
         return None
-    blob = json.loads(row["curve"])
-    points = {int(k): float(v) for k, v in blob["points"].items()}
-    measured = blob.get("measured")
-    return Curve(points, row["state"], row["points"],
-                 None if measured is None else frozenset(int(k) for k in measured))
+    curve = _curve_from(row)
+    if served_id is not None and curve.served_id not in (None, served_id):
+        return replace(curve, measured=frozenset())
+    return curve
+
+
+# the fold's read of an endpoint's recent samples: driven from jobs_created_at over the window
+# (the + keeps SQLite off jobs_endpoint_id and jobs_model_id, whose walks grow with the
+# history), each sample by its primary key; tests/test_query_plans.py pins the plan
+_RECENT_SAMPLES_SQL = (
+    "SELECT s.sessions, s.generate_tps FROM jobs j JOIN speed_samples s ON s.job_id = j.id"
+    " WHERE j.created_at > ? AND +j.model_id = ? AND j.calibration = 0 AND s.endpoint_id = ?"
+    " ORDER BY j.created_at DESC LIMIT ?")
+_RECENT_SAMPLES_MAX = 500
+
+
+def recent_samples(conn, endpoint_id: int, model_id: int, now: float) -> list[tuple[int, float]]:
+    """The samples a fold reads (the rule's "which samples count"): this endpoint's, from jobs
+    that ran ``model_id`` (a curve learned on one model is not another's), no calibration probe
+    (seconds-long short-context work that decodes faster than the jobs it would be the baseline
+    for), created within ``SAMPLE_WINDOW_S``, the newest ``SAMPLES_PER_POINT`` per concurrency."""
+    out: list[tuple[int, float]] = []
+    per: dict[int, int] = {}
+    for sessions, tps in conn.execute(_RECENT_SAMPLES_SQL, (now - SAMPLE_WINDOW_S, model_id,
+                                                            endpoint_id, _RECENT_SAMPLES_MAX)):
+        if per.get(sessions, 0) < SAMPLES_PER_POINT:
+            per[sessions] = per.get(sessions, 0) + 1
+            out.append((int(sessions), float(tps)))
+    return out
+
+
+def _fold_base(stored: Curve | None, served_id: str, kind: str) -> Curve:
+    """The curve a fold refines: the throughput probe's points when the stored curve has them
+    and they were taken on ``served_id`` (or the row records no model: a row from before the
+    field, adopted by its first fold), else the backend-family prior. Never the stored curve's
+    own sample-measured points: every fold re-derives those from the window, so a point whose
+    samples age out goes back to the base, and nothing ratchets."""
+    probe = stored.probe_points(served_id) if stored is not None else {}
+    if probe:
+        return Curve(probe, "probed", len(probe), frozenset(probe), served_id)
+    return replace(prior_curve(kind), served_id=served_id)
+
+
+def fold_samples(conn, endpoint_id: int, served_id: str, model_id: int, kind: str,
+                 now: float | None = None, *, by: str | None = None
+                 ) -> tuple[Curve | None, Curve | None]:
+    """§7's third stage, run at a sampled job's finish (feedback's speed-sample write): the
+    endpoint's curve re-derived as ``_fold_base(...).refine(recent_samples(...))`` and stored
+    when it differs from the row. ``kind`` is a ``registry.backend_kind`` value (the prior's
+    family). One immediate transaction, rows only: the read, the window's samples and the
+    write cannot interleave with another server's fold or the throughput probe's write. A new
+    row's ``kind`` column is ``unknown`` (no live probe is read here; ``from_probe`` reads the
+    model live, and nothing reads the column back); an existing row keeps its own. An endpoint
+    with no row whose samples measure nothing gets none. Returns (stored before, after); the
+    same object twice when nothing changed. ``by`` (the finishing job) rides in the
+    written row's JSON."""
+    now = time.time() if now is None else now
+    with db.immediate(conn):
+        row = conn.execute(_CAPACITY_ROW_SQL, (endpoint_id,)).fetchone()
+        stored = _curve_from(row) if row is not None else None
+        new = _fold_base(stored, served_id, kind).refine(
+            recent_samples(conn, endpoint_id, model_id, now))
+        if new == stored or (stored is None and not new.measured):
+            return stored, stored
+        _write_capacity(conn, endpoint_id, row["kind"] if row is not None else "unknown", new,
+                        now, by)
+    return stored, new
 
 
 def context_load_tokens(score: int | None, text: str) -> int:

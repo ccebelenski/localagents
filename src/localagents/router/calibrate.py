@@ -35,7 +35,7 @@ import yaml
 
 from localagents import db, server
 from localagents.jobs import state_dir
-from localagents.registry import Registry
+from localagents.registry import Registry, backend_kind
 from localagents.router import capacity, scorecard
 
 # calibration-set spec §8: every field a probe entry must carry. ``nominal_source`` and ``kind``
@@ -406,14 +406,20 @@ async def throughput_probe(reg, ep, served_id: str, conn) -> tuple[capacity.Curv
                                 _completion(ep, served_id, THROUGHPUT_MAX_TOKENS))
     shares = [tokens / seconds for tokens, seconds in pair if tokens > 0 and seconds > 0]
     ratio = statistics.median(shares) / tps_single if shares else 1.0
-    # both points are the probe's own measurement: §6's bottleneck rule may hold on point 2
-    curve = capacity.Curve({1: 1.0, 2: ratio}, "probed", 2, frozenset({1, 2}))
+    # both points are the probe's own measurement, taken on this served model: §6's
+    # bottleneck rule may hold on point 2, and only for this model
+    curve = capacity.Curve({1: 1.0, 2: ratio}, "probed", 2, frozenset({1, 2}), served_id)
     endpoint_id = db.lookup_id(conn, "endpoints", name=ep.name, base_url=ep.url,
                                backend=ep.backend, host=ep.host)
     # the schema's own kind list (partitioned | pooled | unknown), read from the live probe
     # exactly as the capacity model reads it
     kind = capacity.from_probe(ep, live, served_id, curve).kind
     capacity.save_capacity(conn, endpoint_id, kind, curve)
+    # the endpoint's speed samples folded onto the new probe at once (the fold re-derives from
+    # the probe's points), so a re-probe over a refined row loses no sample-measured point
+    capacity.fold_samples(conn, endpoint_id, served_id,
+                          db.lookup_id(conn, "models", served_id=served_id),
+                          backend_kind(ep.backend))
     return curve, tps_single
 
 
@@ -808,9 +814,11 @@ async def run(reg, store, conn, endpoint: str, tier: str = "core", reset: bool =
     # row the run will use; reset: nothing is written, and a fresh row has no speed factor).
     row = None if reset else _row_for(conn, ep.name, served_id, endpoint_id, model_id, False)
 
-    curve = capacity.load_capacity(conn, endpoint_id)
+    # the probe runs whenever this model has no probe points on the endpoint: no row, a row
+    # the speed-sample fold made (no probe), or a probe taken on another served model
+    curve = capacity.load_capacity(conn, endpoint_id, served_id)
     tps_single = None
-    if curve is None:
+    if curve is None or not curve.probe_points(served_id):
         try:
             curve, tps_single = await throughput_probe(reg, ep, served_id, conn)
         except EndpointBusy as e:

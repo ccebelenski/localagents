@@ -35,7 +35,8 @@ import httpx
 
 from localagents import db
 from localagents.jobs import TERMINAL_STATUSES
-from localagents.router import definitions, scorecard
+from localagents.registry import backend_kind
+from localagents.router import capacity, definitions, scorecard
 from localagents.router.decision import BriefUnresolved, DecisionUnavailable, resolve_brief, score
 
 # the gate keys scorecard.observations reads (its _RATE_GROUPS); files_n and lint_detail ride beside
@@ -444,17 +445,86 @@ async def _write_gates(job, conn) -> None:
     job._log_safe(f"[gates] {json.dumps(shown)}" + (f" lint: {', '.join(fired)}" if fired else ""))
 
 
-def _write_speed_sample(job, conn, sessions: int | None) -> None:
+# --- the speed sample and the curve's fold (§7) ------------------------------------------------
+
+# A sample's concurrency is the occupancy its run HELD: the one that covered this share of the
+# run's wall time. generate_tps is the server's counters over the whole run, so a run that
+# started alone and shared for most of its life measured the shared speed, whatever the count
+# at its start said; a run whose occupancy changed for longer measures no one concurrency.
+STEADY_SHARE = 0.9
+
+# our other sessions on the endpoint during a run: the jobs_finished_at seeks (finished since
+# the run began, or not finished) that read.py's jobs_overlapping takes, so the read is bounded
+# by the run's own span; tests/test_query_plans.py pins the plan
+_RUN_NEIGHBOURS_SQL = (
+    "SELECT started_at, finished_at FROM jobs WHERE started_at IS NOT NULL AND started_at < ?"
+    " AND (finished_at IS NULL OR finished_at > ?) AND +endpoint_id = ? AND id <> ?")
+
+
+def run_occupancy(conn, job_id: str, endpoint_id: int, start: float, end: float) -> int | None:
+    """Our sessions on the endpoint across one job's run [start, end], the job included: the
+    occupancy that held for at least ``STEADY_SHARE`` of it, or None when none did (the run
+    measures no single concurrency) or the run has no length. Sessions that are not ours
+    (another client on the box) are not in the record and are not counted."""
+    span = end - start
+    if span <= 0:
+        return None
+    edges: list[tuple[float, int]] = []
+    for started, finished in conn.execute(_RUN_NEIGHBOURS_SQL, (end, start, endpoint_id, job_id)):
+        a, b = max(start, started), end if finished is None else min(end, finished)
+        if b > a:
+            edges += [(a, 1), (b, -1)]
+    held: dict[int, float] = {}
+    level, t = 1, start
+    for at, step in sorted(edges):  # an end before a start at the same instant
+        held[level] = held.get(level, 0.0) + (at - t)
+        level, t = level + step, at
+    held[level] = held.get(level, 0.0) + (end - t)
+    k, longest = max(held.items(), key=lambda kv: kv[1])
+    return k if longest >= STEADY_SHARE * span else None
+
+
+def _write_speed_sample(job, conn) -> bool:
+    """The job's ``speed_samples`` row when its speed was measured and its run held one
+    occupancy (``run_occupancy``); True when a row was written."""
     tps = (job.metrics or {}).get("generate_tps")
-    if sessions is None or job.endpoint_id is None or isinstance(tps, bool):
-        return
+    if job.endpoint_id is None or job.started_at is None or isinstance(tps, bool):
+        return False
     if not isinstance(tps, (int, float)) or tps <= 0:
-        return  # no measured speed: a sample is never guessed
+        return False  # no measured speed: a sample is never guessed
+    end = job.finished_at or time.time()
+    sessions = run_occupancy(conn, job.id, job.endpoint_id, job.started_at, end)
+    if sessions is None:
+        job._log_safe(f"[speed-sample] none: our sessions on the endpoint changed for more than"
+                      f" {1 - STEADY_SHARE:.0%} of the run, so its speed measures no one concurrency")
+        return False
     with db.immediate(conn):
         conn.execute("INSERT OR REPLACE INTO speed_samples (job_id, endpoint_id, sessions,"
                      " generate_tps, at) VALUES (?, ?, ?, ?, ?)",
-                     (job.id, job.endpoint_id, int(sessions), float(tps),
-                      job.finished_at or time.time()))
+                     (job.id, job.endpoint_id, sessions, float(tps), end))
+    return True
+
+
+def _fold_curve(job, conn, res) -> None:
+    """The endpoint's curve re-derived with this job's sample in (``capacity.fold_samples``).
+    A change is a ``[curve]`` line in this job's transcript (``job_log``), naming the hold when
+    the rule's first holding concurrency moved; the row's JSON names this job (``by``), so an
+    operator goes from a hold to the line, and from the line to the samples."""
+    if job.model_id is None or res is None:
+        return
+    before, after = capacity.fold_samples(conn, job.endpoint_id, job.model, job.model_id,
+                                          backend_kind(res.endpoint.backend), by=job.id)
+    if after is None or after is before:
+        return
+    points = ", ".join(f"{k}: {v:.3f}" for k, v in after.points.items())
+    line = (f"[curve] {res.endpoint.name} ({job.model}): {after.state}, n={after.n},"
+            f" points {{{points}}}, measured {sorted(after.measured)}")
+    was, now = (before.first_hold() if before is not None else None), after.first_hold()
+    if now != was:
+        line += (f"; the bottleneck rule now holds from {now} sessions (normal and urgent work"
+                 " waits there, background enters)" if now is not None
+                 else "; the bottleneck rule now holds nothing")
+    job._log_safe(line)
 
 
 async def _on_finish(job, res, sessions: int | None) -> None:
@@ -467,15 +537,23 @@ async def _on_finish(job, res, sessions: int | None) -> None:
         except Exception as e:  # noqa: BLE001 -- one feed failing must not drop the other
             job._log_safe(f"[feedback-error] gates: {type(e).__name__}: {e}")
     try:
-        _write_speed_sample(job, conn, sessions)
+        sampled = _write_speed_sample(job, conn)
     except Exception as e:  # noqa: BLE001
+        sampled = False
         job._log_safe(f"[feedback-error] speed sample: {type(e).__name__}: {e}")
+    if sampled:
+        try:
+            _fold_curve(job, conn, res)
+        except Exception as e:  # noqa: BLE001 -- the curve is evidence; it never fails the job
+            job._log_safe(f"[feedback-error] curve: {type(e).__name__}: {e}")
 
 
 async def on_finish(job, res, sessions: int | None = None) -> None:
-    """The finish hook (runner._finish): the gates on ``jobs.gates`` and the speed sample.
-    ``sessions`` is ``note_start``'s count from the job's start; without it no sample is
-    written. Evidence only: it never raises and never changes the job's status or error."""
+    """The finish hook (runner._finish): the gates on ``jobs.gates``, the speed sample, and
+    the curve's fold over the endpoint's recent samples. ``sessions`` (``note_start``'s count
+    at the job's start) is no longer read: a sample's concurrency is the occupancy its run held
+    (``run_occupancy``). Evidence only: it never raises and never changes the job's status or
+    error."""
     try:
         await _on_finish(job, res, sessions)
     except Exception as e:  # noqa: BLE001 -- evidence never fails the job (design §9)

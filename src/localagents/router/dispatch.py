@@ -181,7 +181,7 @@ def _facts(reg: Registry, conn: sqlite3.Connection, ep: Endpoint, served_id: str
            probes: dict[str, dict], now: float, endpoint_id: int | None = None) -> Facts:
     probe = probes[ep.name]
     eid = endpoint_id if endpoint_id is not None else _endpoint_id(conn, ep)
-    curve = (load_capacity(conn, eid) if eid is not None else None) or prior_curve(backend_kind(ep.backend))
+    curve = (load_capacity(conn, eid, served_id) if eid is not None else None) or prior_curve(backend_kind(ep.backend))
     cap = from_probe(ep, probe, served_id, curve)
     ours = queue.occupancy(conn, [eid], now) if eid is not None else 0
     f = Facts(ep, served_id, probe, cap, eid, ours)

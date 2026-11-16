@@ -292,7 +292,9 @@ def test_on_finish_writes_gates_and_a_speed_sample(conn, tmp_path, repo):
     assert stored["files_n"] == 2 and stored["files_within"] is True
     assert stored["tests"] is True and stored["no_tmp"] is True and stored["lint"] is True
     s = conn.execute("SELECT * FROM speed_samples WHERE job_id = 'j1'").fetchone()
-    assert (s["endpoint_id"], s["sessions"], s["generate_tps"]) == (j.endpoint_id, 2, 31.5)
+    # curve-refine moved this pin: the sample's concurrency is the occupancy the run held (it
+    # ran alone), not the count passed in from its start
+    assert (s["endpoint_id"], s["sessions"], s["generate_tps"]) == (j.endpoint_id, 1, 31.5)
     # evidence only: the job's own fields are as they were
     assert (j.status, j.error) == ("succeeded", None)
     # the gate read a scratch index: the tree's own index still has src/new.py untracked

@@ -144,10 +144,11 @@ def test_measured_bottleneck_holds_through_select():
 # --- provenance: refine, the gap/clamp rule, the store ------------------------------------------
 
 def test_refined_with_only_concurrency_1_samples_does_not_hold_at_2():
-    """RULE: a box that only ever ran one session at a time refines point 1 alone; its point 2
-    is still the prior's and holds nothing, at 2 or above."""
-    refined = prior_curve("llamacpp").refine([(1, 40.0), (1, 41.0), (1, 39.0)])
-    assert refined.state == "refined" and refined.measured == {1}
+    """RULE: a box that only ever ran one session at a time refines nothing; its point 2
+    is still the prior's and holds nothing, at 2 or above. (curve-refine moved this pin: the
+    curve comes back unchanged, still the prior, rather than ``refined`` with 1 measured.)"""
+    refined = prior_curve("llamacpp").refine([(1, 40.0), (1, 41.0), (1, 39.0)] * 3)
+    assert refined.state == "prior" and refined.measured == frozenset()
     assert not any(refined.bottleneck_at(n) for n in range(2, 6))
     cap = Capacity("partitioned", 2, requests_running=1, curve=refined)
     assert queue.endpoint_room(cap, 1, "normal")
@@ -156,19 +157,20 @@ def test_refined_with_only_concurrency_1_samples_does_not_hold_at_2():
 def test_refined_with_concurrency_2_samples_that_bottleneck_holds():
     """RULE: speed samples at concurrency 2 make point 2 measured; when they bottleneck
     (median 12 over median 40 = 0.3, 2 x 0.3 < 0.75) the second slot is background's only.
-    Samples at 2 that do not bottleneck (0.45: 0.9) hold nothing."""
-    refined = prior_curve("llamacpp").refine([(1, 40.0), (1, 40.0), (2, 12.0), (2, 12.0)])
+    Samples at 2 that do not bottleneck (0.45: 0.9) hold nothing. (curve-refine moved this
+    pin: eight samples per concurrency, MIN_SAMPLES_PER_POINT.)"""
+    refined = prior_curve("llamacpp").refine([(1, 40.0), (2, 12.0)] * 8)
     assert refined.measured == {1, 2}
     assert refined.points[2] == pytest.approx(0.3)
     assert refined.bottleneck_at(2) and refined.bottleneck_at(3)
     cap = Capacity("partitioned", 2, requests_running=1, curve=refined)
     assert not queue.endpoint_room(cap, 1, "normal")
     assert queue.endpoint_room(cap, 1, "background")
-    fine = prior_curve("llamacpp").refine([(1, 40.0), (2, 18.0)])
+    fine = prior_curve("llamacpp").refine([(1, 40.0), (2, 18.0)] * 8)
     assert fine.measured == {1, 2} and not fine.bottleneck_at(2)
     # point 3 kept the prior's 0.25 (3 x 0.25 = 0.75 is not below the line anyway); it stays
     # unmeasured, and a later refine keeps what was measured
-    again = refined.refine([(1, 40.0)])
+    again = refined.refine([(1, 40.0)] * 8)
     assert again.measured == {1, 2} and again.bottleneck_at(2)
 
 

@@ -77,7 +77,8 @@ def _calibrated(conn, ep, served, *, complete=True, constants="{}"):
 def test_list_models_exposes_sessions_and_queue(monkeypatch):
     """§7 "Exposed", amendment 1: per real endpoint the sessions (capacity, ours, foreign), the
     queue (count, head priority), the predicted speed at ours + foreign + 1 and the curve's
-    state with its point count. A down endpoint admits nothing and predicts nothing; the router
+    state with its point count, its measured concurrencies and where the bottleneck rule holds
+    from (curve-refine moved this pin: ``measured`` and ``holds_from`` added). A down endpoint admits nothing and predicts nothing; the router
     entry carries none of these."""
     box = Endpoint(name="box", base_url="http://box:8080", backend="llama.cpp")
     pooled = Endpoint(name="pooled", base_url="http://pooled:8000", backend="vllm")
@@ -100,7 +101,9 @@ def test_list_models_exposes_sessions_and_queue(monkeypatch):
     conn = server.store.conn
     pooled_id = db.lookup_id(conn, "endpoints", name="pooled", base_url=pooled.url,
                              backend=pooled.backend, host=pooled.host)
-    save_capacity(conn, pooled_id, "pooled", Curve({1: 1.0, 2: 0.9}, "refined", 7))
+    # curve-refine: points 1-3 measured on model-b, 3 x 0.2 = 0.6 < 0.75 holds from 3
+    save_capacity(conn, pooled_id, "pooled",
+                  Curve({1: 1.0, 2: 0.9, 3: 0.2}, "refined", 7, frozenset({1, 2, 3}), "model-b"))
 
     out = asyncio.run(server.list_models())
     eps = out["endpoints"]
@@ -109,7 +112,7 @@ def test_list_models_exposes_sessions_and_queue(monkeypatch):
     assert b["queue"] == {"count": 2, "head_priority": "normal"}
     # the llama.cpp prior {1: 1.0, 2: 0.35, 3: 0.25} at ours + foreign + 1 = 3
     assert b["predicted_speed"] == pytest.approx(0.25)
-    assert b["curve_state"] == {"state": "prior", "points": 0}
+    assert b["curve_state"] == {"state": "prior", "points": 0, "measured": [], "holds_from": None}
     assert b["pool"] is None and "pool_sessions" not in b
     # the probe's own fields are still spread as they were
     assert b["slots"] == {"total": 2, "busy": 2} and b["up"] is True
@@ -118,13 +121,14 @@ def test_list_models_exposes_sessions_and_queue(monkeypatch):
     assert p["sessions"] == {"capacity": 3, "ours": 0, "foreign": 0}
     assert p["queue"] == {"count": 0, "head_priority": None}
     assert p["predicted_speed"] == pytest.approx(1.0)
-    assert p["curve_state"] == {"state": "refined", "points": 7}
+    assert p["curve_state"] == {"state": "refined", "points": 7, "measured": [1, 2, 3],
+                                "holds_from": 3}
 
     g = eps["gone"]
     # down: no session can start there, but the session we hold there still counts as ours
     assert g["sessions"] == {"capacity": 0, "ours": 1, "foreign": 0}
     assert g["predicted_speed"] is None
-    assert g["curve_state"] == {"state": "prior", "points": 0}
+    assert g["curve_state"] == {"state": "prior", "points": 0, "measured": [], "holds_from": None}
 
     for key in ("sessions", "queue", "predicted_speed", "curve_state", "pool"):
         assert key not in eps["auto"]

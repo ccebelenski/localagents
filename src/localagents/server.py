@@ -118,7 +118,9 @@ async def _exposed_endpoints(reg: Registry, conn: sqlite3.Connection, probes: di
                                         if waiting else None)},
             "predicted_speed": (round(cap.curve.predict(f.ours + foreign + 1), 3)
                                 if probe.get("up") else None),
-            "curve_state": {"state": cap.curve.state, "points": cap.curve.n},
+            "curve_state": {"state": cap.curve.state, "points": cap.curve.n,
+                            "measured": sorted(cap.curve.measured),
+                            "holds_from": cap.curve.first_hold()},
             "pool": f.pool,
         }
         if f.pool is not None:
@@ -170,7 +172,9 @@ async def list_models() -> dict[str, Any]:
     Every real endpoint also carries our queue's view of it: `sessions` (`capacity`, `ours`,
     `foreign`), `queue` (`count` waiting, `head_priority`), `predicted_speed` (the throughput
     curve's fraction of a lone session's speed for the next session there), `curve_state`
-    (`state`: prior | probed | refined, with `points`), and `pool` (its declared pool or null)
+    (`state`: prior | probed | refined, `points` its sample count, `measured` the concurrencies
+    measured for the served model, `holds_from` where normal work starts waiting for a measured
+    bottleneck, or null), and `pool` (its declared pool or null)
     with `pool_sessions` (`cap`, `used`) when it is in one.
     A `router` entry serves only its own name: it carries `router: True` and the fleet's
     `context_range` — the smallest and largest real windows probed right now — instead of a

@@ -189,29 +189,31 @@ def test_bottleneck_slot_counts_foreign_sessions():
 
 def test_refine_from_samples():
     """§7: median generate_tps per concurrency, normalised to the concurrency-1 median,
-    MERGED onto the prior (a concurrency with no sample yet keeps the prior's point);
-    without a concurrency-1 point there is no baseline and the curve stands."""
+    MERGED onto the prior (a concurrency with no counted sample keeps the prior's point);
+    without a counted concurrency-1 point there is no baseline and the curve stands.
+    (curve-refine moved this pin: a concurrency counts from MIN_SAMPLES_PER_POINT samples.)"""
     prior = prior_curve("vllm")
-    refined = prior.refine([(1, 40.0), (2, 30.0), (1, 60.0), (2, 34.0)])
+    refined = prior.refine([(1, 40.0), (2, 30.0), (1, 60.0), (2, 34.0)] * 4)
     assert refined.state == "refined"
-    assert refined.n == 4  # len(samples): the endpoint_capacity.points column
+    assert refined.n == 16  # the samples behind it: the endpoint_capacity.points column
     # median 50 and 32; 32/50 at 2, and 3 has no samples so the prior's 0.75 stays
     assert refined.points == pytest.approx({1: 1.0, 2: 0.64, 3: 0.75})
     assert prior.points == {1: 1.0, 2: 0.85, 3: 0.75} and prior.state == "prior"
-    same = prior.refine([(2, 30.0)])
+    same = prior.refine([(2, 30.0)] * 8)
     assert same.points == prior.points and same.state == "prior" and same.n == 0
 
 
 def test_refine_keeps_the_prior_where_no_samples_exist():
-    """The two-slot llama.cpp box whose first jobs all ran alone: samples at 1 refine 1,
-    but the prior's 2 and 3 stay as predictions. §7: the curve is "seeded by a backend-family
-    prior ... refined by every job's observed speed", refined not replaced. They stay prior
-    points: only 1 is measured, so the prior's 2 predicts and holds nothing (§6, the
-    operator's ruling 2026-11-15) — the hold does not come back through a refine."""
-    refined = prior_curve("llamacpp").refine([(1, 40.0), (1, 42.0)])
+    """The two-slot llama.cpp box whose first jobs all ran alone: the prior's 2 and 3 stay as
+    predictions. §7: the curve is "seeded by a backend-family prior ... refined by every job's
+    observed speed", refined not replaced. They stay prior points, so the prior's 2 predicts
+    and holds nothing (§6, the operator's ruling 2026-11-15) — the hold does not come back
+    through a refine. (curve-refine moved this pin: samples at 1 alone change nothing, so the
+    curve comes back as it was, still the prior, rather than ``refined`` with 1 measured.)"""
+    refined = prior_curve("llamacpp").refine([(1, 40.0), (1, 42.0)] * 4)
     assert refined.points == pytest.approx({1: 1.0, 2: 0.35, 3: 0.25})
-    assert refined.n == 2 and refined.state == "refined"
-    assert refined.measured == {1}
+    assert refined == prior_curve("llamacpp")
+    assert refined.measured == frozenset()
     assert refined.predict(2) == pytest.approx(0.35)  # the prior still predicts
     assert not refined.bottleneck_at(2)  # 2 * 0.35 = 0.7 < 0.75, but point 2 is the prior's
 
@@ -233,7 +235,7 @@ def test_save_and_load_capacity_round_trip(conn):
     conn.execute("INSERT INTO endpoints (name, base_url, backend, host)"
                  " VALUES ('ai1', 'http://ai1:8000', 'vllm', 'ai1')")
     eid = conn.execute("SELECT id FROM endpoints").fetchone()[0]
-    curve = prior_curve("vllm").refine([(1, 50.0), (2, 30.0)])
+    curve = prior_curve("vllm").refine([(1, 50.0), (2, 30.0)] * 8)  # curve-refine: 8 per point
     save_capacity(conn, eid, "pooled", curve)
     row = conn.execute(
         "SELECT kind, curve, state, points FROM endpoint_capacity WHERE endpoint_id = ?", (eid,)
@@ -244,9 +246,9 @@ def test_save_and_load_capacity_round_trip(conn):
     assert json.loads(row["curve"]) == {"points": {"1": 1.0, "2": 0.6, "3": 0.75},
                                         "measured": [1, 2]}
     assert row["state"] == "refined"
-    assert row["points"] == 2  # the column is the curve's sample count (schema comment)
+    assert row["points"] == 16  # the column is the curve's sample count (schema comment)
     got = load_capacity(conn, eid)
-    assert got.points == {1: 1.0, 2: 0.6, 3: 0.75} and got.state == "refined" and got.n == 2
+    assert got.points == {1: 1.0, 2: 0.6, 3: 0.75} and got.state == "refined" and got.n == 16
     assert got.measured == {1, 2}
     # upsert: a later save replaces the row rather than adding one
     save_capacity(conn, eid, "pooled", prior_curve("vllm"))
