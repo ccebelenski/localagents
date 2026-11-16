@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -305,41 +306,80 @@ def lint(diff_text: str) -> list[dict[str, Any]]:
     return found[:LINT_DETAIL_MAX]
 
 
-def read_diff(worktree: dict[str, Any], scratch_dir: str) -> tuple[list[str], str] | None:
-    """The worktree's changes against its base, committed and not, untracked files included
-    (what ``finish_worktree`` diffstats), or None when they cannot be read. The tree's own
-    index is never touched: ``git add -A`` runs against a copy of it in ``scratch_dir``."""
-    root, base = worktree.get("root"), worktree.get("base")
-    if not root or not base or not Path(root).is_dir():
-        return None
-    index = Path(scratch_dir) / f"feedback-{db.new_uuid()}.index"
+def git(cwd: str, *args: str, env: dict[str, str] | None = None,
+        bounded: bool = True) -> subprocess.CompletedProcess:
+    """Every git call a job's reads and its worktree make and finish run (runner._git is this).
+    Output is decoded as UTF-8 with ``errors="replace"`` (``-z`` prints names unquoted: a
+    non-UTF-8 name never raises), stdin is closed, and the call is bounded by GIT_TIMEOUT_S, read
+    at call time. Past the bound git and everything it started are killed (its own process
+    group: a hook or filter child holds the output pipes, so killing git alone leaves the read
+    blocked) and subprocess.TimeoutExpired is raised for the caller to name. ``bounded=False`` is
+    for a step whose time grows with the repository (a checkout)."""
+    with subprocess.Popen(["git", *args], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8",
+                          errors="replace", start_new_session=True) as p:
+        try:
+            out, err = p.communicate(timeout=GIT_TIMEOUT_S if bounded else None)
+        except BaseException as e:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            if isinstance(e, subprocess.TimeoutExpired):
+                try:  # reap; a child that left the group keeps a pipe open: stop waiting on it
+                    p.communicate(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+            raise
+    return subprocess.CompletedProcess(p.args, p.returncode, out, err)
 
-    def git(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], cwd=root, env=env, capture_output=True,
-                              encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S)
+
+class DiffUnread(Exception):
+    """A git step of ``tree_diff`` exited non-zero; the message names the step and git's error."""
+
+
+def tree_diff(root: str, base: str, scratch_dir: str, *reads: tuple[str, ...]) -> tuple[list[str], list[str]]:
+    """The one reader of a worktree's changes against ``base``, committed and not, untracked
+    files included (files git ignores are not: ``add -A`` leaves them out). Returns the changed
+    paths (``--no-renames``: a rename is both paths; the record's diff_files and the gates'
+    files_n) and the output of ``git diff --cached <read> <base>`` for each further read. The
+    tree's own index is never touched: ``git add -A`` runs against a copy of it in
+    ``scratch_dir``, so what the agent staged stays staged and a killed git leaves no lock in
+    the tree. Raises DiffUnread, subprocess.TimeoutExpired (a step hung past GIT_TIMEOUT_S) or
+    OSError; the caller names it."""
+    index = Path(scratch_dir) / f"feedback-{db.new_uuid()}.index"
+    env = dict(os.environ, GIT_INDEX_FILE=str(index))
+
+    def step(*args: str, env: dict[str, str] | None = None) -> str:
+        r = git(root, *args, env=env)
+        if r.returncode != 0:
+            raise DiffUnread(f"git {' '.join(args)} failed ({' '.join(r.stderr.split()) or f'exit {r.returncode}'})")
+        return r.stdout
 
     try:
-        own = git("rev-parse", "--git-path", "index")
-        if own.returncode != 0:
-            return None
-        env = dict(os.environ, GIT_INDEX_FILE=str(index))
-        src = Path(root) / own.stdout.strip()
+        src = Path(root) / step("rev-parse", "--git-path", "index").strip()
         if src.is_file():
             shutil.copyfile(src, index)   # the copy keeps the stat cache: add -A rehashes less
-        elif git("read-tree", "HEAD", env=env).returncode != 0:
-            return None
-        if git("add", "-A", env=env).returncode != 0:
-            return None
-        names = git("diff", "--cached", "--no-renames", "--name-only", "-z", base, env=env)
-        text = git("diff", "--cached", "--no-renames", "--no-color", "--no-ext-diff", base, env=env)
-        if names.returncode != 0 or text.returncode != 0:
-            return None
-        return [n for n in names.stdout.split("\0") if n], text.stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
+        else:
+            step("read-tree", "HEAD", env=env)
+        step("add", "-A", env=env)
+        names = step("diff", "--cached", "--no-renames", "--name-only", "-z", base, env=env)
+        return [n for n in names.split("\0") if n], [step("diff", "--cached", *r, base, env=env) for r in reads]
     finally:
         for p in (index, Path(f"{index}.lock")):
             p.unlink(missing_ok=True)
+
+
+def read_diff(worktree: dict[str, Any], scratch_dir: str) -> tuple[list[str], str] | None:
+    """``tree_diff``'s names and unified diff for the gates, or None when they cannot be read."""
+    root, base = worktree.get("root"), worktree.get("base")
+    if not root or not base or not Path(root).is_dir():
+        return None
+    try:
+        names, (text,) = tree_diff(root, base, scratch_dir, ("--no-renames", "--no-color", "--no-ext-diff"))
+    except (DiffUnread, OSError, subprocess.SubprocessError):
+        return None
+    return names, text
 
 
 # --- the gates (§9) --------------------------------------------------------------------------

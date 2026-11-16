@@ -71,7 +71,10 @@ def build_env(res: Resolution, base_url: str) -> dict[str, str]:
 # ---------------- worktree isolation ----------------
 
 def _git(cwd: str, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    """feedback.git, the one git runner (it owns the bound, GIT_TIMEOUT_S, and the decoding): a
+    hung call raises subprocess.TimeoutExpired, which finish_worktree names. ``worktree add`` is
+    a checkout, whose time grows with the repository: the one call left unbounded."""
+    return feedback.git(cwd, *args, bounded=args[:2] != ("worktree", "add"))
 
 
 def make_worktree(job: Job) -> dict[str, Any]:
@@ -142,19 +145,39 @@ def _restore_worktree(wt: dict[str, Any]) -> dict[str, Any]:
     return {**wt, "recreated": True}
 
 
-def _diff_names(root: str, base: str) -> list[str] | None:
-    """The staged tree's paths against ``base`` (call between ``add -A`` and the reset), or
-    None when git fails. ``-z`` prints names unquoted, so the bytes are decoded here with
-    ``errors="replace"`` (feedback.read_diff's rule): a non-UTF-8 name cannot raise between the
-    add and the reset and leave the changes staged. ``--no-renames``: a rename is both paths."""
-    try:
-        r = subprocess.run(["git", "diff", "--cached", "--no-renames", "--name-only", "-z", base],
-                           cwd=root, capture_output=True, encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    if r.returncode != 0:
-        return None
-    return [n for n in r.stdout.split("\0") if n]
+# What an agent's tools create as a side effect and recreate on their next run: package
+# environments (uv run's .venv, npm's node_modules) and interpreter, test-runner and linter
+# caches. A path git ignores is something a removal would lose unless one of its components is
+# named here (or ends in a suffix here). Build outputs (build/, dist/, target/) are not listed:
+# a job may have been asked for them, and keeping a tree is the fail-closed direction.
+REGENERATED = frozenset({".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
+                         ".ruff_cache", ".tox", ".nox", ".hypothesis", ".cache"})
+_REGENERATED_SUFFIXES = (".pyc", ".pyo", ".egg-info")
+IGNORED_NAMED = 10  # the most ignored paths a note names; it counts them all
+
+
+def _status(out: str) -> tuple[bool, list[str]]:
+    """``git status --porcelain -z --ignored=matching``: whether it lists a change (tracked or
+    untracked), and the ignored paths that a removal would lose (a directory ends in "/")."""
+    changes, lost = False, []
+    entries = iter(out.split("\0"))
+    for e in entries:
+        if not e:
+            continue
+        xy, path = e[:2], e[3:]
+        if xy != "!!":
+            changes = True
+            if "R" in xy or "C" in xy:
+                next(entries, None)  # -z puts a rename's source path in the next entry
+        elif not any(p in REGENERATED or p.endswith(_REGENERATED_SUFFIXES) for p in path.split("/")):
+            lost.append(path)
+    return changes, lost
+
+
+def _named(paths: list[str]) -> str:
+    shown = ", ".join(paths[:IGNORED_NAMED])
+    more = len(paths) - IGNORED_NAMED
+    return f"{len(paths)} path{'s' if len(paths) != 1 else ''} ({shown}" + (f" and {more} more)" if more > 0 else ")")
 
 
 def _set_files(wt: dict[str, Any], names: list[str] | None) -> None:
@@ -169,23 +192,50 @@ def _set_files(wt: dict[str, Any], names: list[str] | None) -> None:
     wt["files_n"] = len(names)
 
 
+def _stopped(e: BaseException) -> str:
+    """A git step that hung past the bound, or a step that could not run, as the note names it."""
+    if isinstance(e, subprocess.TimeoutExpired):
+        cmd = e.cmd if isinstance(e.cmd, (list, tuple)) else [e.cmd]
+        return f"{' '.join(map(str, cmd))} timed out after {e.timeout:g}s"
+    return f"a step could not run ({type(e).__name__}: {e})"
+
+
 def finish_worktree(job: Job) -> None:
     wt = job.worktree
     if not wt:
         return
+    try:
+        _finish_tree(job, wt)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        # every git call here is bounded (D2): a hung one is named, the tree is left as that
+        # step left it (a read that could not see never says unchanged) and the job settles
+        what, root = _stopped(e), wt["root"]
+        kept = Path(root).is_dir()
+        wt.update(kept=kept, note=(
+            f"{what}; the finish stopped at that step and nothing after it ran: the worktree is "
+            f"{'left at' if kept else 'not on disk at'} {root} and branch {wt['branch']} is left in {wt['repo']}"))
+        job.log_text(f"[worktree-error] {what}")
+
+
+def _finish_tree(job: Job, wt: dict[str, Any]) -> None:
     root, repo = wt["root"], wt["repo"]
+    # a previous finish's diffstat and file list (a resumed job's tree) are not this tree's
+    # truth: each branch below records what it read, and a list it could not read stays absent
+    wt.pop("diffstat", None)
+    _set_files(wt, None)
     if not Path(root).is_dir():
         # the directory is gone (deleted out from under the job): record what was found instead
         # of raising. git is told to forget the tree; the branch may hold commits the user
         # wants, so removing it stays the user's call (review of 3.9B, finding B2)
         _git(repo, "worktree", "prune")
-        _set_files(wt, None)  # no tree, no diff to read: the file list is unknown, never empty
         wt.update(kept=False, note=f"the worktree directory was removed while the job ran; "
                                    f"it is left out of git (worktree prune); "
                                    f"branch {wt['branch']} is left in {repo}")
         job.log_text(f"[worktree-error] worktree directory missing at {root}")
         return
-    st = _git(root, "status", "--porcelain")
+    # --ignored=matching: a file git ignores is listed too (a review's t/REVIEW.md where t/* is
+    # ignored), an ignored directory as one entry (.venv/), never walked
+    st = _git(root, "status", "--porcelain", "-z", "--ignored=matching")
     hd = _git(root, "rev-parse", "HEAD")
     if st.returncode != 0 or hd.returncode != 0:
         # git cannot read the tree (a corrupted .git pointer, a broken mount): both calls
@@ -194,8 +244,6 @@ def finish_worktree(job: Job) -> None:
         # (review 3.9D, F2).
         failed = st if st.returncode != 0 else hd
         err = " ".join(failed.stderr.split()) or f"exit {failed.returncode}"  # one line
-        wt.pop("diffstat", None)  # a previous finish's diffstat is not this tree's truth
-        _set_files(wt, None)  # nor its file list: this diff could not be read
         wt.update(
             kept=True,
             note=(f"git could not read the worktree at {root} ({err}); it is left in place "
@@ -203,13 +251,21 @@ def finish_worktree(job: Job) -> None:
         )
         job.log_text(f"[worktree-error] git could not read the worktree: {err}")
         return
-    status = st.stdout.strip()
+    changes, lost = _status(st.stdout)
     head = hd.stdout.strip()
-    changed = bool(status) or head != wt["base"]
+    changed = changes or head != wt["base"]
     if not changed:
         # a clean status at the base commit: the diff against the base is empty, so the file
         # list is known to be empty whatever the removal below does
         _set_files(wt, [])
+        if lost:
+            # the tree is removed only when nothing in it would be lost: files git ignores are
+            # outside the diff, so they keep the tree and the note is the only place naming them
+            wt.update(kept=True, note=(
+                f"no changes git tracks, but the worktree is kept: it holds {_named(lost)} that git "
+                f"ignores and removing it would lose. It is left at {root} on branch {wt['branch']}; "
+                f"when done: `git worktree remove --force {root}` and `git -C {repo} branch -D {wt['branch']}`."))
+            return
         # each step's return code is read: "removed" is said only when git removed it
         rm = _git(repo, "worktree", "remove", "--force", root)
         if rm.returncode != 0:
@@ -228,28 +284,19 @@ def finish_worktree(job: Job) -> None:
             return
         wt.update(kept=False, note="no changes; worktree removed")
         return
-    # each step's return code is read (3.11a row 7, as the no-change branch above reads its
-    # own): a diffstat is recorded only when the add and the diff both worked, the reset always
-    # runs (a partial add staged something), and every failure is named in the note and a line
-    add = _git(root, "add", "-A")
-    diff = _git(root, "diff", "--cached", "--stat", wt["base"]) if add.returncode == 0 else None
-    # the diff's own file list (what the record's diff_files shows): every path the job changed
-    # against the base, shell writes included; the diffstat above cuts long paths to ".../"
-    names = _diff_names(root, wt["base"]) if add.returncode == 0 else None
-    reset = _git(root, "reset", "-q")
-    problems = []
-    if add.returncode != 0:
-        problems.append(f"git add -A failed ({' '.join(add.stderr.split())}): no diffstat was taken")
-    elif diff is not None and diff.returncode != 0:
-        problems.append(f"git diff --cached --stat failed ({' '.join(diff.stderr.split())}): no diffstat was taken")
-    if add.returncode == 0 and names is None:
-        problems.append("git diff --cached --name-only failed: no file list was taken")
-    if reset.returncode != 0:
-        problems.append(f"git reset failed ({' '.join(reset.stderr.split())}): the changes are left staged in the index")
-    wt.pop("diffstat", None)  # a previous finish's diffstat is not this tree's truth
-    _set_files(wt, names)
-    if add.returncode == 0 and diff is not None and diff.returncode == 0:
-        wt["diffstat"] = diff.stdout.strip()
+    # the diffstat and the file list (what the record's diff_files shows: every path the job
+    # changed against the base, shell writes included; the diffstat cuts long paths to ".../")
+    # come from feedback's one copy-index reader, so the tree's own index is never touched.
+    # A read that failed or hung is named in the note and a line; the tree is kept either way.
+    problem = None
+    try:
+        names, (stat,) = feedback.tree_diff(root, wt["base"], job.log_dir, ("--stat",))
+    except (feedback.DiffUnread, subprocess.TimeoutExpired, OSError) as e:
+        problem = f"{e if isinstance(e, feedback.DiffUnread) else _stopped(e)}: no diffstat or file list was taken"
+        job.log_text(f"[worktree-error] {problem}")
+    else:
+        _set_files(wt, names)
+        wt["diffstat"] = stat.strip()
     wt.update(
         kept=True,
         note=(
@@ -257,11 +304,11 @@ def finish_worktree(job: Job) -> None:
             f"Review with: git -C {root} status --short && git -C {root} diff {wt['base']}  "
             "(uncommitted work; status also lists files git has not tracked yet) — "
             f"then merge/cherry-pick or `git worktree remove --force {root}`."
-            + "".join(f" {p}." for p in problems)
+            + (f" It also holds {_named(lost)} that git ignores, which status and the diff do not show."
+               if lost else "")
+            + (f" {problem}." if problem else "")
         ),
     )
-    for p in problems:
-        job.log_text(f"[worktree-error] {p}")
 
 
 # ---------------- message handling ----------------

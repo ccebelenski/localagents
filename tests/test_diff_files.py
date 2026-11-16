@@ -185,20 +185,29 @@ def test_a_tree_removed_under_the_job_is_null_not_empty(repo):
 
 
 def test_a_failed_name_list_is_null_and_named(repo, monkeypatch):
-    """The name-only read failing leaves the list absent (null), says so in the note and the
-    transcript, keeps the diffstat, and the reset still runs (nothing left staged)."""
-    from localagents import runner
+    """The name-only read failing leaves the list absent (null) and says so in the note and the
+    transcript. The names and the diffstat are one copy-index read (feedback.tree_diff), so a
+    failed read takes neither, and the tree's own index is never touched (nothing staged)."""
+    from localagents.router import feedback
 
     store, j = _job(repo)
     wt = Path(j.worktree["path"])
     (wt / "n.txt").write_text("n\n")
-    monkeypatch.setattr(runner, "_diff_names", lambda root, base: None)
+    real = feedback.git
+
+    def failing(cwd, *args, **kw):
+        if "--name-only" in args:
+            return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: simulated failure")
+        return real(cwd, *args, **kw)
+
+    monkeypatch.setattr(feedback, "git", failing)
     for s in _finish(store, j):
         assert s["diff_files"] is None
-        assert "no file list was taken" in s["worktree"]["note"]
-        assert "n.txt" in s["worktree"]["diffstat"]
-    assert git(wt, "diff", "--cached", "--name-only") == ""  # the reset ran
-    assert "no file list was taken" in j.transcript_tail()
+        assert "no diffstat or file list was taken" in s["worktree"]["note"]
+        assert "fatal: simulated failure" in s["worktree"]["note"]
+        assert "diffstat" not in s["worktree"]
+    assert git(wt, "diff", "--cached", "--name-only") == ""  # the real index was never staged
+    assert "no diffstat or file list was taken" in j.transcript_tail()
 
 
 def test_a_non_utf8_name_cannot_strand_the_index(repo):

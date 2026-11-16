@@ -392,17 +392,18 @@ def test_an_odd_json_shape_on_a_side_route_never_reports_an_answering_endpoint_d
 # --- row 7: finish_worktree's changed branch reads its return codes ----------------------------------
 
 
-@pytest.mark.parametrize("fails", ["add", "diff", "reset"])
+@pytest.mark.parametrize("fails", ["add", "diff"])
 def test_a_failed_git_step_on_a_changed_tree_is_recorded(tmp_path, monkeypatch, fails):
     """Row 7 (DeepSeek 3.9B): the changed branch ran ``git add -A``, ``git diff --cached --stat``
     and ``git reset -q`` and read none of their return codes — a failed add or diff recorded an
-    empty or partial diffstat under the "Changes left" note, a failed reset left the user's work
-    staged, and neither was said. Each failure is in the note and a [worktree-error] line (the
-    no-change branch's shape); the tree is kept; a diffstat is recorded only when add and diff
-    both worked, and a failed reset says the changes are left staged."""
+    empty or partial diffstat under the "Changes left" note, and it was not said. Each failure is
+    in the note and a [worktree-error] line (the no-change branch's shape); the tree is kept; a
+    diffstat is recorded only when the read worked. (2026-11-15: the read is feedback.tree_diff
+    on a copy of the index, so there is no reset on the tree's own index left to fail.)"""
 
     from localagents import runner
     from localagents.jobs import Job
+    from localagents.router import feedback
 
     def git(cwd, *args):
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
@@ -421,25 +422,22 @@ def test_a_failed_git_step_on_a_changed_tree_is_recorded(tmp_path, monkeypatch, 
     j.worktree = runner.make_worktree(j)
     (Path(j.worktree["root"]) / "b.txt").write_text("new\n")  # the job changed something
 
-    real = runner._git
-    step = {"add": ("add", "-A"), "diff": ("diff", "--cached"), "reset": ("reset", "-q")}[fails]
+    real = feedback.git
+    step = {"add": ("add", "-A"), "diff": ("diff", "--cached")}[fails]
 
-    def failing(cwd, *args):
+    def failing(cwd, *args, **kw):
         if args[:2] == step:
             return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: simulated failure")
-        return real(cwd, *args)
+        return real(cwd, *args, **kw)
 
-    monkeypatch.setattr(runner, "_git", failing)
+    monkeypatch.setattr(feedback, "git", failing)
     runner.finish_worktree(j)
     wt = j.worktree
     assert wt["kept"] is True and Path(wt["root"]).is_dir()
     assert "fatal: simulated failure" in wt["note"] and "Changes left" in wt["note"]
     log = (logs / "transcript.txt").read_text()
     assert "[worktree-error]" in log and "fatal: simulated failure" in log
-    if fails == "reset":
-        assert "b.txt" in wt["diffstat"] and "left staged" in wt["note"]
-    else:
-        assert wt.get("diffstat") is None
+    assert wt.get("diffstat") is None
 
 
 # --- the page scripts under node (tests/fakedom.js: a DOM stand-in, no browser) -------------------
