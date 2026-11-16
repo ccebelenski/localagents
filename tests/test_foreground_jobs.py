@@ -186,7 +186,17 @@ def _foreground(opts, transcript):
             "background_tasks=off" in transcript)
 
 
-def test_a_job_runs_foreground_only_by_default(live, monkeypatch):
+def test_a_job_runs_with_background_tasks_by_default(live, monkeypatch):
+    # the default is ON (the operator's call, 2026-11-16, on the store's record: 24 of 209
+    # jobs backgrounded a test suite or a server and none was stuck after a result)
+    out, opts, transcript = _one_session(live, monkeypatch)
+    assert _foreground(opts, transcript) == (False, False, False, False)
+    assert "background_tasks=on" in transcript
+    assert not set(FOREGROUND_ENV) & set(opts.env)
+
+
+def test_a_config_default_of_false_runs_foreground_only(live, monkeypatch):
+    live.reg = _reg(background_tasks=False)
     out, opts, transcript = _one_session(live, monkeypatch)
     assert _foreground(opts, transcript) == (True, True, True, True)
     assert opts.env["BASH_DEFAULT_TIMEOUT_MS"] == "600000" and opts.env["BASH_MAX_TIMEOUT_MS"] == "1800000"
@@ -203,7 +213,8 @@ def test_a_config_default_of_true_runs_as_today(live, monkeypatch):
     assert opts.disallowed_tools == ["Agent", "Task"]
 
 
-def test_an_explicit_true_over_the_default_false(live, monkeypatch):
+def test_an_explicit_true_over_a_config_default_of_false(live, monkeypatch):
+    live.reg = _reg(background_tasks=False)
     out, opts, transcript = _one_session(live, monkeypatch, background_tasks=True)
     assert _foreground(opts, transcript) == (False, False, False, False)
 
@@ -217,7 +228,7 @@ def test_an_explicit_false_over_a_config_default_of_true(live, monkeypatch):
 def test_the_endpoint_env_wins_over_the_resolved_value_in_the_session(live, monkeypatch):
     live.reg = _reg()
     live.reg.endpoints["e"].env = {"BASH_MAX_TIMEOUT_MS": "5000"}
-    out, opts, transcript = _one_session(live, monkeypatch)
+    out, opts, transcript = _one_session(live, monkeypatch, background_tasks=False)
     assert opts.env["BASH_MAX_TIMEOUT_MS"] == "5000"
     assert opts.env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
 
@@ -266,12 +277,12 @@ def test_the_record_does_not_carry_the_value_in_either_summary(live, monkeypatch
 
 def test_the_config_keys_parse(tmp_path):
     p = tmp_path / "models.yaml"
-    p.write_text("defaults:\n  background_tasks: true\n  bash_timeout_s: 30\n  bash_max_timeout_s: 90\n")
+    p.write_text("defaults:\n  background_tasks: false\n  bash_timeout_s: 30\n  bash_max_timeout_s: 90\n")
     d = Registry.load(p).defaults
-    assert (d.background_tasks, d.bash_timeout_s, d.bash_max_timeout_s) == (True, 30, 90)
+    assert (d.background_tasks, d.bash_timeout_s, d.bash_max_timeout_s) == (False, 30, 90)
     p.write_text("defaults: {}\n")
     d = Registry.load(p).defaults
-    assert (d.background_tasks, d.bash_timeout_s, d.bash_max_timeout_s) == (False, 600, 1800)
+    assert (d.background_tasks, d.bash_timeout_s, d.bash_max_timeout_s) == (True, 600, 1800)
 
 
 @pytest.mark.parametrize("key, bad", [
@@ -575,7 +586,7 @@ def test_without_task_messages_the_session_reads_as_today(live, monkeypatch):
 
 def test_run_agent_describes_background_tasks_within_the_cap():
     desc = {t.name: t.description or "" for t in server.mcp._tool_manager.list_tools()}["run_agent"]
-    assert "background_tasks: false (config default): foreground only, the job ends at its result" in desc
+    assert "background_tasks: false: foreground only, the job ends at its result; true (config" in desc
     assert "a resume keeps its job's" in desc
     assert len(desc) <= 2048, len(desc)
 

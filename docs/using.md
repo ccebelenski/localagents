@@ -19,17 +19,20 @@ waits — e.g. `running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: uv run py
 to about 28 hours. To run several jobs, Claude makes one blocking call per job; each
 one notifies on its own when it finishes.
 
-Jobs run in the foreground by default. The Bash tool in a job's session has no
-`run_in_background` parameter and no Monitor tool, a command's default timeout is
-`defaults.bash_timeout_s` (600 s) with a ceiling of `defaults.bash_max_timeout_s`
-(1800 s), and one sentence in the system prompt tells the model so. The reason is how a
-headless session ends. A session that starts a background task outlives its result,
-because the harness waits for the task and then takes another turn, and the job holds
-its slot all that time. `run_agent(background_tasks=true)` lets one job background its
-commands and `defaults.background_tasks: true` does it for every job. A resumed job keeps
-the value its first run had unless the call passes one, and the transcript's `[start]`
-line names it (`background_tasks=off`). An endpoint's own `env:` still wins over the
-variables this sets.
+A job's commands may run in the background by default, as in any Claude Code session. That
+has one cost worth knowing. A session that starts a background task outlives its result,
+because the harness waits for the task and then takes another turn, and the job holds its
+slot all that time. A task that never exits holds it until the job's timeout. While a job is
+in that state its record says so (see Job records below).
+
+`run_agent(background_tasks=false)` runs one job in the foreground only, and
+`defaults.background_tasks: false` does it for every job. The Bash tool in such a session
+has no `run_in_background` parameter and no Monitor tool, a command's default timeout is
+`defaults.bash_timeout_s` (600 s) with a ceiling of `defaults.bash_max_timeout_s` (1800 s),
+one sentence in the system prompt tells the model so, and the job ends at its result. A
+resumed job keeps the value its first run had unless the call passes one, and the
+transcript's `[start]` line names it (`background_tasks=on`). An endpoint's own `env:` still
+wins over the variables this sets.
 
 `wait_jobs` is the fallback for calls that cannot background: start each job with
 `wait_s: 0` and wait on all the ids in one call. Each job's `timeout_s` counts from its

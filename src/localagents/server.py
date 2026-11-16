@@ -974,8 +974,8 @@ async def run_agent(
       tolerance: Routed: acceptable shortfall distance from the best row.
       avoid_job: A job id (routed or named); routing never picks its model, naming it too is
         bad_argument.
-      background_tasks: false (config default): foreground only, the job ends at its result;
-        true allows background commands; a resume keeps its job's.
+      background_tasks: false: foreground only, the job ends at its result; true (config
+        default) allows background commands; a resume keeps its job's.
     """
     if isolation not in ("none", "worktree"):
         return {"error": "bad_argument", "message": "isolation must be 'none' or 'worktree'"}

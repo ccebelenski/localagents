@@ -9,8 +9,8 @@ defaults:
   timeout_s: 1800
   probe_timeout_s: 2.5
   job_retention_days: 7     # delete ~/.local/state/localagents/jobs/<job> older than this; 0 keeps everything
-  background_tasks: false   # true lets a job's commands run in the background; a session that starts one holds its slot until the task ends. A run_agent call can set it for its own job
-  bash_timeout_s: 600       # foreground jobs: a command's default timeout; a model may ask for more, up to bash_max_timeout_s
+  # background_tasks: false # run every job in the foreground only (the default, true, lets a job background a test run or a server; a session that does holds its slot until the task ends). A run_agent call can set it for its own job
+  bash_timeout_s: 600       # foreground-only jobs: a command's default timeout; a model may ask for more, up to bash_max_timeout_s
   bash_max_timeout_s: 1800
   # log_events: true        # debugging: write events.jsonl (every SDK message) per job; large
   # dump_requests: true     # debugging: write requests_full.jsonl (every request body) per job

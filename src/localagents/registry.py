@@ -200,12 +200,15 @@ class Defaults:
     dump_requests: bool = False
     log_events: bool = False  # write events.jsonl per job (debugging; env LOCALAGENTS_LOG_EVENTS=1 also enables)
     job_retention_days: int = 7  # delete job directories older than this; 0 disables
-    # the 2026-11-15 incident: a session with a background task outlives its result and holds
-    # its slot to the timeout. False (a run_agent call may say otherwise for its job) runs a
-    # job foreground only: runner.build_env writes CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 and
+    # A session with a background task outlives its result and holds its slot until the task
+    # ends (the 2026-11-15 smoke: to its timeout). The default stays ON, the operator's call on
+    # the store's record (2026-11-16): 24 of 209 jobs backgrounded a test suite or a server and
+    # all but one succeeded, none stuck after a result; the one stuck job was a smoke whose
+    # brief demanded a foreground sleep the harness blocks. False (here, or a run_agent call
+    # for its own job) runs a job foreground only: runner.build_env writes CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 and
     # these two Bash timeouts (BASH_DEFAULT_TIMEOUT_MS / BASH_MAX_TIMEOUT_MS), run_job
     # disallows Monitor and appends runner.FOREGROUND_NOTE to the system prompt
-    background_tasks: bool = False
+    background_tasks: bool = True
     bash_timeout_s: int = 600
     bash_max_timeout_s: int = 1800
 
