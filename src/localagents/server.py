@@ -24,6 +24,7 @@ from .registry import ModelUnavailable, Registry, config_path, local_path
 from .router import dispatch
 from .router import queue as router_queue
 from .router import scorecard
+from .router.capacity import from_probe, prior_curve
 from .router.decision import BriefUnresolved, DecisionUnavailable
 from .runner import run_job
 from .shim import Shim
@@ -355,8 +356,9 @@ async def _sample_tick() -> None:
     """One sampler tick (fold 2): heartbeat this server's row (jobs or not: the status line
     reads liveness from it); probe the endpoints of RUNNING sessions only — a queued job is
     not a running session, its endpoint is probed by its own admission wake, not here — and
-    write the compact load text to endpoint_load (idle servers write no load rows: old ones
-    age out by ``updated``); run the stall scan here (§7 "Stalled sessions": once per stall
+    write each one's sample to endpoint_load (``_load_sample``: the session capacity, live
+    requests, the server's queue depth and our sessions; idle servers write no load rows: old
+    ones age out by ``updated``); run the stall scan here (§7 "Stalled sessions": once per stall
     episode, nothing cancelled), independent of the queue, so a stalled session is flagged
     even while nothing is queued behind it; and repair this process's settled jobs whose drop
     write failed at the drop, before the phantom queue entry blocks its endpoint for good."""
@@ -369,12 +371,34 @@ async def _sample_tick() -> None:
             ep = reg.endpoints.get(name)
             if ep is None:
                 continue
-            text = status.load_summary(await reg.probe(ep))
-            if text:
-                loads[name] = text
+            probe = await reg.probe(ep)
+            mine = [j for j in running if j.endpoint == name]
+            try:
+                loads[name] = _load_sample(ep, probe, [j.model for j in mine],
+                                           next((j.endpoint_id for j in mine if j.endpoint_id is not None), None))
+            except Exception:  # noqa: BLE001 -- a probe value from_probe cannot read (or a locked
+                continue       # read) writes no sample: the line shows no capacity, and the stall
+                               # scan and the drop repair below still run this tick
         store.record_endpoint_load(loads)
     await dispatch.stall_scan(store, store.conn, reg, time.time())
     _repair_settled_drops()
+
+
+def _load_sample(ep, probe: dict, served_ids: list[str], endpoint_id: int | None) -> str:
+    """One endpoint's endpoint_load text (status-sessions; ``status.load_sample``): the
+    session capacity admission gates on (``capacity.from_probe``, the entry's max_concurrent
+    applied; a pooled model's count depends on its window, so with several served ids running
+    here the smallest, never the largest), None when the probe could not see the endpoint (a
+    read that could not see never says free); the live requests ``from_probe`` reads; the
+    server's own queue depth; and our admitted sessions now (``queue.occupancy``), so the
+    status line's foreign count is this tick's ``Capacity.admits`` arithmetic."""
+    caps = [from_probe(ep, probe, sid, prior_curve("other")) for sid in dict.fromkeys(served_ids)]
+    up = bool(probe.get("up")) and bool(caps)
+    sessions = min(c.sessions_capacity for c in caps) if up else None
+    running = caps[0].requests_running if up else 0
+    waiting = (probe.get("load") or {}).get("requests_waiting") if up else 0
+    ours = router_queue.occupancy(store.conn, [endpoint_id], time.time()) if endpoint_id is not None else 0
+    return status.load_sample(sessions, running, int(waiting or 0), ours)
 
 
 def _repair_settled_drops() -> None:

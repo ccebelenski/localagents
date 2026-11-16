@@ -193,3 +193,18 @@ def test_queue_live_reads_select_the_live_rows(conn):
     assert conn.execute(queue._occupancy_sql(1), (1, 0.0)).fetchone()[0] == 1
     assert conn.execute(queue._stale_sql(1), (1, 0.0)).fetchall() == []
     assert [r["job_id"] for r in conn.execute(queue._stale_sql(1), (1, 5.0))] == ["j8"]
+
+def test_status_session_count_drives_from_job_status(conn):
+    """status-sessions: the status line's per-endpoint session count (status._SESSIONS_SQL,
+    queue.occupancy's set restated and grouped by endpoint name) reads like the queue's own
+    live reads: from ``jobs.status IN ('queued','running')`` through ``jobs_status_finished_at``,
+    queue_entries by its primary key, never ``SCAN q`` and never ``SCAN j``, after ANALYZE over
+    20k finished entries. It answers the one admitted running session."""
+    from localagents import status
+
+    _queue_history(conn)
+    plan = _plan(conn, status._SESSIONS_SQL, (0.0,))
+    assert any("SEARCH j USING INDEX jobs_status_finished_at (status=?)" in d for d in plan), plan
+    assert any("SEARCH q USING INDEX sqlite_autoindex_queue_entries_1 (job_id=?)" in d for d in plan), plan
+    assert not any(d.startswith("SCAN q") or d.startswith("SCAN j") for d in plan), plan
+    assert [tuple(r) for r in conn.execute(status._SESSIONS_SQL, (0.0,))] == [("e", 1)]

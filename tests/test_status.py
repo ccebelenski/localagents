@@ -191,25 +191,27 @@ def test_render_swallows_a_pid_error_too(monkeypatch, tmp_path):
 def test_other_sessions_jobs_fold_into_a_count(monkeypatch, tmp_path):
     now = time.time()
     mine_store = _store(monkeypatch, tmp_path)
-    mine = _new(mine_store)
+    mine = _admitted(mine_store)  # a session, as dispatch.new_job writes one (status-sessions)
     mine.status, mine.started_at = "running", now - 30
     mine.changed()
-    mine_store.record_endpoint_load({"llamacpp": "1/1 slots"})
+    mine_store.record_endpoint_load({"llamacpp": status.load_sample(1, 1, 0, 1)})
     # a second live server (same pid is fine for the liveness check) owned by another session
     other = jobs.JobStore()
     other.conn.execute("UPDATE mcp_servers SET owner = 4242 WHERE id = ?", (other.server_id,))
-    o1 = _new(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000")
+    o1 = _admitted(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000")
     o1.status, o1.started_at = "running", now - 5
     o1.changed()
     o2 = _new(other, model="x/GLM-5.3-Flash-EXL3", endpoint="dgx1", base_url="http://y:8000")
     o2.status, o2.started_at, o2.finished_at = "succeeded", now - 50, now - 10
     o2.changed()
-    other.record_endpoint_load({"dgx1": "2 run 1 wait kv 34%"})
-    assert status.render(now=now, owner=_owner()) == "local: ⟳ Qwen3.8-Flash-Next 30s · llamacpp 1/1 slots · +2 other"
-    assert status.render(now=now, owner=4242) == "local: ✓ GLM-5.3-Flash 40s · ⟳ GLM-5.3-Flash 5s · dgx1 2 run 1 wait kv 34% · +1 other"
+    other.record_endpoint_load({"dgx1": status.load_sample(2, 2, 1, 1)})
+    assert status.render(now=now, owner=_owner()) == "local: ⟳ Qwen3.8-Flash-Next 30s · llamacpp 1/1 sessions · +2 other"
+    assert status.render(now=now, owner=4242) == (
+        "local: ✓ GLM-5.3-Flash 40s · ⟳ GLM-5.3-Flash 5s · dgx1 1/2 sessions +1 foreign 1 wait · +1 other")
     # no identifiable Claude Code parent: everything is ours, no endpoint load shown for non-running
     monkeypatch.setattr(status, "my_owner", lambda: None)
-    assert status.render(now=now).count("·") == 4 and "+" not in status.render(now=now)
+    # (the `+N other` tail is absent; `+1 foreign` is the dgx1 header's own token)
+    assert status.render(now=now).count("·") == 4 and " other" not in status.render(now=now)
 
 
 def test_render_lines_is_one_header_per_endpoint_one_row_per_job(monkeypatch, tmp_path):
@@ -223,7 +225,7 @@ def test_render_lines_is_one_header_per_endpoint_one_row_per_job(monkeypatch, tm
     store = _store(monkeypatch, tmp_path)
     now = time.time()
 
-    a1 = _new(store, endpoint="ai1", base_url="http://ai1:8080", model="x/Qwen3.8-27B", context=100000)
+    a1 = _admitted(store, endpoint="ai1", base_url="http://ai1:8080", model="x/Qwen3.8-27B", context=100000)
     a1.status, a1.started_at = "running", now - 240
     for i in range(12):
         a1.record_tool_call(now - 200 + i, "Bash", f"b{i}", "ls")
@@ -239,16 +241,16 @@ def test_render_lines_is_one_header_per_endpoint_one_row_per_job(monkeypatch, tm
     a2.record_tool_call(now - 139, "Edit", "e2", "/b.py")
     a2.compactions = 3
     a2.changed()
-    store.record_endpoint_load({"ai1": "1/1 slots"})
+    store.record_endpoint_load({"ai1": status.load_sample(1, 0, 0, 1)})
 
-    d1 = _new(store, endpoint="dgx1-a", base_url="http://dgx1a:8000", model="x/deepseek-v4", context=100000)
+    d1 = _admitted(store, endpoint="dgx1-a", base_url="http://dgx1a:8000", model="x/deepseek-v4", context=100000)
     d1.status, d1.started_at = "running", now - 120
     for i in range(3):
         d1.record_tool_call(now - 100 + i, "Bash", f"c{i}", "make")
     d1.changed()
     d1.record_request({"t": now - 5, "path": "/v1/messages", "status": 200, "ms": 3000,
                        "usage": {"input_tokens": 12000, "output_tokens": 120}})
-    store.record_endpoint_load({"dgx1-a": "1 run kv 31%"})
+    store.record_endpoint_load({"dgx1-a": "1 run kv 31%"})  # an older server's text: no capacity
 
     other = jobs.JobStore()
     other.conn.execute("UPDATE mcp_servers SET owner = 4242 WHERE id = ?", (other.server_id,))
@@ -261,10 +263,10 @@ def test_render_lines_is_one_header_per_endpoint_one_row_per_job(monkeypatch, tm
 
     me = _owner()
     assert status.render_lines(now=now, owner=me) == [
-        "local ai1 · 1/1 slots",
+        "local ai1 · 1/1 sessions",
         "  ⟳ Qwen3.8-27B 4m00s · 12 calls · ctx 41% · 33 t/s · 2 compactions · Bash: uv run pytest -q",
         "  ✓ Qwen3.8-27B 2m00s · 2 files · 3 compactions",
-        "local dgx1-a · 1 run kv 31%",
+        "local dgx1-a · 1 session",
         "  ⟳ deepseek-v4 2m00s · 3 calls · ctx 12% · 40 t/s",
         "+2 jobs in other sessions",
     ]
@@ -272,7 +274,7 @@ def test_render_lines_is_one_header_per_endpoint_one_row_per_job(monkeypatch, tm
     # (render_entry's bits are space-joined, endpoint loads and the +N tail as today)
     assert status.render(now=now, owner=me) == (
         "local: ⟳ Qwen3.8-27B 4m00s 12 calls ctx 41% 33 t/s · ✓ Qwen3.8-27B 2m00s 2 files · "
-        "⟳ deepseek-v4 2m00s 3 calls ctx 12% 40 t/s · ai1 1/1 slots · dgx1-a 1 run kv 31% · +2 other"
+        "⟳ deepseek-v4 2m00s 3 calls ctx 12% 40 t/s · ai1 1/1 sessions · dgx1-a 1 session · +2 other"
     )
 
 
@@ -469,10 +471,12 @@ def test_status_line_shows_queued_count(monkeypatch, tmp_path):
     queue.enqueue(other.conn, theirs.id, theirs.endpoint_id, other.server_id, "background")
 
     me = _owner()
+    # status-sessions: the admitted job (8s) holds a session and lists before the waiting one
+    # (10s); the old-format sample gives no capacity, so the two sessions show without one
     assert status.render(now=now, owner=me) == (
-        "local: ⟳ Qwen3.8-Flash-Next 30s · … Qwen3.8-Flash-Next 10s · … Qwen3.8-Flash-Next 8s · "
-        "llamacpp 1/1 slots 1 wait q2 · +1 other")
-    assert status.render_lines(now=now, owner=me)[0] == "local llamacpp · 1/1 slots 1 wait q2"
+        "local: ⟳ Qwen3.8-Flash-Next 30s · … Qwen3.8-Flash-Next 8s · … Qwen3.8-Flash-Next 10s · "
+        "llamacpp 2 sessions 1 wait q2 · +1 other")
+    assert status.render_lines(now=now, owner=me)[0] == "local llamacpp · 2 sessions 1 wait q2"
 
     # no load row (the sampler has not written one): the queue alone still shows, and an
     # endpoint whose jobs of ours are only queued gets its segment on the one-line form too
@@ -480,8 +484,8 @@ def test_status_line_shows_queued_count(monkeypatch, tmp_path):
     running.status, running.finished_at = "succeeded", now - 1
     running.changed()
     line = status.render(now=now, owner=me)
-    assert line.endswith(" · llamacpp q2 · +1 other"), line
-    assert status.render_lines(now=now, owner=me)[0] == "local llamacpp · q2"
+    assert line.endswith(" · llamacpp 1 session q2 · +1 other"), line  # the admitted one's
+    assert status.render_lines(now=now, owner=me)[0] == "local llamacpp · 1 session q2"
 
 
 def test_shim_usage_feeds_context_and_speed(monkeypatch, tmp_path):
@@ -596,3 +600,317 @@ def test_every_status_has_a_mark_and_the_monitor_legend_is_the_same_map():
     literal = re.search(r"var MARK = (\{[^}]*\});", js).group(1)
     legend = json.loads(re.sub(r"(\w+):", r'"\1":', literal))
     assert legend == status.MARK
+
+
+# --- sessions, not slots (status-sessions story) ------------------------------------------------
+
+
+def _admitted(store, **kw):
+    """A job holding an admitted (forced) queue entry: a session, the way the server writes one
+    (router/dispatch.py new_job: the entry goes in with the job)."""
+    from localagents.router import queue
+
+    job = _new(store, **kw)
+    queue.enqueue(store.conn, job.id, job.endpoint_id, store.server_id, "normal", forced=True)
+    return job
+
+
+def test_header_counts_the_running_session_not_the_idle_slot(monkeypatch, tmp_path):
+    """The operator's live line (2026-11-15): ``local ai1 · 0/1 slots q2`` beside a running
+    job. The slot reading is instantaneous (idle while the session runs a tool); admission
+    counts sessions, so the header does too. The stored sample here is the old text a server
+    on today's code writes: it carries no session capacity, so the header shows our one
+    session without a denominator, never the slot reading."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    job = _admitted(store, endpoint="ai1", base_url="http://ai1:8080")
+    job.status, job.started_at = "running", now - 60
+    job.changed()
+    store.record_endpoint_load({"ai1": "0/1 slots"})
+    assert status.render_lines(now=now, owner=_owner())[0] == "local ai1 · 1 session"
+
+
+def test_a_long_queued_job_prints_below_the_running_job_it_waits_behind(monkeypatch, tmp_path):
+    """The operator's live line: a job queued 2h39m ago printed ABOVE the running job, because
+    collect sorted every row by started_at and a queued job's falls back to created_at.
+    Running rows come first; queued rows follow in queue order."""
+    from localagents.router import queue
+
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    waiting = _new(store, endpoint="ai1", base_url="http://ai1:8080", created_at=now - 9540)
+    queue.enqueue(store.conn, waiting.id, waiting.endpoint_id, store.server_id, "normal", now=now - 9540)
+    running = _admitted(store, endpoint="ai1", base_url="http://ai1:8080", created_at=now - 3120)
+    running.status, running.started_at = "running", now - 3116
+    running.changed()
+    rows = status.render_lines(now=now, owner=_owner())
+    assert rows[1:] == ["  ⟳ Qwen3.8-Flash-Next 51m56s", "  … Qwen3.8-Flash-Next 2h39m"], rows
+
+
+def test_the_operators_snippet_renders_sessions_and_queue_order(monkeypatch, tmp_path):
+    """The operator's live snippet (2026-11-15), rebuilt: ai1 runs one session with two jobs
+    queued behind it; dgx1-a runs one with one queued. With the sampler's new sample the
+    header is our live sessions over the session capacity plus our queue (``1/1 sessions
+    q2``), and the rows are the running one first, then the queued ones in queue order. The
+    one-line form shows the same sessions text for each endpoint segment."""
+    from localagents.router import queue
+
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    qwen = "unsloth/qwen3.8-flash-next-unsloth-ud-q4_k_xl"
+    deep = "DeepSeek-V4.1-Flash-1017"
+
+    def waiting(endpoint, model, age):
+        job = _new(store, endpoint=endpoint, base_url=f"http://{endpoint}:8080", model=model,
+                   created_at=now - age)
+        queue.enqueue(store.conn, job.id, job.endpoint_id, store.server_id, "normal", now=now - age)
+        return job
+
+    waiting("ai1", qwen, 2 * 3600 + 39 * 60)
+    run1 = _admitted(store, endpoint="ai1", base_url="http://ai1:8080", model=qwen, created_at=now - 3200)
+    run1.status, run1.started_at = "running", now - (51 * 60 + 56)
+    run1.changed()
+    waiting("ai1", qwen, 13 * 60)
+    run2 = _admitted(store, endpoint="dgx1-a", base_url="http://dgx1-a:8080", model=deep,
+                     created_at=now - 900)
+    run2.status, run2.started_at = "running", now - (13 * 60 + 25)
+    run2.changed()
+    waiting("dgx1-a", deep, 8 * 60 + 38)
+    # what the sampler writes now: ai1 one slot, idle between requests; dgx1-a a pooled box of
+    # two sessions with no request generating
+    store.record_endpoint_load({"ai1": status.load_sample(1, 0, 0, 1),
+                                "dgx1-a": status.load_sample(2, 0, 0, 1)})
+
+    me = _owner()
+    assert status.render_lines(now=now, owner=me) == [
+        "local ai1 · 1/1 sessions q2",
+        "  ⟳ qwen3.8-flash-next-unsloth-ud-q4_k_xl 51m56s",
+        "  … qwen3.8-flash-next-unsloth-ud-q4_k_xl 2h39m",
+        "  … qwen3.8-flash-next-unsloth-ud-q4_k_xl 13m00s",
+        "local dgx1-a · 1/2 sessions q1",
+        "  ⟳ DeepSeek-V4.1-Flash-1017 13m25s",
+        "  … DeepSeek-V4.1-Flash-1017 8m38s",
+    ]
+    assert status.render(now=now, owner=me) == (
+        "local: ⟳ qwen3.8-flash-next-unsloth-ud-q4_k_xl 51m56s · ⟳ DeepSeek-V4.1-Flash-1017 13m25s · "
+        "… qwen3.8-flash-next-unsloth-ud-q4_k_xl 2h39m · … qwen3.8-flash-next-unsloth-ud-q4_k_xl 13m00s · "
+        "… DeepSeek-V4.1-Flash-1017 8m38s · ai1 1/1 sessions q2 · dgx1-a 1/2 sessions q1")
+
+
+def test_foreign_use_shows_only_when_present():
+    """``+N foreign`` is ``Capacity.admits``' arithmetic, ``max(0, running - ours)``: the
+    server's live requests beyond ours. A new sample carries ours from its own tick, so a
+    request count 10 s old is never set against a session count from now (a session that
+    just ended must not turn its own last request into a foreign one); an old-format sample
+    has no sample-time count and uses the live one."""
+    s = status.read_sample
+    assert status.sessions_text(s(status.load_sample(1, 1, 0, 1)), 1) == "1/1 sessions"
+    assert status.sessions_text(s(status.load_sample(2, 2, 0, 1)), 1) == "1/2 sessions +1 foreign"
+    assert status.sessions_text(s(status.load_sample(2, 3, 0, 1)), 1) == "1/2 sessions +2 foreign"
+    # between requests ours is a session and no request runs: nothing foreign, never negative
+    assert status.sessions_text(s(status.load_sample(1, 0, 0, 1)), 1) == "1/1 sessions"
+    # the sample's tick saw our one request; our session has since ended: still not foreign
+    assert status.sessions_text(s(status.load_sample(1, 1, 0, 1)), 0) == "0/1 sessions"
+    # an old-format sample: the live count is the only one there is
+    assert status.sessions_text(s("1/1 slots"), 1) == "1 session"
+    assert status.sessions_text(s("2 run kv 3%"), 1) == "1 session +1 foreign"
+    assert status.sessions_text(s("1/1 slots"), 0) == "+1 foreign"
+
+
+def test_server_wait_stays_only_when_nonzero_and_kv_and_slots_no_longer_headline():
+    """The server's own queue depth stays (strata and vLLM), only when non-zero; the slot
+    reading, the bare ``N run`` and ``kv N%`` no longer appear in the header, from either
+    sample shape."""
+    s = status.read_sample
+    assert status.sessions_text(s(status.load_sample(1, 1, 2, 1)), 1, 3) == "1/1 sessions 2 wait q3"
+    assert status.sessions_text(s(status.load_sample(1, 1, 0, 1)), 1, 3) == "1/1 sessions q3"
+    assert status.sessions_text(s("1/1 slots 2 wait"), 1) == "1 session 2 wait"
+    assert status.sessions_text(s("1 run 1 wait kv 34%"), 1) == "1 session 1 wait"
+    for text in ("0/1 slots", "1/1 slots 2 wait", "0 run kv 0%", "2 run 1 wait kv 34%"):
+        line = status.sessions_text(s(text), 1) or ""
+        assert "slots" not in line and "run" not in line and "kv" not in line, (text, line)
+
+
+def test_a_read_that_could_not_see_never_says_free():
+    """No capacity at render time — no fresh sample, the endpoint down (the sampler writes
+    sessions null), an old-format sample, or a sample this reader cannot trust — shows the
+    session count without a denominator, and nothing when it is zero: never ``0/N
+    sessions`` for an endpoint the sampler could not read."""
+    down = status.read_sample(status.load_sample(None, 0, 0, 1))
+    assert down == {"sessions": None, "running": 0, "waiting": 0, "ours": 1}
+    for sample in (None, down, status.read_sample("0/1 slots"), status.read_sample("0 run kv 0%")):
+        assert status.sessions_text(sample, 1) == "1 session", sample
+        assert status.sessions_text(sample, 2) == "2 sessions", sample
+        assert status.sessions_text(sample, 0) is None, sample
+        assert status.sessions_text(sample, 0, 2) == "q2", sample
+    # untrusted text reads as no sample at all, never raises
+    for text in (None, "", "{", "{}", "[1]", '{"v": 1, "sessions": 1, "running": 0, "waiting": 0, "ours": 0}',
+                 '{"v": 2, "sessions": true, "running": 0, "waiting": 0, "ours": 0}',
+                 '{"v": 2, "sessions": -1, "running": 0, "waiting": 0, "ours": 0}',
+                 '{"v": 2, "sessions": 1, "running": "0", "waiting": 0, "ours": 0}',
+                 '{"v": 2, "sessions": 1, "running": 0, "waiting": 0}',
+                 '{"v": 2, "sessions": 1.5, "running": 0, "waiting": 0, "ours": 0}',
+                 "q2", "busy", "slots 1/1"):
+        assert status.read_sample(text) is None, text
+
+
+def test_read_sample_reads_every_old_load_summary_shape():
+    """The old format's definition is load_summary: the reader takes the live requests (busy
+    slots, or vLLM's ``run``) and the server's wait from each of its shapes, and never a
+    capacity or a sample-time count of ours (an old sample has neither)."""
+    cases = [
+        ({"slots": {"total": 2, "busy": 1}}, 1, 0),
+        ({"slots": {"total": 1, "busy": 1}, "load": {"requests_waiting": 3}}, 1, 3),
+        ({"load": {"requests_running": 2, "requests_waiting": 1, "kv_cache_usage": 0.337}}, 2, 1),
+        ({"load": {"requests_running": 0, "requests_waiting": 0, "kv_cache_usage": 0.0}}, 0, 0),
+        ({"load": {"requests_running": 12}}, 12, 0),
+    ]
+    for probe, running, waiting in cases:
+        text = status.load_summary(probe)
+        assert status.read_sample(text) == {"sessions": None, "running": running,
+                                            "waiting": waiting, "ours": None}, text
+
+
+def test_old_format_and_stale_samples_in_the_table(monkeypatch, tmp_path):
+    """Other server versions write the old text into the same endpoint_load table, and the
+    sampler only probes endpoints of RUNNING sessions, so a header may have an old sample, a
+    stale one (older than 60 s: ignored), or none. Each renders without a denominator."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    job = _admitted(store, endpoint="ai1", base_url="http://ai1:8080")
+    job.status, job.started_at = "running", now - 30
+    job.changed()
+    me = _owner()
+    assert status.render_lines(now=now, owner=me)[0] == "local ai1 · 1 session"  # no sample yet
+    store.record_endpoint_load({"ai1": "1/1 slots 2 wait"})
+    assert status.render_lines(now=now, owner=me)[0] == "local ai1 · 1 session 2 wait"
+    store.record_endpoint_load({"ai1": status.load_sample(1, 0, 0, 1)})
+    assert status.render_lines(now=now, owner=me)[0] == "local ai1 · 1/1 sessions"
+    # the same sample written 61 s ago: stale, so the capacity is no longer known
+    store.conn.execute("UPDATE endpoint_load SET updated = ?", (now - 61,))
+    assert status.render_lines(now=now, owner=me)[0] == "local ai1 · 1 session"
+    # the endpoint went down: the sampler writes no capacity
+    store.record_endpoint_load({"ai1": status.load_sample(None, 0, 0, 1)})
+    assert status.render_lines(now=now, owner=me)[0] == "local ai1 · 1 session"
+    # a corrupt row is no sample, and the line still renders
+    store.conn.execute("UPDATE endpoint_load SET load = '{not json'")
+    assert status.render_lines(now=now, owner=me)[0] == "local ai1 · 1 session"
+
+
+def test_session_count_is_the_queues_occupancy(monkeypatch, tmp_path):
+    """The header's session count is router/queue.py's occupancy set, restated (status.py
+    never imports the queue): the two FROM/liveness fragments are pinned equal to queue.py's,
+    and over a store with every kind of entry the per-name counts equal queue.occupancy per
+    endpoint: admitted running and admitted-not-started count, forced included; a waiting
+    entry, a finished job, a job with no entry and an entry whose owner stopped or stopped
+    beating do not."""
+    from localagents.router import queue
+
+    assert status._LIVE_FROM == queue.LIVE_FROM
+    assert status._LIVE == queue._LIVE
+    assert status.QUEUE_LIVE_S == queue.SERVER_LIVE_S
+
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    a_run = _admitted(store, endpoint="a", base_url="http://a:1")
+    a_run.status, a_run.started_at = "running", now - 30
+    a_run.changed()
+    _admitted(store, endpoint="a", base_url="http://a:1")  # admitted, task not started
+    w = _new(store, endpoint="a", base_url="http://a:1")
+    queue.enqueue(store.conn, w.id, w.endpoint_id, store.server_id, "normal")  # waiting
+    done = _admitted(store, endpoint="a", base_url="http://a:1")
+    done.status, done.started_at, done.finished_at = "succeeded", now - 50, now - 5
+    done.changed()
+    bare = _new(store, endpoint="a", base_url="http://a:1")  # no entry: counted by nothing
+    bare.status, bare.started_at = "running", now - 10
+    bare.changed()
+    b_run = _admitted(store, endpoint="b", base_url="http://b:1")
+    b_run.status, b_run.started_at = "running", now - 30
+    b_run.changed()
+    gone = jobs.JobStore()  # a server that stopped beating: its session no longer counts
+    g = _admitted(gone, endpoint="b", base_url="http://b:1")
+    g.status, g.started_at = "running", now - 30
+    g.changed()
+    gone.conn.execute("UPDATE mcp_servers SET updated = ? WHERE id = ?", (now - 120, gone.server_id))
+    stopped = jobs.JobStore()
+    st = _admitted(stopped, endpoint="b", base_url="http://b:1")
+    st.status, st.started_at = "running", now - 30
+    st.changed()
+    stopped.conn.execute("UPDATE mcp_servers SET stopped = ? WHERE id = ?", (now, stopped.server_id))
+
+    got = {r["name"]: r["n"] for r in store.conn.execute(status._SESSIONS_SQL, (now - status.QUEUE_LIVE_S,))}
+    want = {name: queue.occupancy(store.conn, [eid], now)
+            for name, eid in (("a", a_run.endpoint_id), ("b", b_run.endpoint_id))}
+    assert got == want == {"a": 2, "b": 1}
+
+
+def test_queued_rows_follow_queue_order(monkeypatch, tmp_path):
+    """Queued rows print in queue order (router/queue.py ``_WAITING_SQL``'s ORDER BY: priority
+    rank, arrival, the entry's rowid), after the running and finished rows: an urgent job that
+    arrived last prints first among the waiting, and the waiting order equals
+    queue.waiting's. An admitted job whose task has not started holds a session and prints
+    ahead of every waiting one; a queued job with no entry prints last."""
+    from localagents.router import queue
+
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    kw = {"endpoint": "ai1", "base_url": "http://ai1:8080"}
+
+    def wait(priority, age, model):
+        job = _new(store, model=model, created_at=now - age, **kw)
+        queue.enqueue(store.conn, job.id, job.endpoint_id, store.server_id, priority, now=now - age)
+        return job
+
+    bg = wait("background", 500, "x/bg-old")
+    n1 = wait("normal", 400, "x/normal-old")
+    n2 = wait("normal", 300, "x/normal-new")
+    ur = wait("urgent", 100, "x/urgent-late")
+    tie = wait("normal", 300, "x/normal-tie")  # same arrival as n2: the entry's rowid breaks it
+    bare = _new(store, model="x/no-entry", created_at=now - 9999, **kw)
+    adm = _admitted(store, model="x/admitted", created_at=now - 5, **kw)
+    fin = _admitted(store, model="x/finished", created_at=now - 600, **kw)
+    fin.status, fin.started_at, fin.finished_at = "succeeded", now - 590, now - 20
+    fin.changed()
+    run = _admitted(store, model="x/running", created_at=now - 60, **kw)
+    run.status, run.started_at = "running", now - 50
+    run.changed()
+
+    entries, _ = status.collect(now=now, conn=store.conn)
+    order = [e["id"] for e in entries]
+    assert order == [fin.id, run.id, adm.id, ur.id, n1.id, n2.id, tie.id, bg.id, bare.id]
+    waiting_ids = [e["id"] for e in entries if e["status"] == "queued" and e["id"] not in (adm.id, bare.id)]
+    assert waiting_ids == [r["job_id"] for r in queue.waiting(store.conn, ur.endpoint_id, now)]
+    assert [line.split()[1] for line in status.render_lines(now=now, owner=_owner())[1:]] == [
+        "finished", "running", "admitted", "urgent-late", "normal-old", "normal-new",
+        "normal-tie", "bg-old", "no-entry"]
+
+
+def test_collect_on_a_long_history_is_fast(monkeypatch, tmp_path):
+    """status.py's promise: under 100 ms. A store with 3000 finished jobs, each keeping the
+    admitted entry it ran under (entries persist, ruling 184), plus a running session and a
+    waiting job: collect stays well inside the budget (generous here: CI boxes vary)."""
+    from localagents.router import queue
+
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    eid = _new(store).endpoint_id
+    c = store.conn
+    c.execute("BEGIN")
+    for i in range(3000):
+        c.execute("INSERT INTO jobs (id, mcp_server_id, endpoint_id, status, created_at, started_at,"
+                  " finished_at, updated) VALUES (?, ?, ?, 'succeeded', ?, ?, ?, ?)",
+                  (f"h{i}", store.server_id, eid, i, i, i + 1, i + 1))
+        c.execute("INSERT INTO queue_entries (job_id, endpoint_id, owner_server, priority_rank,"
+                  " enqueued, admitted) VALUES (?, ?, ?, 1, ?, ?)", (f"h{i}", eid, store.server_id, i, i))
+    c.execute("COMMIT")
+    run = _admitted(store)
+    run.status, run.started_at = "running", now - 30
+    run.changed()
+    w = _new(store)
+    queue.enqueue(store.conn, w.id, w.endpoint_id, store.server_id, "normal")
+    store.record_endpoint_load({"llamacpp": status.load_sample(1, 0, 0, 1)})
+    t0 = time.perf_counter()
+    entries, loads = status.collect(now=now)
+    took = time.perf_counter() - t0
+    assert loads == {"llamacpp": "1/1 sessions q1"} and len(entries) == 3  # with the eid probe job
+    assert took < 0.1, took

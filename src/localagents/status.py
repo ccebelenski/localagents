@@ -15,6 +15,7 @@ database (no live servers or no database yet prints the empty line).
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from typing import Any
@@ -61,8 +62,10 @@ def load_summary(probe: dict[str, Any], queued: int = 0) -> str | None:
     ``2 wait`` when requests are queued) or ``2 run 1 wait kv 34%`` (vLLM), then ``q<n>`` when
     ``queued`` jobs wait in our queue (``with_queued``). None when there is none of these.
 
-    The sampler stores this text without the token (it passes no ``queued``): ``collect``
-    counts the queue when the line renders, so the count is never a sample old."""
+    The OLD sample format (status-sessions): the sampler writes ``load_sample`` now, but a
+    server still running older code writes this text into the same table, so ``read_sample``
+    still reads it; this function is that format's definition, and the reader's tests parse
+    its output."""
     slots = probe.get("slots") or {}
     load = probe.get("load") or {}
     out: str | None = None
@@ -78,6 +81,90 @@ def load_summary(probe: dict[str, Any], queued: int = 0) -> str | None:
             parts.append(f"kv {round(100 * load['kv_cache_usage'])}%")
         out = " ".join(parts)
     return with_queued(out, queued)
+
+
+# the sample text's format (status-sessions): JSON with this "v". Any other text in
+# endpoint_load.load is load_summary's old format, from a server on older code.
+SAMPLE_VERSION = 2
+
+
+def load_sample(sessions: int | None, running: int, waiting: int, ours: int) -> str:
+    """The sampler's endpoint_load text (status-sessions): the endpoint's session capacity
+    (``Capacity.sessions_capacity``, the number admission gates on; None when the probe could
+    not see the endpoint), the server's live requests and its own queue depth, and OUR
+    admitted sessions there at the same moment (``queue.occupancy``), so the reader's foreign
+    count is one tick's arithmetic, never a 10-s-old request count against a live session
+    count. Compact JSON; ``read_sample`` reads it back."""
+    return json.dumps({"v": SAMPLE_VERSION, "sessions": sessions, "running": running,
+                       "waiting": waiting, "ours": ours}, separators=(",", ":"))
+
+
+def _count(value: Any) -> int | None:
+    """A non-negative int from a sample, else None (a bool is an int to Python; not here)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+_OLD_RUNNING = re.compile(r"(\d+)/\d+ slots\b|(\d+) run\b")
+_OLD_WAITING = re.compile(r"\b(\d+) wait\b")
+
+
+def read_sample(text: str | None) -> dict[str, Any] | None:
+    """A stored sample as ``{"sessions", "running", "waiting", "ours"}``, or None when the text
+    says nothing this reader can trust. Two shapes (status-sessions): ``load_sample``'s JSON,
+    and ``load_summary``'s old text from a server on older code (``1/1 slots 2 wait``, ``2 run
+    1 wait kv 34%``), which gives the live requests (busy slots or ``run``) and the server's
+    queue depth but no session capacity and no sample-time count of ours: both read as None.
+    Never raises."""
+    if not isinstance(text, str) or not text:
+        return None
+    if text.startswith("{"):
+        try:
+            d = json.loads(text)
+        except ValueError:
+            return None
+        if not isinstance(d, dict) or d.get("v") != SAMPLE_VERSION:
+            return None
+        running, waiting, ours = _count(d.get("running")), _count(d.get("waiting")), _count(d.get("ours"))
+        sessions = d.get("sessions")
+        if running is None or waiting is None or ours is None:
+            return None
+        if sessions is not None and _count(sessions) is None:
+            return None
+        return {"sessions": sessions, "running": running, "waiting": waiting, "ours": ours}
+    m = _OLD_RUNNING.match(text)
+    if m is None:
+        return None
+    w = _OLD_WAITING.search(text)
+    return {"sessions": None, "running": int(m.group(1) or m.group(2)),
+            "waiting": int(w.group(1)) if w else 0, "ours": None}
+
+
+def sessions_text(sample: dict[str, Any] | None, ours: int, queued: int = 0) -> str | None:
+    """The endpoint's header text (status-sessions; the operator's ruling 2026-11-15: "session
+    is the right gate and the right number to report"): ``1/1 sessions`` = our live admitted
+    sessions there over the session capacity admission gates on; ``+1 foreign`` when the
+    server's live requests exceed ours (``Capacity.admits``' arithmetic, ``max(0, running -
+    ours)``, both from the sample's own tick when it carries ours); the server's own ``N wait``
+    when non-zero; then ``q<n`` (``with_queued``). A read that could not see never says free:
+    with no capacity (no fresh sample, the endpoint down, an old-format sample) the count
+    shows without a denominator (``1 session``), and nothing at all when it is zero. None when
+    there is nothing to say."""
+    parts: list[str] = []
+    cap = sample.get("sessions") if sample else None
+    if cap is not None:
+        parts.append(f"{ours}/{cap} sessions")
+    elif ours:
+        parts.append(_n(ours, "session"))
+    if sample:
+        base = sample["ours"] if sample.get("ours") is not None else ours
+        foreign = max(0, sample["running"] - base)
+        if foreign:
+            parts.append(f"+{foreign} foreign")
+        if sample["waiting"]:
+            parts.append(f"{sample['waiting']} wait")
+    return with_queued(" ".join(parts) or None, queued)
 
 
 def my_owner() -> int | None:
@@ -129,10 +216,42 @@ _QUEUED_SQL = (
     " GROUP BY e.name"
 )
 
+# our admitted sessions per endpoint name: router/queue.py's occupancy set (``_occupancy_sql``:
+# admitted entries whose job is queued or running and whose owner beats), grouped by name.
+# Restated, not imported (stdlib plus db/derive only); tests/test_status.py pins both fragments
+# equal to queue.py's LIVE_FROM and _LIVE and the counts equal to queue.occupancy's. One
+# parameter, now - QUEUE_LIVE_S. The endpoints join is a CROSS JOIN too, so the planner keeps
+# the jobs-driven order instead of scanning endpoints outermost (tests/test_query_plans.py).
+_LIVE_FROM = (" FROM jobs j INDEXED BY jobs_status_finished_at"
+              " CROSS JOIN queue_entries q ON q.job_id = j.id"
+              " CROSS JOIN mcp_servers s ON s.id = q.owner_server")
+_LIVE = "(s.stopped IS NULL AND s.updated IS NOT NULL AND s.updated >= ?)"
+_SESSIONS_SQL = (
+    "SELECT e.name, COUNT(*) AS n" + _LIVE_FROM + " CROSS JOIN endpoints e ON e.id = q.endpoint_id"
+    " WHERE j.status IN ('queued', 'running') AND q.admitted IS NOT NULL AND " + _LIVE +
+    " GROUP BY e.name"
+)
+
+
+def _order_key(e: dict[str, Any]) -> tuple:
+    """Row order (status-sessions): running and finished rows first, oldest start first; then
+    queued rows in queue order (router/queue.py ``_WAITING_SQL``'s ORDER BY: priority rank,
+    arrival, the entry's rowid), an admitted one (a session whose task has not started) ahead
+    of every waiting one, and a queued job with no entry (counted by nothing) last, by its
+    creation. A job queued two hours ago no longer prints above the session it waits behind."""
+    if e.get("status") != "queued":
+        return (0, e.get("started_at") or 0)
+    q = e.get("queue")
+    if q is None:
+        return (1, 2, 0, e.get("started_at") or 0, 0)
+    return (1, 0 if q["admitted"] is not None else 1, q["rank"], q["enqueued"], q["rowid"])
+
 
 def collect(now: float | None = None, conn: sqlite3.Connection | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """Job entries from every live server, oldest first, each tagged with its server's ``owner``,
-    plus the merged endpoint load map (spec "Access patterns": the status line's budget).
+    """Job entries from every live server, each tagged with its server's ``owner``, in row order
+    (``_order_key``: running and finished oldest first, then queued in queue order), plus the
+    endpoint header map, name -> ``sessions_text`` (spec "Access patterns": the status line's
+    budget).
 
     Live = ``stopped IS NULL`` and a heartbeat within 60 s, checked before the pid because pids
     are reused. Their jobs are queued/running or finished within KEEP_FINISHED_S; the metrics
@@ -157,9 +276,12 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
         out: list[dict[str, Any]] = []
         for s in servers:
             for j in conn.execute(
-                "SELECT j.*, m.served_id AS model_served, e.name AS endpoint_name"
+                "SELECT j.*, m.served_id AS model_served, e.name AS endpoint_name,"
+                " qe.priority_rank AS q_rank, qe.enqueued AS q_enqueued,"
+                " qe.admitted AS q_admitted, qe.rowid AS q_rowid"
                 " FROM jobs j LEFT JOIN models m ON m.id = j.model_id"
                 " LEFT JOIN endpoints e ON e.id = j.endpoint_id"
+                " LEFT JOIN queue_entries qe ON qe.job_id = j.id"
                 " WHERE j.mcp_server_id = ? AND (j.status IN ('queued', 'running') OR j.finished_at >= ?)",
                 (s["id"], now - KEEP_FINISHED_S),
             ).fetchall():
@@ -188,22 +310,32 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
                     "last_activity": j["last_activity"],
                     "root": _job_root(j),
                     "owner": s["owner"],
+                    # the queue-order key of a queued job's entry (row order, _order_key)
+                    "queue": None if j["q_rank"] is None else {
+                        "rank": j["q_rank"], "enqueued": j["q_enqueued"] or 0,
+                        "admitted": j["q_admitted"], "rowid": j["q_rowid"]},
                 })
-        loads = {
-            r["name"]: r["load"]
+        samples = {
+            r["name"]: read_sample(r["load"])
             for r in conn.execute(
                 "SELECT e.name, l.load FROM endpoint_load l JOIN endpoints e ON e.id = l.endpoint_id"
                 " WHERE l.updated >= ?",
                 (now - 60.0,),
             ).fetchall()
-            if r["load"]
         }
+        # status-sessions: our admitted sessions per endpoint name, any live session's (the
+        # queue's occupancy set), counted when the line renders, so never a sample old
+        ours = {r["name"]: r["n"] for r in conn.execute(_SESSIONS_SQL, (now - QUEUE_LIVE_S,)).fetchall()}
         # router 14a: the jobs waiting in our queue per endpoint name, any live session's (the
-        # queue's own waiting set: not admitted, job still queued, owner beating), added to the
-        # load text here so the token is as fresh as the line
-        for r in conn.execute(_QUEUED_SQL, (now - QUEUE_LIVE_S,)).fetchall():
-            loads[r["name"]] = with_queued(loads.get(r["name"]), r["n"])
-        out.sort(key=lambda e: e.get("started_at") or 0)
+        # queue's own waiting set: not admitted, job still queued, owner beating), counted here
+        # so the token is as fresh as the line
+        queued = {r["name"]: r["n"] for r in conn.execute(_QUEUED_SQL, (now - QUEUE_LIVE_S,)).fetchall()}
+        loads: dict[str, str] = {}
+        for name in dict.fromkeys([*samples, *ours, *queued]):
+            text = sessions_text(samples.get(name), ours.get(name, 0), queued.get(name, 0))
+            if text:
+                loads[name] = text
+        out.sort(key=_order_key)
         return out, loads
     finally:
         if own_conn:
@@ -294,8 +426,9 @@ def _split_by_owner(entries: list[dict[str, Any]], owner: int | None) -> tuple[l
 def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ", owner: int | None = None) -> str:
     """One line for the status bar, or an empty string when no live server has jobs to show.
 
-    Jobs of this Claude Code session (same ``owner`` pid) are shown in full, followed by the load
-    of the endpoints they run or wait on (with our queue's ``q<n>``); other sessions' jobs are folded into ``+N other``, because the
+    Jobs of this Claude Code session (same ``owner`` pid) are shown in full, followed by the
+    sessions text of the endpoints they run or wait on (``sessions_text``: our sessions over
+    the capacity, foreign use, the server's wait, our queue's ``q<n>``); other sessions' jobs are folded into ``+N other``, because the
     boxes are shared and knowing one is busy matters even when the job isn't yours.
 
     It must never print a traceback: the database is somebody else's process's file, so a
@@ -325,7 +458,8 @@ def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ",
 def render_lines(now: float | None = None, owner: int | None = None) -> list[str]:
     """The multi-line status line (story 1.11; the one-line render() is unchanged): one
     header per endpoint this session's jobs run on — first-seen order of the entries, which
-    collect returns sorted by started_at — with that endpoint's load when the map has one,
+    collect returns in row order (``_order_key``) — with that endpoint's sessions text when
+    the map has one,
     one indented row per job, and a trailing line for other sessions' jobs. Jobs with no
     endpoint go under ``local ?``.
 

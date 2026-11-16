@@ -1024,6 +1024,102 @@ def test_sampler_skips_queued_jobs(reg, tmp_path, monkeypatch):
     assert probed == ["first"]
 
 
+def test_sampler_writes_the_session_capacity_admission_gates_on(reg, tmp_path):
+    """status-sessions: the sampler's endpoint_load text is ``status.load_sample``: the session
+    capacity ``capacity.from_probe`` gives admission (slots, capped by the entry's
+    max_concurrent; a pooled box's pool over the served window, the smallest when several
+    served ids run there; one 'until probed'), the live requests from_probe reads, the
+    server's queue depth, and our admitted sessions at the same tick (queue.occupancy). A
+    probe that could not see the endpoint writes no capacity: the line never says free."""
+    from localagents import status
+    from localagents.router import queue
+
+    job = server.store.new(task="t", model="m", endpoint="first", base_url="http://first:8080",
+                           backend="llama.cpp", host="local", cwd="/tmp", run_cwd="/tmp", isolation="none")
+    queue.enqueue(server.store.conn, job.id, job.endpoint_id, server.store.server_id, "normal", forced=True)
+    eid = job.endpoint_id
+
+    def sample(ep, probe, served=("m",)):
+        return status.read_sample(server._load_sample(ep, probe, list(served), eid))
+
+    slots = Endpoint(name="first", base_url="http://first:8080", backend="llama.cpp")
+    assert sample(slots, {"up": True, "slots": {"total": 4, "busy": 0}}) == {
+        "sessions": 4, "running": 0, "waiting": 0, "ours": 1}
+    capped = Endpoint(name="first", base_url="http://first:8080", backend="strata", max_concurrent=2)
+    assert sample(capped, {"up": True, "slots": {"total": 4, "busy": 3},
+                           "load": {"requests_waiting": 2}}) == {
+        "sessions": 2, "running": 3, "waiting": 2, "ours": 1}
+    pooled = Endpoint(name="first", base_url="http://first:8080", backend="vllm")
+    probe = {"up": True, "context": {"m": 32768, "big": 65536},
+             "load": {"kv_cache_size_tokens": 100_000, "requests_running": 1, "requests_waiting": 0}}
+    assert sample(pooled, probe) == {"sessions": 3, "running": 1, "waiting": 0, "ours": 1}
+    assert sample(pooled, probe, ("m", "big"))["sessions"] == 1   # the smaller count of the two
+    assert sample(slots, {"up": True, "models": ["m"]})["sessions"] == 1   # unknown: one until probed
+    assert sample(slots, {"up": False, "models": [], "error": "refused"}) == {
+        "sessions": None, "running": 0, "waiting": 0, "ours": 1}
+
+
+def test_sampler_tick_feeds_the_sessions_header(reg, tmp_path, monkeypatch):
+    """status-sessions end to end: a running session on a one-slot endpoint whose slot reads
+    idle (the session is running a tool) — the operator's ``0/1 slots`` — renders as
+    ``1/1 sessions`` after one sampler tick."""
+    from localagents import status
+
+    async def probe(self, ep):
+        return {"up": True, "models": SERVING[ep.name], "slots": {"total": 1, "busy": 0}}
+
+    monkeypatch.setattr(Registry, "probe", probe)
+
+    async def go():
+        a = await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        job = server.store.get(a["id"])
+        job.status, job.started_at = "running", time.time() - 30
+        job.changed()
+        await server._sample_tick()
+        return job
+
+    asyncio.run(go())
+    lines = status.render_lines(owner=server.store.conn.execute(
+        "SELECT owner FROM mcp_servers WHERE id = ?", (server.store.server_id,)).fetchone()[0])
+    assert lines[0] == "local first · 1/1 sessions", lines
+
+
+def test_sampler_tick_survives_a_probe_it_cannot_read(reg, tmp_path, monkeypatch):
+    """status-sessions: the sample reads the probe through capacity.from_probe, which raises on
+    a value it cannot read (a slot total that is not a number). That endpoint gets no sample
+    (so the line shows no capacity), and the rest of the tick still runs: the stall scan is
+    not skipped on every tick by one odd probe."""
+    from localagents.router import dispatch
+
+    total: list = [1]   # admission reads a good probe; the tick reads the odd one
+
+    async def probe(self, ep):
+        return {"up": True, "models": SERVING[ep.name], "slots": {"total": total[0], "busy": 0}}
+
+    monkeypatch.setattr(Registry, "probe", probe)
+    scans = []
+    real_scan = dispatch.stall_scan
+
+    async def scan(*a, **kw):
+        scans.append(1)
+        return await real_scan(*a, **kw)
+
+    monkeypatch.setattr(dispatch, "stall_scan", scan)
+
+    async def go():
+        a = await server.run_agent(task="a", model="default-model", cwd=str(tmp_path))
+        job = server.store.get(a["id"])
+        job.status, job.started_at = "running", time.time() - 30
+        job.changed()
+        total[0] = "many"
+        scans.clear()   # the admission wake's own scan
+        await server._sample_tick()   # it returns: an exception here would fail the test
+        return list(scans)
+
+    assert asyncio.run(go())   # the tick reached its stall scan
+    assert server.store.conn.execute("SELECT COUNT(*) FROM endpoint_load").fetchone()[0] == 0
+
+
 def test_sampler_repairs_a_settled_job_whose_drop_write_failed(reg, tmp_path, monkeypatch):
     """Fold 2 (Task 12 review, probe 4B): a `mark_dropped` that failed at the drop (a locked
     database) left the row `queued` and the queue entry alive while the job settled `dropped`

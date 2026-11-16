@@ -382,7 +382,10 @@ def test_statusline_lists_the_running_job_under_ai1(tmp_path):
     owner = c.execute("SELECT owner FROM mcp_servers").fetchone()[0]
     c.close()
     lines = status.render_lines(now=NOW, owner=owner)
-    assert lines and lines[0] == "local ai1 · 1/1 slots"
+    # status-sessions: the header counts our admitted sessions (queue entries) and reads the
+    # sample's live requests; the seed's job has no queue entry (the seed predates the queue)
+    # and its sample is the old text ("1/1 slots"), so its one busy slot reads as foreign
+    assert lines and lines[0] == "local ai1 · +1 foreign"
     assert lines[1].startswith("  ⟳")
 
 
