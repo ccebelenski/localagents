@@ -609,6 +609,7 @@ the `job_status` dict: `id`, `task` (first 300 chars), `model`, `endpoint`,
 `/metrics` delta, or null), `usage` (`input_tokens`, `output_tokens`,
 `cache_read_input_tokens`, `cache_creation_input_tokens`), `tool_calls` (count),
 `tool_counts` (`{tool: {"calls", "errors"}}`), `errors`, `last_tool`, `files_touched` (list),
+`diff_files` (list or null: a worktree job's diff file names, see job_status),
 `ctx_tokens`, `gen_tps`, `prefill_tps`, `elapsed_s` (to the wall clock while unfinished),
 `server_version` (story 1.14: the build stamp — `<version>+<short sha>`, `db.build_stamp` — of
 the MCP server that ran the job, its `mcp_servers.version`; null when that row is gone). No `result`.

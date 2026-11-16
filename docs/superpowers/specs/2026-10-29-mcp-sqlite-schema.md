@@ -71,6 +71,7 @@ jobs
   generated_tokens, prompt_tokens_processed, prompt_tokens_cached   INTEGER
   cache_hit_ratio, prompt_tps, generate_tps, spec_decode_acceptance   REAL
   worktree      TEXT (JSON)         -- repo, path, root, branch, base, recreated, diffstat, kept, note; read as a unit
+                                    -- since 2026-11-15 also files (the diff's names, at most 100) and files_n (their count)
   dump, log_events   INTEGER (0/1)  -- which opt-in debug files exist in the job directory
   compactions   INTEGER            -- added in version 2 (story 1.11): how many of the harness's
                                    --   compact_boundary messages the job saw (a trailing
@@ -169,7 +170,10 @@ that never logged a line has neither, and readers say so.
   with `SUM(is_error)`.
 - **files touched**: `DISTINCT input` over `tool_calls` where `tool` is an edit tool and
   `input` is not NULL, in first-seen order (today: runner.py EDIT_TOOLS + file_path present +
-  deduplicated keeping first seen).
+  deduplicated keeping first seen). True now (2026-11-15): a call whose `is_error` is 1 is left
+  out; a call with no result yet stays.
+- **diff_files**: `worktree.files` from the jobs row, null when absent (not a tool_calls
+  derivation).
 - **ctx_tokens**: the prompt sum (input + cache_read + cache_creation) of the latest
   `/v1/messages` row whose prompt sum is non-zero (today: jobs.py note_usage keeps the older
   value over a null or zero one).

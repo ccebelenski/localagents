@@ -11,8 +11,9 @@ What Claude does behind that: `list_models` to see what's up and pick a model, t
 `run_agent` with the brief and `wait_s` set to the job's timeout. The call blocks
 until the job ends; after the auto-background delay Claude Code moves it to a
 background task (shown in `/tasks`), Claude keeps working, and the final job record
-arrives as a task notification. Claude reads `files_touched` (or the worktree diff)
-and checks the work. The server sends a progress notification every minute while it
+arrives as a task notification. Claude reads `diff_files` (a worktree job's changed
+files, shell writes included; null for a job with no worktree) or the worktree diff, and
+checks the work. `files_touched` lists only the paths the edit tools were given. The server sends a progress notification every minute while it
 waits — e.g. `running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: uv run pytest -q`
 — so Claude Code's idle timeout does not fire, and the tool timeout itself defaults
 to about 28 hours. To run several jobs, Claude makes one blocking call per job; each
@@ -112,7 +113,7 @@ local gpu-server · 1/2 sessions +1 foreign
 +2 jobs in other sessions
 ```
 
-Per running job: elapsed time, tool calls, files touched, how full the local model's
+Per running job: elapsed time, tool calls, files its edit tools touched, how full the local model's
 context window is (`ctx`, from the token usage recorded on every backend request, so it
 tells you how close the agent is to compaction), its recent generation speed, the
 compaction count (compactions mean the window is too small for the job; the harness
@@ -165,7 +166,12 @@ numbers are rows in SQLite (see [The database](#the-database) below): the brief 
 `jobs.task` column and every backend request is a row in the `requests` table with
 timing, size and usage, written directly by the shim. `job_status` answers from those
 rows: `usage` as the sums over the job's requests, `tool_calls` with `tool_counts` per
-tool, `errors`, `last_tool`, `files_touched`, `ctx_tokens` and `gen_tps`. `compactions`
+tool, `errors`, `last_tool`, `files_touched`, `ctx_tokens` and `gen_tps`. `files_touched` holds the paths
+the edit tools were given, without the calls that failed, so a file written through the
+shell is not in it. `diff_files` comes from the worktree instead: the file list of a
+worktree job's diff against its base, recorded when the job finishes (at most 100 names,
+with `worktree.files_n` counting them all, and without the files git ignores). It is null
+for a job with no worktree, one that has not finished, or one whose diff could not be read. `compactions`
 is a column of its own: the runner counts the harness's `compact_boundary` messages
 into it. The transcript is written to the `transcripts` table once when the job
 finishes, so it outlives the directory below.
