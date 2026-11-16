@@ -450,6 +450,13 @@ async def _write_gates(job, conn) -> None:
 # started alone and shared for most of its life measured the shared speed, whatever the count
 # at its start said; a run whose occupancy changed for longer measures no one concurrency.
 STEADY_SHARE = 0.9
+# The boundary is compared on sums of float differences of epoch timestamps, so a run that held
+# a count for exactly STEADY_SHARE of its wall time can land an ulp or so short of
+# STEADY_SHARE * span. A millisecond of slack is safe both ways: it is ~4000x the ulp of today's
+# epoch floats (2.4e-7 s) and thousands of times the accumulated rounding of any realistic
+# neighbour count, while the nearest real difference — a run genuinely short of the boundary —
+# is seconds at the least (the timestamps are wall-clock readings of jobs that run minutes).
+STEADY_TOL_S = 1e-3
 
 # our other sessions on the endpoint during a run: the jobs_finished_at seeks (finished since
 # the run began, or not finished) that read.py's jobs_overlapping takes, so the read is bounded
@@ -479,7 +486,7 @@ def run_occupancy(conn, job_id: str, endpoint_id: int, start: float, end: float)
         level, t = level + step, at
     held[level] = held.get(level, 0.0) + (end - t)
     k, longest = max(held.items(), key=lambda kv: kv[1])
-    return k if longest >= STEADY_SHARE * span else None
+    return k if longest >= STEADY_SHARE * span - STEADY_TOL_S else None
 
 
 def _write_speed_sample(job, conn) -> bool:
@@ -508,7 +515,11 @@ def _fold_curve(job, conn, res) -> None:
     A change is a ``[curve]`` line in this job's transcript (``job_log``), naming the hold when
     the rule's first holding concurrency moved; the row's JSON names this job (``by``), so an
     operator goes from a hold to the line, and from the line to the samples."""
-    if job.model_id is None or res is None:
+    if job.model_id is None:
+        job._log_safe("[curve] not folded: the job records no model")
+        return
+    if res is None:
+        job._log_safe("[curve] not folded: no endpoint resolution for the backend's prior")
         return
     before, after = capacity.fold_samples(conn, job.endpoint_id, job.model, job.model_id,
                                           backend_kind(res.endpoint.backend), by=job.id)

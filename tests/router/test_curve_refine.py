@@ -147,6 +147,21 @@ def test_the_fold_reads_the_newest_samples_per_concurrency(conn):
     assert got == [(1, 50.0)] * SAMPLES_PER_POINT
 
 
+def test_a_busy_concurrency_never_hides_a_quiet_one(conn):
+    """RULE: every concurrency with samples in the window is read, the newest SAMPLES_PER_POINT
+    of EACH, however many samples another concurrency has. 520 recent samples at 1 must not hide
+    8 samples at 2 three days old (a global row cap of 500 did): the read is 20 at 1 and 8 at 2,
+    and the fold measures point 2 = 8 / 40 = 0.2, a hold from 2 (2 x 0.2 < 0.75)."""
+    eid, a = _endpoint(conn), _model(conn)
+    _samples(conn, eid, a, 1, 40.0, 520, created=NOW - 3600.0)
+    _samples(conn, eid, a, 2, 8.0, MIN_SAMPLES_PER_POINT, created=NOW - 3 * 86_400.0)
+    got = recent_samples(conn, eid, a, NOW)
+    assert sorted(s for s, _ in got) == [1] * SAMPLES_PER_POINT + [2] * MIN_SAMPLES_PER_POINT
+    assert got.count((2, 8.0)) == MIN_SAMPLES_PER_POINT
+    _, curve = fold_samples(conn, eid, "m-a", a, "llamacpp", NOW)
+    assert curve.points[2] == pytest.approx(0.2) and curve.first_hold() == 2
+
+
 # --- the fold (fold_samples) -------------------------------------------------------------------
 
 def test_an_endpoint_whose_samples_measure_nothing_gets_no_row(conn):
@@ -263,6 +278,22 @@ def test_a_sample_is_the_occupancy_the_run_held(conn):
     assert occ(conn, "me", other, 100.0, 233.0) == 1                 # another endpoint's jobs
 
 
+def test_a_run_that_held_one_count_for_the_exact_ninety_percent_boundary_is_a_sample(conn):
+    """RULE: a run that held one count for exactly STEADY_SHARE (90%) of its wall time is a
+    sample at that count; rounding error never decides it. On real epoch floats a neighbour
+    starting at ``start + 0.1 * span`` leaves the run 90% shared, but the summed durations fall
+    one float ulp short of ``0.9 * span`` (7626.903769731522 against 7626.903769744732), so an
+    exact comparison labels the run "changed occupancy". A run genuinely 0.1% short of the
+    boundary is still no sample: the tolerance is far below any real difference."""
+    eid, other = _endpoint(conn), _endpoint(conn, "other")
+    start, span = 1640309273.2337203, 8474.33752193859
+    end = start + span
+    _neighbour(conn, eid, "n", start + 0.1 * span, end)
+    assert feedback.run_occupancy(conn, "me", eid, start, end) == 2
+    _neighbour(conn, other, "short", start + 0.101 * span, end)      # 89.9%: 85 s short
+    assert feedback.run_occupancy(conn, "me", other, start, end) is None
+
+
 # --- the trigger (feedback.on_finish) ----------------------------------------------------------
 
 def _job(conn, tmp_path, eid, mid, start, end, tps, served="m-a"):
@@ -313,6 +344,27 @@ def test_a_failing_fold_never_fails_the_finish(conn, tmp_path, monkeypatch):
     assert conn.execute("SELECT sessions FROM speed_samples WHERE job_id = ?",
                         (j.id,)).fetchone()[0] == 1
     assert "[feedback-error] curve: RuntimeError: fold broke" in _transcript(j)
+
+
+def test_a_fold_that_cannot_run_says_why_in_the_log(conn, tmp_path):
+    """RULE: a sampled job whose curve was not folded says why in its log, once, in one line
+    (``[curve] not folded: <reason>``); it still never raises, and the sample is written. A job
+    that records no model and a finish with no resolution are the two silent skips this closes:
+    a transcript with a sample and no curve line now always carries the reason."""
+    eid, a = _endpoint(conn), _model(conn)
+    no_model = _job(conn, tmp_path, eid, a, T0, T0 + 200.0, 30.0)
+    no_model.model_id = None
+    asyncio.run(feedback.on_finish(no_model, _res()))
+    line = _transcript(no_model)
+    assert line.count("[curve] not folded:") == 1
+    assert "no model" in line
+    no_res = _job(conn, tmp_path, eid, a, T0 + 1000.0, T0 + 1200.0, 30.0)
+    asyncio.run(feedback.on_finish(no_res, None))
+    line = _transcript(no_res)
+    assert line.count("[curve] not folded:") == 1
+    assert "no endpoint resolution" in line
+    assert [r[0] for r in conn.execute("SELECT job_id FROM speed_samples ORDER BY job_id")] \
+        == sorted([no_model.id, no_res.id])                           # both samples were written
 
 
 def test_concurrency_2_samples_below_the_line_hold_normal_work_and_admit_background(conn, tmp_path):

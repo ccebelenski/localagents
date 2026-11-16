@@ -316,28 +316,47 @@ def load_capacity(conn, endpoint_id: int, served_id: str | None = None) -> Curve
     return curve
 
 
-# the fold's read of an endpoint's recent samples: driven from jobs_created_at over the window
-# (the + keeps SQLite off jobs_endpoint_id and jobs_model_id, whose walks grow with the
-# history), each sample by its primary key; tests/test_query_plans.py pins the plan
-_RECENT_SAMPLES_SQL = (
-    "SELECT s.sessions, s.generate_tps FROM jobs j JOIN speed_samples s ON s.job_id = j.id"
+# the fold's read of an endpoint's recent samples: two statements, both driven from
+# jobs_created_at over the window (the + keeps SQLite off jobs_endpoint_id and jobs_model_id,
+# whose walks grow with the history), each sample by its primary key; tests/test_query_plans.py
+# pins both plans. The first names every concurrency that has a sample in the window; the second
+# reads one concurrency's newest SAMPLES_PER_POINT, the index's own created_at order serving the
+# ORDER BY, so the walk stops at its LIMIT. One globally capped statement cannot do this: a busy
+# concurrency's rows push a quiet one out of the read entirely (the 500-row cap of 1ea97c7).
+_RECENT_SESSIONS_SQL = (
+    "SELECT DISTINCT s.sessions FROM jobs j JOIN speed_samples s ON s.job_id = j.id"
+    " WHERE j.created_at > ? AND +j.model_id = ? AND j.calibration = 0 AND s.endpoint_id = ?")
+_RECENT_SAMPLE_SQL = (
+    "SELECT s.generate_tps FROM jobs j JOIN speed_samples s ON s.job_id = j.id"
     " WHERE j.created_at > ? AND +j.model_id = ? AND j.calibration = 0 AND s.endpoint_id = ?"
-    " ORDER BY j.created_at DESC LIMIT ?")
-_RECENT_SAMPLES_MAX = 500
+    " AND s.sessions = ? ORDER BY j.created_at DESC LIMIT ?")
 
 
 def recent_samples(conn, endpoint_id: int, model_id: int, now: float) -> list[tuple[int, float]]:
     """The samples a fold reads (the rule's "which samples count"): this endpoint's, from jobs
     that ran ``model_id`` (a curve learned on one model is not another's), no calibration probe
     (seconds-long short-context work that decodes faster than the jobs it would be the baseline
-    for), created within ``SAMPLE_WINDOW_S``, the newest ``SAMPLES_PER_POINT`` per concurrency."""
+    for), created within ``SAMPLE_WINDOW_S``, the newest ``SAMPLES_PER_POINT`` at EVERY
+    concurrency with a sample in the window: a busy concurrency never crowds a quiet one out of
+    the read. "In 14 days" is measured on the job's ``created_at``, not on the sample's own
+    ``at``: the window must ride an indexed column or the read walks the endpoint's whole
+    history, and the fold runs before the finishing job's ``finished_at`` reaches its row (the
+    tail writes it after ``on_finish``), so a finished_at window could not read the sample that
+    job just wrote. A sample is never older than its job's ``created_at``, so the window holds no
+    stale sample; it only leaves out a run longer than the window.
+
+    The read is two statements: the window's distinct concurrencies (one index-served walk,
+    at most one row per concurrency) and each concurrency's newest samples (index-ordered,
+    stopped at the limit). Exactness costs that one walk: no index carries ``sessions``, so a
+    read bounded by the number of concurrencies times ``SAMPLES_PER_POINT`` instead of by the
+    window's samples would need one (``speed_samples(endpoint_id, sessions, at)``), which this
+    project's schema does not add."""
+    since = now - SAMPLE_WINDOW_S
     out: list[tuple[int, float]] = []
-    per: dict[int, int] = {}
-    for sessions, tps in conn.execute(_RECENT_SAMPLES_SQL, (now - SAMPLE_WINDOW_S, model_id,
-                                                            endpoint_id, _RECENT_SAMPLES_MAX)):
-        if per.get(sessions, 0) < SAMPLES_PER_POINT:
-            per[sessions] = per.get(sessions, 0) + 1
-            out.append((int(sessions), float(tps)))
+    for (sessions,) in conn.execute(_RECENT_SESSIONS_SQL, (since, model_id, endpoint_id)):
+        rows = conn.execute(_RECENT_SAMPLE_SQL,
+                            (since, model_id, endpoint_id, sessions, SAMPLES_PER_POINT))
+        out.extend((int(sessions), float(tps)) for (tps,) in rows)
     return out
 
 

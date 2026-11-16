@@ -229,25 +229,34 @@ def _sample_history(c, finished=20_000):
 
 
 def test_curve_fold_reads_drive_from_the_time_indexes(conn):
-    """curve-refine: the fold's sample read (capacity._RECENT_SAMPLES_SQL) seeks
-    ``jobs_created_at`` over the window and joins each sample by its primary key; the speed
-    sample's occupancy read (feedback._RUN_NEIGHBOURS_SQL) seeks ``jobs_finished_at`` (the
-    not-finished and the finished-since-the-run-began, ``jobs_overlapping``'s OR). Neither walks
-    jobs_endpoint_id or jobs_model_id (the endpoint's whole history) nor scans a table, after
-    ANALYZE over 20k sampled jobs on one endpoint and model."""
+    """curve-refine: the fold's sample read (capacity._RECENT_SESSIONS_SQL and
+    capacity._RECENT_SAMPLE_SQL) seeks ``jobs_created_at`` over the window and joins each sample
+    by its primary key. The distinct-concurrency statement dedupes the window's sessions in a
+    temp B-tree (one key per concurrency, not one row per sample); the per-concurrency statement
+    is served by the index's own ``created_at`` order, so its LIMIT stops the walk with no sort.
+    The speed sample's occupancy read (feedback._RUN_NEIGHBOURS_SQL) seeks ``jobs_finished_at``
+    (the not-finished and the finished-since-the-run-began, ``jobs_overlapping``'s OR). None
+    walks jobs_endpoint_id or jobs_model_id (the endpoint's whole history) nor scans a table,
+    after ANALYZE over 20k sampled jobs on one endpoint and model."""
     from localagents.router import capacity, feedback
 
     eid, mid = _sample_history(conn)
-    fold = _plan(conn, capacity._RECENT_SAMPLES_SQL, (19_000.0, mid, eid, 500))
+    seen = _plan(conn, capacity._RECENT_SESSIONS_SQL, (19_000.0, mid, eid))
+    assert any("SEARCH j USING INDEX jobs_created_at (created_at>?)" in d for d in seen), seen
+    assert any("SEARCH s USING INDEX sqlite_autoindex_speed_samples_1 (job_id=?)" in d
+               for d in seen), seen
+    assert any("TEMP B-TREE FOR DISTINCT" in d for d in seen), seen
+    fold = _plan(conn, capacity._RECENT_SAMPLE_SQL, (19_000.0, mid, eid, 1, 20))
     assert any("SEARCH j USING INDEX jobs_created_at (created_at>?)" in d for d in fold), fold
     assert any("SEARCH s USING INDEX sqlite_autoindex_speed_samples_1 (job_id=?)" in d
                for d in fold), fold
+    assert not any("TEMP B-TREE" in d for d in fold), fold
     occupancy = _plan(conn, feedback._RUN_NEIGHBOURS_SQL, (19_500.0, 19_000.0, eid, "x"))
     assert any("SEARCH jobs USING INDEX jobs_finished_at (finished_at>?)" in d
                for d in occupancy), occupancy
-    for plan in (fold, occupancy):
+    for plan in (seen, fold, occupancy):
         assert not any(d.startswith("SCAN") or "jobs_endpoint_id" in d or "jobs_model_id" in d
-                       or "TEMP B-TREE" in d for d in plan), plan
+                       for d in plan), plan
     # and they answer: the window's newest 20 at concurrency 1; the one job inside the run
     assert len(capacity.recent_samples(conn, eid, mid, 20_000.0)) == capacity.SAMPLES_PER_POINT
     assert feedback.run_occupancy(conn, "x", eid, 19_000.0, 19_001.0) == 2
