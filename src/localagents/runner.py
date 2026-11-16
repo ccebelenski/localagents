@@ -24,16 +24,12 @@ from claude_agent_sdk import (
     query,
 )
 
-from .derive import DIFF_FILES_MAX, EDIT_TOOLS  # the write rule's list is the read rule's (files_touched)
+# the write rule's list is the read rule's (files_touched); the stored cuts and the shown form
+# are derive's too (classify_call and feedback read the cut back, last_tool shows the line)
+from .derive import COMMAND_CHARS, DIFF_FILES_MAX, EDIT_TOOLS, TOOL_INPUT_CHARS, activity_line
 from .jobs import Job, prune, state_dir
 from .registry import Registry, Resolution, backend_kind, fetch_metrics, metrics_delta
 from .router import feedback
-
-# the tool_calls row stores the command (Bash) or the input JSON cut to this length (spec,
-# story 1.5b; tests/test_tool_calls_db.py pins it). It is a shared fact, not a local detail:
-# router feedback reads a row of exactly this length as truncated, able to have lost a token
-# to the cut, and never as the full record (feedback._tests_gate).
-TOOL_INPUT_CHARS = 120
 
 
 def build_env(res: Resolution, base_url: str) -> dict[str, str]:
@@ -357,8 +353,10 @@ def _apply_message(job: Job, m: Any) -> None:
                             break
                     if isinstance(command, str):
                         # spec: a string `command` (Bash) stores the command itself, not the JSON
-                        # around it, so the progress line reads "Bash: uv run pytest -q"
-                        input_text = command[:TOOL_INPUT_CHARS]
+                        # around it, so the progress line reads "Bash: uv run pytest -q"; a Bash
+                        # command whole up to COMMAND_CHARS (the read share and the tests gate
+                        # read it), any other tool's at the JSON's cut as before
+                        input_text = command[:COMMAND_CHARS if b.name == "Bash" else TOOL_INPUT_CHARS]
                     elif path is not None:
                         # spec: any path-shaped tool (the edit tools and the readers with a
                         # file_path/notebook_path/path — Read, Glob, Grep, LS) stores just the
@@ -369,10 +367,11 @@ def _apply_message(job: Job, m: Any) -> None:
                     elif b.name in EDIT_TOOLS:
                         # spec: an edit tool whose input carries no path stores NULL
                         input_text = None
-                # last_activity shows the same text the row shows, in derive.last_tool's shape:
-                # job_status and the progress line read it, so a Bash call says
-                # "Bash: uv run pytest -q", never the JSON around the command (review of 1.8)
-                job.last_activity = f"{b.name}: {input_text}" if input_text is not None else b.name
+                # last_activity shows the row's text as derive.last_tool shows it (one shape,
+                # derive.activity_line: a Bash command's first TOOL_DISPLAY_CHARS): job_status
+                # and the progress line read it, so a Bash call says "Bash: uv run pytest -q",
+                # never the JSON around the command (review of 1.8)
+                job.last_activity = activity_line(b.name, input_text)
                 job.record_tool_call(time.time(), b.name, b.id, input_text)
     elif isinstance(m, UserMessage):
         content = m.content

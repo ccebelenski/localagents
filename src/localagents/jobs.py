@@ -301,8 +301,9 @@ class Job:
     def record_tool_call(self, t: float, tool: str, tool_use_id: str, input_text: str | None) -> None:
         """One ``tool_calls`` row per ToolUseBlock. The ``input_text`` follows the current input
         rule (spec; runner._apply_message builds it): an edit tool stores the path, or NULL when
-        the input has none; a tool whose input carries a string ``command`` (Bash) stores that
-        command, first 120 chars; any other tool stores the first 120 chars of the input JSON.
+        the input has none; a tool whose input carries a string ``command`` stores that command
+        (Bash: its first derive.COMMAND_CHARS, any other tool: derive.TOOL_INPUT_CHARS); any
+        other tool stores the first derive.TOOL_INPUT_CHARS of the input JSON.
         Remembers the rowid so the matching result can set ``finished``/``is_error`` by rowid —
         no index on ``tool_use_id`` needed."""
         if self._conn is None:
@@ -437,6 +438,7 @@ class Job:
             d["usage"] = derive.usage_totals(conn, self.id)
             d["tool_calls"] = derive.tool_call_count(conn, self.id)
             d["tool_counts"] = derive.tool_counts(conn, self.id)
+            d["tool_mix"] = derive.tool_mix(conn, self.id, d["usage"]["output_tokens"])
             d["errors"] = derive.error_count(conn, self.id)
             d["last_tool"] = derive.last_tool(conn, self.id)
             d["files_touched"] = derive.files_touched(conn, self.id)
@@ -448,6 +450,7 @@ class Job:
             d["usage"] = None
             d["tool_calls"] = 0
             d["tool_counts"] = {}
+            d["tool_mix"] = derive.tool_mix(None, self.id, 0)
             d["errors"] = 0
             d["last_tool"] = None
             d["files_touched"] = []

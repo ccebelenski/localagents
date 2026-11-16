@@ -89,9 +89,11 @@ def _row_vals(store, job):
 
 def test_tool_use_rows(monkeypatch, tmp_path):
     """One row per ToolUseBlock in t order; input per the spec: a tool with a string
-    ``command`` (Bash) the first 120 chars of the command, any tool whose input carries a path
+    ``command`` (Bash) the command, its first derive.COMMAND_CHARS (the read share fold: the
+    stored cut, a fact apart from the 120 chars a reader is shown), any tool whose input carries a path
     (the edit tools and the path-shaped readers, story 1.11b) the path itself (NULL for an
-    edit tool without one), every other tool the first 120 chars of the input JSON."""
+    edit tool without one), every other tool the first derive.TOOL_INPUT_CHARS (120) chars of
+    the input JSON."""
     store = _store(monkeypatch, tmp_path)
     job = _new(store)
     _feed(store, monkeypatch, job, [1000.0, 1001.0, 1002.0, 1003.0])
@@ -101,9 +103,11 @@ def test_tool_use_rows(monkeypatch, tmp_path):
     assert [r["tool_use_id"] for r in rows] == ["tu-read", "tu-bash", "tu-edit", "tu-write"]
     # Read is path-shaped: input is its file_path, not the JSON around it (story 1.11b)
     assert rows[0]["input"] == "/a.py"
-    # Bash: exactly the first 120 chars of its command (review of 1.5b: not of the input JSON)
-    assert rows[1]["input"] == ("uv run pytest -q " + "x" * 200)[:120]
-    assert len(rows[1]["input"]) == 120
+    # Bash: the command itself, whole under the stored cut (review of 1.5b: not of the input
+    # JSON); what a reader is shown of it stays its first 120 chars (derive.display_input)
+    assert derive.COMMAND_CHARS == 2000 and derive.TOOL_INPUT_CHARS == 120 == derive.TOOL_DISPLAY_CHARS
+    assert rows[1]["input"] == "uv run pytest -q " + "x" * 200
+    assert derive.display_input("Bash", rows[1]["input"]) == ("uv run pytest -q " + "x" * 200)[:120]
     # edit tools: the path, or NULL when the input has none
     assert rows[2]["input"] == "/a.py"
     assert rows[3]["input"] is None

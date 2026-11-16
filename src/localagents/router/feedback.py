@@ -33,7 +33,7 @@ from typing import Any
 
 import httpx
 
-from localagents import db
+from localagents import db, derive
 from localagents.jobs import TERMINAL_STATUSES
 from localagents.registry import backend_kind
 from localagents.router import capacity, definitions, scorecard
@@ -162,12 +162,10 @@ def _tests_gate(conn, job_id: str, text: str) -> bool | None:
     """Tests ran and passed where the brief named a runner: the last test-runner Bash call
     that finished decides (red then green is a pass). None when the brief names no runner, or
     when the runs it made never returned a result (could not see, so never a verdict), or when
-    no row shows a runner but some row was stored at exactly the runner's cut length
-    (runner.TOOL_INPUT_CHARS): a truncated row may have lost the runner token past the cut, so
-    it is not evidence of no test run — the gate cannot be evaluated (design §9: null, not
-    false). A row under the cut that shows no runner is the runner's full record: False."""
-    from localagents.runner import TOOL_INPUT_CHARS  # deferred: runner imports this module
-
+    no row shows a runner but some row's stored command may have been cut
+    (derive.command_may_be_cut): a cut row may have lost the runner token past the cut, so it
+    is not evidence of no test run — the gate cannot be evaluated (design §9: null, not
+    false). A row that cannot have been cut and shows no runner is the full record: False."""
     if not _TEST_RUNNER.search(text or ""):
         return None
     rows = [r for r in conn.execute(
@@ -175,8 +173,8 @@ def _tests_gate(conn, job_id: str, text: str) -> bool | None:
         " ORDER BY t, rowid", (job_id,)).fetchall() if r["input"]]
     runs = [r for r in rows if _TEST_RUNNER.search(r["input"])]
     if not runs:
-        # a row at exactly the cut length may have lost the runner to the truncation
-        return None if any(len(r["input"]) == TOOL_INPUT_CHARS for r in rows) else False
+        # a row that may have been cut may have lost the runner to the cut
+        return None if any(derive.command_may_be_cut(r["input"]) for r in rows) else False
     finished = [r for r in runs if r["is_error"] is not None]
     if not finished:
         return None

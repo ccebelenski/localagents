@@ -1,0 +1,1126 @@
+{
+ "about": "Real Bash tool_calls.input values from the local store, hand-labelled read/other/unclassified (derive.classify_call). Inputs of exactly 120 chars were cut by the runner (its cut before 2026-11-15, derive.COMMAND_CHARS_BEFORE). The user name outside /home/<user>/projects paths is replaced by a same-length placeholder. 'unlabelled' is a further 300 random distinct inputs for the classifier's invariants. 'whole' holds commands longer than the old cut, recovered whole from the store's transcripts (the runner's [tool] line keeps 400 chars of the input JSON; only lines whose JSON parsed whole were taken), hand-labelled.",
+ "rows": [
+  {
+   "input": "grep -n \"port_free\" tests/*.py src/localagents -r",
+   "label": "read",
+   "edge": "grep-short",
+   "why": "grep"
+  },
+  {
+   "input": "grep -n \"markRow\\|in-progress\\|unreadable\" packages/daemon/src/services/iscsi-health.ts | head -30",
+   "label": "read",
+   "edge": "grep-short",
+   "why": "grep | head"
+  },
+  {
+   "input": "grep -n -i \"smoke\\|cdp\\|floor\\|tables\" README.md | head -30",
+   "label": "read",
+   "edge": "grep-short",
+   "why": "grep | head"
+  },
+  {
+   "input": "sed -n '170,200p' tests/fixtures/monitor/manifest.json",
+   "label": "read",
+   "edge": "sed-n-short",
+   "why": "sed -n"
+  },
+  {
+   "input": "sed -n '40,100p' packages/daemon/src/services/source-guard.ts",
+   "label": "read",
+   "edge": "sed-n-short",
+   "why": "sed -n"
+  },
+  {
+   "input": "sed -n 120,200p tests/fakedom.js; echo ====; cat t/conftest.py",
+   "label": "read",
+   "edge": "sed-n-short",
+   "why": "sed -n; echo; cat"
+  },
+  {
+   "input": "cat src/localagents/monitor/config.py",
+   "label": "read",
+   "edge": "cat-read",
+   "why": "cat"
+  },
+  {
+   "input": "cat t/monitor.pid; ps -o pid,ppid,cmd -p $(cat t/monitor.pid); pgrep -af \"localagents monitor\" | head",
+   "label": "other",
+   "edge": "cat-read",
+   "why": "ps/pgrep look at processes, not files"
+  },
+  {
+   "input": "cat packages/daemon/src/fixtures/zfs/replication-tree/README.md",
+   "label": "read",
+   "edge": "cat-read",
+   "why": "cat"
+  },
+  {
+   "input": "ls -la /home/ccebelenski/projects/anas-cr3-lreview/t/lunrestore-run/ /home/ccebelenski/projects/anas-cr3-lreview/t/lunre",
+   "label": "unclassified",
+   "edge": "ls",
+   "why": "cut at 120 inside ls args: the rest is unseen"
+  },
+  {
+   "input": "ls tests/fixtures/monitor; echo ---; grep -rn \"running\" tests/fixtures/monitor 2>/dev/null | head; echo ---; sed -n '1,8",
+   "label": "unclassified",
+   "edge": "ls",
+   "why": "cut inside the last sed"
+  },
+  {
+   "input": "ls tests/ tests/fixtures/monitor/",
+   "label": "read",
+   "edge": "ls",
+   "why": "ls"
+  },
+  {
+   "input": "git show c83a373; echo ====; git show f42bf8c",
+   "label": "read",
+   "edge": "git-read",
+   "why": "git show; echo; git show"
+  },
+  {
+   "input": "git status --porcelain; echo ---; git diff --stat 745d406..HEAD",
+   "label": "read",
+   "edge": "git-read",
+   "why": "git status; echo; git diff"
+  },
+  {
+   "input": "git show cr3-ahr-core:packages/daemon/src/routes/ahr-expand.ts | sed -n '260,300p;370,385p'",
+   "label": "read",
+   "edge": "git-read",
+   "why": "git show | sed -n"
+  },
+  {
+   "input": "wc -l t/REVIEW.md && echo \"--- probe files ---\" && ls t/probe/",
+   "label": "read",
+   "edge": "wc/find/awk/head/tail",
+   "why": "wc && echo && ls"
+  },
+  {
+   "input": "tail -5 /tmp/claude-1000/-home-someoneelse-projects-claudelocalmcp--claude-worktrees-lane-fold-2/7b205af1-3f07-471b-8a40",
+   "label": "unclassified",
+   "edge": "wc/find/awk/head/tail",
+   "why": "cut inside tail path"
+  },
+  {
+   "input": "tail -2 /tmp/claude-1000/-home-someoneelse--local-state-localagents-worktrees-claudelocalmcp-20261030-141817-f201ca86/51",
+   "label": "unclassified",
+   "edge": "wc/find/awk/head/tail",
+   "why": "cut inside tail path"
+  },
+  {
+   "input": "grep -n \"MCPServer\\|from mcp\" src/localagents/server.py src/localagents/monitor.py 2>/dev/null | head -20; echo ---; gre",
+   "label": "unclassified",
+   "edge": "truncated-read-prefix",
+   "why": "cut inside the last grep"
+  },
+  {
+   "input": "grep -rn \"unreadable\" src/services/__tests__/iscsi-*.test.ts src/services/__tests__/cr3-lunrestore.test.ts | grep -i \"ca",
+   "label": "unclassified",
+   "edge": "truncated-read-prefix",
+   "why": "cut inside a grep pattern"
+  },
+  {
+   "input": "grep -oE '/home/[a-z]+' tests/fixtures/monitor/db/job_20261029-110844-8fd14e0e.json | sort | uniq -c; python3 -c \"\nimpor",
+   "label": "other",
+   "edge": "truncated-read-prefix",
+   "why": "python3 -c ran"
+  },
+  {
+   "input": "sed -n '400,720p' /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/fa98b295-8996-46c5-98e5-eb32ee8673",
+   "label": "unclassified",
+   "edge": "truncated-read-prefix",
+   "why": "cut inside sed path"
+  },
+  {
+   "input": "cd /home/ccebelenski/projects/anas && grep -n \"handsOffRefusal\\|export const foreignGate\\|multiTpg\\|more than one TPG\" -",
+   "label": "unclassified",
+   "edge": "cd-and",
+   "why": "cd && grep, cut"
+  },
+  {
+   "input": "cd /home/ccebelenski/projects/anas && sed -n '/^## iSCSI/,/^## /p' docs/CODE-REVIEW-2026-11-14.md | head -200",
+   "label": "read",
+   "edge": "cd-and",
+   "why": "cd && sed -n | head"
+  },
+  {
+   "input": "cd /home/ccebelenski/projects/anas && sed -n '150,300p' packages/daemon/src/routes/__tests__/iscsi-mutate.test.ts",
+   "label": "read",
+   "edge": "cd-and",
+   "why": "cd && sed -n"
+  },
+  {
+   "input": "cd /home/ccebelenski/projects/anas-cr4-tasks && git grep -n \"next new snapshot is sent from it\" -- packages/daemon/src",
+   "label": "read",
+   "edge": "cd-and",
+   "why": "cd && git grep"
+  },
+  {
+   "input": "git ls-files | grep -iE 'epics|review' | head; grep -rn \"D3\" docs/EPICS.md 2>/dev/null | head -5",
+   "label": "read",
+   "edge": "pipe-write",
+   "why": "git ls-files | grep | head; grep | head"
+  },
+  {
+   "input": "ss -tln 2>/dev/null | grep -E '9009|8471' || echo \"no live listener found (fixture environment)\"",
+   "label": "other",
+   "edge": "pipe-write",
+   "why": "ss looks at sockets"
+  },
+  {
+   "input": "grep -rn \"executor.exec(\\|run(executor\\|executor.pipeline(\" packages/daemon/src --include=*.ts | grep -v __tests__ > t/s",
+   "label": "other",
+   "edge": "pipe-write",
+   "why": "redirect into t/ visible before the cut"
+  },
+  {
+   "input": "ps -o pid,cmd -p 2706218 2>/dev/null || echo \"2706218 not a process (pgrep matched its own cmdline)\"; pgrep -fa chrome-h",
+   "label": "other",
+   "edge": "pipe-write",
+   "why": "ps/pgrep"
+  },
+  {
+   "input": "cat >> /home/ccebelenski/projects/anas-cr3-lreview/t/replication-remote/REVIEW.md <<'EOF'\n\n## Probe 3 — R3: pinHostKey w",
+   "label": "other",
+   "edge": "cat-heredoc-write",
+   "why": "cat >> heredoc"
+  },
+  {
+   "input": "cat >> /home/ccebelenski/projects/anas-cr3-lreview/t/backup-routes/REVIEW.md << 'EOF'\n\n---\n\n## PROBE 3 — Rule B: a file ",
+   "label": "other",
+   "edge": "cat-heredoc-write",
+   "why": "cat >> heredoc"
+  },
+  {
+   "input": "cat > t/review/probe8-inactive.mjs <<'EOF'\n// An INACTIVE array (GT-8): md labels every member (S), the daemon maps them",
+   "label": "other",
+   "edge": "cat-heredoc-write",
+   "why": "cat > heredoc"
+  },
+  {
+   "input": "sed -i 's|Path(tempfile.mkdtemp(prefix=\"probe1-\"))|Path(__file__).resolve().parent / \"tmp-probe1\"|g; s|^import tempfile$",
+   "label": "other",
+   "edge": "sed-i",
+   "why": "sed -i"
+  },
+  {
+   "input": "sed -i 's/window\\.__d2/window.__d1/g' t/p2.js && sed -i 's/o\\.d2/o.d1/' t/probe_2.sh && bash t/probe_2.sh 2>&1 | tail -1",
+   "label": "other",
+   "edge": "sed-i",
+   "why": "sed -i; bash"
+  },
+  {
+   "input": "sed -i 's|mkdir -p \"$TREE/sibling\" \"$TREE/mountpoint\" \"$TREE/foreign\" \"$TREE/sub\"|mkdir -p \"$TREE/mountpoint\" \"$TREE/sib",
+   "label": "other",
+   "edge": "sed-i",
+   "why": "sed -i"
+  },
+  {
+   "input": "export TMPDIR=$PWD/t/tmp; npm run test:unit:ui 2>&1 | tail -15",
+   "label": "other",
+   "edge": "export-prefix",
+   "why": "export; npm run test"
+  },
+  {
+   "input": "export TMPDIR=$PWD/t/tmp; mkdir -p t/tmp; node --import tsx --test src/parsers/__tests__/exports.test.ts src/parsers/__t",
+   "label": "other",
+   "edge": "export-prefix",
+   "why": "export; mkdir; node"
+  },
+  {
+   "input": "export XDG_STATE_HOME=\"$PWD/t/state\" LOCALAGENTS_DB=\"$PWD/t/x.db\"; python3 -m pytest t/test_p1_facet.py -v -s 2>&1 | tai",
+   "label": "other",
+   "edge": "export-prefix",
+   "why": "export; python3 -m pytest"
+  },
+  {
+   "input": "TZ=America/New_York node t/run_page.js t/p2.js | python3 -m json.tool",
+   "label": "other",
+   "edge": "env-assign-prefix",
+   "why": "env prefix; node"
+  },
+  {
+   "input": "LOCALAGENTS_DB=$PWD/t/x.db uv run localagents seed --force 2>&1 | tail -5; ss -ltn | grep -E ':(933[0-9]|1890[123])\\b' |",
+   "label": "other",
+   "edge": "env-assign-prefix",
+   "why": "uv run seed"
+  },
+  {
+   "input": "PYTHONDONTWRITEBYTECODE=1 uv run pytest -q -s t/probe3.py 2>&1 | grep -E \"fresh|v11|migrated:|dropped-index|missing-inde",
+   "label": "other",
+   "edge": "env-assign-prefix",
+   "why": "uv run pytest"
+  },
+  {
+   "input": "R=/home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/20261029-160736-e72f7f88; sed -n '1,110p' $R/src/l",
+   "label": "unclassified",
+   "edge": "var-semicolon-prefix",
+   "why": "var; sed -n, cut"
+  },
+  {
+   "input": "R=/home/ccebelenski/projects/anas-cr4-panels2; git -C $R diff e31fd0447..HEAD -- packages/pve-integration/src/ | grep -c",
+   "label": "unclassified",
+   "edge": "var-semicolon-prefix",
+   "why": "var; git diff | grep -c, cut"
+  },
+  {
+   "input": "L=/home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/1d330882-4709-4597-b347-8874fbffe3ac; grep -n \"^sh",
+   "label": "unclassified",
+   "edge": "var-semicolon-prefix",
+   "why": "var; grep, cut"
+  },
+  {
+   "input": "export XDG_STATE_HOME=\"$PWD/t/state\" LOCALAGENTS_DB=\"$PWD/t/x.db\"; uv run pytest -q tests/test_3_12f.py 2>&1 | tail -4",
+   "label": "other",
+   "edge": "test-run",
+   "why": "export; pytest"
+  },
+  {
+   "input": "export XDG_STATE_HOME=\"$PWD/t/state\" LOCALAGENTS_DB=\"$PWD/t/x.db\"; uv run pytest t/test_p1_facet.py -v -s 2>&1 | tail -4",
+   "label": "other",
+   "edge": "test-run",
+   "why": "export; pytest"
+  },
+  {
+   "input": "uv run pytest -q 2>&1 | tail -2 && git diff --stat",
+   "label": "other",
+   "edge": "test-run",
+   "why": "pytest && git diff"
+  },
+  {
+   "input": "uv run pytest -q tests/test_db.py 2>&1 | tail -8",
+   "label": "other",
+   "edge": "test-run",
+   "why": "pytest"
+  },
+  {
+   "input": "git add tests/test_monitor_seed.py && git commit -q -m \"WIP: the seeded database shows every state (story 2.4 item 2)\n\nR",
+   "label": "other",
+   "edge": "git-write",
+   "why": "git add && commit"
+  },
+  {
+   "input": "git add -f t/REVIEW.md t/probe_1.sh t/p1.js t/pids.txt && git commit -q -m \"WIP: probe 1\" && git log --oneline -1",
+   "label": "other",
+   "edge": "git-write",
+   "why": "git add && commit"
+  },
+  {
+   "input": "git add -f t/REVIEW.md t/probe_p3.py && git commit -q -m \"WIP: probe 3\" && git log --oneline -1",
+   "label": "other",
+   "edge": "git-write",
+   "why": "git add && commit"
+  },
+  {
+   "input": "rm -rf packages/daemon/t && git status --short",
+   "label": "other",
+   "edge": "mkdir/cp/rm",
+   "why": "rm -rf"
+  },
+  {
+   "input": "mkdir -p t/review2/tmp && cd packages/daemon && ../../node_modules/.bin/tsx ../../t/review2/probe1-target.ts 2>&1 | tail",
+   "label": "other",
+   "edge": "mkdir/cp/rm",
+   "why": "mkdir; tsx"
+  },
+  {
+   "input": "mkdir -p t && git add docs/superpowers/specs/2026-10-29-monitor-design.md src/localagents/monitor/app.py src/localagents",
+   "label": "other",
+   "edge": "mkdir/cp/rm",
+   "why": "mkdir; git add"
+  },
+  {
+   "input": "uv run python - <<'EOF'\nimport inspect, ast\nfrom localagents import server\nsrc = inspect.getsource(server)\ntree = ast.pa",
+   "label": "other",
+   "edge": "python-heredoc",
+   "why": "python heredoc"
+  },
+  {
+   "input": "python3 - <<'EOF'\nf='packages/daemon/src/routes/cloud.ts'\ns=open(f).read()\nold=\"\"\"  /** A create's object is the name SL",
+   "label": "other",
+   "edge": "python-heredoc",
+   "why": "python heredoc"
+  },
+  {
+   "input": "python3 - <<'EOF'\nimport sqlite3\nc=sqlite3.connect('t/seed.db')\nprint([d[0] for d in c.execute(\"select * from endpoints\"",
+   "label": "other",
+   "edge": "python-heredoc",
+   "why": "python heredoc"
+  },
+  {
+   "input": "for f in tests/test_*.py; do n=$(grep -cE '^def test_|^    def test_' \"$f\"); echo \"$n $f\"; done | sort -rn",
+   "label": "read",
+   "edge": "for-loop",
+   "why": "for/do grep in $(); echo; done | sort"
+  },
+  {
+   "input": "for c in bde6527c7 47a2f075b 0cc1c8465 405b2c362 0a7eb1a1c b474f3934 b4b4fb59d 7a224f8b3; do git show $c --format= | gre",
+   "label": "unclassified",
+   "edge": "for-loop",
+   "why": "for/do git show | gre..., cut"
+  },
+  {
+   "input": "for c in bde6527c7 47a2f075b 0cc1c8465 405b2c362 0a7eb1a1c b474f3934 b4b4fb59d; do echo \"===== $c =====\"; git show $c --",
+   "label": "unclassified",
+   "edge": "for-loop",
+   "why": "for/do, cut"
+  },
+  {
+   "input": "STUNT_NODE=zfs test/stunt-node/ssh.sh 'export IQN=$(cat /root/node3d/iqn.txt); SOCK=/run/anas/anasd.sock; REQID=$(cat /p",
+   "label": "other",
+   "edge": "cmd-subst",
+   "why": "ssh.sh script"
+  },
+  {
+   "input": "kill $(cat t/monitor.pid) $(cat t/chrome.pid) 2>/dev/null; sleep 1; for p in t/monitor.pid t/chrome.pid; do pid=$(cat $p",
+   "label": "other",
+   "edge": "cmd-subst",
+   "why": "kill"
+  },
+  {
+   "input": "test/stunt-node/ssh.sh 'source /root/node3b/lib3b.sh\nSUB=$(btrfs subvolume show /mnt/node3b/@data | awk -F: \"/Subvolume ",
+   "label": "other",
+   "edge": "cmd-subst",
+   "why": "ssh.sh script"
+  },
+  {
+   "input": "sed -n \"$(grep -n \"server.delete\" packages/daemon/src/routes/backup.ts | head -3 | head -1 | cut -d: -f1),+40p\" packages",
+   "label": "unclassified",
+   "edge": "cmd-subst",
+   "why": "sed -n \"$(grep ...)\" cut"
+  },
+  {
+   "input": "git show cdf0563:src/localagents/shim.py > t/shim_old.py && git check-ignore -v t/shim_old.py || echo \"NOT IGNORED\"",
+   "label": "other",
+   "edge": "or-echo",
+   "why": "git show > t/file"
+  },
+  {
+   "input": "kill 1770177 1770184 1771297 2>/dev/null; sleep 2; ss -ltnp 2>/dev/null | grep -E ':8784|:9244' || echo \"8784 and 9244 c",
+   "label": "other",
+   "edge": "or-echo",
+   "why": "kill"
+  },
+  {
+   "input": "kill 1431548 1431549; sleep 1; kill -0 1431548 2>/dev/null && echo MONITOR-STILL-UP || echo monitor-stopped; kill -0 143",
+   "label": "other",
+   "edge": "or-echo",
+   "why": "kill"
+  },
+  {
+   "input": "git merge-base main HEAD | xargs git log --oneline -1; git log --oneline main -3; git diff --stat $(git merge-base main ",
+   "label": "unclassified",
+   "edge": "xargs",
+   "why": "git reads and xargs git log, cut"
+  },
+  {
+   "input": "git log --oneline -2 main; echo ---; git merge-base main HEAD | xargs git log --oneline -1; echo ---; git diff --stat 00",
+   "label": "unclassified",
+   "edge": "xargs",
+   "why": "git reads, cut"
+  },
+  {
+   "input": "git show a5b62dc:tests | true; git ls-tree -r a5b62dc --name-only tests/ | grep '\\.py$' | xargs -I{} git show a5b62dc:{}",
+   "label": "unclassified",
+   "edge": "xargs",
+   "why": "git reads | xargs -I{} git show, cut at 120"
+  },
+  {
+   "input": "find . -name __pycache__ -type d -prune -exec rm -rf {} +; git add src/localagents/registry.py src/localagents/jobs.py t",
+   "label": "other",
+   "edge": "find-exec",
+   "why": "find -exec rm"
+  },
+  {
+   "input": "find . -name __pycache__ -not -path \"./.venv/*\" | head; find . -name __pycache__ -not -path \"./.venv/*\" -exec rm -rf {} ",
+   "label": "other",
+   "edge": "find-exec",
+   "why": "find -exec rm"
+  },
+  {
+   "input": "find . -name __pycache__ -type d -not -path \"./.venv/*\" -exec rm -rf {} + 2>/dev/null; find . -name __pycache__ -type d ",
+   "label": "other",
+   "edge": "find-exec",
+   "why": "find -exec rm"
+  },
+  {
+   "input": "git -C /home/ccebelenski/projects/anas-cr4-panels1 diff e31fd0447..HEAD -- packages/pve-integration/src/",
+   "label": "read",
+   "edge": "git-C",
+   "why": "git -C diff"
+  },
+  {
+   "input": "git -C /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/e3cc6b27-63ab-43ff-93f9-70c6db10bdc3 status -",
+   "label": "unclassified",
+   "edge": "git-C",
+   "why": "git -C status, cut"
+  },
+  {
+   "input": "git -C /home/ccebelenski/projects/anas log --oneline -5 -- packages/pve-integration/src/33-pool-import.js && git -C /hom",
+   "label": "unclassified",
+   "edge": "git-C",
+   "why": "git -C log && git -C, cut"
+  },
+  {
+   "input": "timeout 180 uv run pytest t/probe1_cancel.py::test_e_two_cancel_job_calls_during_make_worktree -q -s 2>&1 | tail -30",
+   "label": "other",
+   "edge": "timeout",
+   "why": "timeout pytest"
+  },
+  {
+   "input": "timeout 110 node t/probe2s.mjs",
+   "label": "other",
+   "edge": "timeout",
+   "why": "timeout node"
+  },
+  {
+   "input": "timeout 500 uv run pytest -q 2>&1 | tail -4",
+   "label": "other",
+   "edge": "timeout",
+   "why": "timeout pytest"
+  },
+  {
+   "input": "node --check t/p4_scroll_live.js; echo \"check=$?\"; node -e \"const s=require('fs').readFileSync('t/p4_scroll_live.js','ut",
+   "label": "other",
+   "edge": "node",
+   "why": "node"
+  },
+  {
+   "input": "npx tsx --test packages/daemon/src/parsers/__tests__/pve-storage.test.ts 2>&1 | sed -n '/failing tests/,$p' | grep -E \"✖",
+   "label": "other",
+   "edge": "node",
+   "why": "npx tsx"
+  },
+  {
+   "input": "npx eslint packages/daemon/src/services/ahr-scrub.ts packages/daemon/src/services/__tests__/ahr-scrub.test.ts && echo ES",
+   "label": "other",
+   "edge": "node",
+   "why": "npx eslint"
+  },
+  {
+   "input": "sleep 20; tail -2 t/baseline.log; grep -c \"\" t/baseline.log",
+   "label": "other",
+   "edge": "process",
+   "why": "sleep waits on a run"
+  },
+  {
+   "input": "kill $(cat t/browser.pid) $(cat t/monitor.pid) 2>/dev/null; sleep 1; curl -s -m 2 -o /dev/null -w \"monitor:%{http_code}\\",
+   "label": "other",
+   "edge": "process",
+   "why": "kill"
+  },
+  {
+   "input": "pkill -f \"localagents monitor\" 2>/dev/null; pkill -f \"chrome-headless-shell\" 2>/dev/null; sleep 1\nLOCALAGENTS_DB=$PWD/t/",
+   "label": "other",
+   "edge": "process",
+   "why": "pkill"
+  },
+  {
+   "input": "echo \"=== test functions ===\"; grep -n \"^def test_\" tests/test_monitor_page.py\necho \"=== innerHTML count in job.js ===\";",
+   "label": "unclassified",
+   "edge": "newline-multi",
+   "why": "echo; grep; newline; echo, cut"
+  },
+  {
+   "input": "CH=~/.cache/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-linux64/chrome-headless-shell\nls -l \"$CH\" >",
+   "label": "unclassified",
+   "edge": "newline-multi",
+   "why": "ls -l with a redirect whose target is cut"
+  },
+  {
+   "input": "L=/home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/1f830695-a3c7-48f2-a7a9-b5dd4d0dbe14\ncp $L/src/loc",
+   "label": "other",
+   "edge": "newline-multi",
+   "why": "cp"
+  },
+  {
+   "input": "echo \"=== 'monitor' in server modules (must be empty) ===\" && grep -rn \"monitor\" src/localagents/server.py src/localagen",
+   "label": "unclassified",
+   "edge": "echo",
+   "why": "echo && grep, cut"
+  },
+  {
+   "input": "echo \"== test counts ==\"; grep -n \"^def test_\" tests/test_monitor_collect.py tests/test_monitor_read.py | wc -l; grep -c",
+   "label": "unclassified",
+   "edge": "echo",
+   "why": "echo; grep | wc; grep -c, cut"
+  },
+  {
+   "input": "echo \"XDG_STATE_HOME=${XDG_STATE_HOME:-unset}\"; echo \"LOCALAGENTS_DB=${LOCALAGENTS_DB:-unset}\"; ls -la \"${XDG_STATE_HOME",
+   "label": "unclassified",
+   "edge": "echo",
+   "why": "echo; ls, cut"
+  },
+  {
+   "input": "sed -n 412,435p src/localagents/monitor/static/app.js; grep -n \"jobsBlock\\|function jobsFor\\|mine\" src/localagents/monit",
+   "label": "unclassified",
+   "edge": "semicolon-reads",
+   "why": "sed; grep, cut"
+  },
+  {
+   "input": "sed -n 260,300p tests/test_monitor_page.py; echo ====; sed -n 620,660p tests/test_monitor_page.py; echo ====; sed -n 840",
+   "label": "unclassified",
+   "edge": "semicolon-reads",
+   "why": "sed; echo; sed, cut"
+  },
+  {
+   "input": "sed -n '160,215p' src/localagents/jobs.py; echo ===; grep -n \"compact_boundary\\|compactions\" src/localagents/runner.py s",
+   "label": "unclassified",
+   "edge": "semicolon-reads",
+   "why": "sed; grep, cut"
+  },
+  {
+   "input": "git rev-parse --short main HEAD && git log --oneline -1 main && echo ---- && git diff --stat 2c570a2..HEAD",
+   "label": "read",
+   "edge": "git-branch/worktree",
+   "why": "git rev-parse && git log && echo && git diff"
+  },
+  {
+   "input": "git rev-parse HEAD && git log --oneline main..HEAD && git status --short | wc -l",
+   "label": "read",
+   "edge": "git-branch/worktree",
+   "why": "git rev-parse && log && status | wc"
+  },
+  {
+   "input": "git rev-parse HEAD; grep -n \"BUSY_TIMEOUT_MS\" src/localagents/db.py | head -3; sed -n '1,60p' src/localagents/monitor/ra",
+   "label": "unclassified",
+   "edge": "git-branch/worktree",
+   "why": "git rev-parse; grep; sed, cut"
+  },
+  {
+   "input": "pwd && git log --oneline -8 && git status --short | head -20 && ls",
+   "label": "read",
+   "edge": "pwd",
+   "why": "pwd && git log && git status | head && ls"
+  },
+  {
+   "input": "pwd; PYTHONPATH=/home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/20261029-160736-e72f7f88/src /home/c",
+   "label": "unclassified",
+   "edge": "pwd",
+   "why": "pwd; an env-prefixed command cut before its name"
+  },
+  {
+   "input": "pwd && git status --short && ls -la && ls t 2>/dev/null || echo \"no t dir\"",
+   "label": "read",
+   "edge": "pwd",
+   "why": "pwd && git status && ls || echo"
+  },
+  {
+   "input": "sqlite3 .check/check.db \"select id, status from jobs\" 2>/dev/null || uv run python -c \"\nimport sqlite3\nc = sqlite3.conne",
+   "label": "other",
+   "edge": "sqlite",
+   "why": "uv run python after ||"
+  },
+  {
+   "input": "sqlite3 t/plan.db \"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;\" && echo --- && for t in $(sqlite3 t",
+   "label": "unclassified",
+   "edge": "sqlite",
+   "why": "sqlite3 SELECT, a for loop, cut"
+  },
+  {
+   "input": "sqlite3 -readonly ~/.local/state/localagents/localagents.db \".schema jobs\" \".schema requests\" \".schema tool_calls\"",
+   "label": "read",
+   "edge": "sqlite",
+   "why": "sqlite3 -readonly .schema"
+  },
+  {
+   "input": "bash -n packaging/test/preflight-refusal.test.sh && echo PARSE-OK; grep -n \"shellcheck\" packaging/test/run-shell-tests.s",
+   "label": "other",
+   "edge": "bash-c",
+   "why": "bash -n is a syntax-check run"
+  },
+  {
+   "input": "bash -n packages/pve-integration/uninstall.sh && bash -n packages/pve-integration/test/proxy-install.test.sh && echo SYN",
+   "label": "other",
+   "edge": "bash-c",
+   "why": "bash -n runs"
+  },
+  {
+   "input": "bash /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/315960d9-5ab3-49ff-9139-f3e337f53435/t/probe2.s",
+   "label": "other",
+   "edge": "bash-c",
+   "why": "bash script"
+  },
+  {
+   "input": "set -o pipefail; uv run pytest -q tests/router/test_calibrate.py -k \"materialize_failure or implicit_need or plan_skips\"",
+   "label": "other",
+   "edge": "set",
+   "why": "set; pytest"
+  },
+  {
+   "input": "set -o pipefail; uv run pytest -q tests/router/test_calibration_jobs.py::test_runner_logs_the_thinking_length 2>&1 | tai",
+   "label": "other",
+   "edge": "set",
+   "why": "set; pytest"
+  },
+  {
+   "input": "set -o pipefail; uv run pytest -q tests/router 2>&1 | tail -2 && cat /home/ccebelenski/projects/claudelocalmcp/t/final2/",
+   "label": "other",
+   "edge": "set",
+   "why": "set; pytest"
+  },
+  {
+   "input": "git show a84d979:src/localagents/shim.py > t/old_shim.py && sed -n '320,345p' t/old_shim.py",
+   "label": "other",
+   "edge": "short-redirect-file",
+   "why": "redirect into t/"
+  },
+  {
+   "input": "node t/probe_2.mjs 2>&1 | tee t/probe_2.out",
+   "label": "other",
+   "edge": "tee",
+   "why": "node | tee"
+  },
+  {
+   "input": "git branch --show-current; git rev-parse main HEAD",
+   "label": "read",
+   "edge": "git-branch",
+   "why": "git branch (list form); rev-parse"
+  },
+  {
+   "input": "git branch -a; git log --all --oneline --grep='Review 2.4\\|review of 2.4\\|probe' -20",
+   "label": "read",
+   "edge": "git-branch",
+   "why": "git branch -a; git log"
+  },
+  {
+   "input": "git log --oneline -1 main; git merge-base HEAD main | xargs git log --oneline -1; git diff --stat 5915519..HEAD",
+   "label": "read",
+   "edge": "xargs",
+   "why": "xargs git log"
+  },
+  {
+   "input": "cd /home/ccebelenski/projects/anas && sed -n '1440,1590p' packages/daemon/src/services/mounts.ts",
+   "label": "read",
+   "edge": "cd-and",
+   "why": "cd && sed -n"
+  },
+  {
+   "input": "R=/home/ccebelenski/projects/anas-cr4-panels2; grep -rn \"restoreMark\" $R/packages/daemon/src --include=*.ts | head -20",
+   "label": "read",
+   "edge": "var-semicolon-prefix",
+   "why": "var; grep | head"
+  },
+  {
+   "input": "R=/home/ccebelenski/projects/anas-cr4-panels2; git -C $R diff --stat e31fd0447..HEAD -- packages/pve-integration/src/",
+   "label": "read",
+   "edge": "var-semicolon-prefix",
+   "why": "var; git -C diff"
+  },
+  {
+   "input": "git diff --stat; git status --short; echo \"HEAD: $(git log --oneline -1)\"",
+   "label": "read",
+   "edge": "cmd-subst",
+   "why": "echo of a $(git log)"
+  },
+  {
+   "input": "echo \"base: $(git log --oneline -1)\" > t/REPORT.md",
+   "label": "other",
+   "edge": "cmd-subst",
+   "why": "echo > file"
+  },
+  {
+   "input": "grep -rn \"/bin/sh\\|/bin/bash\\|exec('.*'+\\|\\`bash\" packages/daemon/src --include=*.ts | grep -v __tests__ | head -30",
+   "label": "read",
+   "edge": "backtick",
+   "why": "escaped backtick inside double quotes"
+  },
+  {
+   "input": "grep -n '`' t/added-lines.txt",
+   "label": "read",
+   "edge": "backtick",
+   "why": "backtick inside single quotes"
+  },
+  {
+   "input": "awk 'NR>=192 && NR<=200' docs/EPICS.md | fold -w 160 | head -60",
+   "label": "read",
+   "edge": "awk",
+   "why": "awk with > inside quotes"
+  },
+  {
+   "input": "awk 'length>94 {print FNR\": \"length}' docs/router.md; sed -n '75,84p;238,252p;283,290p;325,332p' docs/router.md",
+   "label": "read",
+   "edge": "awk",
+   "why": "awk; sed -n"
+  },
+  {
+   "input": "git worktree list; git status --short",
+   "label": "read",
+   "edge": "git-worktree",
+   "why": "git worktree list"
+  },
+  {
+   "input": "git worktree list; echo \"--- other anas dirs:\"; ls -d /home/ccebelenski/projects/*/ | head -30",
+   "label": "read",
+   "edge": "git-worktree",
+   "why": "worktree list; ls"
+  },
+  {
+   "input": "uv run python -c \"\nfrom mcp.server.mcpserver import MCPServer\nm = MCPServer('localagents')\nprint(m.name)\n\"",
+   "label": "other",
+   "edge": "newline-multi",
+   "why": "python -c, newlines inside quotes"
+  },
+  {
+   "input": "F=packages/daemon/src/fixtures/ahr/selfheal-node-captures-2026-11-15.txt\ngrep -n '```' \"$F\"",
+   "label": "read",
+   "edge": "newline-multi",
+   "why": "assignment newline grep"
+  },
+  {
+   "input": "ls t/ t/capture/ 2>/dev/null && git status --short && git log --oneline -3",
+   "label": "read",
+   "edge": "dev-null",
+   "why": "2>/dev/null"
+  },
+  {
+   "input": "cat tests/fixtures/router/d3_answers.json; ls docs/spikes/ 2>/dev/null",
+   "label": "read",
+   "edge": "dev-null",
+   "why": "cat; ls 2>/dev/null"
+  },
+  {
+   "input": "mkdir -p t && cat > t/answer.json <<'EOF'\n{\"premise_corrected\": true}\nEOF",
+   "label": "other",
+   "edge": "cat-heredoc-write",
+   "why": "mkdir; cat > heredoc"
+  },
+  {
+   "input": "uv run python - <<'EOF'\nt=open('t/smoke-i.txt').read()\ni=t.index('\"detail\"')\nprint(t[i:i+700])\nEOF",
+   "label": "other",
+   "edge": "python-heredoc",
+   "why": "python heredoc that only reads: a program ran"
+  }
+ ],
+ "unlabelled": [
+  "git add docs/superpowers/specs/2026-10-29-monitor-design.md src/localagents/monitor/rows.py tests/test_monitor_collect.p",
+  "python3 -c \"\nimport sqlite3\nc = sqlite3.connect('t/seed.db')\nc.execute('DELETE FROM mcp_servers')\nc.commit(); print('ser",
+  "sed -n '660,672p' packages/daemon/src/services/ahr-create.ts; echo ===; grep -n \"export async function changeAhrMountpoi",
+  "sed -n '700,725p' packages/daemon/src/routes/backup.ts",
+  "grep -n \"_METRIC_KEYS\" -A 20 src/localagents/registry.py | head -40",
+  "mkdir -p t/tmp && export TMPDIR=$PWD/t/tmp && npm run test:unit:daemon 2>&1 | tail -25",
+  "node -e \"\nconst fs=require('fs');\nlet s=fs.readFileSync('t/probe1.mjs','utf8');\ns=s.replace(\\\"const HERE = dirname(fileU",
+  "git add src/localagents/jobs.py src/localagents/derive.py src/localagents/runner.py tests/test_summary_db.py && git comm",
+  "grep -n \"describe\\|it(\" packages/daemon/src/routes/__tests__/scrub.test.ts | head -50; wc -l packages/daemon/src/routes/",
+  "grep -n \"function \\|fireEvent\\|afterrender\\|_readError\" packages/pve-integration/src/80-users.js | head -80",
+  "cp t/fixed-ahr-fstab.test.ts packages/daemon/src/services/__tests__/ahr-fstab.test.ts && git add packages/daemon/src/ser",
+  "git -C /home/ccebelenski/projects/anas-cr4-panels1 diff e31fd0447..HEAD -- packages/pve-integration/src | grep -E \"^\\+\" ",
+  "uv run pytest tests/test_db.py -q 2>&1 | tail -8",
+  "grep -n \"prefill\" tests/test_derive.py | head; grep -n \"prefill\\|prefillRate\" tests/test_3_10hb.py | head -30; grep -n \"",
+  "git -C /home/ccebelenski/projects/anas grep -n \"function readPoolMountpoints\" e31fd0447 -- packages/daemon/src",
+  "cd $PWD/t/review/tmp && printf 'ANAS_PORT=3005\\nANAS_OPERATOR_BYTES=a\\x00b\\n' > nul.before && wc -c < nul.before && cont",
+  "ls /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/4675bbc6-b869-4aee-b215-b82aa61459f6/t/",
+  ".venv/bin/python - <<'EOF'\nimport asyncio, json, sqlite3, time\nfrom localagents import db\nfrom localagents.monitor impor",
+  "cd /home/ccebelenski/projects/anas && sed -n '2895,2945p' packages/pve-integration/src/65-replication.js && echo ==== &&",
+  "grep -n -oE '^[a-z_]+(:[a-z_]+)*\\{' tests/fixtures/monitor/vllm/dgx1-a_metrics_1.txt | head -30; echo ===; grep -cE '^vl",
+  "cd /home/ccebelenski/projects/anas && grep -n \"facts\\|sourceProps\\|keystatus\\|targetProps\" packages/daemon/src/routes/__",
+  "echo \"=== git status ===\" && git status --short && echo \"(clean if empty above)\" && echo \"=== my commits ===\" && git log",
+  "sed -n 1481,1560p src/localagents/monitor/static/app.js",
+  "git grep -n \"prefer-array-to-sorted\" -- packages | head -20; echo \"---toSorted---\"; git grep -n \"toSorted\" -- packages |",
+  "grep -rln \"newLun\" packages/daemon/src/ | head",
+  "git diff ad9d3e178..HEAD -- packages/pve-integration/src | grep -n \"^+\" | grep \"…\" ; echo \"ellipsis-in-added-lines: $?\";",
+  "mkdir -p t/tmp && export TMPDIR=$PWD/t/tmp && echo ok",
+  "sed -n '1845,1890p' packages/daemon/src/routes/backup.ts; echo ---CLOUD1210; sed -n '1205,1240p' packages/daemon/src/rou",
+  "node --test --import tsx src/routes/__tests__/replication-recursive.test.ts 2>&1 | grep -A 30 \"failing tests\" | head -40",
+  "grep -n \"69-scrubs\\|function loadSource\\|makeSandbox\\|function sandbox\\|vm.createContext\\|readFileSync\\|async function m",
+  "grep -n \"localDay\\|timeTd\\|toggleTimePanel\\|panelCol\\|except\" src/localagents/monitor/static/app.js",
+  "cat >> t/REVIEW.md <<'EOF'\n\n## Probe 4 — blind voice read of docs/router.md (lane head) + tests\n\n`wc -l docs/router.md` ",
+  "uv run pytest -q -s t/probe1_record.py 2>&1 | tail -30",
+  "python3 - <<'EOF'\nimport re\np = \"t/REVIEW.md\"\ns = open(p).read()\ns = s.replace(\"(tests/test_monitor_page.py:863, :878)\",",
+  "grep -n \"def close\\|def heartbeat\" src/localagents/jobs.py | head; grep -n \"DEFAULT_RANGE\" src/localagents/monitor/app.p",
+  "grep -n \"_run_cli\" tests/test_monitor_seed.py | head -3; sed -n '/def _run_cli/,/^def /p' tests/test_monitor_seed.py | h",
+  "grep -n \"ANAS.errText = \" -A 12 packages/pve-integration/src/10-api.js",
+  "sed -n '380,430p' src/services/iscsi-health.ts",
+  "python3 - <<'EOF'\nimport pathlib\np = pathlib.Path(\"tests/test_server.py\")\ns = p.read_text()\ndbg = '''        admitted = ",
+  "grep -n \"function mount\" -A 30 src/localagents/monitor/static/app.js; echo ===TEST===; sed -n '1,154p' tests/test_3_12b_",
+  "ls /home/ccebelenski/projects/claudelocalmcp/t/final2/probes/ 2>/dev/null; echo ===; grep -n \"setting_sources\\|allowed_t",
+  "uv run pytest -q t/probe_p1_transcripts.py 2>&1 | tail -40",
+  "for h in lastrun-pill poll-selection edit-retarget alert-encoding; do echo \"== $h\"; timeout 120 node packages/pve-integr",
+  "grep -n \"addNewSchedule\\|submit\\|doSave\\|anas-btn-sched-submit\" packages/pve-integration/src/69-snapshots.js | head -20",
+  "node t/p4_fold.js",
+  "git grep -n \"mountsKnown\" packages/daemon/src/services/ahr-topology.ts",
+  "git diff e31fd0447..HEAD -- packages/daemon/src/services/iscsi-warnings.ts packages/daemon/src/routes/backup.ts packages",
+  "cd /home/ccebelenski/projects/anas && grep -n -E 'async function restoreFiles|function restoreFiles|destination|dest|tar",
+  "git show main:packages/daemon/src/services/replication-transport.ts > t/review/main-transport.ts && grep -n \"buildSshArg",
+  "rm -f /tmp/claude-help.txt /tmp/claude-nosuch.txt; grep -n \"def test_\" tests/router/test_calibrate.py | wc -l; grep -n \"",
+  "git commit --allow-empty -q -m \"WIP: suite green\" && git log --oneline -1",
+  "R=/home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/20261029-160736-e72f7f88; cd $R && git show 5720d6",
+  "mkdir -p t && ls tests/ tools/smoke/",
+  "mkdir -p t && wc -l src/localagents/monitor/*.py src/localagents/monitor/static/*.js tests/test_monitor* 2>/dev/null; ec",
+  "grep -rn \"collect.run\\|collect import\\|from .collect\\|from ..monitor.collect\\|monitor.collect\" src/ --include=*.py | gre",
+  "uv run python -c \"\nimport dataclasses, claude_agent_sdk.types as t\nprint([f.name for f in dataclasses.fields(t.SystemMes",
+  "export LOCALAGENTS_DB=\"$PWD/t/seed.db\" LOCALAGENTS_CONFIG=\"$PWD/t/models.yaml\"\nnode tools/smoke/conn.mjs 9248 http://127",
+  "grep -n \"scrub\" /home/ccebelenski/projects/anas-wt-scrub-r1/packages/daemon/src/routes/__tests__/ahr-mutate.test.ts | he",
+  "sed -n '20,70p' src/localagents/status.py && echo ---- && sed -n '180,240p' src/localagents/status.py",
+  "R=/home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/20261029-160736-e72f7f88; timeout 180 bash $R/t/pa",
+  "mkdir -p /home/ccebelenski/projects/anas-cr4-lun/t/review/tmp && export TMPDIR=/home/ccebelenski/projects/anas-cr4-lun/t",
+  "timeout 60 uv run python t/probeB_lint.py 2>&1",
+  "npx eslint packages/daemon/src/services/iscsi-mutate.ts packages/daemon/src/services/__tests__/iscsi-cr3-mutate.test.ts ",
+  "grep -rF -e RETRY tree 2>/dev/null | wc -l; cat t/answer.json",
+  "timeout 30 npm view @anthropic-ai/claude-code bin 2>&1 | head -5",
+  "grep -n \"COMPLETE_RE\\|LINE_SPLIT_RE\\|PROGRESS_RE\" src/services/backup-restore.ts | head -20; echo ===; ls ../daemon/fixt",
+  "uv run pytest -q tests/test_monitor_jobs.py 2>&1 | tail -6",
+  "git log --oneline -1 && git status --short",
+  "git log --oneline -3",
+  "python3 -I - <<'EOF'\np='t/review/main-schedules.ts'\ns=open(p).read()\ns=s.replace(\"from './common.js'\",\"from '../../packa",
+  "grep -n \"lookup_id\\|now=\" src/localagents/monitor/seed.py | head -12",
+  "wc -l tests/test_shim.py && ls docs/superpowers/specs/",
+  "cd /home/ccebelenski/projects/anas-rrep2 && grep -n \"recvTargets =\" t/review2/probe3-taskdoor.ts",
+  "sed -n '683,1075p' packages/pve-integration/test/dialog-contracts.harness.mjs",
+  "cd /home/ccebelenski/projects/anas && git show ed3d05eaf -- packages/daemon/src/services/mounts.ts | tail -130",
+  "npx tsx --test packages/daemon/src/routes/__tests__/shares-nfs.test.ts packages/daemon/src/routes/__tests__/shares-smb.t",
+  "sed -n 760,940p tests/test_monitor_read.py",
+  "git branch -a; git rev-parse --verify main; git diff --stat main..HEAD | tail -3",
+  "sed -n '1,120p' src/localagents/status.py; echo \"===collect 120-230===\"; sed -n '115,230p' src/localagents/status.py; ec",
+  "npx eslint packages/daemon/src/services/iscsi-mutate.ts packages/daemon/src/services/__tests__/iscsi-mutate.test.ts 2>&1",
+  "LOCALAGENTS_DB=$PWD/t/seed.db LOCALAGENTS_CONFIG=$PWD/t/models.yaml XDG_STATE_HOME=$PWD/t/state uv run localagents monit",
+  "sed -n '1,80p' /home/ccebelenski/projects/anas-cr3-lreview/t/lunrestore-doors/probe4.ts",
+  "sed -n '1160,1200p' /home/ccebelenski/projects/anas/packages/daemon/src/routes/datasets.ts",
+  "sed -n '85,95p' src/localagents/jobs.py && sed -n '220,232p' src/localagents/router/queue.py",
+  "cd /home/ccebelenski/projects/anas-replr2/packages/daemon && npm test 2>&1 | grep -E \"^✖ |^ℹ (tests|pass|fail)\" | head -",
+  "cd /home/ccebelenski/projects/anas-cr3-lreview/t/iscsi && python3 - <<'EOF'\np='REVIEW.md'\ns=open(p).read().replace('`sec",
+  "uv run pytest -q tests/test_monitor_seed.py 2>&1 | tail -15",
+  "grep -E \"kv_cache|num_requests|num_preemptions|prefix_cache|spec_decode\" tests/fixtures/monitor/vllm/dgx1-a_metrics_1.tx",
+  "grep -n \"snapshotFirst\" packages/daemon/src/routes/replication.ts | head -20; echo \"=== double-quoted strings with apost",
+  "cd /home/ccebelenski/projects/anas/packages/pve-integration/src && grep -n 'credUser\\|_userTyped\\|passFld' 67-mounts.js ",
+  "cd /home/ccebelenski/projects/anas && grep -n \"dmStatus\\|DMSETUP\\|readDmStatus\\|buildAhrCacheState\" packages/daemon/src/",
+  "git show a84d979:src/localagents/runner.py > t/old_runner.py && sed -n '/^def finish_worktree/,/^def /p' t/old_runner.py",
+  "grep -n \"function jobLink\" -A 12 src/localagents/monitor/static/app.js",
+  "grep -n \"_row_bits\" -A 25 src/localagents/status.py | head -35",
+  "uv run python -c \"\nimport asyncio, time\nfrom localagents.monitor.collect import probe_port\nt0=time.time()\ntry:\n    async",
+  "command -v ss; ls packaging/test/ | head -40",
+  "sed -n 930,1000p src/localagents/monitor/static/app.js",
+  "rm -f t/p2.db t/p2.db-wal t/p2.db-shm",
+  "uv run pytest -q tests/test_monitor_rates.py::test_reset_reason_rounds_the_figures_it_names tests/test_monitor_seed.py -",
+  "ls packages/daemon/src/parsers/__tests__/ | grep -i \"pve-storage\"; grep -n \"matchMountpoint\" packages/daemon/src/parsers",
+  "ls /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/a6299bc8-03a9-4173-812d-a04d6e002d8a/tests/",
+  "grep -n \"1.9a\" -A40 docs/EPICS.md | head -70",
+  "grep -n \"now\\|snapshot\\|/api/jobs\" src/localagents/monitor/read.py | head -50",
+  "cp t/tmp/testnames.txt t/tmp/names.txt && echo 'D-22: a credentials file that is' >> t/tmp/names.txt && while IFS= read ",
+  "export TMPDIR=$PWD/t/tmp && node --import tsx t/probe-step8.ts 2>&1 | grep -A1 \"^C-\" | python3 -c \"\nimport sys, json, re",
+  "sed -n 990,1075p packages/daemon/src/routes/ahr-mutate.ts",
+  "sed -n '194,215p' docs/EPICS.md",
+  "cat >> t/probe2.py <<'EOF'\n\n\n# --- (d) the builder's \"at most one duplicate connect\" claim, generalized ----------------",
+  "uv run pytest -q 2>&1 | tail -1 && git add src/localagents/monitor/read.py src/localagents/monitor/app.py docs/superpowe",
+  "grep -n \"§5a\\|## 5a\\|### 5a\" docs/superpowers/specs/2026-10-29-monitor-design.md | head; grep -n \"running_job\\|elapsed_s",
+  "cat /tmp/claude-1000/-home-someoneelse-projects-anas/cfff2f65-5957-426d-a1e5-213c32a01416/scratchpad/lreview/briefs/ahr-",
+  "grep -n \"flat layout\\|subvolLayout\\|not mounted\\|describe(\" packages/daemon/src/routes/__tests__/ahr-snapshots.test.ts |",
+  "L=/home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/1f830695-a3c7-48f2-a7a9-b5dd4d0dbe14\nuv run --dire",
+  "node t/review/probe1-bodies.mjs 2>&1 | tail -40",
+  "tail -5 src/localagents/monitor/static/app.css; echo \"--- lines ---\"; wc -l src/localagents/monitor/static/app.css",
+  "ls -la t/ 2>/dev/null | head; echo ---; cat .gitignore 2>/dev/null | head -40; echo ---; git status --porcelain | head",
+  "LOCALAGENTS_DB=\"$PWD/t/seed.db\" uv run localagents monitor --no-collect --no-open --port 8785 --config t/models.yaml > t",
+  "grep -rn --include=*.ts -E \"datasetFrom|datasetOf|poolFrom|poolOfPath|resolveDataset|mountpointTo|pathToDataset|datasetF",
+  "cd /home/ccebelenski/projects/anas && git show --stat 7a9975185 | grep -i pve-integration; echo \"---\"; wc -l /tmp/claude",
+  "grep -n \"pool\" packages/daemon/src/routes/__tests__/replication-remotes.test.ts | head -40; echo ===; sed -n 1,80p packa",
+  "grep -n \"def changed\" -A 30 src/localagents/jobs.py | head -45",
+  "grep -n \"ep-active\" tests/test_monitor_page.py src/localagents/monitor/static/app.css | head -3; grep -n \"renders:\\|acti",
+  "STUNT_NODE=zfs test/stunt-node/ssh.sh 'bash -s' < t/tmp/step6.sh 2>&1 | grep -v 'Permanently added'",
+  "uv run pytest tests/router/test_calibrate.py -q 2>&1 | tail -10",
+  "uv run pytest -q tests/test_shim.py -k \"overflow_rewrite or real_ms\" 2>&1 | tail -20",
+  "grep -n \"3.7-fold-1\\|3.7n\\|3.7o\\|3.7q\\|D1\\|D2\\|D3\" docs/EPICS.md | head -40",
+  "sed -n 214,224p packages/daemon/src/server.ts",
+  "cd /home/ccebelenski/projects/anas && grep -n \"itemId:\" packages/pve-integration/src/30-pools.js | head -30 && grep -n \"",
+  "git status --short; echo '---'; git log --oneline -6; echo '---'; git show --stat --oneline HEAD~4..HEAD | grep -E \"^[0-",
+  "mv t/probe_4_test.py t/probe_4_check.py && uv run pytest -q 2>&1 | tail -3",
+  "sed -n '178,190p' packages/daemon/src/services/__tests__/ahr-topology.test.ts",
+  "sed -n '1060,1160p' packages/pve-integration/test/dialog-contracts.harness.mjs",
+  "uv run python t/probe3.py 2>&1 | head -80",
+  "grep -rn \"INSERT INTO jobs\" -A8 src/localagents/ | head -60",
+  "uv run pytest -q tests/router 2>&1 | tail -1; git add -A && git commit -q --amend -m \"WIP: item 4\" && git log --oneline ",
+  "node packages/pve-integration/test/dialog-contracts.harness.mjs 2>&1 | head -40",
+  "node t/review/probe1.mjs 2>&1 | head -120",
+  "cat >> t/REVIEW.md <<'EOF'\n\n## Probe 5 — self-check\n\n- Lane `git status --short`: **one entry, `?? main`** — a 0-byte un",
+  "which setpriv capsh 2>&1; setpriv --help 2>&1 | grep -i -E \"bounding|inh-caps|ambient\" | head",
+  "grep -n \"calendar\\|utc\" tests/test_db.py",
+  "mkdir -p t/tmp && export TMPDIR=$PWD/t/tmp && cd packages/daemon && npx tsx --test src/services/__tests__/ahr-create.tes",
+  "export XDG_STATE_HOME=$PWD/t/state LOCALAGENTS_DB=$PWD/t/state/localagents.db LOCALAGENTS_CONFIG=$PWD/t/models.yaml; pri",
+  "python3 -c \"\nimport json\ns=json.load(open('t/snap.json'))\nfor h in s['hosts']:\n    for e in h['endpoints']: print(h['nam",
+  "uv run pytest -q tests/test_server.py 2>&1 | tail -3",
+  "npx eslint packages/daemon/src/services/iscsi-health.ts packages/daemon/src/services/__tests__/iscsi-cr3-read.test.ts 2>",
+  "sed -i \"s/\\[id='jobs-body'\\]/[id=\\\"jobs-body\\\"]/g\" tests/test_3_12b.py && grep -n 'id=' tests/test_3_12b.py",
+  "git log --oneline -1 && git status --short && ls",
+  "cat >> t/REVIEW.md <<'EOF'\n\n---\n\n## P3 — 3.10h(b) + 3.7v together (`t/probe_3.sh`, `t/p3.js`)\n\nRendered five hand rows t",
+  "grep -n \"describe(\" src/routes/__tests__/shares-nfs.test.ts | head; grep -n \"steps\\|progress\" ../shared/src/schemas/job.",
+  "cp packages/daemon/src/routes/replication-tasks.ts t/mut/b.ts && python3 - <<'EOF'\np='packages/daemon/src/routes/replica",
+  "git bisect start HEAD $(git rev-list --max-parents=0 HEAD) -- 2>&1; git bisect run python3 -m unittest -q build_check 2>",
+  "sed -n '25,40p' src/localagents/monitor/status.py",
+  "node --check tools/smoke/tables.js && ls ~/.cache/ms-playwright/ 2>/dev/null",
+  "grep -rn \"loadConfig\\|ANAS_PORT\\|ANAS_PVE_PORT\" packages/gateway/src packages/pve-integration --include=*.ts --include=*",
+  "grep -nP '\\t' src/localagents/monitor/read.py tests/test_monitor_read.py tests/test_server.py; echo \"tabs: $?\"",
+  "grep -n \"PICK_BLANK\" src/localagents/monitor/static/app.js",
+  "tr=''; f=/home/someoneelse/.claude/projects/-home-someoneelse-projects-anas-cr4-panels1/c6e75925-7b5c-42c6-93d7-6ed5c071",
+  "ls t/review/ && ls t/review/tmp 2>/dev/null | head",
+  "XDG_STATE_HOME=\"$PWD/t/state\" LOCALAGENTS_DB=\"$PWD/t/seed.db\" uv run pytest -q tests/test_3_10f2.py::test_the_endpoint_e",
+  "cd /home/ccebelenski/projects/anas && grep -n \"encodedList\" packages/pve-integration/src/65-replication.js | head && sed",
+  "R=/home/ccebelenski/projects/anas-cr4-panels2; grep -n \"_task\\b\\|_task =\" $R/packages/pve-integration/src/68-backup.js |",
+  "git diff d49d8c5..HEAD -- src/ | head -200",
+  "grep -rn \"mirrorGuardedExecutor\" packages/daemon/src --include=*.ts | head; echo ---; grep -n \"export function mirrorGua",
+  "uv run python - <<'EOF'\nimport re, pathlib\nSTATIC=pathlib.Path('src/localagents/monitor/static')\nstrre=re.compile(r'''([",
+  "wc -l tests/test_monitor_*.py tests/monitor_*.py && sed -n '1,120p' tests/test_monitor_read.py",
+  "grep -n \"update:\" /home/ccebelenski/projects/anas-cr4-panels1/packages/pve-integration/src/65-replication.js /home/ccebe",
+  "grep -n \"test_the_down_endpoint_names_its_sentence_and_no_dropped_job\" -B5 -A25 tests/test_monitor_read.py",
+  "cd /home/ccebelenski/projects/anas/packages/pve-integration/src && grep -n 'restoreMark\\|held\\.\\|markGate\\|markBlocks\\|u",
+  "grep -n \"from_probe\" -A 40 src/localagents/router/capacity.py | head -70",
+  "wc -l src/localagents/monitor/static/*.js tests/test_3_12b.py tools/smoke/tables.js tools/smoke/README.md && ls tools/sm",
+  "git add src/localagents/monitor/state.py tests/test_monitor_state.py docs/superpowers/specs/2026-10-29-monitor-design.md",
+  "tr '\\0' ' ' < /proc/3549050/cmdline; echo; ss -ltn | grep -c 18781 || echo \"18781 free\"",
+  "uv run python -c \"\nfrom localagents.registry import config_path, local_path\np = config_path(); print(p)\nprint(p.read_tex",
+  "grep -n \"return part / whole\\|def percent_of\" src/localagents/router/sets/fixtures/judgement-planted-bug/project/unitcon",
+  "cd /home/ccebelenski/projects/anas-rrep2 && git add packages/daemon/src/services/replication-units.ts packages/daemon/sr",
+  "grep -n \"AFTER_JSON\\|\\\"c4\\\"\\|LOGS\" t/review/cdp.out | head; echo ----; grep -c \"\" t/review/cdp.out",
+  "grep -rn \"t_first\\\"*\\s*$\" /dev/null 2>/dev/null; git -C /home/someoneelse/.local/state/localagents/worktrees/claudelocal",
+  "cat /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/18518895-ba79-422f-8d0f-c20a53532c7a/t/conftest.",
+  "grep -n \"^def test_\" tests/test_3_10i.py; git log --oneline -5",
+  "git show d8a7b92d6 -- packages/pve-integration/src/30-pools.js packages/daemon/src/routes/dashboard.ts packages/shared/s",
+  "grep -n \"restore-mark-unreadable\\|409\\|CONFLICT\" packages/daemon/src/routes/__tests__/backup-restore.test.ts | head -20 ",
+  "uv run pytest -q t/probe1_race.py -s 2>&1 | tail -8",
+  "sed -n '100,200p' packages/daemon/src/routes/ahr-snapshots.ts",
+  "python -c \"import starlette, httpx, pytest, uvicorn; print('ok')\" 2>&1; python -c \"import localagents; print(localagents",
+  "sed -n '71,132p' docs/superpowers/specs/2026-11-02-router-design.md",
+  "git status --short && git diff src/localagents/shim.py",
+  "sed -n '/function ahrPoolMountedAt/,/^}/p' packages/daemon/src/services/backup-consistency.ts",
+  "node /home/ccebelenski/projects/anas-cr3-ahr-panel/t/review/probe4.mjs 2>&1 | head -60",
+  "sed -n 400,470p packages/daemon/src/services/pve-footprint.ts; grep -n \"ANAS_PVE_STORAGE\\|storageCfg\\|storage.cfg\" packa",
+  "grep -rn \"iscsi/targets\" tests/integration/ident-iscsi.spec.ts | head; ls packages/daemon/src/routes/",
+  "mkdir -p /home/ccebelenski/projects/anas-cr3-lreview/t/schedules/tmp && TMPDIR=/home/ccebelenski/projects/anas-cr3-lrevi",
+  "export XDG_STATE_HOME=\"$PWD/t/state\" LOCALAGENTS_DB=\"$PWD/t/x.db\"; uv run pytest -q tests/test_3_12a_fold.py 2>&1 | tail",
+  "export TMPDIR=$PWD/t/tmp && node t/review/probe-c-datasets.mjs 2>&1 | head -14",
+  "grep -rn \"Target pool\" packages/daemon/src --include=\"*.ts\" | head -30",
+  "cat src/fixtures/ahr/md-bad-blocks-coordinates.txt",
+  "cd /home/ccebelenski/projects/anas && sed -n '1,60p' packages/daemon/src/executor/types.ts && echo === && grep -n \"Backu",
+  "grep -n \"running_job = {\" -A 45 docs/superpowers/specs/2026-10-29-monitor-design.md | head -60",
+  "grep -n \"_METRIC_KEYS\" -A 40 src/localagents/registry.py | head -n 60",
+  "cat > t/probe3b.py <<'EOF'\nimport contextlib, io, sqlite3\nfrom pathlib import Path\nfrom localagents import db\n\nDB = Path",
+  "cat pyproject.toml | head -60 && cat tests/conftest.py",
+  "git add src/localagents/monitor/retention.py tests/test_monitor_retention.py && git commit -m \"WIP: item 4 (retention pr",
+  "grep -n \"JOB_COLUMNS\\|jobsTable\\|jobs_section\\|jobsSection\\|Jobs on it\\|history_jobs\\|jobs\\b\" tests/test_monitor_app.py ",
+  "cd /home/ccebelenski/projects/anas && sed -n '250,420p' packages/daemon/src/routes/cloud.ts",
+  "git show e31fd0447:packages/daemon/src/services/ahr-create.ts | sed -n '615,620p;655,668p' | grep -n \"''s\" ; echo \"---al",
+  "ls; ls src/localagents tests | head -50",
+  "find budget -type f | head -50 && echo \"---\" && cat tests_budget.py",
+  "ls -la /home/ccebelenski/projects/anas-cr4-panels1/t/review/ 2>/dev/null; ls /home/ccebelenski/projects/anas-cr4-panels1",
+  "printf '*.db\\n*.db-wal\\n*.db-shm\\nstate/\\nno/\\n' > t/.gitignore && git rm -r -q --cached t/b.db t/c.db t/d.db t/iso.db t",
+  "node -e \"\n(async () => {\n  const acorn = await import('acorn');\n  const fs = await import('node:fs');\n  const files = ['",
+  "sed -n '470,510p' src/localagents/monitor/static/job.js",
+  "cat t/conftest.py 2>/dev/null | head -40; echo ----; ls ~/.cache/ms-playwright/ 2>/dev/null; echo ----; which uv node; e",
+  "PYTHONPATH=$PWD/src /home/ccebelenski/projects/claudelocalmcp/.venv/bin/python t/probe2.py 2>&1 | tail -8",
+  "grep -n \"Missing\\|missing\" packages/pve-integration/src/69-snapshots.js | sed -n 1,40p",
+  "git add -A && git commit -qm \"WIP: item 3\" && git log --oneline -1",
+  "sed -n 480,560p tests/test_shim.py",
+  "sed -n '560,700p' docs/EPICS.md",
+  "cd /home/ccebelenski/projects/anas && wc -l /tmp/claude-1000/-home-someoneelse-projects-anas/cfff2f65-5957-426d-a1e5-213",
+  "cat > t/probe_3.sh <<'EOF'\n#!/bin/sh\n# P3 (commit 56364bb, 3.7x + the 3.7u column floor): seeded cardLayout/grid, then a",
+  "sed -n '660,800p' packages/daemon/src/routes/__tests__/backup-restore-files.test.ts",
+  "git add src/localagents/__init__.py src/localagents/monitor/seed.py tests/test_monitor_seed.py && git commit -q -m \"WIP:",
+  "sed -n '361,400p' src/localagents/jobs.py; sed -n '140,175p' src/localagents/status.py; grep -n \"def render_lines\" -A 15",
+  "cat >> t/REPORT.md <<'EOF'\n## Row 1 — one renderer\n- Added `requestsTable(rows, opts)` to `static/app.js`, defined just ",
+  "grep -rn \"1\\.2\\|134\\.8\\|0\\.822\\|720\\|event\\|four\\|elapsed\\|restart\" tests/test_monitor_app.py tests/test_monitor_boundar",
+  "ls /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/20261029-123309-2f18d755/tests/",
+  "git rev-list --count 2c570a2..main && git log --oneline 2c570a2..main | head -8",
+  "git add docs/router.md && git commit -q -m \"WIP: docs/router.md\n\nCo-Authored-By: Claude <noreply@anthropic.com>\" && git ",
+  "python3 - <<'EOF'\nf='packages/daemon/src/server.ts'\ns=open(f).read()\ns=s.replace(\"import { imageRestorePin } from './ser",
+  "git log --oneline e31fd0447..HEAD --stat | head -60",
+  "cat >> t/REVIEW-floor.md <<'EOF'\n\n## Probe 3 — the activity line as the only long text (hand render, 1400×900)\n\n`t/act-o",
+  "sed -n '490,620p' packages/daemon/src/routes/ahr-cache.ts",
+  "grep -n \"fp-from\\|fp-to\\|fromSel\\|toSel\\|dateSel\\|\\.value\" tests/test_3_12c.py tests/test_3_12c_fold.py tests/test_3_12d",
+  "sed -n 1,120p tests/test_monitor_app.py",
+  "uv run pytest -q 2>&1 | tail -2 && git add src/localagents/monitor/rows.py tests/test_monitor_rows.py && git commit -q -",
+  "cd /home/ccebelenski/projects/anas-rrep1a && cat packages/daemon/src/parsers/zfs-tree.ts",
+  "sed -n 1,60p tests/test_monitor_es5.py; echo ===; grep -rn \"window.localagentsMonitor = {\" tests/ | head",
+  "grep -n \"CREATE TABLE jobs\" -A 40 src/localagents/db.py | head -50; sed -n '50,75p' src/localagents/registry.py",
+  "git show 63df4de -- src/localagents/monitor/static/app.js tests/test_monitor_page.py tools/smoke/neverseen.js",
+  "cat > t/heights3.js <<'EOF'\njs:(function(){var x=new XMLHttpRequest();x.open(\"GET\",\"/api/snapshot\",false);x.send();var b",
+  "cd /home/ccebelenski/projects/anas && grep -n \"loadOnceSnapshots\\|snapshotFirst\\|setOnceSubmit\\|fetchPlan\" packages/pve-",
+  "ls packages/daemon/src/services/ packages/daemon/src/parsers/ packages/daemon/src/routes/ packages/daemon/src/fixtures/z",
+  "sed -n '360,430p' src/localagents/monitor/static/app.js",
+  "grep -n \"interface MdGeometry\\|memberOffsetOn\\|dataOffsets\\|badBlocks\" src/services/selfheal-map.ts | head -30 && sed -n",
+  "wc -l docs/superpowers/specs/2026-10-29-monitor-design.md src/localagents/db.py src/localagents/monitor/rows.py src/loca",
+  "uv run python -c \"\nimport sys; sys.path.insert(0, 'tests')\nfrom monitor_seeded import MODELS_YAML\nfrom pathlib import Pa",
+  "grep -n \"ahrMountpoints\\|ahrUnreadable\" /home/ccebelenski/projects/anas-cr4-iscsi/packages/daemon/src/services/__tests__",
+  "head -25 ~/.local/state/localagents/jobs/20261029-134023-49d71a6b/transcript.txt",
+  "cat /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/20261029-112752-b3499250/t/REVIEW.md",
+  "uv run pytest -q tests/test_monitor_page.py::test_endpoint_page_draws_no_tier_numbered_headings 2>&1 | grep -A3 \"assert\"",
+  "cd /home/ccebelenski/projects/anas-cr3-lreview/t/panels-data && node probe4.mjs 2>&1",
+  "grep -n \"loading snapshots\\|No pool is available for replication\\|loadOnceSnapshots\" packages/pve-integration/src/65-rep",
+  "sed -n '84,96p' docs/superpowers/specs/2026-10-29-mcp-sqlite-schema.md",
+  "cat >> /home/ccebelenski/projects/anas-cr3-node3c/t/NODE3C.md <<'LOGEOF'\n\n## STEP 6 — recover, following the step 5 mess",
+  "sed -n '1260,1300p' packages/daemon/src/routes/backup.ts",
+  "L=/home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/fa98b295-8996-46c5-98e5-eb32ee867331; ls -la --tim",
+  "sed -n '120,330p' tests/test_3_10c_fold.py",
+  "export XDG_STATE_HOME=\"$PWD/t/state\" LOCALAGENTS_DB=\"$PWD/t/x.db\"; uv run pytest \"t/test_p3_events.py::test_p3_empty_the",
+  "cd /home/ccebelenski/projects/anas-replr2/packages/daemon && npx tsx --test src/services/__tests__/replication-target.te",
+  "grep -rn \"OnCalendar\" packages/daemon/src --include=*.ts | grep -v __tests__ | head -40",
+  "wc -l /home/ccebelenski/projects/claudelocalmcp/t/review/phase-1-fix.diff && sed -n '1,80p' /home/ccebelenski/projects/c",
+  "grep -rn \"sortRows\\|caret\\|setSelectionRange\" tests/*.py | head -20",
+  "cd /home/ccebelenski/projects/anas/packages/daemon && npx tsx /home/ccebelenski/projects/anas-cr3-lreview/t/schedules/pr",
+  "cd /home/ccebelenski/projects/anas/packages/daemon/src/fixtures/backup && sed -n '92,116p' restore-failure-taxonomy.txt ",
+  "grep -n \"showReadFailed\\|statusUnreadable\\|showUnitProps\\b\\|function showUnitProps\" packages/daemon/src/services/unit-ru",
+  "cd /home/ccebelenski/projects/anas\necho \"== status system checks\"; grep -rn \"status === 'system'\\|status: 'system'\\|'sys",
+  "grep -n \"def pid_alive\" -A 15 src/localagents/db.py; grep -n \"def immediate\" -A 12 src/localagents/db.py; grep -n \"journ",
+  "sed -n '260,280p' src/localagents/runner.py && sed -n '15,60p' src/localagents/router/scorecard.py",
+  "grep -n '\"path\"\\|path' docs/superpowers/specs/2026-10-29-monitor-design.md | sed -n '1,30p'; echo ===; grep -n \"pill\\|re",
+  "awk 'NR>=816 && NR<=1595 && /addEventListener|removeEventListener/ {printf \"%d: %s\\n\", NR, $0}' src/localagents/monitor/",
+  "cd /home/ccebelenski/projects/anas && git show 442bb4dd5 --stat 2>/dev/null | head -60; echo \"=====5092d2086=====\"; git ",
+  "cat packages/daemon/package.json | sed -n '1,40p' | grep -A5 '\"scripts\"'",
+  "git grep -n \"remount\\|Remount\" packages/pve-integration/src/39-ahr.js | head -20; git grep -n \"remount\" packages/daemon/",
+  "cat > t/probe2b.py <<'EOF'\n\"\"\"Probe 2b (LIVE, supplementary): a proposed document whose change should be visible.\"\"\"\nimp",
+  "grep -n \"^class Job\\|^@dataclass\" -A 40 src/localagents/jobs.py | sed -n '1,55p'",
+  "git add src/localagents/router/calibrate.py tests/router/test_calibrate.py && git commit -q -m \"WIP: item 3\" && git log ",
+  "grep -rln \"static\" tests/*.py; grep -rn \"var \\|function \" tests/test_static*.py 2>/dev/null | head -3",
+  "cd /home/ccebelenski/projects/anas && grep -rn \"class MockExecutor\\|function scrubStatus\\|function until\\|function statu",
+  "cd /home/ccebelenski/projects/anas && grep -rn \"DatasetListUnreadableError\\|DatasetSnapshotListUnreadable\" packages/daem",
+  "L=/home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/1d330882-4709-4597-b347-8874fbffe3ac; sed -n '219,",
+  "ls /home/ccebelenski/projects/anas-cr3-lreview/t/panels-svc/; wc -l /home/ccebelenski/projects/anas-cr3-lreview/t/panels",
+  "mkdir -p t && cat > t/models.yaml <<'EOF'\nmonitor:\n  refresh_s: 1\n\ndefaults:\n  permission_mode: acceptEdits\n  allowed_to",
+  "grep -n \"spec\\|5a\" tests/test_monitor_read.py | head -20; grep -rn \"§5a\\|spec-5a\\|named\\b\" tests/test_monitor_app.py | h",
+  "cd \"$PWD\" && cat t/monitor.pid t/chrome.pid; echo \"--- listeners ---\"; ss -ltnp 2>/dev/null | grep -E ':8774|:9234' || t",
+  "cd /home/ccebelenski/projects/anas && sed -n '850,880p;1140,1175p' packages/daemon/src/routes/pools.ts",
+  "cat /tmp/claude-1000/-home-someoneelse-projects-anas/cfff2f65-5957-426d-a1e5-213c32a01416/scratchpad/fullreview/fixes/_h",
+  "git status --short | head -20; echo ---; ls t/review",
+  "cd /home/ccebelenski/projects/anas && grep -n -B4 -A14 \"ceph_osd\" packages/shared/src/schemas/disks.ts | head -50",
+  "pwd && git status && git log --oneline -8 && echo \"--- merge-base vs main ---\" && git merge-base HEAD main && git rev-pa",
+  "python3 -m unittest -q pig_latin_test",
+  "git diff main..HEAD -- packages/daemon/src/services/replication-transport.ts packages/daemon/src/services/replication-ho",
+  "cd /home/ccebelenski/projects/anas && cat packages/daemon/src/fixtures/ahr/mdstat-clean.txt; echo ---; cat packages/daem",
+  "uv run pytest -q tests/test_3_12b.py 2>&1 | tail -4",
+  "sed -n '150,290p' src/localagents/shim.py",
+  "grep -n \"hist.jobs\\|job\\.\\|jobsTable\\|JOB_COLUMNS\" tests/test_monitor_page.py | head -40; echo ===; grep -rn \"endpoint_h",
+  "export TMPDIR=$PWD/t/tmp && npm run test:unit:daemon > t/daemon.log 2>&1; echo \"daemon rc=$?\"; grep -E 'ℹ (tests|pass|fa",
+  "sed -n 60,200p packages/shared/src/pve-footprint.ts",
+  "grep -n \"export const PV_UNDERSIZE_MARGIN_BYTES\\|export function isPvUnderSized\\|export function fmtKnownBytes\\|export {",
+  "grep -n \"still listening\\|could not all be removed\\|NO portal\\|undone\\|removed again\" packages/daemon/src/services/__tes",
+  "ps -o pid,ppid,cmd -p 3199932 3199939 3388616 2>/dev/null; ss -tlnp 2>/dev/null | grep 8783; cat t/pids.txt; echo ---; t",
+  "grep -n \"function jobsBlock\" -A40 src/localagents/monitor/static/app.js",
+  "ls ~/.cache/ms-playwright/ 2>/dev/null; /home/linuxbrew/.linuxbrew/bin/node --version; grep -n \"MODELS_YAML\\|def write_c"
+ ],
+ "whole": [
+  {
+   "input": "grep -n \"def _server_live\\|def _job_row\\|server_owner\\|server_pid\\|server_updated\" src/localagents/monitor/read.py | head; echo \"=== _server_live body ===\"; sed -n \"$(grep -n 'def _server_live' src/localagents/monitor/read.py | head -1 | cut -d: -f1),+25p\" src/localagents/monitor/read.py",
+   "label": "read",
+   "why": "grep | head; echo; sed -n \"$(grep | head | cut)\" (288 chars)"
+  },
+  {
+   "input": "cd /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/20261030-221551-e4442830\ngrep -n \"var fmt\\|fmt = \\|function fmt\\|  speed:\\|  time:\\|  date:\\|  int:\\|  dur:\\|  pct:\\|  ago:\\|speed = \\|time = \\|date = \\|int = \\|dur = \\|pct = \" src/localagents/monitor/static/app.js | head -30",
+   "label": "read",
+   "why": "cd, newline, grep | head (296 chars)"
+  },
+  {
+   "input": "sed -n '60,100p' src/localagents/runner.py; echo ---; sed -n '160,230p' src/localagents/server.py; echo ---; sed -n '450,480p' src/localagents/server.py; echo ---; sed -n '700,730p' src/localagents/server.py; echo ---; sed -n '790,815p' src/localagents/server.py",
+   "label": "read",
+   "why": "sed -n; echo; sed -n ... (262 chars)"
+  },
+  {
+   "input": "ls -la t/ 2>/dev/null; cat .gitignore 2>/dev/null; git check-ignore -v t/x 2>/dev/null; cat tests/conftest.py | head -60",
+   "label": "read",
+   "why": "a whole command of exactly 120 chars: reads as possibly cut (the cost of the length rule)"
+  },
+  {
+   "input": "cd /home/someoneelse/.local/state/localagents/worktrees/claudelocalmcp/a6299bc8-03a9-4173-812d-a04d6e002d8a\nXDG_STATE_HOME=\"$PWD/t/state\" LOCALAGENTS_DB=\"$PWD/t/x.db\" uv run pytest -q tests/test_1_15.py 2>&1 | tail -15",
+   "label": "other",
+   "why": "cd, newline, env-prefixed uv run pytest: the runner is past the old 120 cut (288 chars)"
+  }
+ ]
+}

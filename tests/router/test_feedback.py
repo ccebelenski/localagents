@@ -169,24 +169,25 @@ def test_gates_read_the_diff_and_the_record(conn, tmp_path):
 
 
 def test_tests_gate_is_null_not_false_when_the_stored_command_was_truncated(conn, tmp_path):
-    """The runner stores a Bash command cut to ``runner.TOOL_INPUT_CHARS`` chars, so a row
-    at exactly that length may have lost the runner token to the cut. The rule: a tool_calls
+    """Before 2026-11-15 the runner stored a Bash command cut to 120 chars
+    (``derive.COMMAND_CHARS_BEFORE``), so a row at exactly that length may have lost the runner
+    token to the cut (derive.command_may_be_cut; tests/test_command_cut.py pins the new cut). The rule: a tool_calls
     row whose stored command was truncated and shows no runner is NOT evidence of "no test
     run" — the ``tests`` gate is None for a job whose only candidate rows are truncated and
     runner-less (design §9: a gate that cannot be evaluated is null, not false); a truncated
     row that still shows the runner counts as a run. A stored row under the cut that shows no
     runner is the runner's full record: the job ran no test, the gate says False."""
-    from localagents.runner import TOOL_INPUT_CHARS
+    from localagents.derive import COMMAND_CHARS_BEFORE  # the old rows' cut
 
     # a 125-char command: the cut ends mid-token, the row reads "... uv run pyte"
     blind = f"cd {'w' * 102} && uv run pytest -q"
-    stored = blind[:TOOL_INPUT_CHARS]
-    assert len(blind) > TOOL_INPUT_CHARS
-    assert len(stored) == TOOL_INPUT_CHARS and stored.endswith("uv run pyte")
+    stored = blind[:COMMAND_CHARS_BEFORE]
+    assert len(blind) > COMMAND_CHARS_BEFORE
+    assert len(stored) == COMMAND_CHARS_BEFORE and stored.endswith("uv run pyte")
     # a 121-char command: still truncated, but the cut keeps the whole runner token
     seen = f"cd {'w' * 98} && uv run pytest -q"
-    kept = seen[:TOOL_INPUT_CHARS]
-    assert len(kept) == TOOL_INPUT_CHARS and "pytest" in kept
+    kept = seen[:COMMAND_CHARS_BEFORE]
+    assert len(kept) == COMMAND_CHARS_BEFORE and "pytest" in kept
 
     # the green run of the blind command: the row was cut, so no run is visible -> no verdict
     j1 = _job(conn, "jcut", tmp_path, task=CLEAN_BRIEF, isolation="worktree")

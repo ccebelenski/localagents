@@ -1275,6 +1275,11 @@ async def job_status(job_id: str) -> dict[str, Any]:
     no worktree, or before its finish); `files_touched` is only the paths the edit tools were
     given, so it never sees a file written through the shell.
 
+    `tool_mix.read_share` is the share of the job's tool calls that only looked (read, searched,
+    listed, inspected git), a classification of each call's stored command line;
+    `tool_mix.unclassified` counts the calls it could not place (mostly commands cut in
+    storage), so the share is a floor.
+
     Reads any localagents server's job: an in-process job gets its live summary, otherwise
     the row and its read-time derivations from the shared database."""
     try:
@@ -1376,7 +1381,9 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
                 " ORDER BY t DESC, rowid DESC LIMIT ?",
                 (job_id, tools),
             ).fetchall()
-            out["tool_calls"] = [dict(r) for r in reversed(rows)]  # the last N, oldest first
+            # the last N, oldest first; a Bash command as a reader is shown it (derive.display_input)
+            out["tool_calls"] = [{**dict(r), "input": derive.display_input(r["tool"], r["input"])}
+                                 for r in reversed(rows)]
         return out
     except (sqlite3.Error, db.SchemaError) as e:
         # the foreign branch's row SELECT and the tools=N query both read the database;

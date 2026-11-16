@@ -855,7 +855,8 @@ def job_detail(conn: sqlite3.Connection, job_id: str, now: float | None = None) 
     # summary carries (its length is len(tool_call_log))
     d["tool_call_log"] = [
         {"t": r["t"], "finished": r["finished"], "tool": r["tool"], "tool_use_id": r["tool_use_id"],
-         "input": r["input"], "is_error": bool(r["is_error"]) if r["is_error"] is not None else None}
+         "input": derive.display_input(r["tool"], r["input"]),  # a Bash command as shown, 120 chars
+         "is_error": bool(r["is_error"]) if r["is_error"] is not None else None}
         for r in conn.execute(
             "SELECT t, finished, tool, tool_use_id, input, is_error FROM tool_calls"
             " WHERE job_id = ? ORDER BY t, rowid", (job_id,))

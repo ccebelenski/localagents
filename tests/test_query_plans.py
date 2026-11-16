@@ -251,3 +251,14 @@ def test_curve_fold_reads_drive_from_the_time_indexes(conn):
     # and they answer: the window's newest 20 at concurrency 1; the one job inside the run
     assert len(capacity.recent_samples(conn, eid, mid, 20_000.0)) == capacity.SAMPLES_PER_POINT
     assert feedback.run_occupancy(conn, "x", eid, 19_000.0, 19_001.0) == 2
+
+
+def test_tool_mix_reads_one_jobs_calls_by_the_job_id_index(conn):
+    """read share: derive.tool_mix's one statement (derive._TOOL_MIX_SQL) seeks
+    ``tool_calls_job_id_t`` for the job's rows; list_jobs runs it once per summary (50), the
+    monitor's /api/jobs up to read.JOBS_LIMIT times, so a scan of the table would grow with
+    the whole history."""
+    from localagents import derive
+
+    plan = _plan(conn, derive._TOOL_MIX_SQL, ("j1",))
+    assert plan == ["SEARCH tool_calls USING INDEX tool_calls_job_id_t (job_id=?)"], plan
