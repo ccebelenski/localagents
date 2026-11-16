@@ -244,7 +244,13 @@ band minus elapsed, floored at a quarter of the band time so an overrunning job 
 nearly done) plus the band times of queued jobs ahead that would take the same slot. With no
 history the band's default is used and the ticket says "default". **Bottleneck rule:** on a row
 whose curve bottlenecks at n sessions, the n-th concurrent session is admitted only for
-background work.
+background work. *(True-now, 2026-11-15, the operator's ruling after a live two-slot llama.cpp box on the
+prior curve ran one job at a time all afternoon with its second slot free: "We're bottlenecked on a
+number we don't have, so that seems wrong." The rule holds a slot only on a MEASURED point of the
+curve: one the throughput probe wrote, or one refined from speed samples at that concurrency. A
+point that is still the backend-family prior predicts speed and expected wait and holds nothing,
+including on a curve whose other points are measured. A named job obeys a measured bottleneck like
+a routed one; `admit: force` is the override, the operator's choice of the two.)*
 
 **Never preempt.** A running job is never cancelled for a higher priority arrival.
 **No acceptable row, free or busy:** refuse with `no_acceptable_row` listing each row's
@@ -289,7 +295,8 @@ confirmed by one probe point (two concurrent, large prompt; refused while the en
 session, "run when quiet"), refined by every job's observed speed logged with the occupancy beside
 it. The curve never refuses, it predicts a session's speed at the current occupancy; that
 prediction feeds expected wait, the tie-break and the bottleneck rule (§6: aggregate at n below
-75% of aggregate at 1, so for the prior shape llama.cpp bottlenecks at 2 and vLLM does not). The
+75% of aggregate at 1, so for the prior shape llama.cpp bottlenecks at 2 and vLLM does not;
+*True-now, 2026-11-15: a prior point no longer holds a slot, see §6's bottleneck rule*). The
 partitioned model cannot tell a unified-KV llama.cpp (`-c` shared, `/props` reports it) from fixed
 slots; the probe records which it saw.
 
@@ -321,7 +328,7 @@ as occupancy, so the queue behind it reads an honest wait.
 **Directly named jobs** pass the same gate. The behaviour change from today: a job whose
 endpoint has no free session waits in our queue with a visible reason where it used to interleave
 inside the server with none, and a third session on a two-slot box waits for a job to finish
-instead of thrashing two others' caches. *(True-now, 2026-11-04, fix wave 3: the same gate includes §6's bottleneck rule, so on a two-slot box whose curve bottlenecks at the second session a named job of normal or urgent priority waits for the first to finish as well; a background job takes that slot; `admit: force` takes it regardless. This matches the operator's standing one-big-job-per-box rule and gives the decision and admission one predicate.)* `admit: now` refuses instead of waiting (`would_queue`,
+instead of thrashing two others' caches. *(True-now, 2026-11-04, fix wave 3: the same gate includes §6's bottleneck rule, so on a two-slot box whose curve bottlenecks at the second session a named job of normal or urgent priority waits for the first to finish as well; a background job takes that slot; `admit: force` takes it regardless. This matches the operator's standing one-big-job-per-box rule and gives the decision and admission one predicate.)* *(True-now, 2026-11-15: only where the curve's point is measured, §6; on an unmeasured box the one-job rule is the entry's `max_concurrent: 1`.)* `admit: now` refuses instead of waiting (`would_queue`,
 §4); `admit: force` skips the wait but still writes an admitted entry, so it is counted; the
 record says it forced. **Queue time counts inside the
 blocking wait**: `run_agent(wait_s)` covers queue plus run, the progress line says `queued #n,
