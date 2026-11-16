@@ -14,7 +14,13 @@ rows after running ones (1be3bad); a blocking wait holds for the settled record 
 operator held the other session's jobs and a Qwen3.8-27B construct-it review found no defect. Also landed: the
 curve fold's review by DeepSeek (one defect, fixed by the reviewer, 1ceb824) and `tool_mix` on the job record
 with Bash commands stored up to 2000 characters (2ed040d, a consumer requirement). EVERY session must reconnect
-its MCP server before running jobs: a server on older code refuses the v13 file. The text that follows is the
+its MCP server before running jobs: a server on older code refuses the v13 file. Then, after a live smoke
+showed a job with a background watcher holding its slot to its timeout: jobs run FOREGROUND-ONLY by default
+(d80b437; `run_agent(background_tasks=)` per job, `defaults.background_tasks`, the Bash timeouts raised to 600 s
+and a 1800 s ceiling) and a result held open by background tasks is recorded as such; this needs one more
+reconnect per session, and the new `defaults` keys must not be written into a models.yaml while any server still
+runs older code (an unknown defaults key is a TypeError there). Calibration jobs now run foreground-only too, so
+rows calibrated before this ran with a different prompt and tool schema. The text that follows is the
 record of the parking.** PARKED (then): branch `wait-estimate` in
 `/home/ccebelenski/projects/claudelocalmcp-ew`** (main merged in at 81a6183, suite 1384 passed, 1 skipped): the
 expected wait read from job history, the estimate on the queue entry, SCHEMA v13 (a column and an index). It must

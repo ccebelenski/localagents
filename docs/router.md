@@ -348,7 +348,8 @@ one, while a job further back waits, since an endpoint that is restarting reads 
 for about a minute. A
 running session with no message, tool call or start for 15 minutes gets one notice in its
 log saying how long it has been quiet and whether the endpoint answers a probe, and a
-routed job takes a `stalled` mark on its ticket. Nothing is cancelled; the job's own
+routed job takes a `stalled` mark on its ticket. A session whose result is reported while
+background tasks hold it open is waiting on them and gets no notice. Nothing is cancelled; the job's own
 timeout still applies. The notice comes from the periodic load sampler, so a stall shows
 up even when nothing is queued and no wake would come. That sampler wakes every ten
 seconds, and while this process has unfinished jobs it probes the endpoints those jobs

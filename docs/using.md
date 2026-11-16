@@ -19,6 +19,18 @@ waits — e.g. `running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: uv run py
 to about 28 hours. To run several jobs, Claude makes one blocking call per job; each
 one notifies on its own when it finishes.
 
+Jobs run in the foreground by default. The Bash tool in a job's session has no
+`run_in_background` parameter and no Monitor tool, a command's default timeout is
+`defaults.bash_timeout_s` (600 s) with a ceiling of `defaults.bash_max_timeout_s`
+(1800 s), and one sentence in the system prompt tells the model so. The reason is how a
+headless session ends. A session that starts a background task outlives its result,
+because the harness waits for the task and then takes another turn, and the job holds
+its slot all that time. `run_agent(background_tasks=true)` lets one job background its
+commands and `defaults.background_tasks: true` does it for every job. A resumed job keeps
+the value its first run had unless the call passes one, and the transcript's `[start]`
+line names it (`background_tasks=off`). An endpoint's own `env:` still wins over the
+variables this sets.
+
 `wait_jobs` is the fallback for calls that cannot background: start each job with
 `wait_s: 0` and wait on all the ids in one call. Each job's `timeout_s` counts from its
 own admission, as `wait_job`'s does, so time a job spends in the queue does not spend it,
@@ -46,7 +58,7 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 | tool | what it does |
 |---|---|
 | `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
-| `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, … |
+| `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, `background_tasks`, … |
 | `wait_job` / `wait_jobs` / `cancel_job` | the waits block on any server's job — another server's is polled from its row in the shared database — reporting progress while they block; `wait_jobs` takes several ids (`mode` all/any); `cancel_job` stops a job this server started and returns its final record once the session's teardown has settled it (up to two minutes, with progress; a `note` says when it has not) |
 | `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls and carries a `note` when neither the finished job's `transcripts` row nor its directory exists — a finished job's transcript is read from the database, so it outlives the file's retention — `job_log(tail_lines=0)` returns the whole transcript, `list_jobs(all=True)` spans every server's, and the listing answers with the 50 newest by default (`limit=0` lists everything) |
 | `foreign_job` | the answer only `cancel_job` and `run_agent(resume_job=…)` give for a job another server started (they need its process); the waits and the three reads above work on any job |
@@ -187,7 +199,13 @@ with `worktree.files_n` counting them all, and without the files git ignores). A
 `worktree.note` instead, and it keeps the tree. It is null
 for a job with no worktree, one that has not finished, or one whose diff could not be read. `compactions`
 is a column of its own: the runner counts the harness's `compact_boundary` messages
-into it. The transcript is written to the `transcripts` table once when the job
+into it. When a session reports a result while background tasks it started are still
+alive, `last_activity` reads `result reported; waiting on 1 background task:
+<description>` until they end, and the progress and status lines show the same. If the
+timeout or a cancel ends such a session, the record keeps the result and `error` says when
+it was reported and what held the session open. The status is still `timeout` or
+`cancelled`, and a job that times out before any result still reads `exceeded timeout of
+<n>s`. The record's `result` and `error` follow the session's latest result. The transcript is written to the `transcripts` table once when the job
 finishes, so it outlives the directory below.
 
 The directory — `~/.local/state/localagents/jobs/<id>/`, where `<id>` is the job's uuid
