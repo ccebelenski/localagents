@@ -20,7 +20,9 @@ to about 28 hours. To run several jobs, Claude makes one blocking call per job; 
 one notifies on its own when it finishes.
 
 `wait_jobs` is the fallback for calls that cannot background: start each job with
-`wait_s: 0` and wait on all the ids in one call. Be careful with it: a `mode: "any"` wait
+`wait_s: 0` and wait on all the ids in one call. Each job's `timeout_s` counts from its
+own admission, as `wait_job`'s does, so time a job spends in the queue does not spend it,
+and the progress line shows such a job as `queued #n, ~m min`. Be careful with it: a `mode: "any"` wait
 returns on the first finish and must be re-armed at once, or the remaining jobs finish
 with nobody watching (one coordinator lost six hours to that). Its `running` list holds
 every job whose record is not yet settled. At the timeout the call waits up to two minutes
@@ -45,7 +47,7 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 |---|---|
 | `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
 | `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, … |
-| `wait_job` / `wait_jobs` / `cancel_job` | the waits block on any server's job — another server's is polled from its row in the shared database — reporting progress while they block; `wait_jobs` takes several ids (`mode` all/any); `cancel_job` stops a job this server started |
+| `wait_job` / `wait_jobs` / `cancel_job` | the waits block on any server's job — another server's is polled from its row in the shared database — reporting progress while they block; `wait_jobs` takes several ids (`mode` all/any); `cancel_job` stops a job this server started and returns its final record once the session's teardown has settled it (up to two minutes, with progress; a `note` says when it has not) |
 | `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls and carries a `note` when neither the finished job's `transcripts` row nor its directory exists — a finished job's transcript is read from the database, so it outlives the file's retention — `job_log(tail_lines=0)` returns the whole transcript, `list_jobs(all=True)` spans every server's, and the listing answers with the 50 newest by default (`limit=0` lists everything) |
 | `foreign_job` | the answer only `cancel_job` and `run_agent(resume_job=…)` give for a job another server started (they need its process); the waits and the three reads above work on any job |
 | `register_endpoint` | add a server from inside a session (written to `models.local.yaml`) |
@@ -88,7 +90,10 @@ Messages sent to the relay let Claude cancel the job or, after it finishes, cont
 the same local session (`resume_job`). A follow-up runs on the same model, in the same
 directory and isolation: a worktree job continues in its tree, and if the tree was
 removed because the job changed nothing, it is recreated at the same path from the
-same base commit. Jobs live in the server's memory, so a follow-up is only possible
+same base commit. A tree is removed only when nothing in it would be lost, which means
+no change against the base and no file git ignores other than tool caches (`.venv`,
+`node_modules`, `__pycache__`, test-runner caches). A tree kept for an ignored file, such
+as a report in a gitignored `t/`, says so in `worktree.note` and names the files. Jobs live in the server's memory, so a follow-up is only possible
 while that server process is up. Stopping the relay from `/tasks` does **not**
 stop the local job; use `cancel_job`. The overhead is a few small Haiku turns per job,
 one per 25 minutes of job time (each `wait_job` blocks for 1500 s with progress
@@ -170,7 +175,8 @@ tool, `errors`, `last_tool`, `files_touched`, `ctx_tokens` and `gen_tps`. `files
 the edit tools were given, without the calls that failed, so a file written through the
 shell is not in it. `diff_files` comes from the worktree instead: the file list of a
 worktree job's diff against its base, recorded when the job finishes (at most 100 names,
-with `worktree.files_n` counting them all, and without the files git ignores). It is null
+with `worktree.files_n` counting them all, and without the files git ignores). A file git ignores that the job left is named in
+`worktree.note` instead, and it keeps the tree. It is null
 for a job with no worktree, one that has not finished, or one whose diff could not be read. `compactions`
 is a column of its own: the runner counts the harness's `compact_boundary` messages
 into it. The transcript is written to the `transcripts` table once when the job

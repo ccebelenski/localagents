@@ -305,7 +305,13 @@ score to be admitted.
 sizes. Seeded by a backend-family prior (llama.cpp degrades on several slots; vLLM batches),
 confirmed by one probe point (two concurrent, large prompt; refused while the endpoint has any
 session, "run when quiet"), refined by every job's observed speed logged with the occupancy beside
-it. The curve never refuses, it predicts a session's speed at the current occupancy; that
+it. *(True-now, 2026-11-15, the operator's go to wire it: until this date nothing folded the
+samples into a curve. The occupancy is the count of our sessions the run held for at least 90% of
+its wall time; a point is refined from at least 8 samples there and 8 at one session, the newest
+20 per count in 14 days, same served model, no calibration probes; a probed point takes the higher
+of the probe's ratio and the samples'; every fold re-derives from the probe's points or the prior;
+the curve records its served model and holds nothing for another; vLLM writes no samples. The
+thresholds are the builder's, accepted by the coordinator, the operator's to change.)* The curve never refuses, it predicts a session's speed at the current occupancy; that
 prediction feeds expected wait, the tie-break and the bottleneck rule (§6: aggregate at n below
 75% of aggregate at 1, so for the prior shape llama.cpp bottlenecks at 2 and vLLM does not;
 *True-now, 2026-11-15: a prior point no longer holds a slot, see §6's bottleneck rule*). The

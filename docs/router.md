@@ -316,10 +316,14 @@ it ran on. That model leaves the considered table. Naming that model directly as
 `model` is refused with `bad_argument`, and so is an `avoid_job` whose job has no
 recorded model.
 
-The blocking wait counts from admission. `run_agent` reports `queued #n, ~m min` while
-its entry waits, and the queue phase runs until admission or the caller cancels;
-`admit="now"` is how to not wait. The job's `timeout_s` and the call's `wait_s` both
-start at admission, so time spent in the queue does not spend the session's budget.
+The blocking waits count from admission. `run_agent`, `wait_job` and `wait_jobs` report
+`queued #n, ~m min` while the job's entry waits, and the queue phase runs until admission,
+until the job leaves the queue (dropped or cancelled), or until the caller cancels;
+`admit="now"` is how to not wait. The job's `timeout_s`, the call's `wait_s` and the
+waits' `timeout_s` all start at admission, so time spent in the queue does not spend the
+session's budget. In `wait_jobs` each job's cap counts from its own admission, and a wait
+called on a job that is already admitted counts from the call. The same holds for a job
+another server owns.
 The session's own clock starts a moment after admission, once its worktree is ready, and
 closing a session that ran out of time takes a few seconds more. A blocking call whose
 `wait_s` is at least the job's timeout waits through both and returns the final record;
@@ -397,10 +401,18 @@ pool is what held the best row, the decision records `pool` as the wait's cause 
 ## Verdicts and feedback
 
 A finished job feeds back the row it ran on. When the job reached a session and was not
-cancelled, the exit hook writes the job's gates, and where the job's session count and a
-measured generation speed are both known it writes a speed sample, and a sample comes
-only from a measurement. Speed samples merge by median at each session count and refine
-the capacity curve the throughput probe seeds. Neither feed
+cancelled, the exit hook writes the job's gates. Where the job's generation speed was
+measured and its run held one count of our sessions on the endpoint for at least 90% of
+its time, it also writes a speed sample at that count. A run whose count changed for
+longer writes none, and neither does a vLLM endpoint, which reports no generation time.
+Each sample folds the endpoint's recent samples into its capacity curve: the newest 20
+per session count from the last 14 days, taken from jobs that ran the same served model
+and were not calibration probes. A count's point is measured once it has 8 samples and
+the one-session baseline has 8. It is the ratio of the two medians, and a point the
+throughput probe measured is not set below the probe's value. A curve measured on one
+served model holds no slot for another. A change to the curve is a `[curve]` line in the
+finishing job's log, and `list_models` shows the measured counts and where a hold begins
+(`curve_state.measured`, `curve_state.holds_from`). Neither feed
 changes the job's status, and a feed that throws is a log line, not a failed job.
 
 The gates are six. `tests` reads the record: where the brief names a test runner, the

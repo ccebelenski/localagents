@@ -18,7 +18,17 @@ migrates on open, so the status line's next refresh would migrate the live store
 (`tools/land.sh wait-estimate -F msg`) only at the operator's word that the other sessions' jobs have drained,
 then place its stale doc sentences (router.md:435 "version 12", :278, :349; design spec §6/§7 queue_entries
 listing; this file's "schema v12") and have every session reconnect. Until a session reconnects its server runs
-the old admission and wait code. Open, the operator's call: `wait_job` counts its cap from the call, not from
+the old admission and wait code. **Second round, same day, at the operator's "you can build":** a worktree is removed only when nothing in it
+would be lost, every finish-path git call is bounded, one copy-index reader (84fbe8e); `wait_job`/`wait_jobs`
+count their cap from admission and `cancel_job` uses the settle hold (8e5f4b0); curves are refined from speed
+samples under a fail-closed rule and belong to their served model (1ea97c7; design §7 True-now). Suite 1407
+passed, 1 skipped. That closes the first three and the fifth of the items listed next, and the gitignored-report
+loss. Still open after it: `feedback.note_start` / `sessions_at_start` and `on_finish(sessions=)` feed nothing
+now (remove); run_agent's tool text still says a worktree is "kept only if changed" (its description is at 2044
+of 2048 characters); `make_worktree`'s `worktree add` is unbounded; calibrate.py:481 holds a second copy of the
+queue-then-wait act (`_wait_admitted`'s last caller); an empty ignored directory keeps a tree. The operator will
+say when ai9 frees up (a second-model review of the v13 branch waits for a box) and restarts the MCP servers
+only at a quiet time. The list as it stood before the second round: `wait_job` counts its cap from the call, not from
 admission; the runner's git helper has no timeout (a hung git in `finish_worktree` never settles the job);
 `cancel_job`'s 15 s wait is shorter than the SDK's worst-case close; `Curve.refine` is called by nothing in
 production (speed samples are written and never folded into a curve); a worktree job whose only output is a
