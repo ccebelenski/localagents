@@ -242,7 +242,19 @@ know it, the caller passes it.
 slots, of the remaining time of the session there (its row's band time at the job's complexity
 band minus elapsed, floored at a quarter of the band time so an overrunning job never reads as
 nearly done) plus the band times of queued jobs ahead that would take the same slot. With no
-history the band's default is used and the ticket says "default". **Bottleneck rule:** on a row
+history the band's default is used and the ticket says "default". *(True-now, 2026-11-15, the
+operator's go after an investigation of three live estimates: `~1 min` logged for a 12.9 min
+wait, `~2 min` for one past 30 min. The row's band times are medians dominated by calibration
+probes, 20 to 100 seconds, while the jobs behind them ran 45 to 70 minutes, and a named job's
+duration never entered them: only ticketed jobs do. A session's or a queued job's time is read
+from JOB HISTORY: the finished non-calibration jobs on the same endpoint and served id, at the
+job's band when enough of them carry that band, else across all of them. Probe seconds are not a
+wall-clock prediction; with too little history the band's default table is used and the estimate
+says "default". A session already past its expected time is read from how much longer the past
+jobs that ran at least that long went on to run, in place of the quarter-band floor. A slot the
+bottleneck rule holds from the asking priority counts as occupied. The estimate is written on the
+job's queue entry at every wake, so any server process reads the same refreshed number, a named
+job's included.)* **Bottleneck rule:** on a row
 whose curve bottlenecks at n sessions, the n-th concurrent session is admitted only for
 background work. *(True-now, 2026-11-15, the operator's ruling after a live two-slot llama.cpp box on the
 prior curve ran one job at a time all afternoon with its second slot free: "We're bottlenecked on a
