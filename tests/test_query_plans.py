@@ -194,6 +194,38 @@ def test_queue_live_reads_select_the_live_rows(conn):
     assert conn.execute(queue._stale_sql(1), (1, 0.0)).fetchall() == []
     assert [r["job_id"] for r in conn.execute(queue._stale_sql(1), (1, 5.0))] == ["j8"]
 
+def test_wait_history_walks_the_endpoint_model_index_newest_first(conn):
+    """§6 "Expected wait" (True-now 2026-11-15): the wait's job-history read
+    (``dispatch._HISTORY_SQL``) runs per scorecard row per decision and per queued job's wake,
+    so it must never walk the endpoint's whole history: it seeks schema v13's
+    ``jobs_endpoint_model_finished`` on (endpoint, served id) and walks it backwards from the
+    newest finish to the LIMIT, with no sort, after ANALYZE over 3000 finished jobs on three
+    endpoints (a sort would mean every job of the endpoint was read first)."""
+    from localagents.router import dispatch
+
+    eps = [db.lookup_id(conn, "endpoints", name=f"e{i}", base_url=f"http://e{i}", backend="vllm",
+                        host="h") for i in range(3)]
+    mid = db.lookup_id(conn, "models", served_id="m")
+    conn.execute("BEGIN")
+    for n in range(3000):
+        conn.execute("INSERT INTO jobs (id, endpoint_id, model_id, status, created_at, started_at,"
+                     " finished_at, calibration) VALUES (?, ?, ?, 'succeeded', ?, ?, ?, ?)",
+                     (f"h{n}", eps[n % 3], mid, float(n), float(n), n + 50.0, n % 7 == 0))
+    conn.execute("COMMIT")
+    conn.execute("ANALYZE")
+    plan = _plan(conn, dispatch._HISTORY_SQL, (eps[0], "m", 20))
+    assert any("SEARCH j USING INDEX jobs_endpoint_model_finished"
+               " (endpoint_id=? AND model_id=? AND finished_at>?)" in d for d in plan), plan
+    assert not any("TEMP B-TREE" in d for d in plan), plan
+    assert not any(d.startswith("SCAN") for d in plan), plan
+    got = conn.execute(dispatch._HISTORY_SQL, (eps[0], "m", 20)).fetchall()
+    assert len(got) == 20
+    finishes = [r["finished_at"] for r in got]
+    # the newest on e0 is h2997 (2997 % 3 == 0, not a calibration job: 2997 % 7 == 1)
+    assert finishes == sorted(finishes, reverse=True) and finishes[0] == 2997 + 50.0
+    assert all(int(f - 50) % 3 == 0 and int(f - 50) % 7 != 0 for f in finishes)
+
+
 def test_status_session_count_drives_from_job_status(conn):
     """status-sessions: the status line's per-endpoint session count (status._SESSIONS_SQL,
     queue.occupancy's set restated and grouped by endpoint name) reads like the queue's own

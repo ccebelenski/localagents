@@ -724,10 +724,25 @@ def _v12(conn: sqlite3.Connection) -> None:
         raise SchemaError(f"schema version 12 would break foreign keys: {sorted(broken)[:5]}")
 
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 12.
+# Version 13 (router-design spec §6 "Expected wait", True-now 2026-11-15, the operator's go):
+# ``queue_entries.est_wait_s``, the waiting job's expected wait in seconds, written at its first
+# admission attempt and at every wake that leaves it waiting, NULL once admitted (or never
+# estimated), so any server process reads the same refreshed number, a named job's included;
+# and ``jobs_endpoint_model_finished``, the index the wait's job-history read walks: the newest
+# finished jobs of one endpoint x served id, newest first, without walking the endpoint's
+# history or the whole table's (``jobs_endpoint_id`` would read and sort every job of the
+# endpoint; ``jobs_finished_at`` would walk every endpoint's jobs back to the first match).
+# Both plain: a re-run must fail loudly. The ALTER is an append (no CHECK, no default).
+_V13 = [
+    "ALTER TABLE queue_entries ADD COLUMN est_wait_s REAL",
+    "CREATE INDEX jobs_endpoint_model_finished ON jobs(endpoint_id, model_id, finished_at)",
+]
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 13.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5), _v6,
     _statements(_V7), _statements(_V8), _v9, _statements(_V10), _statements(_V11), _v12,
+    _statements(_V13),
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 # the steps that rebuild a table other tables reference: migrate() runs a pending one with

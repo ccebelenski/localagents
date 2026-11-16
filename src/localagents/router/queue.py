@@ -2,9 +2,10 @@
 
 Several Claude sessions each run a localagents server against one SQLite file, so the queue is
 a ``queue_entries`` row per job: its endpoint, priority rank, arrival, owning server, admission
-moment, whether it was forced, and (schema v12) why it still waits. Order is priority rank,
-then arrival (the row's insertion order breaks a tie). Position and expected wait are computed
-on read.
+moment, whether it was forced, (schema v12) why it still waits and (schema v13) its expected
+wait, refreshed at every wake. Order is priority rank, then arrival (the row's insertion order
+breaks a tie). Position is computed on read; the expected wait is computed by the job's own
+loop and written here (``set_estimate``) so every server process reads the same number.
 
 Occupancy is counted in sessions: our admitted entries whose job is ``queued`` (admitted, task
 not yet started) or ``running`` and whose owning server's heartbeat is fresh. Foreign sessions
@@ -278,12 +279,32 @@ def try_admit(conn: sqlite3.Connection, job_id: str, capacity: Capacity, now: fl
                                 pool_blocked_ahead(conn, pool_ids, _key(me), now, job_id))
         if room(capacity, ours, priority, ahead=0 if is_head else 1,
                 pool_admits=pool_ok):
-            conn.execute("UPDATE queue_entries SET admitted = ?, blocked_by = NULL WHERE job_id = ?",
-                         (now, job_id))
+            # an admitted entry waits for nothing: its wait estimate goes in the same write
+            conn.execute("UPDATE queue_entries SET admitted = ?, blocked_by = NULL, est_wait_s = NULL"
+                         " WHERE job_id = ?", (now, job_id))
             return True
         why = "pool" if endpoint_ok and not pool_ok else "endpoint"
         conn.execute("UPDATE queue_entries SET blocked_by = ? WHERE job_id = ?", (why, job_id))
         return False
+
+
+def set_estimate(conn: sqlite3.Connection, job_id: str, est_wait_s: float | None) -> bool:
+    """§6 "Expected wait" (True-now 2026-11-15): the waiting entry's expected wait in seconds
+    (schema v13), written by the job's own loop at its first admission attempt and at every
+    wake that leaves it waiting, so any server process reads the same refreshed number, a named
+    job's included. Only a waiting entry takes it: an admitted one keeps NULL (``try_admit``
+    nulls it in the admission's own write). None is "unknown". True when an entry took it."""
+    with db.immediate(conn):
+        return conn.execute("UPDATE queue_entries SET est_wait_s = ? WHERE job_id = ?"
+                            " AND admitted IS NULL", (est_wait_s, job_id)).rowcount > 0
+
+
+def estimate_of(conn: sqlite3.Connection, job_id: str) -> float | None:
+    """The waiting entry's stored expected wait (``set_estimate``), None when there is none:
+    no entry, admitted, or not estimated yet."""
+    r = conn.execute("SELECT est_wait_s FROM queue_entries WHERE job_id = ? AND admitted IS NULL",
+                     (job_id,)).fetchone()
+    return r["est_wait_s"] if r is not None else None
 
 
 def waiting(conn: sqlite3.Connection, endpoint_id: int, now: float) -> list[sqlite3.Row]:

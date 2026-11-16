@@ -38,8 +38,9 @@ from localagents.router.capacity import (Capacity, context_load_tokens, from_pro
                                          prior_curve)
 from localagents.router.decision import BriefScores, resolve_brief, score
 from localagents.router.feedback import brief_files
-from localagents.router.select import (FALLBACK_BAND, PRIORITIES, Candidate, Considered, Decision,
-                                       Session, band_time, expected_wait, select)
+from localagents.router.select import (HISTORY_N, HISTORY_STATUSES, PRIORITIES, Candidate,
+                                       Considered, Decision, History, Session, expected_wait,
+                                       select, wait_default)
 
 # §7 "Stalled sessions": a running admitted session with no progress for this long gets a
 # notice (its endpoint probed); nothing is cancelled, the job's own timeout still governs it
@@ -254,7 +255,7 @@ def _waiting(conn: sqlite3.Connection, endpoint_id: int, now: float) -> list[sql
     their tickets' scores."""
     return conn.execute(
         "SELECT q.job_id, q.priority_rank, q.enqueued, q.blocked_by, q.rowid AS entry_rowid,"
-        " t.scores, t.est_wait_s" + queue.LIVE_FROM +
+        " q.est_wait_s AS entry_est, t.scores, t.est_wait_s" + queue.LIVE_FROM +
         " LEFT JOIN router_tickets t ON t.job_id = q.job_id"
         f" WHERE j.status = 'queued' AND q.endpoint_id = ? AND q.admitted IS NULL AND {queue._LIVE}"
         " ORDER BY q.priority_rank, q.enqueued, q.rowid",
@@ -264,6 +265,34 @@ def _waiting(conn: sqlite3.Connection, endpoint_id: int, now: float) -> list[sql
 def _entry_key(r: sqlite3.Row) -> tuple:
     """queue order: priority rank, then arrival, then insertion (queue._key's order)."""
     return (r["priority_rank"], r["enqueued"], r["entry_rowid"])
+
+
+# §6 "Expected wait" (True-now 2026-11-15): the job history a wait reads, the newest finished
+# non-calibration jobs of one endpoint x served id (select.HISTORY_N, HISTORY_STATUSES). Walks
+# schema v13's jobs_endpoint_model_finished backwards from the newest finish and stops at the
+# LIMIT; the rows the filter skips (calibration probes, other statuses) are the only extra
+# reads. INDEXED BY as in queue.LIVE_FROM: whatever ANALYZE's statistics say. Parameters:
+# endpoint_id, served_id, the limit. tests/test_query_plans.py pins its plan.
+_HISTORY_SQL = (
+    "SELECT j.started_at, j.finished_at, t.scores"
+    " FROM jobs j INDEXED BY jobs_endpoint_model_finished"
+    " LEFT JOIN router_tickets t ON t.job_id = j.id"
+    " WHERE j.endpoint_id = ? AND j.model_id = (SELECT id FROM models WHERE served_id = ?)"
+    " AND j.finished_at IS NOT NULL AND j.started_at IS NOT NULL AND j.calibration = 0"
+    f" AND j.status IN ({', '.join(repr(s) for s in HISTORY_STATUSES)})"
+    " ORDER BY j.finished_at DESC LIMIT ?"
+)
+
+
+def history(conn: sqlite3.Connection, endpoint_id: int | None, served_id: str) -> History:
+    """The job history a wait on this endpoint x served id reads (``_HISTORY_SQL``): each run's
+    seconds and its ticket's complexity band (``_band``: None for a named job). An endpoint with
+    no row yet has no history. A run whose clock went backwards reads as zero seconds."""
+    if endpoint_id is None:
+        return History([])
+    rows = conn.execute(_HISTORY_SQL, (endpoint_id, served_id, HISTORY_N)).fetchall()
+    return History([(max(0.0, float(r["finished_at"] - r["started_at"])), _band(r["scores"]))
+                    for r in rows])
 
 
 def _ahead(conn: sqlite3.Connection, endpoint_id: int | None, rank: int, now: float,
@@ -297,27 +326,10 @@ def _exclusion(ep: Endpoint, scores: BriefScores, unproven: frozenset[str]) -> s
     return None
 
 
-def _brief_band(scores: BriefScores, unproven: frozenset[str]) -> int:
-    value = scores.values.get("complexity")
-    if ("complexity" in scores.undetermined or "complexity" in unproven
-            or not isinstance(value, int) or isinstance(value, bool)):
-        return FALLBACK_BAND
-    return value
-
-
-def _wait_default(cand: Candidate, scores: BriefScores, unproven: frozenset[str]) -> bool:
-    """§6/§7c: the expected wait is "default" when any band time it summed came from the
-    table, not the row (``band_time``'s flag; ``expected_wait`` drops it)."""
-    brief = _brief_band(scores, unproven)
-    bands = {brief}
-    bands |= {s.band if s.band is not None else brief for s in cand.running[:cand.ours_running]}
-    bands |= {b if b is not None else brief for b in cand.ahead_bands[:cand.queued_ahead]}
-    return any(band_time(cand.row, b)[1] for b in bands)
-
-
 def _bare_row(ep: Endpoint, served_id: str) -> scorecard.Row:
-    """A row-shaped stand-in for an endpoint x served id with no scorecard row (a named job's
-    expected wait reads the band defaults)."""
+    """A row-shaped stand-in for an endpoint x served id with no scorecard row. The expected
+    wait never reads a row's band times (§6 True-now 2026-11-15: job history, else the band
+    defaults), so a bare row waits exactly as a scorecard row does."""
     return scorecard.Row(id=0, endpoint_name=ep.name, served_id=served_id, endpoint_id=0,
                          model_id=0, set_version=None, band_times={}, speed_factor=None,
                          archived=None, facts=None)
@@ -352,8 +364,9 @@ def _candidate(conn: sqlite3.Connection, row: scorecard.Row, cells: list, f: Fac
         pool_admits=pool_admits,
         running=_sessions(conn, f.endpoint_id, now) if f.endpoint_id is not None else [],
         ahead_bands=[_band(a["scores"]) for a in ahead],
-        queued_higher=sum(1 for a in ahead if a["priority_rank"] < rank))
-    cand.expected_wait_s = expected_wait(cand, scores, now, unproven)
+        queued_higher=sum(1 for a in ahead if a["priority_rank"] < rank),
+        history=history(conn, f.endpoint_id, row.served_id))
+    cand.expected_wait_s = expected_wait(cand, scores, now, unproven, queue.priority_name(rank))
     return cand
 
 
@@ -388,7 +401,7 @@ def _row_dicts(view_cands: list[Candidate], considered: list[Considered], scores
     for c, cand in zip(considered, view_cands):
         d = asdict(c)
         d["expected_wait_s"] = _finite(cand.expected_wait_s)
-        d["wait_default"] = _wait_default(cand, scores, unproven) if cand.capacity is not None else None
+        d["wait_default"] = wait_default(cand) if cand.capacity is not None else None
         d["pool"] = cand.pool
         out.append(d)
     return out
@@ -476,7 +489,7 @@ def _ticket(view: View, router_ep: Endpoint, priority: str, now: float,
     flags = {"router": router_ep.name, "priority": priority, "reason": d.chosen_reason,
              "tie_break": d.tie_break, "wait_cause": d.wait_cause, "pool": _pool_of(view),
              "truncated": view.scores.truncated, "load_tokens": view.load_tokens,
-             "est_wait_default": (_wait_default(q, view.scores, unproven) if q is not None else False)}
+             "est_wait_default": wait_default(q) if q is not None else False}
     if avoid_served_id is not None:
         flags["avoid_served_id"] = avoid_served_id
     return {"defs_version": view.scores.defs_version,
@@ -762,19 +775,39 @@ def alternatives(decision: Decision) -> list[dict]:
             for c in decision.considered if c.filtered is None and c.admits]
 
 
+def waiting_estimate(conn: sqlite3.Connection, job_id: str) -> float | None:
+    """A waiting job's expected wait as every reader gives it, any server's job (§6 True-now
+    2026-11-15): its queue entry's refreshed number (``queue.set_estimate``, written by the
+    job's own loop at every wake), else the ticket's wait at enqueue (an entry its loop has not
+    estimated yet, or one written before schema v13), else None."""
+    est = queue.estimate_of(conn, job_id)
+    if est is None:
+        r = conn.execute("SELECT est_wait_s FROM router_tickets WHERE job_id = ?", (job_id,)).fetchone()
+        est = r["est_wait_s"] if r is not None else None
+    return est
+
+
+def _store_estimate(conn: sqlite3.Connection, job: Job, est: float | None) -> None:
+    """The job's estimate in memory and on its queue entry; a failed write is a logged line
+    (the next wake writes it again), never an exception on the admission path."""
+    job._queue_estimate = est
+    try:
+        queue.set_estimate(conn, job.id, est)
+    except Exception as e:  # noqa: BLE001 -- the wait goes on; the next wake rewrites it
+        job._log_safe(f"[queue-error] estimate: {type(e).__name__}: {e}")
+
+
 def queued_line(conn: sqlite3.Connection, job: Job) -> str | None:
     """The blocking wait's progress line while queued (§7): ``queued #n, ~m min``; None when the
-    job has no waiting entry (admitted, over, or never entered)."""
+    job has no waiting entry (admitted, over, or never entered). The wait is
+    ``waiting_estimate``'s, the one every server process reads."""
     try:
         pos = queue.position(conn, job.id, time.time())
     except KeyError:
         return None
     if not pos:
         return None
-    est = job._queue_estimate
-    if est is None:
-        r = conn.execute("SELECT est_wait_s FROM router_tickets WHERE job_id = ?", (job.id,)).fetchone()
-        est = r["est_wait_s"] if r is not None else None
+    est = waiting_estimate(conn, job.id)
     mins = str(math.ceil(est / 60)) if est is not None else "?"
     return f"queued #{pos}, ~{mins} min"
 
@@ -789,9 +822,9 @@ def note_queued(conn: sqlite3.Connection, job: Job, facts: Facts, now: float) ->
     blocked = conn.execute("SELECT blocked_by FROM queue_entries WHERE job_id = ?", (job.id,)).fetchone()
     blocked_by = blocked["blocked_by"] if blocked is not None else None
     if route_ is not None and route_.decision.queue_for is not None:
-        job._queue_estimate = _finite(route_.decision.queue_for.expected_wait_s)
+        _store_estimate(conn, job, _finite(route_.decision.queue_for.expected_wait_s))
     else:
-        job._queue_estimate = estimate(conn, job, facts, route_.scores if route_ else None, now)
+        _store_estimate(conn, job, estimate(conn, job, facts, route_.scores if route_ else None, now))
     if (job.routed_by is not None and blocked_by == "pool" and facts.pool
             and job.routed_by.get("pool") is None):
         job.routed_by = {**job.routed_by, "pool": facts.pool}
@@ -1059,7 +1092,7 @@ async def _wake(store: JobStore, conn: sqlite3.Connection, job: Job, reg: Regist
     if try_admit_now(conn, job, facts, now):
         job._log_safe(f"[queue] admitted on {job.endpoint} after {now - (job.created_at or now):.0f} s")
         return Resolution.make(facts.endpoint, job.model, facts.probe)
-    job._queue_estimate = estimate(conn, job, facts, routed.scores if routed else None, now)
+    _store_estimate(conn, job, estimate(conn, job, facts, routed.scores if routed else None, now))
     return False
 
 
@@ -1143,17 +1176,24 @@ async def queue_view(reg: Registry, conn: sqlite3.Connection, ep: Endpoint,
         row = _live_row(conn, ep.name, served) or _bare_row(ep, served)
         sessions = _sessions(conn, f.endpoint_id, now)
         waiting = _waiting(conn, f.endpoint_id, now)
+        past = history(conn, f.endpoint_id, served)
         for i, w in enumerate(waiting):
             band = _band(w["scores"])
             s = BriefScores({"complexity": band} if band is not None else {}, {}, set(), False, {}, 0)
             cand = Candidate(row=row, cells=[], capacity=cap, ours_running=f.ours, queued_ahead=i,
                              window=None, expected_wait_s=None, excluded_by=None, pool=f.pool,
                              pool_admits=f.pool_admits, running=sessions,
-                             ahead_bands=[_band(a["scores"]) for a in waiting[:i]])
+                             ahead_bands=[_band(a["scores"]) for a in waiting[:i]], history=past)
+            # the job's own loop writes its refreshed wait on the entry (§6 True-now
+            # 2026-11-15): the queue tool shows that number, the one job_status shows; an entry
+            # not estimated yet is computed here
+            est = w["entry_est"]
+            if est is None:
+                est = _finite(expected_wait(cand, s, now,
+                                            priority=queue.priority_name(w["priority_rank"])))
             queued.append({"job_id": w["job_id"], "position": i + 1,
                            "priority": queue_priority(w["priority_rank"]), "enqueued": w["enqueued"],
-                           "blocked_by": w["blocked_by"],
-                           "expected_wait_s": _finite(expected_wait(cand, s, now))})
+                           "blocked_by": w["blocked_by"], "expected_wait_s": est})
     pool = None
     if f.pool is not None:
         pool = {"name": f.pool, "max_concurrent": reg.pools[f.pool]["max_concurrent"],

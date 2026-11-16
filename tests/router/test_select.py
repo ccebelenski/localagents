@@ -310,16 +310,19 @@ def test_idle_rows_tie_break_on_the_measured_speed_factor_not_row_order():
 # --- expected wait (§6, "Expected wait") ----------------------------------------------------------
 
 def test_expected_wait_per_slot_and_overrun_floor():
+    """The default table's arithmetic (no job history on the candidate). Moved 2026-11-15 (§6
+    True-now): the row's band times are calibration probe seconds and never a wall-clock
+    time, so the row's {2: 1000} is no longer read; band 2 is the table's 1800 s."""
     assert BAND_TIMES_S == {0: 120, 1: 600, 2: 1800, 3: 3600, 4: 5400}
     row = _row(1, band_times={2: 1000.0})
-    sessions = [Session(started_at=NOW - 400, band=2),     # 1000 - 400 = 600 left
-                Session(started_at=NOW - 1200, band=2)]    # overran: floored at 1000 / 4 = 250
+    sessions = [Session(started_at=NOW - 400, band=2),     # 1800 - 400 = 1400 left
+                Session(started_at=NOW - 1600, band=2)]    # overran: floored at 1800 / 4 = 450
     cand = _cand(row, _cells(), capacity=_cap(2, running=2), ours=2, running=sessions)
-    assert expected_wait(cand, _scores(), NOW) == pytest.approx(250.0)
-    # one band-2 job queued ahead takes the 250 slot (free again at 1250): ours waits for 600
+    assert expected_wait(cand, _scores(), NOW) == pytest.approx(450.0)
+    # one band-2 job queued ahead takes the 450 slot (free again at 2250): ours waits for 1400
     ahead = _cand(row, _cells(), capacity=_cap(2, running=2), ours=2, queued=1,
                   running=sessions, ahead_bands=[2])
-    assert expected_wait(ahead, _scores(), NOW) == pytest.approx(600.0)
+    assert expected_wait(ahead, _scores(), NOW) == pytest.approx(1400.0)
     # a free slot: no wait
     free = _cand(row, _cells(), capacity=_cap(2, running=1), ours=1, running=sessions[:1])
     assert expected_wait(free, _scores(), NOW) == 0.0
@@ -330,7 +333,7 @@ def test_expected_wait_per_slot_and_overrun_floor():
     # a session with no band of its own reads at the brief's complexity band
     unbanded = _cand(row, _cells(), capacity=_cap(1, running=1), ours=1,
                      running=[Session(started_at=NOW - 100, band=None)])
-    assert expected_wait(unbanded, _scores({"complexity": 2}), NOW) == pytest.approx(900.0)
+    assert expected_wait(unbanded, _scores({"complexity": 2}), NOW) == pytest.approx(1700.0)
 
 
 # --- the ticket's row list ------------------------------------------------------------------------
@@ -432,7 +435,8 @@ def test_unproven_axis_is_always_undetermined():
     assert _by_row(d)[1].shortfall == pytest.approx(0.5)
     # an unproven complexity is not the brief's band in the wait either: an unbanded session
     # reads at the brief's band 4 (no history: 5400 - 100) when proven, at the middle band 2
-    # (the row's 1000 - 100) when not
+    # (the table's 1800 - 100; moved 2026-11-15, §6 True-now: the row's probe-scale band times
+    # are never read) when not
     row = _row(2, band_times={2: 1000.0})
     waiting = _cand(row, _cells(), capacity=_cap(1, running=1), ours=1,
                     running=[Session(started_at=NOW - 100, band=None)])
@@ -440,7 +444,7 @@ def test_unproven_axis_is_always_undetermined():
     unproven = expected_wait(waiting, _scores({"complexity": 4}), NOW,
                              frozenset({"complexity"}))
     assert proven == pytest.approx(BAND_TIMES_S[4] - 100)
-    assert unproven == pytest.approx(900.0)
+    assert unproven == pytest.approx(1700.0)
 
 
 def test_chosen_reason_is_one_line():

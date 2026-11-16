@@ -39,6 +39,9 @@ INDEXES = {
     # version 10 (router 1, spec §13): scorecard_rows_identity is the partial unique index
     # on (endpoint_name, served_id) WHERE archived IS NULL
     "scorecard_rows_identity", "scorecard_passes_row_at", "queue_entries_dispatch",
+    # version 13 (router-design §6 "Expected wait", True-now 2026-11-15): the wait's job-history
+    # read walks one endpoint x served id's finished jobs newest first
+    "jobs_endpoint_model_finished",
 }
 MONITOR_INDEXES = {"probes_endpoint_t", "endpoint_events_endpoint_t", "host_probes_host_t"}
 # every column of every table, in the spec's order
@@ -78,7 +81,9 @@ COLUMNS = {
     "queue_entries": ["job_id", "endpoint_id", "owner_server", "priority_rank", "enqueued",
                       "admitted", "forced",
                       # version 12 (router 11): why a queued entry waits (pool | endpoint)
-                      "blocked_by"],
+                      "blocked_by",
+                      # version 13 (§6 True-now 2026-11-15): the waiting job's refreshed wait
+                      "est_wait_s"],
     "router_tickets": ["job_id", "defs_version", "pass_id", "scores", "rows", "chosen_row",
                        "divert", "divert_at", "est_wait_s", "admitted", "flags"],
     "verdicts": ["job_id", "accepted", "dimensions", "at"],
@@ -129,12 +134,13 @@ def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     (router 1, router-design spec §13: the router's tables and jobs' priority, calibration and
     gates), the version-11 step (router 1 review M7: the ticket's, cell's and correction's
     references, rebuilt in place) and the version-12 step (router 11: jobs.routed_by,
-    queue_entries.blocked_by, the status CHECK's 'dropped'), so it comes up at version 12
-    with them."""
+    queue_entries.blocked_by, the status CHECK's 'dropped') and the version-13 step (router
+    design §6 True-now 2026-11-15: queue_entries.est_wait_s, jobs_endpoint_model_finished), so
+    it comes up at version 13 with them."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
-    assert db.SCHEMA_VERSION == 12 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    assert db.SCHEMA_VERSION == 13 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -745,7 +751,7 @@ def test_v10_creates_the_router_tables_with_not_null_keys(dbfile):
     the spec leaves optional are nullable: a ticket predates its choice and predates the pass
     it cites, a skipped probe never had a job."""
     conn = db.open_db()
-    assert db.SCHEMA_VERSION == 12 == len(db.MIGRATIONS)
+    assert db.SCHEMA_VERSION == 13 == len(db.MIGRATIONS)
     assert ROUTER_TABLES <= _names(conn, "table")
     nullable_refs, refs = set(), {}
     for table in sorted(ROUTER_TABLES):
@@ -991,12 +997,15 @@ def test_v12_rebuild_keeps_every_referencing_row_and_fk_check_is_clean(dbfile):
     assert before["fk_check"] == []
     assert all(len(rows) == 1 for rows in before["children"].values())  # a row in each
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    # the file opens at the current version: version 13 runs after the rebuild (its column and
+    # index are read off below, so this test stays about version 12's rebuild)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1  # restored after the step
     conn.close()
     after = _dump(dbfile)
     assert after["fk_check"] == []
-    assert after["children"]["queue_entries"] == [r + (None,) for r in before["children"]["queue_entries"]]
+    # blocked_by (v12) and est_wait_s (v13) appended, both NULL on the old row
+    assert after["children"]["queue_entries"] == [r + (None, None) for r in before["children"]["queue_entries"]]
     for t in JOBS_CHILDREN:
         if t != "queue_entries":  # blocked_by appended there, NULL on the old row
             assert after["children"][t] == before["children"][t], t
@@ -1004,7 +1013,8 @@ def test_v12_rebuild_keeps_every_referencing_row_and_fk_check_is_clean(dbfile):
     assert [r[0] for r in after["jobs"]] == [3, 7]
     assert after["info"][:-1] == before["info"]  # type, NOT NULL, default, pk: column for column
     assert after["info"][-1] == (len(before["info"]), "routed_by", "TEXT", 0, None, 0)
-    assert after["indexes"] == before["indexes"]
+    # the rebuild hands every index back; version 13 then adds its one
+    assert [r for r in after["indexes"] if r[0] != "jobs_endpoint_model_finished"] == before["indexes"]
     assert "jobs_by_hand" in {r[0] for r in after["indexes"]}
     raw = sqlite3.connect(dbfile)
     jobs_sql = raw.execute("SELECT sql FROM sqlite_master WHERE name = 'jobs'").fetchone()[0]
@@ -1044,7 +1054,7 @@ def test_v12_tolerates_a_violation_the_file_already_had(dbfile):
     before = _dump(dbfile)["fk_check"]
     assert len(before) == 1 and before[0][0] == "tool_calls"
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     conn.close()
     assert _dump(dbfile)["fk_check"] == before
 
@@ -1159,3 +1169,37 @@ def test_session_pid_is_none_below_init_or_without_proc(monkeypatch):
     assert db.session_pid(start_pid=100) is None
     _fake_proc(monkeypatch, {})
     assert db.session_pid(start_pid=12345) is None
+
+
+def test_v13_appends_the_entry_estimate_and_the_history_index(dbfile):
+    """Router design §6 "Expected wait" (True-now 2026-11-15): a file as version 12 left it (a
+    waiting entry, an admitted one, finished jobs) opens at version 13 with every row intact,
+    ``queue_entries.est_wait_s`` appended last, nullable REAL with no default and NULL on the
+    old rows, and ``jobs_endpoint_model_finished`` on (endpoint_id, model_id, finished_at). A
+    re-run of the step fails loudly (plain DDL, like every step)."""
+    _v11_file(dbfile)
+    raw = sqlite3.connect(dbfile)   # foreign keys off, as migrate() runs the rebuild
+    db.MIGRATIONS[11](raw)
+    raw.execute("PRAGMA user_version = 12")
+    raw.execute("UPDATE queue_entries SET blocked_by = 'endpoint'")
+    raw.commit()
+    raw.close()
+    before = _dump(dbfile)
+    assert len(before["children"]["queue_entries"][0]) == 9   # rowid + v12's eight columns
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    conn.close()
+    after = _dump(dbfile)
+    assert after["jobs"] == before["jobs"]
+    assert after["children"]["queue_entries"] == [r + (None,) for r in before["children"]["queue_entries"]]
+    for t in JOBS_CHILDREN:
+        if t != "queue_entries":
+            assert after["children"][t] == before["children"][t], t
+    raw = sqlite3.connect(dbfile)
+    info = raw.execute("PRAGMA table_info(queue_entries)").fetchall()
+    assert info[-1][1:] == ("est_wait_s", "REAL", 0, None, 0)
+    assert [r[2] for r in raw.execute("PRAGMA index_info(jobs_endpoint_model_finished)")] == [
+        "endpoint_id", "model_id", "finished_at"]
+    with pytest.raises(sqlite3.OperationalError):   # a second run is a bookkeeping bug, loud
+        db.MIGRATIONS[12](raw)
+    raw.close()

@@ -1225,8 +1225,10 @@ def _routing_extras(job_id: str, status: str, job: Job | None = None) -> dict[st
     once admitted or over), ``forced`` (its queue entry was written by ``admit='force'``, §7
     "the record says it forced"; beside the queue facts so a named job, which has no ticket,
     says it too) and ``ticket``, the routing decision's summary (None for a named job). Read
-    from the database for any server's job; the estimate is this process's latest wake's for
-    its own jobs, else the ticket's wait at enqueue."""
+    from the database for any server's job: the estimate is the one its own loop wrote on the
+    queue entry at its latest wake (§6 True-now 2026-11-15, schema v13), the same number in
+    every server process, a named job's included; else the ticket's wait at enqueue
+    (``dispatch.waiting_estimate``)."""
     conn = store.conn
     ticket = dispatch.read_ticket(conn, job_id)
     entry = conn.execute("SELECT forced FROM queue_entries WHERE job_id = ?", (job_id,)).fetchone()
@@ -1237,10 +1239,8 @@ def _routing_extras(job_id: str, status: str, job: Job | None = None) -> dict[st
         except KeyError:
             position = 0  # no entry: a job recorded before router 12, or by hand
         if position:
-            est = job._queue_estimate if job is not None else None
-            if est is None and ticket is not None:
-                est = ticket.get("est_wait_s")
-            waiting = {"position": position, "expected_wait_s": est}
+            waiting = {"position": position,
+                       "expected_wait_s": dispatch.waiting_estimate(conn, job_id)}
     return {"queue": waiting, "forced": bool(entry["forced"]) if entry is not None else False,
             "ticket": dispatch.ticket_summary(ticket)}
 
