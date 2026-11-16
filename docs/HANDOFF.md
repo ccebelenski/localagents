@@ -10,7 +10,12 @@ the bottleneck rule holds a slot only on a MEASURED curve point (18db0a7; design
 per-point provenance in its JSON); the status line reports sessions over the capacity admission gates on, queued
 rows after running ones (1be3bad); a blocking wait holds for the settled record when the job's session is ending
 (15cb8c5, `jobs.held_at_cap`, 120 s backstop); `diff_files` names a worktree job's changed files and
-`files_touched` leaves out failed edits (f8ee5ed). **PARKED: branch `wait-estimate` in
+`files_touched` leaves out failed edits (f8ee5ed). **LANDED the same evening (abe4851, schema v13, the live store migrated; suite 1470 passed, 1 skipped) after the
+operator held the other session's jobs and a Qwen3.8-27B construct-it review found no defect. Also landed: the
+curve fold's review by DeepSeek (one defect, fixed by the reviewer, 1ceb824) and `tool_mix` on the job record
+with Bash commands stored up to 2000 characters (2ed040d, a consumer requirement). EVERY session must reconnect
+its MCP server before running jobs: a server on older code refuses the v13 file. The text that follows is the
+record of the parking.** PARKED (then): branch `wait-estimate` in
 `/home/ccebelenski/projects/claudelocalmcp-ew`** (main merged in at 81a6183, suite 1384 passed, 1 skipped): the
 expected wait read from job history, the estimate on the queue entry, SCHEMA v13 (a column and an index). It must
 not land while another session's server runs: the tool is an editable install of this checkout and `db.open_db`

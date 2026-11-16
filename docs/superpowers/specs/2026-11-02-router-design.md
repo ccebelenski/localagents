@@ -247,7 +247,9 @@ operator's go after an investigation of three live estimates: `~1 min` logged fo
 wait, `~2 min` for one past 30 min. The row's band times are medians dominated by calibration
 probes, 20 to 100 seconds, while the jobs behind them ran 45 to 70 minutes, and a named job's
 duration never entered them: only ticketed jobs do. A session's or a queued job's time is read
-from JOB HISTORY: the finished non-calibration jobs on the same endpoint and served id, at the
+from JOB HISTORY: the finished non-calibration jobs on the same endpoint and served id (the ones
+whose session ran to its own end: succeeded, failed or timeout; a cancelled, dropped or lost job
+is left out, a cancel cuts a run short by a decision outside it), at the
 job's band when enough of them carry that band, else across all of them. Probe seconds are not a
 wall-clock prediction; with too little history the band's default table is used and the estimate
 says "default". A session already past its expected time is read from how much longer the past
@@ -324,7 +326,8 @@ owner server, admitted at). **The transaction holds database rows only** (the sc
 never a probe or a network call inside a transaction, and the store's one shared connection
 cannot nest): live facts are read first, then one `BEGIN IMMEDIATE` re-reads the entries,
 computes occupancy, and claims or stays queued. Order: priority rank, then arrival. Position and
-expected wait are computed on read. Each process wakes on its own job completions and on a
+expected wait are computed on read. *(True-now, 2026-11-15, schema v13: the expected wait is computed by the job's own loop and
+stored on its entry, `queue_entries.est_wait_s`; position is still computed on read.)* Each process wakes on its own job completions and on a
 30-second poll; a wake that fails (database locked past the busy timeout, a probe error) logs,
 sleeps and retries, and never ends the job's task, so a job can never be left `queued` for good
 by an exception.
