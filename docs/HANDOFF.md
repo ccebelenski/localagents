@@ -2,51 +2,25 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
-**2026-11-15: a live check of admission, queueing and display; four fixes landed, one PARKED.** The operator
-saw jobs queue beside a free slot and a status header reading `0/1 slots` beside a running job. Landed on main
-(suite 1363 passed, 1 skipped; nothing pushed), each built by an Opus lane in a hand-cut worktree and accepted on
-the coordinator's read of the diff (the local review lanes were busy with ANAS, so no cross-model review ran):
-the bottleneck rule holds a slot only on a MEASURED curve point (18db0a7; design §6 True-now; the curve carries
-per-point provenance in its JSON); the status line reports sessions over the capacity admission gates on, queued
-rows after running ones (1be3bad); a blocking wait holds for the settled record when the job's session is ending
-(15cb8c5, `jobs.held_at_cap`, 120 s backstop); `diff_files` names a worktree job's changed files and
-`files_touched` leaves out failed edits (f8ee5ed). **LANDED the same evening (abe4851, schema v13, the live store migrated; suite 1470 passed, 1 skipped) after the
-operator held the other session's jobs and a Qwen3.8-27B construct-it review found no defect. Also landed: the
-curve fold's review by DeepSeek (one defect, fixed by the reviewer, 1ceb824) and `tool_mix` on the job record
-with Bash commands stored up to 2000 characters (2ed040d, a consumer requirement). EVERY session must reconnect
-its MCP server before running jobs: a server on older code refuses the v13 file. Then, after a live smoke
-showed a job with a background watcher holding its slot to its timeout: jobs CAN run foreground-only (the default was foreground for one commit and went back to background ON the next
-morning, the operator's call on the store's record: 24 of 209 jobs backgrounded a test suite or a server, none
-stuck after a result)
-(d80b437; `run_agent(background_tasks=)` per job, `defaults.background_tasks`, the Bash timeouts raised to 600 s
-and a 1800 s ceiling) and a result held open by background tasks is recorded as such; this needs one more
-reconnect per session, and the new `defaults` keys must not be written into a models.yaml while any server still
-runs older code (an unknown defaults key is a TypeError there). The text that follows is the
-record of the parking.** PARKED (then): branch `wait-estimate` in
-`/home/ccebelenski/projects/claudelocalmcp-ew`** (main merged in at 81a6183, suite 1384 passed, 1 skipped): the
-expected wait read from job history, the estimate on the queue entry, SCHEMA v13 (a column and an index). It must
-not land while another session's server runs: the tool is an editable install of this checkout and `db.open_db`
-migrates on open, so the status line's next refresh would migrate the live store under a v12 server. Land it
-(`tools/land.sh wait-estimate -F msg`) only at the operator's word that the other sessions' jobs have drained,
-then place its stale doc sentences (router.md:435 "version 12", :278, :349; design spec §6/§7 queue_entries
-listing; this file's "schema v12") and have every session reconnect. Until a session reconnects its server runs
-the old admission and wait code. **Second round, same day, at the operator's "you can build":** a worktree is removed only when nothing in it
-would be lost, every finish-path git call is bounded, one copy-index reader (84fbe8e); `wait_job`/`wait_jobs`
-count their cap from admission and `cancel_job` uses the settle hold (8e5f4b0); curves are refined from speed
-samples under a fail-closed rule and belong to their served model (1ea97c7; design §7 True-now). Suite 1407
-passed, 1 skipped. That closes the first three and the fifth of the items listed next, and the gitignored-report
-loss. Still open after it: `feedback.note_start` / `sessions_at_start` and `on_finish(sessions=)` feed nothing
-now (remove); run_agent's tool text still says a worktree is "kept only if changed" (its description is at 2044
-of 2048 characters); `make_worktree`'s `worktree add` is unbounded; calibrate.py:481 holds a second copy of the
-queue-then-wait act (`_wait_admitted`'s last caller); an empty ignored directory keeps a tree. The operator will
-say when ai9 frees up (a second-model review of the v13 branch waits for a box) and restarts the MCP servers
-only at a quiet time. The list as it stood before the second round: `wait_job` counts its cap from the call, not from
-admission; the runner's git helper has no timeout (a hung git in `finish_worktree` never settles the job);
-`cancel_job`'s 15 s wait is shorter than the SDK's worst-case close; `Curve.refine` is called by nothing in
-production (speed samples are written and never folded into a curve); a worktree job whose only output is a
-gitignored file (a review's `t/REVIEW.md`) is judged unchanged and its worktree, report included, is removed;
-routed jobs now divert sooner once v13 lands (waits are minutes, were seconds); the monitor seed's status pin
-reads `+1 foreign` (the seed's job has no queue entry).
+**2026-11-16: the admission, queueing and display work is landed and live; the benchmark epic is still next.**
+Main at 49b2383 (suite 1523 passed, 1 skipped), nothing pushed, no worktrees or branches left. It began on
+2026-11-15 as a check of jobs queueing beside a free slot and grew to 12 code commits; the record, the finds by
+finder, the operator's verdicts and what it cost are in docs/retros/2026-11-15-admission-queue-display.md. What is
+true now: the bottleneck rule holds a slot only on a MEASURED curve point (per-point provenance in the curve's
+JSON), and curves are refined from job speed samples under a fail-closed rule and belong to their served model;
+the status line reports sessions over the capacity admission gates on; the blocking waits hold for the settled
+record at their cap and count from admission (`wait_job` and `wait_jobs` too), and `cancel_job` uses the same
+settle hold; a worktree is removed only when nothing in it would be lost and every finish-path git call is
+bounded; the expected wait reads job history and lives on the queue entry (SCHEMA v13, the operator's real store
+migrated); job records carry `diff_files` and `tool_mix` (read share, output tokens per call), and a Bash command
+is stored up to 2000 characters, shown at 120; `run_agent(background_tasks=)` sets foreground-only per job
+(`defaults.background_tasks`, default ON, the operator's call on the store's record), and a result held open by
+background tasks is recorded as such. Operating notes: a schema bump on main migrates the shared store at once
+(editable install, migrate on open, the status line opens it), so such a branch is parked until other sessions'
+jobs drain, and every session reconnects after; new `defaults` keys must not go into a models.yaml while any
+server runs older code. The other session (ANAS) had not reconnected when this was written. Open items and four
+proposals for the operator (a review batch for the nine commits no second model has read, a hint about smoke
+briefs, the curve thresholds, the name of `sessions.ours`) are listed in the retrospective.
 
 **2026-11-04 evening: the router LIVE-TESTED on the operator's real store and ACCEPTED by the consumer; Epic 5
 DONE.** Main at the commit this note rides on; suite 1301 passed, 1 skipped; nothing pushed ("No push because we
