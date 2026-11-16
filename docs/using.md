@@ -22,8 +22,10 @@ one notifies on its own when it finishes.
 `wait_s: 0` and wait on all the ids in one call. Be careful with it: a `mode: "any"` wait
 returns on the first finish and must be re-armed at once, or the remaining jobs finish
 with nobody watching (one coordinator lost six hours to that). Its `running` list holds
-every job whose record is not yet settled, including one whose `status` is already final
-while its worktree is still being finished.
+every job whose record is not yet settled. At the timeout the call waits up to two minutes
+more for a job whose session has ended and is being closed, so a job listed there is
+normally still working; under `mode: "any"` it can also be one whose `status` is already
+final while its worktree is still being finished.
 
 If nothing suitable is running you'll be asked to start one:
 

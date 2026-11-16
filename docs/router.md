@@ -320,6 +320,10 @@ The blocking wait counts from admission. `run_agent` reports `queued #n, ~m min`
 its entry waits, and the queue phase runs until admission or the caller cancels;
 `admit="now"` is how to not wait. The job's `timeout_s` and the call's `wait_s` both
 start at admission, so time spent in the queue does not spend the session's budget.
+The session's own clock starts a moment after admission, once its worktree is ready, and
+closing a session that ran out of time takes a few seconds more. A blocking call whose
+`wait_s` is at least the job's timeout waits through both and returns the final record;
+it comes back `running` only when the session is still working inside its own timeout.
 
 `queued` means recorded, waiting, not started; the record already names the row it waits
 on. `dropped` is the terminal sibling, for a job that left the queue before its session
