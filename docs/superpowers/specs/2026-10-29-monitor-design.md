@@ -30,7 +30,7 @@ Its own spec and approval. Summary of what was agreed so the monitor can assume 
   - `requests`: one row per backend request from the shim (what `requests.jsonl` holds today:
     time, path, status, ms, gen_ms, usage, model, messages, tools, bytes, notes). Replaces the file.
   - `tool_calls`: one row per tool call from the runner: time, tool name, short input (file path
-    or first 120 chars of a command), error flag.
+    or first 120 chars of a command), error flag. (True now 2026-11-15: stored up to 2000 chars, shown at 120.)
   - `servers`: pid, owner (Claude Code pid), last heartbeat. Replaces `status/<pid>.json`; the
     status line becomes one indexed query, stdlib only, same pid alive check.
 - Exposed to the coordinating model: `job_status` and the final record gain `tool_counts`
@@ -608,7 +608,9 @@ the `job_status` dict: `id`, `task` (first 300 chars), `model`, `endpoint`,
 `last_activity`, `log_dir`, `dump`, `log_events`, `context`, `metrics` (the seven-column
 `/metrics` delta, or null), `usage` (`input_tokens`, `output_tokens`,
 `cache_read_input_tokens`, `cache_creation_input_tokens`), `tool_calls` (count),
-`tool_counts` (`{tool: {"calls", "errors"}}`), `errors`, `last_tool`, `files_touched` (list),
+`tool_counts` (`{tool: {"calls", "errors"}}`),
+`tool_mix` (`{"reads", "edits", "other", "unclassified", "read_share", "output_tokens_per_call"}`: the
+job's tool calls by `derive.classify_call`, the two ratios null for a job with no tool calls), `errors`, `last_tool`, `files_touched` (list),
 `diff_files` (list or null: a worktree job's diff file names, see job_status),
 `ctx_tokens`, `gen_tps`, `prefill_tps`, `elapsed_s` (to the wall clock while unfinished),
 `server_version` (story 1.14: the build stamp — `<version>+<short sha>`, `db.build_stamp` — of

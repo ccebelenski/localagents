@@ -171,7 +171,15 @@ numbers are rows in SQLite (see [The database](#the-database) below): the brief 
 `jobs.task` column and every backend request is a row in the `requests` table with
 timing, size and usage, written directly by the shim. `job_status` answers from those
 rows: `usage` as the sums over the job's requests, `tool_calls` with `tool_counts` per
-tool, `errors`, `last_tool`, `files_touched`, `ctx_tokens` and `gen_tps`. `files_touched` holds the paths
+tool, `errors`, `last_tool`, `files_touched`, `ctx_tokens` and `gen_tps`. `tool_mix` sorts the job's tool calls by what they did. Its
+`reads` are Read, Grep, Glob and shell commands that only read, searched, listed or
+inspected git; `edits` are the edit tools; `other` is programs, test runs, shell writes
+and every other tool; `unclassified` is a command the classifier could not place, mostly
+one that may have been cut in storage (a Bash command is stored up to 2000 characters,
+and before 2026-11-15 up to 120). `read_share` is reads over all calls, a floor while any
+are unclassified, and `output_tokens_per_call` is the job's output tokens over its calls.
+Comparing the read share of two jobs on the same lane shows what a brief's quoted code
+saved. `files_touched` holds the paths
 the edit tools were given, without the calls that failed, so a file written through the
 shell is not in it. `diff_files` comes from the worktree instead: the file list of a
 worktree job's diff against its base, recorded when the job finishes (at most 100 names,

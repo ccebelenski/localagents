@@ -115,6 +115,9 @@ tool_calls                          -- one row per ToolUseBlock the runner saw
                                     --   readers Read/Glob/Grep/LS that carry one): that path,
                                     --   NULL for an edit tool whose input carries none; any
                                     --   other tool: the first 120 chars of its input JSON
+                                    -- True now (2026-11-15): a Bash command is stored up to 2000 chars
+                                    -- (derive.COMMAND_CHARS; rows written earlier are cut at 120); readers are
+                                    -- shown its first 120 (derive.TOOL_DISPLAY_CHARS)
                                     --   (corrected after the 1.5b review: the command rule;
                                     --   amended after 1.11b: the path rule covers any
                                     --   path-shaped tool, not only the edit tools — a Read
@@ -166,6 +169,13 @@ that never logged a line has neither, and readers say so.
 - **usage totals**: sums of the four token columns over the job's `requests` rows. This
   replaces the SDK's `ResultMessage.usage` in `job_status` (a contract change: the two count the
   same traffic from different sides and can differ by count_tokens calls and failed requests).
+- **tool mix** (2026-11-15, a consumer coordinator's requirement: "I would use read share and output tokens
+  per tool call on the job record. It would let me compare briefs."): every `tool_calls` row of the job placed
+  by `derive.classify_call` from `tool` and `input`. Edit tools are `edits`; Read/Grep/Glob/LS/NotebookRead are
+  `reads`; a Bash command is `reads` only when every part is a listed look or neutral and nothing writes,
+  `unclassified` when `derive.command_may_be_cut` (exactly 120 chars, the cut before 2026-11-15, or 2000 and
+  over) and nothing visible already makes it other, else `other`; every other tool is `other`. `read_share` =
+  reads / calls and `output_tokens_per_call` = the usage total's output_tokens / calls, both null at zero calls.
 - **tool call count**: `COUNT(*)` over `tool_calls`; **counts by tool**: grouped by `tool`
   with `SUM(is_error)`.
 - **files touched**: `DISTINCT input` over `tool_calls` where `tool` is an edit tool and
