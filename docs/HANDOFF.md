@@ -2,6 +2,30 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
+**2026-11-15: a live check of admission, queueing and display; four fixes landed, one PARKED.** The operator
+saw jobs queue beside a free slot and a status header reading `0/1 slots` beside a running job. Landed on main
+(suite 1363 passed, 1 skipped; nothing pushed), each built by an Opus lane in a hand-cut worktree and accepted on
+the coordinator's read of the diff (the local review lanes were busy with ANAS, so no cross-model review ran):
+the bottleneck rule holds a slot only on a MEASURED curve point (18db0a7; design §6 True-now; the curve carries
+per-point provenance in its JSON); the status line reports sessions over the capacity admission gates on, queued
+rows after running ones (1be3bad); a blocking wait holds for the settled record when the job's session is ending
+(15cb8c5, `jobs.held_at_cap`, 120 s backstop); `diff_files` names a worktree job's changed files and
+`files_touched` leaves out failed edits (f8ee5ed). **PARKED: branch `wait-estimate` in
+`/home/ccebelenski/projects/claudelocalmcp-ew`** (main merged in at 81a6183, suite 1384 passed, 1 skipped): the
+expected wait read from job history, the estimate on the queue entry, SCHEMA v13 (a column and an index). It must
+not land while another session's server runs: the tool is an editable install of this checkout and `db.open_db`
+migrates on open, so the status line's next refresh would migrate the live store under a v12 server. Land it
+(`tools/land.sh wait-estimate -F msg`) only at the operator's word that the other sessions' jobs have drained,
+then place its stale doc sentences (router.md:435 "version 12", :278, :349; design spec §6/§7 queue_entries
+listing; this file's "schema v12") and have every session reconnect. Until a session reconnects its server runs
+the old admission and wait code. Open, the operator's call: `wait_job` counts its cap from the call, not from
+admission; the runner's git helper has no timeout (a hung git in `finish_worktree` never settles the job);
+`cancel_job`'s 15 s wait is shorter than the SDK's worst-case close; `Curve.refine` is called by nothing in
+production (speed samples are written and never folded into a curve); a worktree job whose only output is a
+gitignored file (a review's `t/REVIEW.md`) is judged unchanged and its worktree, report included, is removed;
+routed jobs now divert sooner once v13 lands (waits are minutes, were seconds); the monitor seed's status pin
+reads `+1 foreign` (the seed's job has no queue entry).
+
 **2026-11-04 evening: the router LIVE-TESTED on the operator's real store and ACCEPTED by the consumer; Epic 5
 DONE.** Main at the commit this note rides on; suite 1301 passed, 1 skipped; nothing pushed ("No push because we
 are not complete, but this epic is done"). The operator ruled the arc could not close on tests alone ("we really
