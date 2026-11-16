@@ -287,8 +287,8 @@ def _predicted_speed(cand: Candidate) -> float | None:
 
 def _can_admit(cand: Candidate, priority: str) -> bool:
     """``queue.room``, the predicate ``try_admit`` applies (fix wave 3, D1): §7's sessions
-    rule, §6's bottleneck rule (the session that would be the curve's bottleneck is admitted
-    only for background work), the head of the endpoint's queue (``queued_ahead``), and the
+    rule, §6's bottleneck rule (the session that would be the curve's bottleneck on a measured
+    point is admitted only for background work), the head of the endpoint's queue (``queued_ahead``), and the
     pool (``pool_admits``, ``queue.pool_room``'s answer)."""
     return queue.room(cand.capacity, cand.ours_running, priority, ahead=cand.queued_ahead,
                       pool_admits=cand.pool_admits)
@@ -303,10 +303,10 @@ def _blocked_by(cand: Candidate, priority: str) -> tuple[str, str]:
     named whenever it refused (amendment 2), even when the endpoint is full as well."""
     if not cand.pool_admits:
         return "pool", f"pool {cand.pool}" if cand.pool else "pool"
-    cap = cand.capacity
-    if not cap.admits(cand.ours_running):
+    hold = queue.endpoint_hold(cand.capacity, cand.ours_running, priority)
+    if hold == "full":
         return "endpoint", "endpoint busy"
-    if not queue.endpoint_room(cap, cand.ours_running, priority):
+    if hold == "bottleneck":
         return "endpoint", "bottleneck slot"
     return "endpoint", "behind the queue"
 

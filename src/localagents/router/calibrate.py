@@ -390,7 +390,8 @@ async def throughput_probe(reg, ep, served_id: str, conn) -> tuple[capacity.Curv
     the single's: one session's share of the batched run, read per session (the batch as a whole
     says nothing about what a routed session gets). The point is recorded as measured and never
     clamped: above 1.0 is the box's own signal, and the estimate line carries it onward. The
-    curve is saved as ``probed`` with n = 2."""
+    curve is saved as ``probed`` with n = 2 and both points marked measured (§6: a measured
+    point is one the throughput probe wrote)."""
     live = await reg.probe(ep)
     load = live.get("load") or {}
     slots = live.get("slots") or {}
@@ -405,7 +406,8 @@ async def throughput_probe(reg, ep, served_id: str, conn) -> tuple[capacity.Curv
                                 _completion(ep, served_id, THROUGHPUT_MAX_TOKENS))
     shares = [tokens / seconds for tokens, seconds in pair if tokens > 0 and seconds > 0]
     ratio = statistics.median(shares) / tps_single if shares else 1.0
-    curve = capacity.Curve({1: 1.0, 2: ratio}, "probed", 2)
+    # both points are the probe's own measurement: §6's bottleneck rule may hold on point 2
+    curve = capacity.Curve({1: 1.0, 2: ratio}, "probed", 2, frozenset({1, 2}))
     endpoint_id = db.lookup_id(conn, "endpoints", name=ep.name, base_url=ep.url,
                                backend=ep.backend, host=ep.host)
     # the schema's own kind list (partitioned | pooled | unknown), read from the live probe

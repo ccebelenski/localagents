@@ -134,25 +134,31 @@ def test_max_concurrent_caps():
     assert loose.sessions_capacity == 2
 
 
-def test_prior_llamacpp_bottlenecks_at_two_vllm_does_not():
-    """§6: aggregate at k below 75% of the aggregate at 1 for ANY k in 2..n — llama.cpp
-    bottlenecks at 2 (2*0.35 = 0.7 < 0.75) and stays background-only above it, so the third
-    session on a three-slot box is not admitted for normal work while the second was
+def test_prior_llamacpp_shape_holds_only_when_measured_vllm_never_crosses():
+    """§6: aggregate at k below 75% of the aggregate at 1 for ANY k in 2..n. The llama.cpp
+    prior's shape crosses at 2 (2*0.35 = 0.7 < 0.75), but a prior point predicts and holds
+    nothing (the operator's ruling 2026-11-15): the prior curve never bottlenecks. The same
+    points MEASURED (a probed curve) bottleneck at 2 and stay background-only above it, so the
+    third session on a three-slot box is not admitted for normal work while the second was
     background only. vLLM's aggregate rises (1.7, 2.25) and never crosses the line."""
     ll = prior_curve("llamacpp")
     assert ll.points == {1: 1.0, 2: 0.35, 3: 0.25}
-    assert ll.state == "prior"
-    assert not ll.bottleneck_at(1)  # a single session is never a bottleneck
-    assert ll.bottleneck_at(2)      # 2*0.35 = 0.7 < 0.75
-    assert ll.bottleneck_at(3)      # from 2 on: the rule already held at 2
-    assert ll.bottleneck_at(4)      # the far end reads 0.25: 4*0.25 = 1.0, still 2 holds
+    assert ll.state == "prior" and ll.measured == frozenset()
+    assert not any(ll.bottleneck_at(n) for n in range(-1, 6))  # the prior holds nothing
+    probed = Curve(dict(ll.points), "probed", 2)  # the same shape, every point measured
+    assert probed.measured == {1, 2, 3}
+    assert not probed.bottleneck_at(1)  # a single session is never a bottleneck
+    assert probed.bottleneck_at(2)      # 2*0.35 = 0.7 < 0.75
+    assert probed.bottleneck_at(3)      # from 2 on: the rule already held at 2
+    assert probed.bottleneck_at(4)      # the far end reads 0.25: 4*0.25 = 1.0, still 2 holds
     vl = prior_curve("vllm")
     assert vl.points == {1: 1.0, 2: 0.85, 3: 0.75}
     assert not vl.bottleneck_at(1) and not vl.bottleneck_at(2) and not vl.bottleneck_at(3)
     assert not vl.bottleneck_at(4)  # 4*0.75 = 3.0 on the far end; no k in 2..4 crosses
     assert prior_curve("other").points == {1: 1.0, 2: 0.5}
     # the bottleneck rule read as admission: the n-th concurrent session, §6
-    ll_cap = Capacity("partitioned", 2, curve=ll)
+    assert not Capacity("partitioned", 2, curve=ll).bottleneck_slot(1)  # prior: holds nothing
+    ll_cap = Capacity("partitioned", 2, curve=probed)
     assert ll_cap.bottleneck_slot(1)   # the next session would be the 2nd: background only
     assert not ll_cap.bottleneck_slot(0)
     assert not Capacity("pooled", 3, curve=vl).bottleneck_slot(1)
@@ -162,15 +168,16 @@ def test_bottleneck_slot_counts_foreign_sessions():
     """The session this job would become is the same occupancy ``admits`` counts — ours +
     foreign + 1, foreign = max(0, requests_running - ours) — so a box holding one foreign
     session admits our normal job as the session AFTER it, not the first. The old ours-only
-    arithmetic read ours + 1 and checked no bottleneck at all."""
-    ll = prior_curve("llamacpp")
+    arithmetic read ours + 1 and checked no bottleneck at all. The curves are measured (a
+    prior point holds nothing, §6)."""
+    ll = Curve({1: 1.0, 2: 0.35, 3: 0.25}, "probed", 2)  # the llama.cpp shape, measured
     cap = Capacity("partitioned", 3, requests_running=1, curve=ll)
     assert cap.admits(0)                 # 0 ours + 1 foreign = 1 of 3: room for the job
     assert cap.bottleneck_slot(0)        # it enters as the 2nd session: background only
     # a curve that bottlenecks at 3 only (2*0.85 = 1.7 clears the line, 3*0.2 does not):
     # one of ours plus one foreign, the job enters as the 3rd session — the old
     # arithmetic read the 2nd and said no bottleneck
-    mid = Curve({1: 1.0, 2: 0.85, 3: 0.2}, "refined", 3)
+    mid = Curve({1: 1.0, 2: 0.85, 3: 0.2}, "refined", 3, frozenset({1, 2, 3}))
     mixed = Capacity("pooled", 4, requests_running=2, curve=mid)
     assert mixed.admits(1)               # 1 ours + 1 foreign = 2 of 4
     assert mixed.bottleneck_slot(1)      # the 3rd session, not the 2nd
@@ -197,14 +204,16 @@ def test_refine_from_samples():
 
 def test_refine_keeps_the_prior_where_no_samples_exist():
     """The two-slot llama.cpp box whose first jobs all ran alone: samples at 1 refine 1,
-    but the prior's 2 and 3 stay — dropping them would turn bottleneck_at(2) False and
-    admit the second concurrent session at normal priority where the prior said background
-    only. §7: the curve is "seeded by a backend-family prior ... refined by every job's
-    observed speed", refined not replaced."""
+    but the prior's 2 and 3 stay as predictions. §7: the curve is "seeded by a backend-family
+    prior ... refined by every job's observed speed", refined not replaced. They stay prior
+    points: only 1 is measured, so the prior's 2 predicts and holds nothing (§6, the
+    operator's ruling 2026-11-15) — the hold does not come back through a refine."""
     refined = prior_curve("llamacpp").refine([(1, 40.0), (1, 42.0)])
     assert refined.points == pytest.approx({1: 1.0, 2: 0.35, 3: 0.25})
     assert refined.n == 2 and refined.state == "refined"
-    assert refined.bottleneck_at(2)  # 2 * 0.35 = 0.7 < 0.75, exactly as the prior said
+    assert refined.measured == {1}
+    assert refined.predict(2) == pytest.approx(0.35)  # the prior still predicts
+    assert not refined.bottleneck_at(2)  # 2 * 0.35 = 0.7 < 0.75, but point 2 is the prior's
 
 
 def test_context_load_bands_and_files():
@@ -230,12 +239,15 @@ def test_save_and_load_capacity_round_trip(conn):
         "SELECT kind, curve, state, points FROM endpoint_capacity WHERE endpoint_id = ?", (eid,)
     ).fetchone()
     assert row["kind"] == "pooled"
-    # string keys in JSON; 3 carries the prior's value through the merge (no sample there)
-    assert json.loads(row["curve"]) == {"points": {"1": 1.0, "2": 0.6, "3": 0.75}}
+    # string keys in JSON; 3 carries the prior's value through the merge (no sample there),
+    # so 1 and 2 are measured and 3 is not (§6's provenance rides beside the points)
+    assert json.loads(row["curve"]) == {"points": {"1": 1.0, "2": 0.6, "3": 0.75},
+                                        "measured": [1, 2]}
     assert row["state"] == "refined"
     assert row["points"] == 2  # the column is the curve's sample count (schema comment)
     got = load_capacity(conn, eid)
     assert got.points == {1: 1.0, 2: 0.6, 3: 0.75} and got.state == "refined" and got.n == 2
+    assert got.measured == {1, 2}
     # upsert: a later save replaces the row rather than adding one
     save_capacity(conn, eid, "pooled", prior_curve("vllm"))
     assert load_capacity(conn, eid).state == "prior"
@@ -255,8 +267,9 @@ def test_predict_reads_a_gap_from_the_nearest_lower_point():
 def test_bottleneck_beyond_the_curve_uses_the_last_point():
     """A curve learned at concurrency 2 still answers at 8: the largest key's value reads on,
     and 'bottlenecks at n' means from n on — once the rule has held (at 2 here, 0.2 < 0.75),
-    higher n stay True even though n * value reads back above the line."""
-    curve = Curve({1: 1.0, 2: 0.1}, "refined", 5)
+    higher n stay True even though n * value reads back above the line. Point 2 is measured
+    (a prior point holds nothing, §6)."""
+    curve = Curve({1: 1.0, 2: 0.1}, "refined", 5, frozenset({1, 2}))
     assert curve.predict(2) == 0.1 and curve.predict(8) == 0.1
     assert curve.bottleneck_at(7) and curve.bottleneck_at(8)  # 2 holds in 2..7 and 2..8
     assert curve.predict(0) == 1.0     # zero occupancy reads as one

@@ -14,7 +14,9 @@ from localagents.router.scorecard import Cell, Row
 from localagents.router.select import (BAND_TIMES_S, MATCH, Candidate, Session, expected_wait,
                                        gap, penalty, select, shortfall, weight)
 
-LLAMA = Curve({1: 1.0, 2: 0.35, 3: 0.25})   # the llama.cpp prior shape: bottlenecks at 2
+LLAMA = Curve({1: 1.0, 2: 0.35, 3: 0.25})   # the llama.cpp prior shape: predicts, holds nothing
+# the same shape measured (a probed curve): bottlenecks at 2 (§6: only a measured point holds)
+LLAMA_MEASURED = Curve({1: 1.0, 2: 0.35, 3: 0.25}, "probed", 2)
 FLAT = Curve({1: 1.0, 2: 1.0, 3: 1.0})      # never bottlenecks, never slows
 NOW = 10_000.0
 
@@ -242,8 +244,9 @@ def test_background_queues_unless_no_higher_priority_waits_on_the_lesser_row():
 
 
 def test_bottleneck_slot_only_for_background():
-    # a two-slot llama.cpp box with one of ours running: the second session is the bottleneck
-    cand = _cand(_row(1), _cells(), capacity=_cap(2, running=1, curve=LLAMA), ours=1)
+    # a two-slot llama.cpp box with one of ours running and its curve measured: the second
+    # session is the bottleneck
+    cand = _cand(_row(1), _cells(), capacity=_cap(2, running=1, curve=LLAMA_MEASURED), ours=1)
     assert cand.capacity.admits(1) and cand.capacity.bottleneck_slot(1)
     normal = _select(_scores(), [cand])
     assert normal.chosen is cand and normal.queue_for is cand and normal.wait_cause == "endpoint"

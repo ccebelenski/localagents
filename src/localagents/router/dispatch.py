@@ -731,8 +731,8 @@ def estimate(conn: sqlite3.Connection, job: Job, facts: Facts, scores: BriefScor
 def named_wait(conn: sqlite3.Connection, facts: Facts, priority: str, now: float) -> tuple[bool, int, float | None]:
     """For a named job not yet recorded (``admit: now``): (admits at once, the position it would
     take, the expected wait there). Admits by ``queue.room``, the predicate ``try_admit``
-    applies (fix wave 3, D1): the endpoint has room for this priority (the bottleneck slot is
-    background's), the pool has room, and nobody of the same or a higher priority waits
+    applies (fix wave 3, D1): the endpoint has room for this priority (a measured bottleneck
+    slot is background's, §6), the pool has room, and nobody of the same or a higher priority waits
     ahead."""
     row = _live_row(conn, facts.endpoint.name, facts.served_id) or _bare_row(facts.endpoint, facts.served_id)
     cand = _candidate(conn, row, [], facts, BriefScores({}, {}, set(), False, {}, 0),
@@ -781,7 +781,10 @@ def queued_line(conn: sqlite3.Connection, job: Job) -> str | None:
 
 def note_queued(conn: sqlite3.Connection, job: Job, facts: Facts, now: float) -> None:
     """The first admission attempt left the job waiting: its estimate, the transcript line, and
-    ``routed_by.pool`` when the entry's ``blocked_by`` says the pool held it (amendment 5)."""
+    ``routed_by.pool`` when the entry's ``blocked_by`` says the pool held it (amendment 5). A
+    hold by §6's bottleneck rule reads ``blocked_by = 'endpoint'`` like a full endpoint (the
+    column keeps its two values); the line names it from the facts at hand, through the same
+    ``queue.endpoint_hold`` reading admission applied, with our occupancy read now."""
     route_ = job._route
     blocked = conn.execute("SELECT blocked_by FROM queue_entries WHERE job_id = ?", (job.id,)).fetchone()
     blocked_by = blocked["blocked_by"] if blocked is not None else None
@@ -796,8 +799,13 @@ def note_queued(conn: sqlite3.Connection, job: Job, facts: Facts, now: float) ->
     pos = queue.position(conn, job.id, now)
     est = job._queue_estimate
     mins = f"~{math.ceil(est / 60)} min" if est is not None else "an unknown wait"
-    job._log_safe(f"[queue] queued #{pos} on {job.endpoint}, {mins}"
-                  f" (blocked by {blocked_by or 'the queue'})")
+    why = blocked_by or "the queue"
+    if blocked_by == "endpoint":
+        ours = (queue.occupancy(conn, [facts.endpoint_id], now) if facts.endpoint_id is not None
+                else facts.ours)
+        if queue.endpoint_hold(facts.capacity, ours, job.priority) == "bottleneck":
+            why = "endpoint, bottleneck slot: background only"
+    job._log_safe(f"[queue] queued #{pos} on {job.endpoint}, {mins} (blocked by {why})")
 
 
 # --- the loop --------------------------------------------------------------------------------

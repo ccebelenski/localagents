@@ -79,12 +79,25 @@ _ENTRY_SQL = (
 _NEW_ARRIVAL_ROWID = 2 ** 63 - 1
 
 
+def endpoint_hold(capacity: Capacity, ours: int, priority: str) -> str | None:
+    """Why the endpoint itself holds this priority's next session, or None when it has room:
+    ``"full"`` by §7's sessions rule (``capacity.admits``), ``"bottleneck"`` by §6's bottleneck
+    rule (the session that would be the curve's bottleneck, on a MEASURED point, is background's
+    only; a prior point holds nothing, the operator's ruling 2026-11-15). The one reading
+    ``endpoint_room`` (admission and the decision) and the reason words (``select``'s reason,
+    ``dispatch.note_queued``'s log line) share; ``blocked_by`` keeps its two values."""
+    if not capacity.admits(ours):
+        return "full"
+    if priority != "background" and capacity.bottleneck_slot(ours):
+        return "bottleneck"
+    return None
+
+
 def endpoint_room(capacity: Capacity, ours: int, priority: str) -> bool:
     """The endpoint half of ``room``: §7's sessions rule (``capacity.admits``) and §6's
-    bottleneck rule (the session that would be the curve's bottleneck only for background)."""
-    if not capacity.admits(ours):
-        return False
-    return priority == "background" or not capacity.bottleneck_slot(ours)
+    bottleneck rule (the session that would be the curve's bottleneck on a measured point only
+    for background): ``endpoint_hold`` says nothing holds it."""
+    return endpoint_hold(capacity, ours, priority) is None
 
 
 def pool_room(pool_cap: int | None, pool_occupancy: int, pool_blocked_ahead: bool) -> bool:

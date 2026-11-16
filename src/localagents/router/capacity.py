@@ -6,7 +6,7 @@ KV blocks while it runs tests for ten minutes, so live slot and KV readings say 
 most of a job's life (§7). ``from_probe`` turns a ``Registry.probe`` dict into the three
 capacity models (partitioned / pooled / unknown); ``Curve`` predicts one session's speed at
 the current occupancy — it never refuses, its prediction feeds expected wait, the tie-break
-and §6's bottleneck rule; ``refine`` folds the ``speed_samples`` rows every job leaves behind
+and §6's bottleneck rule (a measured point only: a prior point predicts and holds nothing); ``refine`` folds the ``speed_samples`` rows every job leaves behind
 back into the curve."""
 
 import json
@@ -33,7 +33,9 @@ PRIOR_CURVES = {
 _PRIOR_FALLBACK = {1: 1.0, 2: 0.5}  # the "other" family of the same spec row
 
 # §6's bottleneck rule: "aggregate at n below 75% of aggregate at 1, so for the prior shape
-# llama.cpp bottlenecks at 2 and vLLM does not".
+# llama.cpp bottlenecks at 2 and vLLM does not" — and since the operator's ruling of
+# 2026-11-15 the rule holds a slot only on a MEASURED point: the prior shape predicts and holds
+# nothing (``Curve.bottleneck_at``).
 BOTTLENECK_RATIO = 0.75
 
 
@@ -41,11 +43,30 @@ BOTTLENECK_RATIO = 0.75
 class Curve:
     """One session's tokens/s at each concurrency, normalised so concurrency 1 is 1.0.
     ``state`` is the endpoint_capacity.state CHECK list (prior | probed | refined); ``n`` is
-    the speed samples behind it (the endpoint_capacity.points column), 0 for an unrevised prior."""
+    the speed samples behind it (the endpoint_capacity.points column), 0 for an unrevised prior.
+
+    ``measured`` is each point's provenance (§6, the operator's ruling 2026-11-15): the keys of
+    ``points`` the throughput probe wrote or speed samples at that concurrency refined; every
+    other key is still the backend-family prior. It rides in the endpoint_capacity.curve JSON
+    beside the points (no column). Left out (None), it is read from ``state`` — the rule for a
+    stored row written before the field existed: ``probed`` means every point is measured (the
+    probe writes only what it measured, never a prior point), ``prior`` and ``refined`` mean none
+    is (a refined row's points cannot be told apart from the prior it merged onto, and a point
+    nobody can show was measured holds nothing). A ``prior`` curve has no measured point
+    whatever it is given, and a key not in ``points`` is dropped."""
 
     points: dict[int, float]
     state: str = "prior"
     n: int = 0
+    measured: frozenset[int] | None = None
+
+    def __post_init__(self) -> None:
+        if self.state == "prior":
+            self.measured = frozenset()
+        elif self.measured is None:
+            self.measured = frozenset(self.points) if self.state == "probed" else frozenset()
+        else:
+            self.measured = frozenset(int(k) for k in self.measured if int(k) in self.points)
 
     def _at(self, sessions: int) -> float:
         """The curve's value at a concurrency, clamped to its own range (§7: the curve never
@@ -71,11 +92,22 @@ class Curve:
         (k * value(k) below 75% of the aggregate at 1) holds for ANY k in 2..n, so a box
         that bottlenecks at 2 and flattens after keeps background-only admission at 3
         rather than swinging back open. n of 1 or below is False: a single session is
-        never a bottleneck."""
+        never a bottleneck.
+
+        Only a MEASURED point holds (§6, the operator's ruling 2026-11-15): k counts only when
+        k is itself a key of ``measured``, read at its own concurrency. A prior point holds
+        nothing, on a prior curve or beside measured points. A concurrency ``_at`` answers
+        from ANOTHER key (an interior gap reads the nearest lower key, beyond the curve the
+        largest) holds nothing on its own: the reading is borrowed, and since k * v grows with
+        k for a fixed v, a borrowed reading could never cross the line where its source key
+        did not — so this loses no hold a measured key gives (it carries on through "from n
+        on") and lets no unmeasured key's value hold at a neighbour. The baseline (the
+        value at 1) is the normalisation, not a holding point: a measured ratio was taken
+        against the concurrency-1 rate it was measured with."""
         if n <= 1:
             return False
         limit = BOTTLENECK_RATIO * self._at(1)
-        return any(k * self._at(k) < limit for k in range(2, n + 1))
+        return any(k * self.points[k] < limit for k in range(2, n + 1) if k in self.measured)
 
     def refine(self, samples: list[tuple[int, float]]) -> "Curve":
         """§7: the curve is "seeded by a backend-family prior ... refined by every job's
@@ -84,7 +116,9 @@ class Curve:
         concurrency-1 median updates the prior's points, keys without samples keep the
         prior's value, keys with samples take the median ratio, keys beyond the prior appear.
         Without a concurrency-1 sample there is no baseline to divide by, and the curve
-        comes back unchanged."""
+        comes back unchanged. Provenance: the keys with samples become measured, the keys
+        already measured stay measured, and a key that kept the prior's value stays
+        unmeasured (§6: it predicts and holds nothing)."""
         by_sessions: dict[int, list[float]] = {}
         for sessions, tps in samples:
             by_sessions.setdefault(sessions, []).append(tps)
@@ -96,7 +130,8 @@ class Curve:
         base = medians[1]
         merged = dict(self.points)
         merged.update({k: m / base for k, m in medians.items()})
-        return Curve({k: merged[k] for k in sorted(merged)}, "refined", len(samples))
+        return Curve({k: merged[k] for k in sorted(merged)}, "refined", len(samples),
+                     frozenset(self.measured) | frozenset(medians))
 
 
 def prior_curve(kind: str) -> Curve:
@@ -167,7 +202,8 @@ def from_probe(ep: Endpoint, probe: dict, served_id: str, curve: Curve) -> Capac
 
 def save_capacity(conn, endpoint_id: int, kind: str, curve: Curve) -> None:
     """The endpoint's curve row in ``endpoint_capacity``, one immediate transaction
-    (the schema spec's rule: rows only, and the shared connection cannot nest)."""
+    (the schema spec's rule: rows only, and the shared connection cannot nest). The curve
+    JSON carries the points and, beside them, the measured keys (§6's provenance)."""
     with db.immediate(conn):
         conn.execute(
             """INSERT INTO endpoint_capacity (endpoint_id, kind, curve, state, points, updated)
@@ -176,21 +212,27 @@ def save_capacity(conn, endpoint_id: int, kind: str, curve: Curve) -> None:
                    kind = excluded.kind, curve = excluded.curve, state = excluded.state,
                    points = excluded.points, updated = excluded.updated""",
             (endpoint_id, kind,
-             json.dumps({"points": {str(k): v for k, v in curve.points.items()}}),
+             json.dumps({"points": {str(k): v for k, v in curve.points.items()},
+                         "measured": sorted(curve.measured)}),
              curve.state, curve.n, time.time()),
         )
 
 
 def load_capacity(conn, endpoint_id: int) -> Curve | None:
-    """The stored curve, or None for an endpoint with no curve row yet."""
+    """The stored curve, or None for an endpoint with no curve row yet. A row written before
+    the measured field existed reads its provenance from its state (``Curve``'s rule:
+    ``probed`` is all measured, ``refined`` none)."""
     row = conn.execute(
         "SELECT curve, state, points FROM endpoint_capacity WHERE endpoint_id = ?",
         (endpoint_id,),
     ).fetchone()
     if row is None:
         return None
-    points = {int(k): float(v) for k, v in json.loads(row["curve"])["points"].items()}
-    return Curve(points, row["state"], row["points"])
+    blob = json.loads(row["curve"])
+    points = {int(k): float(v) for k, v in blob["points"].items()}
+    measured = blob.get("measured")
+    return Curve(points, row["state"], row["points"],
+                 None if measured is None else frozenset(int(k) for k in measured))
 
 
 def context_load_tokens(score: int | None, text: str) -> int:

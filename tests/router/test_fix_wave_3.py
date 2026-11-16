@@ -16,7 +16,7 @@ import pytest
 from localagents import db, server
 from localagents.registry import Defaults, Endpoint, Registry
 from localagents.router import definitions, dispatch, queue, scorecard
-from localagents.router.capacity import Capacity, prior_curve
+from localagents.router.capacity import Capacity, Curve, save_capacity
 from localagents.router.decision import BriefScores
 
 STRONG = {"software_dev": 4, "tool_use": 4, "computer_use": 4, "complexity": 4, "judgement": 4,
@@ -107,19 +107,29 @@ async def _settle_tasks():
 
 # --- item 1 (D1): one predicate for admission and the decision -------------------------------
 
+# the llama.cpp prior's shape as the throughput probe would write it: both points measured, so
+# §6's bottleneck rule holds the second slot (2 x 0.35 < 0.75); the prior itself holds nothing
+MEASURED_LLAMA = Curve({1: 1.0, 2: 0.35}, "probed", 2, frozenset({1, 2}))
+
+
 @pytest.fixture
 def bottleneck(monkeypatch):
-    """One two-slot llama.cpp endpoint on the prior curve (2 x 0.35 < 0.75: bottlenecks at 2)."""
+    """One two-slot llama.cpp endpoint whose stored curve is MEASURED and bottlenecks at 2
+    (2 x 0.35 < 0.75): the endpoint_capacity row the throughput probe would have written."""
     reg = _fleet(monkeypatch, {"second": _ep("second")}, {"second": _facts("big-model", 2)})
     _row(server.store.conn, "second", "big-model", STRONG)
+    conn = server.store.conn
+    eid = db.lookup_id(conn, "endpoints", name="second", base_url="http://second:8080",
+                       backend="llama.cpp", host="local")
+    save_capacity(conn, eid, "partitioned", MEASURED_LLAMA)
     return reg
 
 
 def test_queue_room_applies_the_bottleneck_rule_by_priority():
     """RULE (D1): admission and the decision share ONE predicate, ``queue.room``: capacity's
     sessions rule, the bottleneck rule (the n-th session only for ``background``), the head of
-    the queue, and the pool's answer."""
-    cap = Capacity("partitioned", 2, curve=prior_curve("llamacpp"))
+    the queue, and the pool's answer. The curve is measured (a prior point holds nothing, §6)."""
+    cap = Capacity("partitioned", 2, curve=MEASURED_LLAMA)
     assert queue.room(cap, 0, "normal")
     assert not queue.room(cap, 1, "normal")      # the 2nd session is the bottleneck slot
     assert not queue.room(cap, 1, "urgent")
@@ -135,14 +145,14 @@ def test_queue_room_applies_the_bottleneck_rule_by_priority():
 def test_try_admit_reads_the_entry_priority_for_the_bottleneck(conn):
     """RULE (D1): ``try_admit`` reads the entry's priority rank and applies ``room`` with it: a
     normal entry waits for the bottleneck slot (``blocked_by = 'endpoint'``), a background
-    entry takes it."""
+    entry takes it. The curve is measured (a prior point holds nothing, §6)."""
     now = 100_000.0
     with db.immediate(conn):
         conn.execute("INSERT INTO mcp_servers (id, pid, started, updated) VALUES ('s1', 1, ?, ?)",
                      (now, now))
     eid = db.lookup_id(conn, "endpoints", name="e1", base_url="http://e1:8080", backend="llama.cpp",
                        host="e1", now=now)
-    cap = Capacity("partitioned", 2, curve=prior_curve("llamacpp"))
+    cap = Capacity("partitioned", 2, curve=MEASURED_LLAMA)
     for jid, prio in (("occ", "normal"), ("n", "normal"), ("bg", "background")):
         with db.immediate(conn):
             conn.execute("INSERT INTO jobs (id, mcp_server_id, status, created_at)"
@@ -194,6 +204,89 @@ def test_admit_now_refuses_what_queue_would_make_wait_for_a_named_job(bottleneck
     named, bg, bg_entry = asyncio.run(go())
     assert named["error"] == "would_queue" and named.get("id") is None
     assert bg.get("error") is None and bg_entry["admitted"] is not None
+
+
+# --- the operator's ruling 2026-11-15: only a MEASURED point holds a slot (§6, §7) --------------
+
+@pytest.fixture
+def prior_box(monkeypatch):
+    """The live box: one two-slot llama.cpp endpoint with NO endpoint_capacity row, so dispatch
+    reads the llama.cpp prior curve (its shape crosses at 2, but a prior point holds nothing)."""
+    reg = _fleet(monkeypatch, {"second": _ep("second")}, {"second": _facts("big-model", 2)})
+    _row(server.store.conn, "second", "big-model", STRONG)
+    return reg
+
+
+@pytest.mark.parametrize("priority", ["normal", "urgent"])
+def test_a_named_job_takes_the_second_slot_on_a_prior_curve(prior_box, tmp_path, priority):
+    """RULE: a prior point predicts and holds nothing: with one job running on the two-slot
+    box and no stored curve, a named normal or urgent job with ``admit='now'`` is admitted."""
+    async def go():
+        occ = await server.run_agent(task="occupy", model="big-model", cwd=str(tmp_path))
+        _running(occ["id"])
+        named = await server.run_agent(task="named 2nd", model="big-model", cwd=str(tmp_path),
+                                       admit="now", priority=priority)
+        entry = dict(_entry(named["id"])) if named.get("id") else None
+        await _settle_tasks()
+        return named, entry
+    named, entry = asyncio.run(go())
+    assert named.get("error") is None and entry["admitted"] is not None
+
+
+def test_a_routed_job_takes_the_second_slot_on_a_prior_curve(prior_box, tmp_path):
+    """RULE: the decision and admission agree on a prior curve: a routed normal job is chosen
+    for the second slot and admitted at once, nothing queued."""
+    async def go():
+        occ = await server.run_agent(task="occupy", model="big-model", cwd=str(tmp_path))
+        _running(occ["id"])
+        out = await server.run_agent(task="build it", model="auto", cwd=str(tmp_path))
+        entry = dict(_entry(out["id"]))
+        await _settle_tasks()
+        return out, entry
+    out, entry = asyncio.run(go())
+    assert "queued" not in out["routed_by"]["reason"]
+    assert entry["admitted"] is not None and entry["blocked_by"] is None
+
+
+def test_admit_force_takes_a_measured_bottleneck_slot(bottleneck, tmp_path):
+    """RULE: ``admit: force`` is the override of a measured bottleneck: a named normal job's
+    second session is admitted and its entry counted."""
+    async def go():
+        occ = await server.run_agent(task="occupy", model="big-model", cwd=str(tmp_path))
+        _running(occ["id"])
+        forced = await server.run_agent(task="forced 2nd", model="big-model", cwd=str(tmp_path),
+                                        admit="force")
+        entry = dict(_entry(forced["id"]))
+        await _settle_tasks()
+        return forced, entry
+    forced, entry = asyncio.run(go())
+    assert forced.get("error") is None
+    assert entry["admitted"] is not None and entry["forced"]
+
+
+def test_the_queue_line_names_a_bottleneck_hold(bottleneck, tmp_path):
+    """RULE: a job held by a measured bottleneck says so in its queue line, while
+    ``blocked_by`` keeps its two values (``endpoint``); a full endpoint's line is unchanged."""
+    async def go():
+        occ = await server.run_agent(task="occupy", model="big-model", cwd=str(tmp_path))
+        _running(occ["id"])
+        held = await server.run_agent(task="named 2nd", model="big-model", cwd=str(tmp_path))
+        held_entry = dict(_entry(held["id"]))
+        held_log = server.store.get(held["id"]).transcript_tail(0)
+        # the second slot taken (forced): the endpoint is full for a background job too
+        occ2 = await server.run_agent(task="occupy 2", model="big-model", cwd=str(tmp_path),
+                                      admit="force")
+        _running(occ2["id"])
+        full = await server.run_agent(task="bg 3rd", model="big-model", cwd=str(tmp_path),
+                                      priority="background")
+        full_log = server.store.get(full["id"]).transcript_tail(0)
+        await _settle_tasks()
+        return held_entry, held_log, full_log
+    held_entry, held_log, full_log = asyncio.run(go())
+    assert held_entry["admitted"] is None and held_entry["blocked_by"] == "endpoint"
+    assert "(blocked by endpoint, bottleneck slot: background only)" in held_log
+    assert "(blocked by endpoint)" in full_log
+    assert "bottleneck" not in full_log
 
 
 # --- item 2 (D2): a queued job is never pinned to the lesser row -----------------------------
