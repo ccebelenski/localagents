@@ -1,0 +1,20 @@
+{
+ "_note": "initialize params captured 2026-11-17 by a stub MCP server: Claude Code 2.1.239 (the SDK's bundled claude, --mcp-config) and opencode 2.3.1 (opencode run --standalone); capabilities left out",
+ "claude-code": {
+  "clientInfo": {
+   "description": "Anthropic's agentic coding tool",
+   "name": "claude-code",
+   "title": "Claude Code",
+   "version": "2.1.239",
+   "websiteUrl": "https://claude.com/claude-code"
+  },
+  "protocolVersion": "2025-11-25"
+ },
+ "opencode": {
+  "clientInfo": {
+   "name": "opencode",
+   "version": "2.3.1"
+  },
+  "protocolVersion": "2025-11-25"
+ }
+}

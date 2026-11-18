@@ -94,7 +94,7 @@ compact constantly; see [Context windows](docs/shim.md#context-windows).
    the cases where auto-backgrounding is off (see [Using it](docs/using.md#the-local-agent-subagent)):
 
    ```bash
-   mkdir -p ~/.claude/agents && ln -s "$PWD/agents/local-agent.md" ~/.claude/agents/
+   mkdir -p ~/.claude/agents && ln -s "$PWD/agents/claude-code/local-agent.md" ~/.claude/agents/
    ```
 
    It names the server's tools as `mcp__local__*`; if you registered the server under
@@ -111,6 +111,25 @@ compact constantly; see [Context windows](docs/shim.md#context-windows).
    brief. If nothing suitable is up it asks you to start something. Which model that
    is, is your call; the config does not name one, and anything you leave running
    may get used.
+
+### With OpenCode
+
+Steps 1 and 2 are the same. Then register the server and install OpenCode's relay:
+
+```bash
+opencode mcp add local --global -- localagents --config "$PWD/models.yaml"
+mkdir -p ~/.config/opencode/agents && ln -s "$PWD/agents/opencode/local-agent.md" ~/.config/opencode/agents/
+```
+
+The server reads the client's name when OpenCode connects and gives it OpenCode's
+instructions; `--client opencode` after `localagents` says so explicitly. OpenCode
+waits on a `run_agent` call for as long as the job runs, so there is no
+auto-background setting. To run several jobs at once, give each one to the
+`local-agent` subagent. Subagents run in the background and report when their job
+ends. The relay only gets the server's tools (registered as `local`); under another
+name, copy the file and change `local_*` in its permissions and the tool names in its
+text. The jobs themselves are still headless Claude Code sessions. There is no status
+line for OpenCode yet.
 
 `localagents monitor` opens the [Monitor](#monitor) at <http://127.0.0.1:8765/> when you
 want to watch. The tools, the relay subagent, the status line and where a job's record

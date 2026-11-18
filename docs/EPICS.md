@@ -2928,7 +2928,7 @@ the `--format json` event shapes, how a standalone run takes a per-job config, w
 Anthropic-compatible provider works through the shim, whether the overflow recovery fires on
 local backends' errors. (True now: settled by 6.2's captures, below.)
 
-- ☐ **6.1 OpenCode as the coordinator.** Register the server in `opencode.json`
+- ☑ **6.1 OpenCode as the coordinator.** Register the server in `opencode.json`
   (`mcp.servers.<name>`, `type: "local"`); the job's owner from `_meta["ai.opencode/sessionID"]`
   when present (under OpenCode the server's parent is the shared service, so the /proc walk
   would name one owner for every session), the walk kept for Claude Code; the server's
@@ -2939,6 +2939,36 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   `agents/local-agent.md`; the status line's OpenCode equivalent if there is one (to check).
   Gate: suite; an OpenCode session lists models, runs and waits on a job, and its owner is the
   session ID; a Claude Code session unchanged.
+  **Built 2026-11-17** (the coordinator, in an OpenCode session; local lanes were unreachable from
+  it until this story). As built, against the text above: (a) the client is not read from the
+  environment — OpenCode does not mark the environment of the MCP servers it starts (the first
+  end-to-end run, no flag, got Claude Code's text) — but from the `initialize` request's
+  `clientInfo.name`, captured from both clients: Claude Code 2.1.239 sends `claude-code`,
+  opencode 2.3.1 `opencode` (tests/fixtures/clients/initialize-client-info.json).
+  `serve --client` declares it and wins; without it a stdio server answers each handshake with
+  the named client's text (clients.adapt_at_handshake wraps the SDK's
+  `ServerRunner._handle_initialize`, pinned by a test); an unknown name and the HTTP transports
+  (one process, many clients, shared tool descriptions) get Claude Code's. (b) src/localagents/
+  clients/: the shared instructions and run_agent description with named slots, and one module
+  per client filling them; Claude Code's rendering is byte-identical to the server's text before
+  6.1 (tests/fixtures/clients/claude-code-before-6.1.json), OpenCode's carries none of Claude
+  Code's settings, and only `run_agent` and the instructions differ between the two. (c) The
+  Claude Code relay moved to agents/claude-code/local-agent.md, the old path a relative symlink
+  (installs link to it); agents/opencode/local-agent.md is OpenCode's own: V2 frontmatter, deny-all
+  then `local_*` and `execute`, one blocking run_agent call, the same header and report (a test
+  holds the two to that contract). (d) Owner: no schema change here. The per-job client and
+  OpenCode session (from `_meta["ai.opencode/sessionID"]`) ride 6.4's bump with `harness`, one
+  migration for the epic; under OpenCode the /proc walk finds no `claude` and records the
+  parent (OpenCode's service), which only the Claude Code status line reads. (e) OpenCode has no
+  status-line command (its cli.json settings have none); a TUI plugin is 6.12. README (a "With
+  OpenCode" block) and docs/using.md (the relay) updated. Verified end to end twice, both without
+  touching the operator's config: a standalone OpenCode session (ai2 as the coordinator, an
+  isolated config registering the server with no flag, a scratch database) called
+  `list_models`, launched the relay, and the relay's job ran on ai9 and succeeded (6.9 s, 7.9 s);
+  OpenCode woke the parent when the relay went idle. Once in code mode (`tools.local.*` through
+  `execute`) and once with `codemode: false` (`local_*` direct). The second run's prompt carried
+  OpenCode's text and none of Claude Code's. Review: none yet — the first cross-model review this
+  session can dispatch once the server is registered here.
 - ☑ **6.2 Capture experiment.** `opencode run --standalone --format json` against real
   endpoints with an OpenAI-compatible provider (the route the operator prefers), plus one
   Anthropic-compatible run for comparison. Endpoints the operator allowed (2026-11-17): ai9
@@ -3040,6 +3070,9 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   agents and the status line hook, checks with a live `list_models`, and has an `uninstall`
   that reverses exactly what it wrote. To decide: interactive versus flags, user versus project
   scope, and whether it edits client configs directly or prints what to run.
+- ☐ **6.12 OpenCode status line.** OpenCode's TUI has no status-line command (6.1); the jobs
+  view there is a TUI plugin (docs/build/plugins/cli) reading `localagents statusline`'s
+  source, the shared database. Shape to settle with the operator.
 
 ## Epic 4: operations (V2, not scheduled)
 

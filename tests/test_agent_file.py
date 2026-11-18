@@ -1,4 +1,4 @@
-"""The local-agent subagent file must carry valid YAML frontmatter.
+"""The Claude Code local-agent subagent file must carry valid YAML frontmatter.
 
 Claude Code tolerates a broken frontmatter by keeping only name and description, which
 silently turns the relay into a full-tool agent on the main session's model with CLAUDE.md
@@ -9,7 +9,11 @@ from pathlib import Path
 
 import yaml
 
-AGENT_FILE = Path(__file__).resolve().parents[1] / "agents" / "local-agent.md"
+AGENTS = Path(__file__).resolve().parents[1] / "agents"
+AGENT_FILE = AGENTS / "claude-code" / "local-agent.md"
+# Epic 6.1: the Claude Code relay moved under agents/claude-code/; the old path stays as a
+# relative symlink, because installs link ~/.claude/agents/local-agent.md to it
+OLD_PATH = AGENTS / "local-agent.md"
 JOB_TOOLS = {"run_agent", "wait_job", "job_status", "job_log", "cancel_job"}
 
 
@@ -42,3 +46,9 @@ def test_relay_waits_long_enough_not_to_cap_long_jobs():
     m = re.search(r"wait_job\(job_id=<id>, timeout_s=(\d+)\)", AGENT_FILE.read_text())
     assert m and int(m.group(1)) >= 900
     assert frontmatter()["maxTurns"] * int(m.group(1)) >= 24 * 3600
+
+
+def test_the_old_path_still_reaches_the_claude_code_relay():
+    assert OLD_PATH.is_symlink()
+    assert OLD_PATH.resolve() == AGENT_FILE.resolve()
+    assert str(OLD_PATH.readlink()) == "claude-code/local-agent.md"  # relative: survives a moved checkout

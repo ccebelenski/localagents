@@ -1,4 +1,4 @@
-"""FastMCP server exposing local-model agent delegation to Claude Code."""
+"""The MCP server exposing local-model agent delegation to a coordinator (Claude Code or OpenCode)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 from mcp.server.mcpserver import Context, MCPServer
 
-from . import db, derive, jobs, status
+from . import clients, db, derive, jobs, status
 from .jobs import Job, JobStore, oldest_first, prune, state_dir
 from .registry import ModelUnavailable, Registry, config_path, local_path
 from .router import dispatch
@@ -33,33 +33,10 @@ from .shim import Shim
 import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-INSTRUCTIONS = """\
-Delegate work to agents on LOCAL models (llama.cpp / vLLM) on the user's hardware. A `run_agent`
-job is a headless Claude Code session (same tools, CLAUDE.md, working tree) on a local model.
-
-Workflow:
-  1. `list_models`: live endpoints and what they serve. Nothing is vetted; you judge suitability.
-     Prefer instruct/coder ids with `context` >= 128k (`context_warning` = too small). Say which
-     served model you use; ask the user about an unfamiliar or chat-looking id.
-  2. `run_agent(task, model=<served id>, wait_s=<the job's timeout_s, default 1800>)` blocks until
-     the job ends and returns the record. Claude Code (v2.1.212+) moves a call running past
-     CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS (default 2 min) to a background task: you get a task id,
-     keep working, and the record arrives as a task notification.
-     Several jobs: one blocking run_agent per job, never wait_s=0 + wait_jobs. Each job then
-     notifies on its own finish; nothing to re-arm. Set CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=10000
-     (settings env) so each call backgrounds in seconds.
-     wait_jobs is a fallback for calls that cannot background; mode="any" must be re-armed
-     after every return or the remaining jobs finish unseen.
-     `model_unavailable`: tell the user what is up, ask them to start a model, retry when told.
-     `endpoint=` picks between live endpoints.
-     Subagents and non-interactive runs do not auto-background (unless CLAUDE_AUTO_BACKGROUND_TASKS=1):
-     use the `local-agent` subagent if installed (a relay; prompt = `model: <served id>`, optional
-     header lines, `---`, the brief verbatim), or `run_agent(wait_s=0)` then `wait_job` in-turn.
-  3. `cancel_job` stops a job; `list_jobs` / `job_status` / `job_log` follow one.
-  4. Review the work (`diff_files`: a worktree job's changes, null without one; `files_touched`
-     misses shell writes): local models are less reliable than Claude; treat output as a draft.
-`local_complete`: cheap one-shot generation, no tools (summaries, drafts, classification).
-"""
+# the server's instructions and run_agent's description are the client's (Epic 6.1: one module
+# per client, the shared text in clients/__init__.py); main() applies the declared client's, and
+# this is the default's (Claude Code), which every caller importing the module sees
+INSTRUCTIONS = clients.instructions(clients.DEFAULT)
 
 # Returned inside tool results too: server instructions are far back in the prompt by the time a
 # model is chosen, and the served list is whatever the user left running, vetted by nobody.
@@ -927,7 +904,7 @@ async def _wait_admitted(job: Job, ctx: Context | None) -> None:
     await jobs.wait_through_queue(job, _progress_reporter(ctx))
 
 
-@mcp.tool()
+@mcp.tool(description=clients.run_agent_description(clients.DEFAULT))
 async def run_agent(
     task: str,
     model: str | None = None,
@@ -950,33 +927,9 @@ async def run_agent(
 ) -> dict[str, Any]:
     """Delegate a task to an agent on a local model and (with `wait_s`) wait for the result.
 
-    A headless Claude Code session (same tools, project CLAUDE.md, working tree): brief it
-    like a junior engineer (what, where, how to verify).
-
-    Args:
-      task: The brief; be explicit, local models infer less than Claude.
-      model: Served id, glob or fuzzy name (list_models), or a router entry's name to route
-        (the record names the real endpoint and model, plus `routed_by`).
-      endpoint: Force an endpoint (no `model`: whatever it serves). A router entry routes
-        alone: a real `model` or `endpoint` beside it is bad_argument.
-      cwd: Working directory (default: the server's).
-      isolation: none | worktree (git worktree on local-agent/<job id>, kept only if changed).
-      wait_s: If > 0, block (through the queue: `queued #n, ~m min`) for the final record,
-        else return the job id. Counts from admission, like timeout_s. Pass the job's timeout
-        (shorter: `running` while the session works); Claude Code backgrounds a long call,
-        its record a task notification. Use for every job, swarms included.
-      permission_mode: acceptEdits (default) | bypassPermissions | default | plan. max_turns: Turn cap.
-      allowed_tools: Override auto-approved tools. system_prompt_append: Appended to the system prompt.
-      resume_job: Continue a job's session with `task` on its model, endpoint, cwd and
-        isolation unless a real `model` is given. Refused while it runs.
-      timeout_s: Session wall-clock cap, from admission. priority: urgent | normal | background.
-      admit: queue | now (would_queue, no job, no wait) | force (skip the wait).
-      tolerance: Routed: acceptable shortfall distance from the best row.
-      avoid_job: A job id (routed or named); routing never picks its model, naming it too is
-        bad_argument.
-      background_tasks: false: foreground only, the job ends at its result; true (config
-        default) allows background commands; a resume keeps its job's.
-    """
+    The description the client reads (the arguments, the wait) is clients.RUN_AGENT rendered
+    for the client this server serves; the first line above is its first line (the calibration
+    stub, router/stubmcp.py, copies it)."""
     if isolation not in ("none", "worktree"):
         return {"error": "bad_argument", "message": "isolation must be 'none' or 'worktree'"}
     if background_tasks is not None and not isinstance(background_tasks, bool):
@@ -1545,6 +1498,10 @@ def main() -> None:
     )
     ap.add_argument("--config", help="path to models.yaml (or set LOCALAGENTS_CONFIG)")
     ap.add_argument("--transport", default="stdio", choices=["stdio", "streamable-http", "sse"])
+    ap.add_argument("--client", choices=sorted(clients.CLIENTS),
+                    help="the coordinator this server serves: claude-code or opencode; without it "
+                         "a stdio server takes the name the client gives at initialize, and "
+                         "falls back to claude-code")
     a = ap.parse_args()
     if a.command == "statusline":  # normally short-circuited in __init__ before this module loads
         from .status import render
@@ -1561,4 +1518,10 @@ def main() -> None:
         prune(_reg().defaults.job_retention_days)
     except OSError:
         pass
+    if a.client:
+        clients.apply(mcp, a.client)
+        print(f"localagents: serving {a.client} (declared)", file=sys.stderr)
+    elif a.transport == "stdio":
+        clients.adapt_at_handshake(mcp, lambda client, info: print(
+            f"localagents: serving {client} (initialize clientInfo {info!r})", file=sys.stderr))
     mcp.run(transport=a.transport)

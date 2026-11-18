@@ -76,7 +76,7 @@ in non-interactive runs unless `CLAUDE_AUTO_BACKGROUND_TASKS=1`. Without it a
 Claude Code doesn't treat it as an agent, so nothing announces when it finishes, and
 a job can be forgotten if Claude ends its turn first.
 
-[`agents/local-agent.md`](../agents/local-agent.md) covers those cases by making each job
+[`agents/claude-code/local-agent.md`](../agents/claude-code/local-agent.md) covers those cases by making each job
 a real background subagent. It's only a relay. It runs on Haiku, can use only the job
 tools (`run_agent`, `wait_job`, `job_status`, `job_log`, `cancel_job`). It passes the
 brief through unchanged, waits, and hands back the job record. Picking the model stays
@@ -113,6 +113,16 @@ while that server process is up. Stopping the relay from `/tasks` does **not**
 stop the local job; use `cancel_job`. The overhead is a few small Haiku turns per job,
 one per 25 minutes of job time (each `wait_job` blocks for 1500 s with progress
 notifications in between).
+
+OpenCode has its own relay,
+[`agents/opencode/local-agent.md`](../agents/opencode/local-agent.md). It takes the same
+header and reports the same way, but it's written for OpenCode: a subagent there always
+runs in the background and wakes the main session when it finishes, and OpenCode waits
+on a tool call for up to 12 hours, so the relay makes one blocking `run_agent` call
+instead of looping on `wait_job`. It has no model of its own, so it runs on the main
+session's model; add a `model:` line to its frontmatter to pin a cheaper one. Its
+permissions deny everything except the server's tools (`local_*`) and `execute`, which
+is how code mode reaches them.
 
 ## Status line
 
