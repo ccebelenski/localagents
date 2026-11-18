@@ -3343,7 +3343,7 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   changed: list_models merges a failed probe's `host` (up/down/unknown) over the configured
   one (server.py `"host": e.host, **probes[n]`); `backend: ollama` is accepted and probes like
   `other`. Suite 1592 passed.
-- ☐ **6.11 Installation (placeholder, to shape).** Today install is the README's seven manual
+- ☑ **6.11 Installation.** Today install is the README's seven manual
   steps (`uv tool install -e .`, copy `models.example.yaml`, `claude mcp add`, the auto-background
   env, the relay agent symlink, the status line). The operator: automate it. Shape to settle: a
   `localagents install` (or `setup`) that is idempotent and re-runnable, detects which clients
@@ -3352,6 +3352,40 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   agents and the status line hook, checks with a live `list_models`, and has an `uninstall`
   that reverses exactly what it wrote. To decide: interactive versus flags, user versus project
   scope, and whether it edits client configs directly or prints what to run.
+  **Shaped and built 2026-11-18.** The operator: "Let's be creative with the installation - this
+  is an LLM oriented project, so maybe the installation itself is instructions for a model to
+  install in claude code or opencode? The user just tells the LLM 'Use these instructions to
+  install'." So the install is INSTALL.md, a brief written to the coding agent; the open
+  questions above answered by it: interactive (the agent asks everything in one message, states
+  the plan, shows every change to a file of the operator's first, keeps a `.bak-localagents`
+  copy), user scope (project scope named for Claude Code), the clients' own commands where they
+  exist (`claude mcp add`, `opencode mcp add`; settings edited as data where none does; OpenCode
+  has no `mcp remove`, so uninstall edits out the one entry). Update and uninstall are the same
+  brief ("say update or uninstall instead"). What the agent must not guess is code's:
+  `localagents check` (install_check.py, read-only) reports every item — package, config, each
+  endpoint probed as list_models does, Claude Code's registration in any scope and the config it
+  names, the auto-background delay, each relay (a link, an identical copy, a copy renamed for
+  another server name, or stale), the status line, OpenCode's registration (read through
+  `opencode debug config --standalone`: without it the answer is the background service's own
+  environment's — a scratch XDG_CONFIG_HOME still showed the operator's config), the harness —
+  as ok/warn/fail/absent/info with a fix naming INSTALL.md's step; exit 1 on a fail. `check
+  --url` identifies the server at an address by its own answers (Strata's /health `service`,
+  `owned_by` llamacpp/vllm), its models, window and missing launch flags, and prints the
+  models.yaml entry, with a `host:` for any server not on this machine. tools/statusline.sh: a
+  status line for someone who has none (the two lines INSTALL.md adds to an existing script are
+  the script's own, pinned by a test). README's Quick start leads with the one sentence.
+  Tests: tests/test_install_check.py (13). **Rehearsed live**: OpenCode on ai9 (Qwen3.8-27B) as
+  the installer, in a scratch HOME under bwrap with the operator's home read-only, cloning from
+  the local main, the step-0 answers in the prompt (both clients, ai2 and ai9, the status line).
+  Install: every item ok, no warn; the `local` tools appeared mid-session and it called
+  list_models end to end; the operator's three client files byte-identical after. It wrote no
+  `host:` for two servers on two boxes by IP (both would have shown as this machine) — check
+  --url now suggests one for every non-loopback address and INSTALL.md says why. Uninstall
+  (keep config and checkout): both registrations, relays, the two settings keys, the package and
+  the state directory removed, backups first, the OpenCode config's `local` entry cut with every
+  other line intact, a localagents outside the sandbox (rehearsal PATH) left alone as not its
+  own. Hardened after reading the run: `--config=path`, malformed settings files reported as
+  absent, never a traceback.
 - ☐ **6.12 OpenCode status line.** OpenCode's TUI has no status-line command (6.1); the jobs
   view there is a TUI plugin (docs/build/plugins/cli) reading `localagents statusline`'s
   source, the shared database. Shape to settle with the operator.

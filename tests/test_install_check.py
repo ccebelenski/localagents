@@ -60,8 +60,12 @@ def test_identify_strata_vllm_and_other(monkeypatch):
         "/health": (200, {"status": "ok", "service": "strata"}),
         "/props": (200, {"default_generation_settings": {"n_ctx": 65536}}),
     }, url="http://10.0.0.5:8080")
-    assert out["backend"] == "strata" and out["entry"].startswith("  strata:\n")  # an IP: no host line
-    assert "host:" not in out["entry"] and any("under 128k" in n for n in out["notes"])
+    # another machine by IP: a host line all the same (the rehearsal left two boxes as `local`)
+    assert out["backend"] == "strata" and out["entry"].startswith("  strata:\n") and "    host: strata" in out["entry"]
+    assert any("under 128k" in n for n in out["notes"])
+    out = _identify(monkeypatch, {"/v1/models": (200, {"data": [{"id": "q", "owned_by": "llamacpp"}]}), "/props": (200, {})},
+                    url="http://127.0.0.1:8080")
+    assert "host:" not in out["entry"]  # this machine: the default
     out = _identify(monkeypatch, {"/v1/models": (200, {"data": [{"id": "ds", "owned_by": "vllm", "max_model_len": 300000}]})})
     assert out["backend"] == "vllm" and out["context"] == {"ds": 300000}
     assert any("--enable-prompt-tokens-details" in n for n in out["notes"])
@@ -145,6 +149,12 @@ def test_claude_code_registration_problems(home, tmp_path):
     other = reg({"command": "localagents", "args": ["--config", "/elsewhere/models.yaml"]})
     assert other.status == "warn" and "/elsewhere/models.yaml" in other.detail
     assert reg({"command": "localagents", "args": []}).status == "warn"  # no --config
+    assert reg({"command": "localagents", "args": [f"--config={cfg}"]}).status == "ok"
+    # a malformed file is reported as not registered, never a traceback
+    (h / ".claude.json").write_text(json.dumps({"mcpServers": ["local"], "projects": "x"}))
+    (h / ".claude" / "settings.json").write_text(json.dumps({"env": ["x"], "statusLine": "a string"}))
+    got = _items(ic.check_claude_code("local", cfg, tmp_path))
+    assert got["claude-code"].status == "absent" and got["claude-code.statusline"].status == "absent"
     _exe(bindir, "someserver")
     assert "not localagents" in reg({"command": "someserver", "args": []}).detail
     (h / ".claude.json").write_text(json.dumps({}))

@@ -103,7 +103,10 @@ localagents check --url http://host:port [--api-key KEY]
 This says what is there (llama.cpp, vLLM or Strata, the model, the window, launch flags that
 are missing) and prints the entry for `models.yaml`. Pass on its notes to the user. An entry's
 name is what the user and you will call it (`endpoint:` in `run_agent`); the suggested one is
-generic when the address is an IP, so ask for a better one. A server that is down: write its
+generic when the address is an IP, so use the user's. Every server not on this machine needs a
+`host:` line naming its machine (entries on one machine share it; the entry's own name is fine
+for a machine with one server). Without one, the monitor and the status line show it as this
+machine. A server that is down: write its
 entry by hand, with `backend:` as the user tells you (`llama.cpp`, `vllm` or `strata`).
 
 Start the file from the example's `defaults:` block, then the entries:

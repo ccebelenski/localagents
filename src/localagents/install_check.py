@@ -134,8 +134,11 @@ def _registration(entry: dict[str, Any] | None, where: str, config: Path, comman
     if "localagents" not in " ".join(command):
         return Item("", "warn", f"{where}: its command is {' '.join(command)!r}, not localagents")
     given = None
-    if "--config" in command[:-1]:
-        given = Path(command[command.index("--config") + 1]).expanduser()
+    for i, arg in enumerate(command):
+        if arg == "--config" and i + 1 < len(command):
+            given = Path(command[i + 1]).expanduser()
+        elif arg.startswith("--config="):
+            given = Path(arg.split("=", 1)[1]).expanduser()
     if given is None:
         return Item("", "warn", f"{where}: registered without --config, so the server looks in its working directory",
                     f"re-register it with --config {config}")
@@ -155,6 +158,12 @@ def claude_dirs() -> tuple[Path, Path]:
     return Path.home() / ".claude", Path.home() / ".claude.json"
 
 
+def _dict(v: Any) -> dict[str, Any]:
+    """A settings value where a mapping belongs, or {}: the files are the operator's, and a
+    malformed one is reported as missing, never a traceback out of the check."""
+    return v if isinstance(v, dict) else {}
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         d = json.loads(path.read_text())
@@ -169,14 +178,11 @@ def check_claude_code(name: str, config: Path, cwd: Path) -> list[Item]:
     cdir, state = claude_dirs()
     st = _read_json(state)
     found: list[tuple[str, dict[str, Any]]] = []
-    if name in (st.get("mcpServers") or {}):
-        found.append(("user scope", st["mcpServers"][name]))
-    proj = (st.get("projects") or {}).get(str(cwd)) or {}
-    if name in (proj.get("mcpServers") or {}):
-        found.append((f"local scope ({cwd})", proj["mcpServers"][name]))
-    mcp_json = _read_json(cwd / ".mcp.json")
-    if name in (mcp_json.get("mcpServers") or {}):
-        found.append((f"project scope ({cwd / '.mcp.json'})", mcp_json["mcpServers"][name]))
+    for where, servers in (("user scope", _dict(st.get("mcpServers"))),
+                           (f"local scope ({cwd})", _dict(_dict(_dict(st.get("projects")).get(str(cwd))).get("mcpServers"))),
+                           (f"project scope ({cwd / '.mcp.json'})", _dict(_read_json(cwd / ".mcp.json").get("mcpServers")))):
+        if isinstance(servers.get(name), dict):
+            found.append((where, servers[name]))
     items = []
     if not found:
         it = _registration(None, "", config, [])
@@ -189,7 +195,7 @@ def check_claude_code(name: str, config: Path, cwd: Path) -> list[Item]:
     items.append(it)
 
     settings = _read_json(cdir / "settings.json")
-    raw = (settings.get("env") or {}).get(AUTO_BACKGROUND) or os.environ.get(AUTO_BACKGROUND)
+    raw = _dict(settings.get("env")).get(AUTO_BACKGROUND) or os.environ.get(AUTO_BACKGROUND)
     try:
         ms = int(raw) if raw is not None else None
     except ValueError:
@@ -211,14 +217,16 @@ def check_claude_code(name: str, config: Path, cwd: Path) -> list[Item]:
     relay.id = "claude-code.relay"
     items.append(relay)
 
-    sl = settings.get("statusLine") or {}
-    cmd = str(sl.get("command") or "") if isinstance(sl, dict) else ""
+    cmd = str(_dict(settings.get("statusLine")).get("command") or "")
     if not cmd:
         items.append(Item("claude-code.statusline", "absent", "no statusLine (optional)",
                           "INSTALL.md step 4a, the optional status line"))
     else:
         script = Path(cmd.split()[0]).expanduser()
-        text = cmd + ("\n" + script.read_text(errors="replace") if script.is_file() else "")
+        try:
+            text = cmd + ("\n" + script.read_text(errors="replace") if script.is_file() else "")
+        except OSError:
+            text = cmd
         if "localagents statusline" in text:
             items.append(Item("claude-code.statusline", "ok", f"{cmd} runs `localagents statusline`"))
         else:
@@ -253,7 +261,7 @@ def check_opencode(name: str, config: Path, cwd: Path) -> list[Item]:
     else:
         found = None
         for doc in sources:
-            mcp = (doc.get("info") or {}).get("mcp") or {}
+            mcp = _dict(_dict(doc.get("info")).get("mcp"))
             servers = mcp.get("servers") if isinstance(mcp.get("servers"), dict) else mcp  # 2.x, then 1.x
             if isinstance(servers, dict) and isinstance(servers.get(name), dict):
                 found = (str(doc.get("path") or doc.get("type")), servers[name])
@@ -304,15 +312,18 @@ async def run_checks(config: Path, name: str, cwd: Path) -> list[Item]:
 
 
 def _suggest_name(url: str, kind: str) -> tuple[str, str | None]:
+    """The entry's name and its ``host:``. A server on this machine needs no host (the default,
+    ``local``); every other one does, or the monitor draws it as this machine (the 6.11 install
+    rehearsal: two servers on two boxes by IP, both left as ``local``). An IP has no name to
+    offer, so the backend's kind stands in for both until the operator names them."""
     host = urlsplit(url).hostname or "server"
     try:
-        ipaddress.ip_address(host)
-        is_ip = True
+        ip = ipaddress.ip_address(host)
     except ValueError:
-        is_ip = False
-    if is_ip or host == "localhost":
+        ip = None
+    if host == "localhost" or (ip is not None and ip.is_loopback):
         return kind.replace(".", ""), None
-    label = host.split(".")[0]
+    label = kind.replace(".", "") if ip is not None else host.split(".")[0]
     return label, label
 
 
