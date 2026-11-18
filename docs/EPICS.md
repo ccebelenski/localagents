@@ -2986,8 +2986,26 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   `list_models`, launched the relay, and the relay's job ran on ai9 and succeeded (6.9 s, 7.9 s);
   OpenCode woke the parent when the relay went idle. Once in code mode (`tools.local.*` through
   `execute`) and once with `codemode: false` (`local_*` direct). The second run's prompt carried
-  OpenCode's text and none of Claude Code's. Review: none yet — the first cross-model review this
-  session can dispatch once the server is registered here.
+  OpenCode's text and none of Claude Code's.
+  **Review, no defect** (two lanes, both dispatched from OpenCode through the new relay): Qwen3.8-27B
+  on ai9 (job 725b4456) ran probe 1 — CLEAN: Claude Code's instructions and run_agent text
+  byte-identical to 82d8c0d by its own extraction, not the fixture; the other nine tools unchanged
+  for both clients — then died on a 500 from ai9's chat template on Claude Code's ToolSearch
+  `tool_reference` result (the shim fix 1b10766). DeepSeek-V4.1-Flash on dgx1-a (job 906e649d, 85
+  turns, 26 min) ran probes 2-4 in the same tree. CLEAN: the handshake over the real server picks
+  each client's text (unknown → Claude Code, `--client` beats clientInfo; only run_agent differs on
+  the wire); the class-method wrap reaches only this process's one server; the Claude Code relay
+  byte-identical, the old path a relative symlink, OpenCode's relay resolving to deny-all +
+  `local_*` + `execute`; all 18 new README/using.md sentences true of the code. POSSIBLE (the
+  `local_*` action glob unproven by `debug agents`): settled by the coordinator's own runs — the
+  codemode-off end-to-end reached the server only through `local_run_agent` under that rule.
+  NOTICED, folded: using.md's "one blocking run_agent call instead of looping on wait_job" — the
+  relay does call wait_job when the record comes back running; the sentence says so now. NOTICED,
+  kept: the clientInfo fixture leaves out `capabilities` (its note says so; a request needs them);
+  a clientInfo-less initialize gets -32602 from the SDK, so that fallback is defensive only; the
+  SDK answers nothing to an `initialize` whose params are not an object (the SDK's, reproduced with
+  the hook off); `apply()` sets two SDK privates, which tests/test_clients.py would catch renamed;
+  a second MCP server in one process would share the wrap (none exists). The chain closes.
 - ☑ **6.2 Capture experiment.** `opencode run --standalone --format json` against real
   endpoints with an OpenAI-compatible provider (the route the operator prefers), plus one
   Anthropic-compatible run for comparison. Endpoints the operator allowed (2026-11-17): ai9

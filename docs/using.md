@@ -118,8 +118,8 @@ OpenCode has its own relay,
 [`agents/opencode/local-agent.md`](../agents/opencode/local-agent.md). It takes the same
 header and reports the same way, but it's written for OpenCode: a subagent there always
 runs in the background and wakes the main session when it finishes, and OpenCode waits
-on a tool call for up to 12 hours, so the relay makes one blocking `run_agent` call
-instead of looping on `wait_job`. It has no model of its own, so it runs on the main
+on a tool call for up to 12 hours, so the relay makes one blocking `run_agent` call and
+calls `wait_job` only if the record comes back still running. It has no model of its own, so it runs on the main
 session's model; add a `model:` line to its frontmatter to pin a cheaper one. Its
 permissions deny everything except the server's tools (`local_*`) and `execute`, which
 is how code mode reaches them.
