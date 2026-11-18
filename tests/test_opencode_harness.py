@@ -140,6 +140,10 @@ def test_the_generated_config_and_environment(tmp_path, monkeypatch):
     assert cfg["agents"]["job"]["steps"] == 60 and cfg["instructions"] == ["/x/CLAUDE.md"]
     denied = {p["action"] for p in cfg["permissions"] if p["effect"] == "deny"}
     assert denied == set(oc.DENIED) and cfg["permissions"][0] == {"action": "*", "resource": "*", "effect": "allow"}
+    # the 6.6+6.7 review's fold: OpenCode's own management tools (worktree remove, session move...)
+    # are switched off by plugin, a deny does not reach them (checked live)
+    assert {"-opencode.tools", "-opencode.tools.mcp-resources"} <= set(cfg["plugins"])
+    assert all(p.startswith("-opencode.") for p in cfg["plugins"])
     env = oc.environment(job, tmp_path / "cfg")
     assert env["PWD"] == str(tmp_path) and env["XDG_CONFIG_HOME"] == str(tmp_path / "cfg")
     assert env["OPENCODE_DISABLE_CLAUDE_CODE"] == "1"

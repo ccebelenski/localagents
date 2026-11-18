@@ -1384,7 +1384,7 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
 
 @mcp.tool()
 async def cancel_job(job_id: str, ctx: Context | None = None) -> dict[str, Any]:
-    """Cancel a running job (kills the headless Claude session).
+    """Cancel a running job (ends its agent session).
 
     A job still waiting in the queue leaves it without a session: `dropped`, error
     `cancelled while queued`, started_at null.

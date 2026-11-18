@@ -176,7 +176,7 @@ def summary_worktree(worktree: object) -> object:
 
 
 def ctx_tokens(conn: sqlite3.Connection, job_id: str) -> int | None:
-    """The prompt sum of the latest ``/v1/messages`` row whose prompt sum is non-zero: a null
+    """The prompt sum of the latest model-request row (``MODEL_REQUEST_PATHS``) whose prompt sum is non-zero: a null
     usage or a count_tokens call keeps the older figure (the old note_usage rule)."""
     row = conn.execute(
         f"SELECT {_PROMPT_SUM} {_MESSAGES} AND {_PROMPT_SUM} > 0 ORDER BY r.t DESC LIMIT 1",
@@ -687,7 +687,7 @@ def last_tool(conn: sqlite3.Connection, job_id: str, harness: object = LOOKUP) -
 
 def gen_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
     """Replay of the note_usage EMA, ``0.5*prev + 0.5*(output / span)``, over the job's
-    ``/v1/messages`` rows in t order; span is gen_ms when set, else ms, and rows without output
+    model-request rows (``MODEL_REQUEST_PATHS``) in t order; span is gen_ms when set, else ms, and rows without output
     or span are skipped exactly as note_usage skipped them."""
     ema: float | None = None
     for r in conn.execute(f"SELECT r.t, r.ms, r.gen_ms, r.output_tokens {_MESSAGES} ORDER BY r.t", (job_id,)).fetchall():
@@ -702,7 +702,7 @@ def gen_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
 
 def prefill_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
     """Processed prompt tokens (input + cache_creation) per second of prefill (ms − gen_ms),
-    summed over the job's ``/v1/messages`` rows — a plain ratio over the job. Rows join when
+    summed over the job's model-request rows — a plain ratio over the job. Rows join when
     ``input_tokens``, ``ms`` and ``gen_ms`` are numbers, ms > gen_ms and the processed tokens
     (input + cache_creation, a NULL cache_creation counting 0) are > 0: the page's own rule
     (app.js prefillRate). A missing cache_creation counts as 0 since story 3.10i — a backend

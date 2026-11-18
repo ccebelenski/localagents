@@ -49,9 +49,18 @@ RETRY_CAP = 6  # consecutive transport retries before the session is ended (Open
 KILL_GRACE_S = 20.0
 CHECKPOINT = "<conversation-checkpoint>"
 # the tools a job never gets: interactive (question), its own agents (subagent: Claude Code jobs
-# disallow Agent/Task), web search, image generation, skills (the operator's own) and code mode
-# (no MCP server is configured for a job)
-DENIED = ("question", "subagent", "websearch", "experimental_image_generate", "skill", "execute")
+# disallow Agent/Task), web search, image generation, skills (the operator's own), code mode (no
+# MCP server is configured for a job) and OpenCode's own management tools, which surface directly
+# once `execute` is denied — worktree create/remove, session move/rename, models, MCP resources
+# (the 6.6+6.7 review saw them offered to a job)
+DENIED = ("question", "subagent", "websearch", "experimental_image_generate", "skill", "execute", "opencode_*")
+# ...and the built-in plugins behind them, switched off in the job's config so their tools are not
+# offered at all: a permission rule does not reach OpenCode's own management tools — the 6.7
+# fold's live check called `opencode_worktree_remove` under a deny and it ran (it failed only on
+# the nonexistent path it was given)
+DISABLED_PLUGINS = ("opencode.tools", "opencode.tools.mcp-resources", "opencode.tool.question",
+                    "opencode.tool.subagent", "opencode.tool.websearch", "opencode.tool.image-generate",
+                    "opencode.tool.skill")
 # the arguments this harness cannot honour yet (the policy translation is 6.8): refused at
 # start_job, never silently dropped
 UNSUPPORTED = ("permission_mode", "allowed_tools", "mcp_servers", "thinking", "effort", "strict_mcp_config")
@@ -127,6 +136,7 @@ def config(job: Job, res: Resolution, spec: SessionSpec, instructions: list[str]
                 "limit": {"context": context, "output": output},
             }},
         }},
+        "plugins": [f"-{p}" for p in DISABLED_PLUGINS],
         "permissions": permissions,
         "instructions": instructions,
         "agents": {"job": {"mode": "primary", "steps": spec.max_turns or d.max_turns, "permissions": permissions}},
@@ -302,6 +312,11 @@ async def run(job: Job, res: Resolution, spec: SessionSpec) -> None:
     argv.append(job.task)
     job.log_text(f"[opencode] {exe} steps={steps} instructions={len(instructions)} cwd={job.run_cwd}"
                  + (f" resume={spec.resume_session}" if spec.resume_session else ""))
+    # the 6.6+6.7 review: the config's tool policy is Claude Code's vocabulary and is not applied
+    # here until 6.8 translates it; say so on every job rather than drop it without a word
+    job.log_text(f"[opencode] the config's permission_mode ({d.permission_mode}), allowed_tools and "
+                 "disallowed_tools are Claude Code's and not applied (Epic 6.8); this job's tools: "
+                 "edit, glob, grep, read, shell, webfetch, write")
     reader = Reader(job, steps)
     job._on_request = CompactionCounter(job)
     proc = await asyncio.create_subprocess_exec(

@@ -3233,6 +3233,35 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   its resume both succeeded in OpenCode, same session, the rule followed, every request
   `/v1/chat/completions` with usage, cache reads growing, ctx/gen/prefill derived, the fix and
   the new function in the diff. Suite 1581 passed.
+  **Review of 6.6 + 6.7 (DeepSeek-V4.1-Flash/dgx1-a, job fcf6dbe3, 82 turns, 29 min; four live
+  OpenCode runs of its own on ai2): no reproduced defect.** CLEAN: every Claude Code request path
+  byte- and row-identical to 34e080c over 28 constructed cases (streams in several splits, non-
+  streamed, the folds, count_tokens 404/405/500/501, /api/hello, every overflow wording, a
+  mid-stream backend disconnect) but the listed Strata exception; the OpenAI side on the captured
+  streams; live, a timeout, a cancel, a step cap of 2 and a task tempting `question` each settled
+  with a true record and nothing left running; isolation (no ~/.claude, no operator skills, the
+  project CLAUDE.md inlined) and fidelity (the rows' tokens equal OpenCode's own per-step counts
+  to the token; compactions 0 = 0 checkpoints). Folded by the coordinator, each verified first:
+  (1) the Anthropic version had been COPIED, not moved — shim.py still held the old normaliser,
+  overflow rewrite and usage readers, already drifted (the coordinator's cut script built the
+  stripped file and never wrote it back); deleted, and a test holds the core to no API code.
+  (2) OpenCode's own management tools (`opencode_worktree_remove`, session move/rename, models,
+  MCP resources) were offered to every job: they surface once `execute` is denied, and a live
+  check showed a deny does not reach them (`opencode_worktree_remove` RAN under `opencode_*`
+  denied, failing only on the nonexistent path it was given) — the job's config now switches off
+  their built-in plugins (opencode.tools, .tools.mcp-resources, and the plugins of the other
+  denied tools); live, a job is offered exactly edit, glob, grep, read, shell, webfetch, write
+  (Claude Code jobs' default seven) and read and shell work. (3) A client disconnect mid-stream
+  recorded a clean 200 (CancelledError is not an Exception; older than 6.6): the row now says
+  the client went away, red test first. (4) POSSIBLE, settled: `skill` is listed but a call is
+  refused at call time (live: "Permission denied: skill") — and now its plugin is off. (5) The
+  config's Claude Code tool policy (permission_mode, allowed_tools) is not applied to OpenCode
+  jobs: every OpenCode transcript now says so and names the job's tools; translating it is 6.8's
+  first item. (6) cancel_job's text ("kills the headless Claude session") and derive's docstrings
+  made harness-neutral. NOTICED, kept: a tool call in flight when a session ends leaves no row
+  (OpenCode emits tool_use only in its final state); a non-object request body is now relayed
+  rather than raising (an input Claude Code never sends); an overflow on a path matching neither
+  API passes through unrewritten.
 - ☐ **6.8 Policy translation.** `permission_mode`, `allowed_tools`, `disallowed_tools`,
   `max_turns`, `system_prompt_append`, `setting_sources`, `background_tasks`: the common
   fields read once, each harness's translation its own module, each mapping stated (and refused where there is no equivalent, never silently

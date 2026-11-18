@@ -180,3 +180,75 @@ def test_the_generation_clock_starts_at_generated_content_not_the_role_chunk():
         _, _, body = _capture(capture)
         first = body.split(b"\n\n")[0]
         assert not shim_openai.content_started(first), capture
+
+
+def test_the_core_holds_no_api_version():
+    """The 6.6+6.7 review (DeepSeek, job fcf6dbe3), NOTICED made a rule: the Anthropic version was
+    copied into shim_anthropic.py and its old copy left in the core, already drifted (the core's
+    translate_context_error lacked Strata's current wording). One owner each: the core defines no
+    normaliser, no overflow rewrite or pattern and no usage reader."""
+    import ast
+
+    import localagents.shim as core
+
+    tree = ast.parse(Path(core.__file__).read_text())
+    defined = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+    defined |= {t.id for n in tree.body if isinstance(n, ast.Assign) for t in n.targets if isinstance(t, ast.Name)}
+    for name in ("normalise_messages_body", "translate_context_error", "_fold_text_into_tool_results",
+                 "_text_tool_references", "_text_of", "_CTX_PATTERNS", "_CTX_HINTS", "_object",
+                 "_usage_from_json", "_usage_from_sse_head", "_usage_from_sse_tail", "_merge_usage"):
+        assert name not in defined, name
+    assert defined >= {"Shim", "api_for", "_apply_levers", "APIS"}
+
+
+def test_a_client_that_goes_away_mid_stream_leaves_an_error_row(tmp_path, monkeypatch):
+    """The 6.6+6.7 review, NOTICED (older than 6.6) made a rule: when the client disconnects,
+    Starlette cancels the task draining the stream; the CancelledError passed the generator's
+    `except Exception` and the row read as a clean 200 with no error. The row now says the stream
+    ended early because the client went away (either API)."""
+    from starlette.requests import Request
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("LOCALAGENTS_DB", str(tmp_path / "s.db"))
+    job = jobs.JobStore().new(task="t", model="m", endpoint="e", base_url="http://x:8080", backend="llama.cpp",
+                              host="local", cwd="/tmp", run_cwd="/tmp", isolation="none")
+
+    class Slow(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"choices":[{"index":0,"delta":{"content":"I"}}]}\n\n'
+            await asyncio.sleep(30)  # the backend still working when the client leaves
+            yield b"data: [DONE]\n\n"
+
+    async def send(upstream, stream=True):
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Slow(), request=upstream)
+
+    shim = Shim(lambda jid: job)
+    shim._client.send = send
+    raw = json.dumps(BODY).encode()
+
+    async def receive():
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    scope = {"type": "http", "method": "POST", "headers": [(b"content-type", b"application/json")],
+             "path": f"/job/{job.id}/v1/chat/completions", "query_string": b"", "root_path": "",
+             "path_params": {"job_id": job.id, "path": "v1/chat/completions"}}
+
+    async def drive():
+        resp = await shim.relay(Request(scope, receive))
+        got = []
+
+        async def drain():
+            async for chunk in resp.body_iterator:
+                got.append(chunk)
+
+        task = asyncio.create_task(drain())
+        while not got:
+            await asyncio.sleep(0.01)
+        task.cancel()  # what Starlette does on a disconnect
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(drive())
+    (row,) = job._conn.execute("SELECT http_status, error FROM requests").fetchall()
+    assert row["http_status"] == 200
+    assert row["error"] and "client went away" in row["error"], row["error"]

@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import socket
 import time
 from types import ModuleType
@@ -45,127 +44,6 @@ def api_for(path: str) -> ModuleType | None:
     return next((api for api in APIS if api.matches(path)), None)
 
 
-def _text_of(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    return "\n".join(
-        b.get("text", "") for b in (content or []) if isinstance(b, dict) and b.get("type") == "text"
-    )
-
-
-def _fold_text_into_tool_results(msgs: list[dict[str, Any]]) -> int:
-    """Move ``text`` blocks that share a user message with ``tool_result`` blocks into the last result.
-
-    Returns the number of text blocks moved. Other block types (images) stay where they are.
-    """
-    folded = 0
-    for m in msgs:
-        content = m.get("content")
-        if m.get("role") != "user" or not isinstance(content, list):
-            continue
-        results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
-        texts = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
-        if not results or not texts:
-            continue
-        last = results[-1]
-        inner = last.get("content")
-        if isinstance(inner, str):
-            inner = [{"type": "text", "text": inner}] if inner else []
-        elif not isinstance(inner, list):
-            inner = []
-        last["content"] = list(inner) + [{"type": "text", "text": t.get("text", "")} for t in texts]
-        m["content"] = [b for b in content if not (isinstance(b, dict) and b.get("type") == "text")]
-        folded += len(texts)
-    return folded
-
-
-def _text_tool_references(msgs: list[dict[str, Any]]) -> int:
-    """Rewrite each ``tool_reference`` item inside a ``tool_result``'s content as a text item
-    naming the tool. Claude Code's ToolSearch answers with them (``[{"type": "tool_reference",
-    "tool_name": "TaskStop"}]``: the deferred tool it loaded); a local backend's chat template
-    accepts only text and images there, and llama.cpp's Qwen template raised "Unexpected item type
-    in content" (HTTP 500) and ended the 6.1 review job on ai9 (job 725b4456, 2026-11-17). The
-    tool itself reaches the session as a tool definition on the next request either way. Returns
-    the number rewritten."""
-    n = 0
-    for m in msgs:
-        content = m.get("content")
-        if m.get("role") != "user" or not isinstance(content, list):
-            continue
-        for b in content:
-            if not (isinstance(b, dict) and b.get("type") == "tool_result" and isinstance(b.get("content"), list)):
-                continue
-            items = b["content"]
-            for i, item in enumerate(items):
-                if isinstance(item, dict) and item.get("type") == "tool_reference":
-                    items[i] = {"type": "text", "text": f"tool_reference: {item.get('tool_name', '?')}"}
-                    n += 1
-    return n
-
-
-def normalise_messages_body(body: dict[str, Any]) -> dict[str, Any]:
-    """Fold ``role: system`` entries in ``messages`` into an adjacent user message, then fold
-    text blocks that share a user message with tool results into the last tool result. A tool
-    result's ``tool_reference`` items become text first (_text_tool_references).
-
-    System text keeps its position (appended to the nearest preceding user message, or
-    prepended to the next one) rather than being hoisted into the top-level ``system`` field, so
-    the prompt stays append-only across turns and the backend's KV-cache prefix is not
-    invalidated on every request.
-    """
-    msgs = body.get("messages")
-    if not isinstance(msgs, list):
-        return body
-    refs = _text_tool_references(msgs)
-    if refs:
-        body.setdefault("_localagents", {})["tool_references_as_text"] = refs
-    if not any(m.get("role") == "system" for m in msgs):
-        folded = _fold_text_into_tool_results(msgs)
-        if folded:
-            body.setdefault("_localagents", {})["folded_tool_result_text"] = folded
-        return body
-    out: list[dict[str, Any]] = []
-    pending: list[str] = []  # system text with no preceding user message yet
-    moved = 0
-    for m in msgs:
-        role = m.get("role")
-        if role == "system":
-            text = _text_of(m.get("content")).strip()
-            if not text:
-                continue
-            moved += 1
-            block = {"type": "text", "text": f"<system>\n{text}\n</system>"}
-            # nearest preceding user message
-            for prev in reversed(out):
-                if prev.get("role") == "user":
-                    c = prev.get("content")
-                    prev["content"] = ([{"type": "text", "text": c}] if isinstance(c, str) else list(c or [])) + [block]
-                    break
-            else:
-                pending.append(block["text"])
-            continue
-        m = dict(m)
-        if pending and role == "user":
-            c = m.get("content")
-            m["content"] = [{"type": "text", "text": t} for t in pending] + (
-                [{"type": "text", "text": c}] if isinstance(c, str) else list(c or [])
-            )
-            pending = []
-        out.append(m)
-    if pending:  # no user message at all: fall back to the system field
-        system = body.get("system") or []
-        if isinstance(system, str):
-            system = [{"type": "text", "text": system}]
-        body["system"] = system + [{"type": "text", "text": t} for t in pending]
-    body["messages"] = out
-    note = body.setdefault("_localagents", {})
-    note["moved_system_messages"] = moved
-    folded = _fold_text_into_tool_results(out)
-    if folded:
-        note["folded_tool_result_text"] = folded
-    return body
-
-
 def _apply_levers(body: dict[str, Any], levers: dict[str, Any] | None) -> dict[str, Any]:
     """Write a job's thinking/effort levers into a ``/v1/messages`` body.
 
@@ -190,59 +68,6 @@ def _apply_levers(body: dict[str, Any], levers: dict[str, Any] | None) -> dict[s
         body["reasoning_effort"] = effort
         applied["effort"] = effort
     return applied
-
-
-_CTX_PATTERNS = (
-    # llama.cpp: "request (327691 tokens) exceeds the available context size (262144 tokens), ..."
-    re.compile(r"request \((?P<actual>\d+) tokens\) exceeds the available context size \((?P<limit>\d+) tokens\)", re.I),
-    # vLLM (Anthropic endpoint, seen as HTTP 500): "This model's maximum context length is 937472 tokens. However,
-    # you requested 16 output tokens and your prompt contains at least 937457 input tokens, for a total of at least 937473 tokens."
-    re.compile(r"maximum context length is (?P<limit>\d+) tokens.*?total of at least (?P<actual>\d+) tokens", re.I | re.S),
-    # vLLM / OpenAI-style chat endpoint: "... However, you requested 40000 tokens (39000 in the messages, ...)"
-    re.compile(r"maximum context length is (?P<limit>\d+) tokens.*?requested (?P<actual>\d+) tokens", re.I | re.S),
-    # strata (llama.cpp-compatible server; counts max_tokens against the window instead of clamping it):
-    # "request exceeds the context window: prompt (150053 tokens) + max tokens (16) exceeds the context (131072); ..."
-    re.compile(r"prompt \((?P<actual>\d+) tokens\) \+ max tokens \(\d+\) exceeds the context \((?P<limit>\d+)\)", re.I),
-)
-_CTX_HINTS = (
-    "exceeds the available context", "maximum context length", "exceed context limit", "context length exceeded",
-    "exceeds the context window",
-)
-
-
-def translate_context_error(status: int, data: bytes) -> tuple[bytes, str] | None:
-    """Map a backend context-overflow error onto Anthropic's ``prompt is too long`` error.
-
-    Returns ``(new_body, original_message)`` or None when the error is something else. Claude
-    Code keys its recovery (compact, then retry) on the literal ``prompt is too long`` and reads
-    ``N tokens > M maximum`` to size the trim, so both are reproduced exactly. vLLM reports the
-    condition as HTTP 500 ``internal_error``, so any 4xx/5xx with a matching message qualifies.
-    """
-    if status < 400:
-        return None
-    try:
-        doc = json.loads(data)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    err = doc.get("error") if isinstance(doc, dict) else None
-    err = err if isinstance(err, dict) else doc if isinstance(doc, dict) else {}
-    msg = str(err.get("message") or "")
-    etype = str(err.get("type") or "")
-    if etype != "exceed_context_size_error" and not any(h in msg.lower() for h in _CTX_HINTS):
-        return None
-    actual, limit = err.get("n_prompt_tokens"), err.get("n_ctx")  # llama.cpp includes these
-    if not (isinstance(actual, int) and isinstance(limit, int)):
-        actual = limit = None
-        for pat in _CTX_PATTERNS:
-            m = pat.search(msg)
-            if m:
-                actual, limit = int(m.group("actual")), int(m.group("limit"))
-                break
-    text = "prompt is too long"
-    if actual is not None and limit is not None:
-        text += f": {actual} tokens > {limit} maximum"
-    body = {"type": "error", "error": {"type": "invalid_request_error", "message": text}}
-    return json.dumps(body).encode(), msg
 
 
 class Shim:
@@ -399,6 +224,12 @@ class Shim:
                     # error) marks it — then re-raise so the client still sees the failure.
                     stream_error = f"stream ended early: {type(e).__name__}: {e}"[:300]
                     raise
+                except (asyncio.CancelledError, GeneratorExit):
+                    # the client went away: Starlette cancels the task draining this stream
+                    # (CancelledError is not an Exception), or the generator is closed. The row
+                    # says so rather than reading as a clean 200 (the 6.6+6.7 review)
+                    stream_error = "stream ended early: the client went away"
+                    raise
             finally:
                 await resp.aclose()
                 t_end = time.monotonic()
@@ -433,53 +264,3 @@ class Shim:
         job.record_request(rec)
         if kw.get("error") and kw.get("status", 0) >= 400:
             job.log_text(f"[backend {kw['status']}] {str(kw['error'])[:300]}")
-
-
-def _object(v: Any) -> dict[str, Any] | None:
-    """The backend's ``usage`` when it is a JSON object, else None: every reader below hands
-    back an object or nothing, so a backend that sends a string or an array there can neither
-    fail the reply nor lose the row (3.11a row 4)."""
-    return v if isinstance(v, dict) else None
-
-
-def _usage_from_json(data: bytes) -> dict[str, Any] | None:
-    try:
-        return _object(json.loads(data).get("usage"))
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _usage_from_sse_head(chunk: bytes) -> dict[str, Any] | None:
-    """Usage from the stream's ``message_start`` event: input and cache token counts."""
-    for line in chunk.decode(errors="replace").splitlines():
-        if line.startswith("data:") and '"message_start"' in line:
-            try:
-                return _object((json.loads(line[5:]).get("message") or {}).get("usage"))
-            except Exception:  # noqa: BLE001
-                pass
-    return None
-
-
-def _merge_usage(head: dict[str, Any] | None, tail: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Combine message_start usage (prompt side) with message_delta usage (output side); the
-    delta wins where both carry a key, as it is the later, final figure."""
-    if not head and not tail:
-        return None
-    return {**(head or {}), **{k: v for k, v in (tail or {}).items() if v is not None}}
-
-
-def _usage_from_sse_tail(bytes_: bytes) -> dict[str, Any] | None:
-    """The final usage of a stream: the LAST ``message_delta`` event's usage in the bytes
-    (the stream's tail, not its last read). A backend that sends usage twice — a mid-stream
-    count and the final one — reports the later figure; a ``message_delta`` carrying no
-    ``usage`` (a stop_reason-only event) is skipped, not the final one's."""
-    usage: dict[str, Any] | None = None
-    for line in bytes_.decode(errors="replace").splitlines():
-        if line.startswith("data:") and '"message_delta"' in line:
-            try:
-                parsed = _object(json.loads(line[5:]).get("usage"))
-            except Exception:  # noqa: BLE001
-                continue
-            if parsed is not None:
-                usage = parsed
-    return usage

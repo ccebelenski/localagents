@@ -2,6 +2,25 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
+**2026-11-18 (overnight, the operator away: "tackle 6.5, 6.6, and 6.7 without me ... Stop before
+6.8"): Epic 6 through 6.7 is on main; a job can run in OpenCode.** Main at the commit this note
+rides on, nothing pushed. This session was itself an OpenCode coordinator using the server (6.1),
+and every review ran from it through the OpenCode relay on local lanes. Landed since 2026-11-17:
+3.15 (fixed card width) and its fold; 6.1 (per-client text, OpenCode's relay); 6.2 (capture
+fixtures); 6.3 (the harness seam); 6.4 (schema 14: `jobs.harness`, `jobs.owner_session`,
+`mcp_servers.client` — the operator's store migrated, 436 jobs read `claude-code`); the shim's
+`tool_reference` fix; 6.5 (tool kinds per harness); 6.6 (the shim's OpenAI version over a factored
+relay core); 6.7 (the OpenCode harness: `run_agent(harness="opencode")`, verified live on ai2 and
+ai9 with a resume). Every review found no defect in the rule as written (3.15, 6.1, 6.3+6.4, 6.5,
+6.6+6.7) and each one's verified finds were folded; the 6.6+6.7 fold mattered most: OpenCode offered
+its own worktree/session management tools to every job and a permission deny did not stop them
+(one ran live) — the job's config now switches their plugins off, so an OpenCode job gets exactly
+Claude Code's default seven tools; and the Anthropic shim code had been copied rather than moved
+(the duplicate is gone). The record of every story is EPICS Epic 6. Next: 6.8 (policy
+translation: the arguments OpenCode jobs refuse today), then 6.9-6.12; the operator's open items:
+OpenCode sometimes replaces a session's MCP process (cancel/resume from a parent may reach a server
+that does not own the job), and the monitor at :8765 still runs the code it was started with.
+
 **2026-11-16: the admission, queueing and display work is landed and live; the benchmark epic is still next.**
 Main at 49b2383 (suite 1523 passed, 1 skipped), nothing pushed, no worktrees or branches left. It began on
 2026-11-15 as a check of jobs queueing beside a free slot and grew to 12 code commits; the record, the finds by

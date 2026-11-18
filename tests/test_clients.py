@@ -53,6 +53,8 @@ CHANGED_SINCE: list[tuple[str, str, str]] = [
      '      endpoint: Force an endpoint (no `model`: whatever it serves); never beside a router entry.\n'),
     ('6.7', "      background_tasks: false: foreground only, the job ends at its result; true (config\n        default) allows background commands; a resume keeps its job's.\n",
      "      background_tasks: false: foreground only, the job ends at its result; true (config\n        default) allows background commands; a resume keeps its job's.\n      harness: claude-code (config default) | opencode; a resume keeps its job's.\n"),
+    # the 6.6+6.7 review: cancel_job's description named Claude Code's session
+    ("6.7", "Cancel a running job (kills the headless Claude session).", "Cancel a running job (ends its agent session)."),
 ]
 
 
@@ -69,9 +71,9 @@ def test_claude_code_text_is_exactly_the_text_before_6_1(restore_default):
     applies to exactly one of the two texts, once)."""
     clients.apply(server.mcp, "claude-code")
     assert server.mcp.instructions == _before_plus_changes(BEFORE["instructions"])
-    expected = dict(BEFORE["tools"], run_agent=_before_plus_changes(BEFORE["tools"]["run_agent"]))
+    expected = {name: _before_plus_changes(text) for name, text in BEFORE["tools"].items()}
     assert _tool_text() == expected
-    joined = BEFORE["instructions"] + BEFORE["tools"]["run_agent"]
+    joined = BEFORE["instructions"] + "".join(BEFORE["tools"].values())
     assert all(joined.count(old) == 1 for _story, old, _new in CHANGED_SINCE)
 
 
