@@ -6,6 +6,7 @@ are the clients' own. The client is read from the ``initialize`` request's ``cli
 (captured fixtures) unless ``--client`` declares it.
 """
 
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,8 +72,10 @@ def test_claude_code_text_is_exactly_the_text_before_6_1(restore_default):
     applies to exactly one of the two texts, once)."""
     clients.apply(server.mcp, "claude-code")
     assert server.mcp.instructions == _before_plus_changes(BEFORE["instructions"])
-    expected = {name: _before_plus_changes(text) for name, text in BEFORE["tools"].items()}
-    assert _tool_text() == expected
+    # cleandoc both sides: Python 3.13 strips a docstring's common indentation at compile time
+    # (the snapshot was taken on 3.12), so the same tool reads indented on one, flush on the other
+    expected = {name: inspect.cleandoc(_before_plus_changes(text)) for name, text in BEFORE["tools"].items()}
+    assert {name: inspect.cleandoc(text) for name, text in _tool_text().items()} == expected
     joined = BEFORE["instructions"] + "".join(BEFORE["tools"].values())
     assert all(joined.count(old) == 1 for _story, old, _new in CHANGED_SINCE)
 
