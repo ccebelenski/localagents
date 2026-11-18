@@ -3429,7 +3429,26 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   `local` server and the plugin, coordinator on ai2): a job on ai9 started from the session drew
   `local ai9 · 1/1 sessions` / `⟳ Qwen3.8-27B-NVFP4-MTP 3s · 1 call · ctx 5% · 137 t/s · Read:
   calc.py` above the prompt, then `✓ … 9s · 1 file`; a job through the relay (its owner_session
-  the relay's child session, whose parent is the open one) drew as this session's.
+  the relay's child session, whose parent is the open one) drew as this session's. The operator
+  added it to their own cli.json (at their go) and confirmed it in this session: "It's there -
+  looks good".
+  **Review (Qwen3.8-27B/ai9, job 8176b1ed, 117 turns, 45 min; scratch XDG dirs and database,
+  a tmux TUI of its own): one DEFECT, reproduced and fixed test-first by the reviewer, taken** —
+  a cli.json with comments (OpenCode 2.3.1 accepts and loads it) read as unreadable, a
+  permanent false warn; check now strips comments, string-aware, before giving up. CLEAN:
+  without `--session` every render is byte-identical to 6a64953 on a varied database; the
+  `--session` split right for an empty set, a set naming nothing, a NULL owner_session, another
+  session's calibration job; the plugin fails quietly in every constructed way (missing,
+  hung past the timeout, a traceback, a non-zero exit), one process in flight per block, its
+  timer cleared on unmount. POSSIBLE, folded: `--session=a,b`, spaces around ids, and an empty
+  or dangling `--session` (it fell back to Claude Code's scoping silently; now no session); a
+  relative cli.json entry resolved from check's cwd (now cli.json's directory); the plugin's
+  `command` option named as the leading words (`localagents --config x` would have run the
+  server). Not a defect: the reviewer could not get its TUI to draw the block — its scratch
+  TUI never persisted a session, so the session view holding the slot never opened; the
+  coordinator's capture and the operator's own screen both show it. NOTICED, kept: a plugin
+  that fails to load leaves one WARN in OpenCode's log and nothing on screen (OpenCode's
+  loader); `prompt.footer` has no sessionID (another reason the block is above the prompt).
 
 ## Epic 4: operations (V2, not scheduled)
 

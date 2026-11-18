@@ -932,3 +932,16 @@ def test_render_lines_scoped_to_opencode_sessions(monkeypatch, tmp_path):
     assert lines[0] == "local ai9" and len([ln for ln in lines if ln.startswith("  ⟳")]) == 2
     assert lines[-1] == "+2 jobs in other sessions"
     assert status.render_lines(now=now, sessions=frozenset({"ses_none"})) == ["+4 jobs in other sessions"]
+
+
+def test_statusline_session_argument_forms(monkeypatch, tmp_path):
+    """The 6.12 review: `--session=a,b`, spaces around ids, and an empty or dangling --session
+    (scoped to no session, never silently the Claude Code scoping)."""
+    import localagents
+
+    seen = []
+    monkeypatch.setattr(status, "render_lines", lambda now=None, owner=None, sessions=None: seen.append(sessions) or [])
+    for argv in (["--session", "a, b"], ["--session=a,b"], ["--session"], ["--session", ""], []):
+        monkeypatch.setattr("sys.argv", ["localagents", "statusline", *argv])
+        localagents.main()
+    assert seen == [frozenset({"a", "b"}), frozenset({"a", "b"}), frozenset(), frozenset(), None]

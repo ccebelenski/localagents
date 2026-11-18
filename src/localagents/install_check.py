@@ -314,13 +314,52 @@ def check_opencode(name: str, config: Path, cwd: Path) -> list[Item]:
     return items
 
 
+def _strip_json_comments(text: str) -> str:
+    """``//`` and ``/* */`` comments outside string literals, which OpenCode's JSONC parser
+    accepts in cli.json but ``json`` does not (comments inside strings are kept)."""
+    out = []
+    i, n = 0, len(text)
+    in_string = False
+    while i < n:
+        c = text[i]
+        if in_string:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_string = False
+            i += 1
+        elif c == '"':
+            in_string = True
+            out.append(c)
+            i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def check_opencode_statusline(root: Path | None) -> Item:
     """Epic 6.12: the TUI plugin that draws the jobs above the prompt, listed in OpenCode's
     cli.json (terminal settings, apart from opencode.json) by its directory."""
     cli = opencode_config_dir() / "cli.json"
     shipped = root / "plugins" / "opencode" if root else None
     try:
-        doc = json.loads(cli.read_text()) if cli.exists() else {}
+        text = cli.read_text() if cli.exists() else ""
+        try:
+            doc = json.loads(text) if text else {}
+        except ValueError:
+            doc = json.loads(_strip_json_comments(text))
     except (OSError, ValueError):
         return Item("opencode.statusline", "warn", f"{cli} is not readable as JSON; cannot see the plugins")
     entries = _dict(doc).get("plugins")
@@ -328,7 +367,9 @@ def check_opencode_statusline(root: Path | None) -> Item:
     for e in entries if isinstance(entries, list) else []:
         p = e.get("package") if isinstance(e, dict) else e
         if isinstance(p, str) and (p.startswith(("/", "~", "file://")) or p.rstrip("/").endswith("plugins/opencode")):
-            paths.append(Path(p.removeprefix("file://")).expanduser())
+            # a relative entry is the file's own, from cli.json's directory, not from wherever
+            # check runs (the 6.12 review: ok from the checkout, "gone" from $HOME)
+            paths.append(cli.parent / Path(p.removeprefix("file://")).expanduser())
     ours = [p for p in paths if p.name == "opencode" and p.parent.name == "plugins"]
     if not ours:
         return Item("opencode.statusline", "absent", f"{cli} lists no localagents plugin (optional)",

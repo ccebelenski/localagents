@@ -340,12 +340,27 @@ def test_the_opencode_status_block_item(home, tmp_path):
     assert got.status == "warn" and "gone" in got.detail
     (cfg / "cli.json").write_text("{not json")
     assert ic.check_opencode_statusline(root).status == "warn"
+    # a relative entry reads from cli.json's directory (the 6.12 review), whatever check's cwd
+    (cfg / "plugins").symlink_to(root / "plugins")
+    (cfg / "cli.json").write_text(json.dumps({"plugins": ["./plugins/opencode"]}))
+    assert ic.check_opencode_statusline(root).status == "ok"  # found, and through the link it is this checkout's
+
+
+def test_a_commented_cli_json_is_readable(home, tmp_path):
+    """OpenCode parses cli.json as JSONC: a comment must not read as an unreadable file."""
+    h, _ = home
+    cfg = h / ".config" / "opencode"
+    cfg.mkdir(parents=True)
+    root = ic.checkout()
+    (cfg / "cli.json").write_text("// scratch\n" + json.dumps({"plugins": [str(root / "plugins" / "opencode")]}))
+    got = ic.check_opencode_statusline(root)
+    assert got.status == "ok" and "lists" in got.detail
 
 
 def test_the_plugin_and_the_cli_agree():
     """The plugin runs `localagents statusline --session <ids>`; the CLI parses exactly that."""
     tui = (ROOT / "plugins" / "opencode" / "src" / "tui.tsx").read_text()
     assert '"statusline", "--session"' in tui and '"session.composer.top"' in tui
-    assert '"--session" in args' in (ROOT / "src" / "localagents" / "__init__.py").read_text()
+    assert 'arg == "--session"' in (ROOT / "src" / "localagents" / "__init__.py").read_text()
     pkg = json.loads((ROOT / "plugins" / "opencode" / "package.json").read_text())
     assert pkg["exports"]["./tui"] == "./src/tui.tsx"

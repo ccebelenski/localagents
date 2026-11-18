@@ -14,9 +14,14 @@ def main() -> None:
             # Epic 6.12: `--session a,b` scopes to those OpenCode sessions (OpenCode's status
             # block passes the open session and its relays); without it, the Claude Code
             # session this runs under
+            # session this runs under. `--session=a,b` too; spaces around an id are dropped; an
+            # empty or dangling --session scopes to no session (the 6.12 review: it fell back to
+            # the Claude Code scoping without a word)
             sessions = None
-            if "--session" in args[:-1]:
-                sessions = frozenset(s for s in args[args.index("--session") + 1].split(",") if s)
+            for i, arg in enumerate(args):
+                if arg == "--session" or arg.startswith("--session="):
+                    value = arg.split("=", 1)[1] if "=" in arg else (args[i + 1] if i + 1 < len(args) else "")
+                    sessions = frozenset(s.strip() for s in value.split(",") if s.strip())
             lines = render_lines(sessions=sessions)
             # as render() always did in the empty case: exactly one empty line — the operator's
             # script -n-tests the output, so "nothing" is an empty line, not silence

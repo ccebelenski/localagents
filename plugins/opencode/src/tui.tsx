@@ -9,7 +9,9 @@
  * Nothing is drawn while no job is running or recently finished. Polled every few seconds
  * (the render reads the shared database in well under 100 ms); a failure draws nothing.
  *
- * Options (cli.json's object form): `command` (default ["localagents"]), `refresh_ms` (3000).
+ * Options (cli.json's object form): `command`, the words that run localagents, to which
+ * `statusline --session <ids>` is appended (default ["localagents"]; e.g. ["uv", "run",
+ * "--project", "/path/to/localagents", "localagents"]), and `refresh_ms` (3000).
  */
 import { Plugin } from "@opencode/plugin/tui"
 import { execFile } from "node:child_process"
