@@ -3251,7 +3251,8 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   denied, failing only on the nonexistent path it was given) — the job's config now switches off
   their built-in plugins (opencode.tools, .tools.mcp-resources, and the plugins of the other
   denied tools); live, a job is offered exactly edit, glob, grep, read, shell, webfetch, write
-  (Claude Code jobs' default seven) and read and shell work. (3) A client disconnect mid-stream
+  (Claude Code jobs' default seven) and read and shell work. Compaction is unaffected by the plugins being off (a
+  32k-window run on ai2: five requests opened with a new checkpoint, the job finished right). (3) A client disconnect mid-stream
   recorded a clean 200 (CancelledError is not an Exception; older than 6.6): the row now says
   the client went away, red test first. (4) POSSIBLE, settled: `skill` is listed but a call is
   refused at call time (live: "Permission denied: skill") — and now its plugin is off. (5) The
