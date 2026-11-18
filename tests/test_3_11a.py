@@ -178,14 +178,16 @@ def test_the_stream_head_is_capped_at_head_bytes_whatever_the_read_size(monkeypa
     """Row 5: ``if len(head) < HEAD_BYTES: head += chunk`` let the head grow by one WHOLE read
     past the cap — a 200 KiB first read kept 200 KiB. The head handed to the message_start
     parser is at most HEAD_BYTES, and the usage at its front is still read."""
+    from localagents import shim_anthropic  # Epic 6.6: the message_start parser is the Anthropic version's
+
     seen = []
-    real = shim_mod._usage_from_sse_head
+    real = shim_anthropic._usage_from_sse_head
 
     def spy(chunk):
         seen.append(len(chunk))
         return real(chunk)
 
-    monkeypatch.setattr(shim_mod, "_usage_from_sse_head", spy)
+    monkeypatch.setattr(shim_anthropic, "_usage_from_sse_head", spy)
     big = MESSAGE_START + b": " + b"x" * (200 * 1024) + b"\n\n"
     resp, out, err, job = _relay(_sse_send([big, MESSAGE_DELTA_57]), STREAM_BODY)
     assert err is None and out == big + MESSAGE_DELTA_57  # the client gets every byte

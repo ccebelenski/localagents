@@ -1,26 +1,13 @@
-"""In-process HTTP shim between headless Claude Code sessions and local backends.
+"""The in-process HTTP shim between a job's agent session and its local backend: the relay core.
 
-Claude Code targets Anthropic's API and uses features local servers do not all support.
-Every job points ``ANTHROPIC_BASE_URL`` at ``http://127.0.0.1:<port>/job/<job_id>``; the
-shim normalises the request, forwards it to the job's endpoint, streams the response back,
-and records every request in the database's ``requests`` table.
-
-Normalisations (all no-ops when not needed):
-* ``role: system`` entries inside ``messages`` (Claude Code's mid-conversation system turns:
-  skills listing, token budget, reminders) are folded in place into the adjacent user message —
-  chat templates such as Qwen's raise "System message must be at the beginning" otherwise, and
-  folding in place (rather than hoisting to ``system``) keeps the KV-cache prefix stable.
-* A user message that mixes ``tool_result`` blocks with ``text`` blocks (Claude Code appends a
-  system-reminder to the tool-result turn, and the fold above adds one more) has the text moved
-  inside the last ``tool_result``'s content. Gemma 4's chat template only renders tool responses
-  that are adjacent to the assistant's tool call; the mixed message breaks that adjacency behind
-  llama.cpp's ``/v1/messages`` converter and the model never sees any of its tool output.
-* ``/v1/messages/count_tokens`` falls back to a char/4 estimate if the backend lacks it.
-* Backend "context exceeded" errors (llama.cpp ``exceed_context_size_error``, vLLM "maximum
-  context length") are rewritten into Anthropic's ``prompt is too long: N tokens > M maximum``
-  envelope, which Claude Code recognises and answers by compacting the conversation. This is the
-  backstop; the primary guard is ``CLAUDE_CODE_MAX_CONTEXT_TOKENS`` set from the probed window
-  (see ``harnesses.claude_code.build_env``) so auto-compact runs *before* the backend overflows.
+Every job's session is pointed at ``http://127.0.0.1:<port>/job/<job_id>``; the shim forwards
+each request to the job's endpoint (with the endpoint's real ``api_key``, which never reaches the
+session), streams the response back, and records every forwarded request in the database's
+``requests`` table. What is one API's lives in its own version (Epic 6.6): shim_anthropic.py
+(``/v1/messages``, Claude Code's) and shim_openai.py (``/v1/chat/completions``, OpenCode's); the
+wire they share in shim_wire.py. A request matching neither is relayed as it is, with no usage.
+The backend-facing levers (thinking, effort) are written into either API's body here; a job's
+``on_request`` hook (a harness's, Epic 6.7) sees each parsed request body before it is sent.
 """
 
 from __future__ import annotations
@@ -31,6 +18,7 @@ import os
 import re
 import socket
 import time
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
@@ -40,18 +28,21 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
+from . import shim_anthropic, shim_openai
+from .shim_wire import HEAD_BYTES, TAIL_BYTES, context_overflow
+
 if TYPE_CHECKING:
     from .jobs import Job
     from .registry import Endpoint
 
 HOP_HEADERS = {"host", "content-length", "connection", "transfer-encoding", "accept-encoding"}
-# SSE usage capture bounds (3.10h fold): message_start arrives first (input and cache
-# counts) and is read from the head of the stream; message_delta arrives near the end
-# (the final output count) and is read from the stream's tail — the last 8 KiB of its
-# bytes, not its last read, so a message_stop delivered as its own read no longer hides
-# the delta, and a delta split across two reads is still seen whole.
-HEAD_BYTES = 65536
-TAIL_BYTES = 8192
+# the API versions, matched by path in this order
+APIS = (shim_anthropic, shim_openai)
+
+
+def api_for(path: str) -> ModuleType | None:
+    """The API version a request path belongs to, or None (relayed as it is, no usage read)."""
+    return next((api for api in APIS if api.matches(path)), None)
 
 
 def _text_of(content: Any) -> str:
@@ -296,12 +287,10 @@ class Shim:
         if job is None:
             return JSONResponse({"error": {"type": "not_found", "message": "unknown job"}}, status_code=404)
         path = "/" + req.path_params["path"]
-        if path == "/api/hello":
-            # Claude Code opens every job with /api/hello: HEAD, and a GET, as a connection
-            # warm-up whose reply it discards (story 3.7t). Forwarded, it recorded the backend's
-            # 404/501 as a row the page painted as an error. The requests table records backend
-            # requests the shim forwarded, so this one is answered here, not sent, not logged.
-            return JSONResponse({})
+        api = api_for(path)
+        local = api.answer_locally(path) if api is not None else None
+        if local is not None:
+            return JSONResponse(local)
         raw = await req.body()
         body: dict[str, Any] | None = None
         note: dict[str, Any] = {}
@@ -310,12 +299,21 @@ class Shim:
                 body = json.loads(raw)
             except json.JSONDecodeError:
                 body = None
-        if body is not None and path.endswith("/v1/messages"):
-            body = normalise_messages_body(body)
+            if not isinstance(body, dict):
+                body = None
+        if body is not None and api is not None and not path.endswith("/count_tokens"):
+            body = api.prepare(path, body)
             note = body.pop("_localagents", {})
             applied = _apply_levers(body, job.levers)
             if applied:
                 note["levers_applied"] = applied
+            hook = job._on_request
+            if hook is not None:
+                # a harness's view of the request (Epic 6.7: OpenCode's compactions); never fails it
+                try:
+                    hook(path, body)
+                except Exception as e:  # noqa: BLE001
+                    job._log_safe(f"[hook-error] {type(e).__name__}: {e}")
             raw = json.dumps(body).encode()
         headers = {k: v for k, v in req.headers.items() if k.lower() not in HOP_HEADERS}
         ep = self.endpoint_lookup(job.endpoint) if self.endpoint_lookup else None
@@ -330,17 +328,11 @@ class Shim:
             self._log(job, path, body, note, status=0, ms=int((time.monotonic() - t0) * 1000), error=str(e))
             return JSONResponse({"error": {"type": "api_error", "message": f"backend unreachable: {e}"}}, status_code=502)
 
-        # "this backend has no count_tokens" is not one status: llama.cpp answers 404, vLLM
-        # 405, a gateway may say 501 (review of 3.5, F4: latent robustness; no backend here
-        # answered 501 to count_tokens — the 501 row every job used to carry was Claude Code's
-        # /api/hello handshake, which the shim answers itself since 3.7t). Any other status — a
-        # 500 is a real failure — forwards
-        # untouched: hiding a failure behind a plausible token count is worse than the failure.
-        if path.endswith("/count_tokens") and resp.status_code in (404, 405, 501):
+        est = api.count_tokens_estimate(path, resp.status_code, raw) if api is not None else None
+        if est is not None:
             await resp.aclose()
-            est = max(1, len(raw) // 4)
             # the row records the backend's own status: http_status is always what the backend
-            # answered, even though the reply to Claude Code is our 200 with the estimate
+            # answered, even though the reply to the client is our 200 with the estimate
             # (story 1.9 item 8), and its own ms, not a 0 that says the round-trip was instant
             # (story 1.9a row 2)
             self._log(job, path, body, note, status=resp.status_code,
@@ -360,44 +352,43 @@ class Shim:
             data = await resp.aread()
             await resp.aclose()
             status = resp.status_code
-            translated = translate_context_error(status, data) if status >= 400 else None
+            overflow = context_overflow(status, data) if status >= 400 else None
+            reply = api.error_reply(status, data) if overflow is not None and api is not None else None
             # the row records what the backend said — its status and its body — even when the
-            # client gets the rewrite. `context_exceeded` carries the backend's original
-            # message, so the rewrite is visible in the row (story 1.9a row 2; the contract in
-            # the spec: http_status is always the backend's status)
-            if translated:
-                note = {**note, "context_exceeded": translated[1][:300]}
+            # client gets a rewrite. `context_exceeded` carries the backend's original message,
+            # whichever API's reply the client gets (story 1.9a row 2; the contract in the spec:
+            # http_status is always the backend's status)
+            if overflow is not None:
+                note = {**note, "context_exceeded": overflow[0][:300]}
             self._log(job, path, body, note, status=status, ms=int((time.monotonic() - t0) * 1000),
                       error=data[:800].decode(errors="replace") if status >= 400 else None,
-                      usage=_usage_from_json(data))
-            if translated:
-                data = translated[0]  # the Anthropic envelope Claude Code compacts on
+                      usage=api.usage_from_json(data) if api is not None else None)
+            if reply is not None:
+                data = reply  # the API's own envelope (Anthropic's: the one Claude Code compacts on)
                 status = 400
                 resp_headers["content-type"] = "application/json"
             return Response(content=data, status_code=status, headers=resp_headers)
 
         async def gen():
-            head = b""  # message_start carries input/cache token counts
-            tail = b""  # the stream's last TAIL_BYTES; message_delta carries output_tokens
+            head = b""  # Anthropic's message_start carries input/cache token counts
+            tail = b""  # the stream's last TAIL_BYTES: the final usage of either API
             t_first: float | None = None  # first chunk carrying generated content, not first byte
             stream_error: str | None = None
             try:
                 try:
                     async for chunk in resp.aiter_bytes():
-                        # message_start precedes prompt processing on llama.cpp, Strata and vLLM, so
-                        # starting the clock at the first byte made ms − gen_ms network and queue
-                        # latency, not prefill (a page showing 3,000 tokens "in 19 ms", story
-                        # 3.10h(a)). The clock starts at the first content event instead: then
-                        # ms − gen_ms is time-to-first-token (queue + prefill), and the prefill rate
-                        # derived from it is honest.
-                        if t_first is None and (b"content_block_start" in chunk
-                                                or b"content_block_delta" in chunk):
+                        # the first event precedes prompt processing on llama.cpp, Strata and
+                        # vLLM, so starting the clock at the first byte made ms − gen_ms network
+                        # and queue latency, not prefill (a page showing 3,000 tokens "in 19 ms",
+                        # story 3.10h(a)). The clock starts at the first content the API's version
+                        # recognises instead: then ms − gen_ms is time-to-first-token (queue +
+                        # prefill), and the prefill rate derived from it is honest.
+                        if t_first is None and api is not None and api.content_started(chunk):
                             t_first = time.monotonic()
                         if len(head) < HEAD_BYTES:  # a hard cap: never one whole read past it
                             head += chunk[:HEAD_BYTES - len(head)]
                         # the tail is the stream's own last 8 KiB of bytes, not the final read:
-                        # a message_stop delivered as its own read no longer hides the
-                        # message_delta that carries the final output_tokens
+                        # a final event delivered as its own read no longer hides the usage
                         tail = (tail + chunk)[-TAIL_BYTES:]
                         yield chunk
                 except Exception as e:
@@ -411,7 +402,7 @@ class Shim:
             finally:
                 await resp.aclose()
                 t_end = time.monotonic()
-                usage = _merge_usage(_usage_from_sse_head(head), _usage_from_sse_tail(tail))
+                usage = api.usage_from_stream(head, tail) if api is not None else None
                 # a stream that sent events but no content decoded nothing: gen_ms 0 makes
                 # ms − gen_ms the whole queue+prefill span (the 0-output row in the screenshot
                 # is the case that matters). No chunk at all is no evidence the backend ever

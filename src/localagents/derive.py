@@ -127,7 +127,13 @@ _METRICS_COLUMNS = (
 )
 
 _PROMPT_SUM = "(COALESCE(r.input_tokens, 0) + COALESCE(r.cache_read_tokens, 0) + COALESCE(r.cache_creation_tokens, 0))"
-_MESSAGES = "FROM requests r JOIN paths p ON p.id = r.path_id WHERE r.job_id = ? AND p.path = '/v1/messages'"
+# a model request, by kind not by one API's path (Epic 6.6): Anthropic's /v1/messages (Claude
+# Code's) and OpenAI's /v1/chat/completions (OpenCode's); count_tokens, a model list or anything
+# else the shim relays is not one. Both APIs' rows carry the same Anthropic-named token columns
+# (shim_openai.row_usage maps OpenAI's usage onto them).
+MODEL_REQUEST_PATHS = ("/v1/messages", "/v1/chat/completions")
+_MESSAGES = ("FROM requests r JOIN paths p ON p.id = r.path_id WHERE r.job_id = ?"
+             " AND p.path IN (" + ", ".join(f"'{p}'" for p in MODEL_REQUEST_PATHS) + ")")
 
 
 def tool_call_count(conn: sqlite3.Connection, job_id: str) -> int:

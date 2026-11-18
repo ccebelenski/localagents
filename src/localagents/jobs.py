@@ -221,6 +221,9 @@ class Job:
     # request; not a column (the requests row notes what was applied) and not in summary()
     levers: dict[str, Any] | None = None
     _task: asyncio.Task | None = field(default=None, repr=False)
+    # Epic 6.6: a harness's view of each request the shim relays for this job, ``(path, body)``
+    # after the API version prepared it (6.7: OpenCode's compactions); set by the harness's run
+    _on_request: Callable[[str, dict[str, Any]], None] | None = field(default=None, repr=False)
     # router 12: set once the job's queue entry is admitted (the blocking wait's clock starts
     # there, design §7 "Accepted"); the routing context a queued routed job's wakes re-apply;
     # the latest expected wait a wake computed; the last progress moment a stall notice named

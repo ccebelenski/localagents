@@ -3154,12 +3154,31 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   captured calls, the write rule on captured inputs and on the Claude reader's old cases, the
   readers on an OpenCode job's rows, the SDK-free import). The Claude Code replay (t/replay.py)
   identical before and after. Suite 1559 passed.
-- ☐ **6.6 The shim's OpenAI version.** The relay core (per-job routing, request rows, timing,
+- ☑ **6.6 The shim's OpenAI version.** The relay core (per-job routing, request rows, timing,
   stall data, the endpoint's api_key) factored out of the Anthropic version; an OpenAI version
   over it (`/v1/chat/completions`, OpenAI SSE usage into the same request rows, the backend's
   overflow error passed through in the shape OpenCode's recovery reads — from 6.2's captures);
   derive.py reads usage by request kind, not by the `/v1/messages` path. The Anthropic version
   unchanged for Claude Code.
+  **Built 2026-11-18** (the coordinator). shim.py is the relay core (per-job routing, the api key
+  swap, send, the stream's clock and capture, the request rows, the levers into either API's body,
+  the overflow note, and a job's `_on_request` hook a harness sets); `api_for(path)` picks the
+  version: shim_anthropic.py (moved, text unchanged: the normalisations, `/api/hello`,
+  count_tokens' estimate, the `prompt is too long` rewrite, the SSE usage readers) or
+  shim_openai.py (new: `/v1/chat/completions` relayed as written, the generation clock at the
+  first generated delta — not the role chunk —, usage from the stream's last usage object or a
+  body's, mapped onto the row's Anthropic-named columns: input = prompt − cached, cache_read =
+  `prompt_tokens_details.cached_tokens`, both backends counting the cached part inside
+  `prompt_tokens` and the field equal to llama.cpp's `cache_n` in the captures; an overflow passed
+  back as the backend sent it, the row's `context_exceeded` still set). shim_wire.py holds what
+  both share (the capture bounds, the object guard, `context_overflow`, which gained Strata's
+  current wording — so Claude Code's rewrite now carries `N tokens > M maximum` on Strata too). A
+  path matching neither is relayed as is. derive reads model requests by kind
+  (`MODEL_REQUEST_PATHS`: both paths), so ctx_tokens, usage, gen and prefill rates read an OpenCode
+  job's rows as a Claude Code job's. Tests: moved seams (imports, one spy); tests/test_shim_openai.py
+  (8, every backend reply a 6.2 capture byte for byte: both streams pass whole with the right row,
+  the cached mapping, both overflows unrewritten and noted, the hook seen and unable to fail a
+  request, the clock's start). Suite 1567 passed.
 - ☐ **6.7 The OpenCode harness.** Per-job standalone run in the job's worktree with a generated
   config (an OpenAI-compatible provider at the shim's OpenAI version (6.6), model, context limit,
   compaction, permissions, steps, instructions);

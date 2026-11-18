@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from localagents.shim import normalise_messages_body, translate_context_error
+from localagents.shim_anthropic import normalise_messages_body, translate_context_error
 
 LLAMA_ERR = (
     b'{"error":{"code":400,"message":"request (327691 tokens) exceeds the available context size '
@@ -503,7 +503,7 @@ def test_count_tokens_500_is_not_estimated(tmp_path, monkeypatch):
 
 
 def test_stream_usage_merges_message_start_and_message_delta():
-    from localagents.shim import _merge_usage, _usage_from_sse_head, _usage_from_sse_tail
+    from localagents.shim_anthropic import _merge_usage, _usage_from_sse_head, _usage_from_sse_tail
 
     head = (b'event: message_start\ndata: {"type":"message_start","message":{"id":"m","usage":'
             b'{"input_tokens":1200,"cache_read_input_tokens":38000,"cache_creation_input_tokens":0,"output_tokens":1}}}\n\n'
@@ -602,7 +602,7 @@ def test_a_tool_reference_in_a_tool_result_reaches_the_backend_as_text():
     item (the shape below is the job's own transcript line), which the shim relayed and llama.cpp's
     template refused. It is text by the time the body leaves the shim; other items are untouched,
     a string result is untouched, and the count rides the note (popped before relaying)."""
-    from localagents.shim import normalise_messages_body
+    from localagents.shim_anthropic import normalise_messages_body
 
     body = {"messages": [
         {"role": "user", "content": "go"},

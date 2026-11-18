@@ -8,7 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from localagents import jobs
-from localagents.shim import Shim, translate_context_error
+from localagents.shim import Shim
+from localagents.shim_anthropic import translate_context_error
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "requests_20261029-031617-adf7.jsonl"
