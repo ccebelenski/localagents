@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..registry import Defaults
+if TYPE_CHECKING:  # the package stays stdlib-only at import: derive and the status line load
+    from ..registry import Defaults  # its tool vocabularies (tools.py, Epic 6.5)
 
 
 @dataclass(frozen=True)

@@ -621,7 +621,12 @@ def test_the_edit_tools_are_one_constant():
     stores NULL) and the read rule (files_touched) must name the same tools."""
     from localagents import derive
 
-    assert claude_code.EDIT_TOOLS is derive.EDIT_TOOLS
+    # Epic 6.5: one owner still, now the harness's vocabulary (harnesses/claude_code_tools.py);
+    # neither the reader nor derive keeps a list of its own
+    from localagents.harnesses import tools
+
+    assert not hasattr(claude_code, "EDIT_TOOLS") and not hasattr(derive, "EDIT_TOOLS")
+    assert tools.vocabulary("claude-code").names("edit") == ("Edit", "Write", "MultiEdit", "NotebookEdit")
 
 
 def test_the_metrics_columns_and_the_task_cut_are_one_rule(monkeypatch):

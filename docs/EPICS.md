@@ -3133,9 +3133,27 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   was replaced mid-session; the relay's job lived on the older one), so `cancel_job` and
   `resume_job` from the parent may reach a server that does not own the job — the relay cancels
   through its own connection; what makes OpenCode replace a session's MCP process is for 6.7/6.9.
-- ☐ **6.5 One tool vocabulary.** Each harness's own map from its tool names to the common kinds
+- ☑ **6.5 One tool vocabulary.** Each harness's own map from its tool names to the common kinds
   (edit, read, shell, web, MCP) and its input keys; derive.py, router/feedback.py, the monitor and the smoke read
   kinds through it, never names.
+  **Built 2026-11-18** (the coordinator, the operator away: "I think you can tackle 6.5, 6.6, and
+  6.7 without me"). harnesses/tools.py: the kinds (edit, read, shell, web, agent, mcp, other),
+  `Vocabulary` (kind, names, the write rule `stored_input` moved out of the Claude Code reader),
+  the cuts (TOOL_INPUT_CHARS, COMMAND_CHARS; derive's names are the same objects), and
+  `vocabulary(harness)` (None: Claude Code's, for a row read before schema 14; an unknown name
+  raises). Each harness's table in its own stdlib-only module — claude_code_tools.py (the names
+  derive held: EDIT_TOOLS, READ_TOOLS, Bash, and `mcp__`), opencode_tools.py (every tool the 6.2
+  captures called, `path`/`command`) — because derive and the status line import them (a test
+  holds the import free of the SDK and the registry; harnesses/__init__ imports Defaults for
+  typing only). Readers by kind through the job's `jobs.harness`: derive.files_touched,
+  classify_call/tool_mix, display_input/activity_line/last_tool, `derive.harness_of`;
+  feedback._tests_gate (shell calls, not `'Bash'`), server.job_log's and the monitor's tool lists,
+  smoke.py's count. A caller holding the row passes its harness (`derive.LOOKUP` otherwise), so
+  the monitor's per-row statement count is unchanged (its pin held). Tests: moved seams in
+  test_read_share/test_3_11a; tests/test_tool_vocabulary.py (7: OpenCode's table against the
+  captured calls, the write rule on captured inputs and on the Claude reader's old cases, the
+  readers on an OpenCode job's rows, the SDK-free import). The Claude Code replay (t/replay.py)
+  identical before and after. Suite 1559 passed.
 - ☐ **6.6 The shim's OpenAI version.** The relay core (per-job routing, request rows, timing,
   stall data, the endpoint's api_key) factored out of the Anthropic version; an OpenAI version
   over it (`/v1/chat/completions`, OpenAI SSE usage into the same request rows, the backend's

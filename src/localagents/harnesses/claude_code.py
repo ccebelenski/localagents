@@ -31,8 +31,8 @@ from claude_agent_sdk import (
 
 # the write rule's list is the read rule's (files_touched); the stored cuts and the shown form
 # are derive's too (classify_call and feedback read the cut back, last_tool shows the line)
-from ..derive import (COMMAND_CHARS, EDIT_TOOLS, TOOL_INPUT_CHARS, activity_line,
-                      background_tasks_named, held_open, held_open_line)
+from ..derive import activity_line, background_tasks_named, held_open, held_open_line
+from .claude_code_tools import VOCABULARY
 from ..jobs import Job
 from ..registry import Defaults, Resolution
 from . import SessionSpec
@@ -222,36 +222,15 @@ def _apply_message(job: Job, m: Any) -> None:
             elif isinstance(b, ToolUseBlock):
                 short = json.dumps(b.input, default=str)
                 job.log_text(f"[tool] {b.name} {short[:400]}")
-                input_text = short[:TOOL_INPUT_CHARS]
-                if isinstance(b.input, dict):
-                    command = b.input.get("command")
-                    path = None
-                    for key in ("file_path", "notebook_path", "path"):
-                        value = b.input.get(key)
-                        if isinstance(value, str) and value:
-                            path = value
-                            break
-                    if isinstance(command, str):
-                        # spec: a string `command` (Bash) stores the command itself, not the JSON
-                        # around it, so the progress line reads "Bash: uv run pytest -q"; a Bash
-                        # command whole up to COMMAND_CHARS (the read share and the tests gate
-                        # read it), any other tool's at the JSON's cut as before
-                        input_text = command[:COMMAND_CHARS if b.name == "Bash" else TOOL_INPUT_CHARS]
-                    elif path is not None:
-                        # spec: any path-shaped tool (the edit tools and the readers with a
-                        # file_path/notebook_path/path — Read, Glob, Grep, LS) stores just the
-                        # path, so a Read on the status row names the file (story 1.11b); the
-                        # count of calls and the files touched are still read back from the
-                        # rows by tool name (story 1.5b)
-                        input_text = path
-                    elif b.name in EDIT_TOOLS:
-                        # spec: an edit tool whose input carries no path stores NULL
-                        input_text = None
+                # the write rule is the shared vocabulary's (Epic 6.5, harnesses/tools.py): a Bash
+                # command whole up to COMMAND_CHARS, a path-shaped tool's path, an edit tool
+                # without a path NULL, any other input's JSON at TOOL_INPUT_CHARS
+                input_text = VOCABULARY.stored_input(b.name, b.input)
                 # last_activity shows the row's text as derive.last_tool shows it (one shape,
                 # derive.activity_line: a Bash command's first TOOL_DISPLAY_CHARS): job_status
                 # and the progress line read it, so a Bash call says "Bash: uv run pytest -q",
                 # never the JSON around the command (review of 1.8)
-                job.last_activity = activity_line(b.name, input_text)
+                job.last_activity = activity_line(b.name, input_text, NAME)
                 job.record_tool_call(time.time(), b.name, b.id, input_text)
     elif isinstance(m, UserMessage):
         content = m.content

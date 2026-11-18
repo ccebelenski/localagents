@@ -100,10 +100,12 @@ def test_every_unlabelled_capture_classifies_without_raising():
 
 
 def test_the_tool_level_rule():
-    """The closed rule's non-Bash half: the edit tools (derive.EDIT_TOOLS, files_touched's owner)
-    are edits, the reading tools reads, every other tool other; a Bash call with no stored
-    command is unclassified."""
-    for tool in derive.EDIT_TOOLS:
+    """The closed rule's non-Bash half: the edit tools (Claude Code's vocabulary's ``edit`` kind,
+    files_touched's owner since 6.5) are edits, the reading tools reads, every other tool other;
+    a Bash call with no stored command is unclassified."""
+    from localagents.harnesses import tools
+
+    for tool in tools.vocabulary("claude-code").names("edit"):
         assert derive.classify_call(tool, "/a.py") == "edit"
         assert derive.classify_call(tool, None) == "edit"
     for tool in ("Read", "Grep", "Glob"):
@@ -115,12 +117,16 @@ def test_the_tool_level_rule():
 
 
 def test_the_input_cut_has_one_owner():
-    """runner writes the cuts, feedback and classify_call read them back (through
-    derive.command_may_be_cut), last_tool and last_activity show them (derive.activity_line):
-    the constants are derive's, runner's names are the same objects."""
-    assert claude_code.TOOL_INPUT_CHARS is derive.TOOL_INPUT_CHARS
-    assert claude_code.COMMAND_CHARS is derive.COMMAND_CHARS
+    """The shared vocabulary writes the cuts (Epic 6.5: harnesses/tools.py, which every harness's
+    reader calls), feedback and classify_call read them back (through derive.command_may_be_cut),
+    last_tool and last_activity show them (derive.activity_line): the constants are the
+    vocabulary's, derive's names are the same objects, and the Claude Code reader holds none."""
+    from localagents.harnesses import tools
+
+    assert tools.TOOL_INPUT_CHARS is derive.TOOL_INPUT_CHARS
+    assert tools.COMMAND_CHARS is derive.COMMAND_CHARS
     assert claude_code.activity_line is derive.activity_line
+    assert not hasattr(claude_code, "TOOL_INPUT_CHARS") and not hasattr(claude_code, "COMMAND_CHARS")
 
 
 # --- the record --------------------------------------------------------------------------------

@@ -303,7 +303,7 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
                     "tool_calls": derive.tool_call_count(conn, j["id"]),
                     "num_turns": j["num_turns"],
                     "compactions": j["compactions"],
-                    "files": len(derive.files_touched(conn, j["id"])),
+                    "files": len(derive.files_touched(conn, j["id"], j["harness"])),
                     "ctx_pct": ctx_pct,
                     "gen_tps": round(tps) if tps else None,
                     # raw: the row relativises against the root and cuts (display_activity),

@@ -258,7 +258,7 @@ def _progress_reporter(ctx: Context | None):
                 msg += f", {errors} errors"
             # what the agent is doing right now, from the rows; a result held open by background
             # tasks says that instead (the last tool is what started them)
-            last = derive.progress_activity(job.last_activity, derive.last_tool(conn, job.id))
+            last = derive.progress_activity(job.last_activity, derive.last_tool(conn, job.id, job.harness))
             if last:
                 msg += f"; {last}"
         except (sqlite3.Error, db.SchemaError) as e:
@@ -526,7 +526,7 @@ async def _wait_foreign(job_id: str, timeout_s: float, ctx: Context | None) -> d
                     errors = derive.error_count(conn, job_id)
                     if errors:
                         msg += f", {errors} errors"
-                    last = derive.progress_activity(row["last_activity"], derive.last_tool(conn, job_id))
+                    last = derive.progress_activity(row["last_activity"], derive.last_tool(conn, job_id, row["harness"]))
                     if last:
                         msg += f"; {last}"
             except (sqlite3.Error, db.SchemaError) as e:
@@ -1362,7 +1362,8 @@ async def job_log(job_id: str, tail_lines: int = 80, tools: int = 0) -> dict[str
                 (job_id, tools),
             ).fetchall()
             # the last N, oldest first; a Bash command as a reader is shown it (derive.display_input)
-            out["tool_calls"] = [{**dict(r), "input": derive.display_input(r["tool"], r["input"])}
+            harness = derive.harness_of(store.conn, job_id)  # the vocabulary its names are in (6.5)
+            out["tool_calls"] = [{**dict(r), "input": derive.display_input(r["tool"], r["input"], harness)}
                                  for r in reversed(rows)]
         return out
     except (sqlite3.Error, db.SchemaError) as e:

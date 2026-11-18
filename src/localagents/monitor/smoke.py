@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from .. import db, derive, server
+from ..harnesses import tools as harness_tools
 from ..jobs import JobStore
 from ..registry import Endpoint, ModelUnavailable, Registry, backend_kind, classify_connect_failure
 from ..runner import run_job
@@ -208,8 +209,10 @@ async def real_job(
         f"{n_req} request row(s), {n200} with http_status 200",
     ))
 
+    shells = harness_tools.vocabulary(job.harness).names("shell")  # Epic 6.5: Bash, for this Claude Code job
     n_bash = conn.execute(
-        "SELECT COUNT(*) FROM tool_calls WHERE job_id = ? AND tool = 'Bash'", (job.id,)
+        "SELECT COUNT(*) FROM tool_calls WHERE job_id = ? AND tool IN ("
+        + ", ".join("?" * len(shells)) + ")", (job.id, *shells),
     ).fetchone()[0]
     n_tools = conn.execute("SELECT COUNT(*) FROM tool_calls WHERE job_id = ?", (job.id,)).fetchone()[0]
     checks.append(Check(

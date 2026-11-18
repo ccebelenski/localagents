@@ -14,17 +14,15 @@ import re
 import sqlite3
 import time
 
-# the tools whose input carries a touched file path: the spec's write rule (harnesses.claude_code
-# imports this one copy) and files_touched's read rule
-EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+from .harnesses import tools as harness_tools
 
-# What the tool_calls row stores (harnesses.claude_code writes it; tests/test_tool_calls_db.py pins it):
-# a Bash call's command up to COMMAND_CHARS; any other tool's input JSON up to
-# TOOL_INPUT_CHARS (a path-shaped tool stores its whole path, an edit tool without one NULL).
-TOOL_INPUT_CHARS = 120
-# bounded because a heredoc can carry a whole file; long enough that a command is stored whole
-# (the store's transcripts, 2026-11-15: 83% of Bash inputs fit 400 chars of JSON)
-COMMAND_CHARS = 2000
+# What the tool_calls row stores is the shared vocabulary's write rule (Epic 6.5:
+# harnesses/tools.py, Vocabulary.stored_input, which every harness's reader calls): a shell
+# call's command up to COMMAND_CHARS; any other tool's input JSON up to TOOL_INPUT_CHARS (a
+# path-shaped tool stores its whole path, an edit tool without one NULL). The cuts are that
+# module's; these are the same objects, for the readers here and in feedback.
+TOOL_INPUT_CHARS = harness_tools.TOOL_INPUT_CHARS
+COMMAND_CHARS = harness_tools.COMMAND_CHARS
 # the cut a Bash command was stored at before 2026-11-15: the rows written then are at most
 # this long. History, never changed (command_may_be_cut reads it).
 COMMAND_CHARS_BEFORE = 120
@@ -43,17 +41,37 @@ def command_may_be_cut(text: str) -> bool:
     return len(text) == COMMAND_CHARS_BEFORE or len(text) >= COMMAND_CHARS
 
 
-def display_input(tool: str | None, text: str | None) -> str | None:
-    """A stored input as a reader is shown it: a Bash command's first TOOL_DISPLAY_CHARS,
-    any other tool's input as stored (its path, or its JSON already cut at TOOL_INPUT_CHARS)."""
-    return text[:TOOL_DISPLAY_CHARS] if tool == "Bash" and text is not None else text
+def display_input(tool: str | None, text: str | None, harness: str | None = None) -> str | None:
+    """A stored input as a reader is shown it: a shell command's first TOOL_DISPLAY_CHARS,
+    any other tool's input as stored (its path, or its JSON already cut at TOOL_INPUT_CHARS).
+    ``harness`` names the vocabulary the tool name is read in (None: Claude Code's)."""
+    shell = harness_tools.vocabulary(harness).kind(tool) == "shell"
+    return text[:TOOL_DISPLAY_CHARS] if shell and text is not None else text
 
 
-def activity_line(tool: str, text: str | None) -> str:
+def activity_line(tool: str, text: str | None, harness: str | None = None) -> str:
     """``"<tool>: <shown input>"``, or just the tool when there is no input: the one shape of
     last_tool and of the runner's last_activity, so job_status's two fields read alike."""
-    shown = display_input(tool, text)
+    shown = display_input(tool, text, harness)
     return f"{tool}: {shown}" if shown is not None else tool
+
+
+# the "look it up" default of the readers below: a caller holding the job's row passes its
+# ``harness`` and saves the statement (the monitor's per-row derivations count them)
+LOOKUP = object()
+
+
+def _harness(conn: sqlite3.Connection | None, job_id: str, harness: object) -> str | None:
+    return harness_of(conn, job_id) if harness is LOOKUP else harness  # type: ignore[return-value]
+
+
+def harness_of(conn: sqlite3.Connection | None, job_id: str) -> str | None:
+    """The harness a job's rows were written in (``jobs.harness``, schema 14), the vocabulary its
+    tool names are read in; None for no row (the default's, Claude Code)."""
+    if conn is None:
+        return None
+    row = conn.execute("SELECT harness FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return row[0] if row is not None else None
 
 
 # A session whose result has arrived while background tasks it started are still alive (the
@@ -117,17 +135,18 @@ def tool_call_count(conn: sqlite3.Connection, job_id: str) -> int:
     return conn.execute("SELECT COUNT(*) FROM tool_calls WHERE job_id = ?", (job_id,)).fetchone()[0]
 
 
-def files_touched(conn: sqlite3.Connection, job_id: str) -> list[str]:
+def files_touched(conn: sqlite3.Connection, job_id: str, harness: object = LOOKUP) -> list[str]:
     """DISTINCT edit-tool ``input`` (the path the edit tools were given, as given: relative and
     absolute forms are not merged) in first-seen order (dedup keeping the earliest row). A call
     whose result was an error is left out: the tool reported it wrote nothing (the store's
     failed-only paths are mostly mistyped ones that never existed); a call with no result yet
     (``is_error`` NULL, still running) stays. Shell writes are never here: see diff_files."""
-    marks = ", ".join("?" * len(EDIT_TOOLS))
+    edits = harness_tools.vocabulary(_harness(conn, job_id, harness)).names("edit")
+    marks = ", ".join("?" * len(edits))
     rows = conn.execute(
         f"SELECT input FROM tool_calls WHERE job_id = ? AND tool IN ({marks}) AND input IS NOT NULL"
         " AND COALESCE(is_error, 0) = 0 GROUP BY input ORDER BY MIN(t)",
-        (job_id, *EDIT_TOOLS),
+        (job_id, *edits),
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -188,8 +207,8 @@ def tool_counts(conn: sqlite3.Connection, job_id: str) -> dict[str, dict[str, in
 
 # --- the read share: what each tool call did, by its stored input --------------------------------
 
-# the tools that only look (read a file, search, list)
-READ_TOOLS = ("Read", "Grep", "Glob", "LS", "NotebookRead")
+# the tools that only look (read a file, search, list) are each harness's ``read`` kind
+# (harnesses/claude_code_tools.py, opencode_tools.py; Epic 6.5)
 
 # shell commands that only look at files, listings or text on a pipe; the ones with a writing
 # flag (sed -i, find -delete/-exec rm, sort -o, uniq IN OUT, awk -i) are refused in _command,
@@ -589,12 +608,14 @@ _SHELL_KIND = {"look": "read", "neutral": "other", "other": "other", "unknown": 
 _TOOL_MIX_SQL = "SELECT tool, input FROM tool_calls WHERE job_id = ?"
 
 
-def classify_call(tool: str | None, input_text: str | None) -> str:
+def classify_call(tool: str | None, input_text: str | None, harness: str | None = None) -> str:
     """What one tool call did, from its tool name and its stored ``input``: ``read``, ``edit``,
     ``other`` or ``unclassified``. The rule is closed:
 
-    - an edit tool (EDIT_TOOLS) is ``edit``; Read, Grep, Glob, LS, NotebookRead are ``read``;
-      every other non-Bash tool (TodoWrite, Task*, MCP tools, web tools) is ``other``.
+    - an edit tool (the harness's ``edit`` kind) is ``edit``; its ``read`` kind (Claude Code's
+      Read, Grep, Glob, LS, NotebookRead) is ``read``; every other non-shell tool (TodoWrite,
+      Task*, MCP tools, web tools) is ``other``. ``harness`` names the vocabulary (None: Claude
+      Code's, Epic 6.5).
     - a Bash command is ``read`` when every part of it (split at ``;`` ``&&`` ``||`` ``|``
       ``&`` and newlines, with ``$(...)``/backtick substitutions judged the same way) is a
       look (_LOOKS, git's reading subcommands, ``sqlite3 -readonly``) or neutral (cd, export,
@@ -609,18 +630,19 @@ def classify_call(tool: str | None, input_text: str | None) -> str:
       rest could write) and nothing visible already makes it ``other``; when it holds a
       construct the rule does not follow (``case``, a function definition, an unclosed quote in
       a command that was not cut); or when no command was stored."""
-    if tool in EDIT_TOOLS:
+    kind = harness_tools.vocabulary(harness).kind(tool)
+    if kind == "edit":
         return "edit"
-    if tool in READ_TOOLS:
+    if kind == "read":
         return "read"
-    if tool != "Bash":
+    if kind != "shell":
         return "other"
     if not input_text or not input_text.strip():
         return "unclassified"
     return _SHELL_KIND[_shell_verdict(input_text, command_may_be_cut(input_text))]
 
 
-def tool_mix(conn: sqlite3.Connection | None, job_id: str, output_tokens: int) -> dict:
+def tool_mix(conn: sqlite3.Connection | None, job_id: str, output_tokens: int, harness: object = LOOKUP) -> dict:
     """The job's tool calls by what they did (classify_call): ``reads``, ``edits``, ``other``,
     ``unclassified`` (counts that sum to the calls classified, all read in one statement), with
     ``read_share`` (reads over all of them: a floor when some are unclassified, since an
@@ -629,8 +651,9 @@ def tool_mix(conn: sqlite3.Connection | None, job_id: str, output_tokens: int) -
     no tool calls. ``conn`` None (a Job built outside JobStore.new) reads as no calls."""
     counts = {"read": 0, "edit": 0, "other": 0, "unclassified": 0}
     if conn is not None:
+        h = _harness(conn, job_id, harness)
         for row in conn.execute(_TOOL_MIX_SQL, (job_id,)):
-            counts[classify_call(row[0], row[1])] += 1
+            counts[classify_call(row[0], row[1], h)] += 1
     calls = sum(counts.values())
     return {
         "reads": counts["read"], "edits": counts["edit"], "other": counts["other"],
@@ -645,7 +668,7 @@ def error_count(conn: sqlite3.Connection, job_id: str) -> int:
     return conn.execute("SELECT COALESCE(SUM(is_error), 0) FROM tool_calls WHERE job_id = ?", (job_id,)).fetchone()[0]
 
 
-def last_tool(conn: sqlite3.Connection, job_id: str) -> str | None:
+def last_tool(conn: sqlite3.Connection, job_id: str, harness: object = LOOKUP) -> str | None:
     """activity_line of the latest tool_calls row (``"<tool>: <shown input>"``, a Bash command's
     first TOOL_DISPLAY_CHARS; a NULL input leaves just the name): the progress line's view of
     what the job is doing right now."""
@@ -653,7 +676,7 @@ def last_tool(conn: sqlite3.Connection, job_id: str) -> str | None:
         "SELECT tool, input FROM tool_calls WHERE job_id = ? ORDER BY t DESC, rowid DESC LIMIT 1",
         (job_id,),
     ).fetchone()
-    return None if row is None else activity_line(row["tool"], row["input"])
+    return None if row is None else activity_line(row["tool"], row["input"], _harness(conn, job_id, harness))
 
 
 def gen_tps(conn: sqlite3.Connection, job_id: str) -> float | None:
@@ -774,10 +797,10 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "usage": usage,
         "tool_calls": tool_call_count(conn, job_id),
         "tool_counts": tool_counts(conn, job_id),
-        "tool_mix": tool_mix(conn, job_id, usage["output_tokens"]),
+        "tool_mix": tool_mix(conn, job_id, usage["output_tokens"], row["harness"]),
         "errors": error_count(conn, job_id),
-        "last_tool": last_tool(conn, job_id),
-        "files_touched": files_touched(conn, job_id),
+        "last_tool": last_tool(conn, job_id, row["harness"]),
+        "files_touched": files_touched(conn, job_id, row["harness"]),
         "ctx_tokens": ctx_tokens(conn, job_id),
         "gen_tps": gen_tps(conn, job_id),
         "prefill_tps": prefill_tps(conn, job_id),

@@ -269,7 +269,7 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
         "num_turns": j["num_turns"],
         "tool_calls": derive.tool_call_count(conn, jid),
         "errors": derive.error_count(conn, jid),
-        "last_tool": status.display_activity(derive.last_tool(conn, jid), root, limit=SNAPSHOT_ACTIVITY_LIMIT),
+        "last_tool": status.display_activity(derive.last_tool(conn, jid, j["harness"]), root, limit=SNAPSHOT_ACTIVITY_LIMIT),
         "last_activity": status.display_activity(j["last_activity"], root, limit=SNAPSHOT_ACTIVITY_LIMIT),
         "ctx_tokens": ctx,
         "context": j["context"],
@@ -277,7 +277,7 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
         "gen_tps": round(tps, 1) if tps else None,
         "prefill_tps": round(prefill, 1) if prefill else None,
         "compactions": j["compactions"],
-        "files": len(derive.files_touched(conn, jid)),
+        "files": len(derive.files_touched(conn, jid, j["harness"])),
         "owner": j["server_owner"],
         # story 1.14: the build stamp of the server that ran the job (static: written once at
         # that server's start, so a cached finished entry keeps it)
@@ -854,9 +854,10 @@ def job_detail(conn: sqlite3.Connection, job_id: str, now: float | None = None) 
     ]
     # ruling E (review of 3.1): the list is tool_call_log; tool_calls stays the count the
     # summary carries (its length is len(tool_call_log))
+    harness = derive.harness_of(conn, job_id)  # Epic 6.5: the vocabulary the names are in
     d["tool_call_log"] = [
         {"t": r["t"], "finished": r["finished"], "tool": r["tool"], "tool_use_id": r["tool_use_id"],
-         "input": derive.display_input(r["tool"], r["input"]),  # a Bash command as shown, 120 chars
+         "input": derive.display_input(r["tool"], r["input"], harness),  # a shell command as shown, 120 chars
          "is_error": bool(r["is_error"]) if r["is_error"] is not None else None}
         for r in conn.execute(
             "SELECT t, finished, tool, tool_use_id, input, is_error FROM tool_calls"

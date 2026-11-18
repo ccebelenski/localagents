@@ -34,6 +34,7 @@ from typing import Any
 import httpx
 
 from localagents import db, derive
+from localagents.harnesses import tools as harness_tools
 from localagents.jobs import TERMINAL_STATUSES
 from localagents.registry import backend_kind
 from localagents.router import capacity, definitions, scorecard
@@ -168,9 +169,12 @@ def _tests_gate(conn, job_id: str, text: str) -> bool | None:
     false). A row that cannot have been cut and shows no runner is the full record: False."""
     if not _TEST_RUNNER.search(text or ""):
         return None
+    # Epic 6.5: the job's shell calls by its harness's vocabulary (Claude Code's Bash, OpenCode's shell)
+    shells = harness_tools.vocabulary(derive.harness_of(conn, job_id)).names("shell")
+    marks = ", ".join("?" * len(shells))
     rows = [r for r in conn.execute(
-        "SELECT input, is_error FROM tool_calls WHERE job_id = ? AND tool = 'Bash'"
-        " ORDER BY t, rowid", (job_id,)).fetchall() if r["input"]]
+        f"SELECT input, is_error FROM tool_calls WHERE job_id = ? AND tool IN ({marks})"
+        " ORDER BY t, rowid", (job_id, *shells)).fetchall() if r["input"]]
     runs = [r for r in rows if _TEST_RUNNER.search(r["input"])]
     if not runs:
         # a row that may have been cut may have lost the runner to the cut

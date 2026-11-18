@@ -465,10 +465,10 @@ class Job:
             d["usage"] = derive.usage_totals(conn, self.id)
             d["tool_calls"] = derive.tool_call_count(conn, self.id)
             d["tool_counts"] = derive.tool_counts(conn, self.id)
-            d["tool_mix"] = derive.tool_mix(conn, self.id, d["usage"]["output_tokens"])
+            d["tool_mix"] = derive.tool_mix(conn, self.id, d["usage"]["output_tokens"], self.harness)
             d["errors"] = derive.error_count(conn, self.id)
-            d["last_tool"] = derive.last_tool(conn, self.id)
-            d["files_touched"] = derive.files_touched(conn, self.id)
+            d["last_tool"] = derive.last_tool(conn, self.id, self.harness)
+            d["files_touched"] = derive.files_touched(conn, self.id, self.harness)
             d["ctx_tokens"] = derive.ctx_tokens(conn, self.id)
             d["gen_tps"] = derive.gen_tps(conn, self.id)
             d["prefill_tps"] = derive.prefill_tps(conn, self.id)
@@ -477,7 +477,7 @@ class Job:
             d["usage"] = None
             d["tool_calls"] = 0
             d["tool_counts"] = {}
-            d["tool_mix"] = derive.tool_mix(None, self.id, 0)
+            d["tool_mix"] = derive.tool_mix(None, self.id, 0, self.harness)
             d["errors"] = 0
             d["last_tool"] = None
             d["files_touched"] = []
