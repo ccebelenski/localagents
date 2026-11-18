@@ -249,6 +249,7 @@ def test_the_command_exits_1_on_a_fail(home, tmp_path, capsys):
 def test_install_md_names_only_items_the_command_reports():
     text = (ROOT / "INSTALL.md").read_text()
     named = set(re.findall(r"`((?:claude-code|opencode)(?:\.[a-z-]+)?|package|config|harness)`", text))
+    named -= {n for n in named if n.endswith(".json")}  # a file (`opencode.json`), not an item
     src = (ROOT / "src" / "localagents" / "install_check.py").read_text()
     reported = set(re.findall(r'Item\("([a-z.:-]+)"', src)) | set(re.findall(r'\.id = "([a-z.-]+)"', src))
     assert named - {"opencode"} <= reported | {"opencode"}, named - reported
@@ -323,3 +324,28 @@ def test_install_md_snippet_writes_where_check_reads(home, tmp_path, monkeypatch
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
     got = _items(ic.check_claude_code("local", tmp_path / "m.yaml", tmp_path))
     assert got["claude-code.auto-background"].status == "ok"
+
+
+def test_the_opencode_status_block_item(home, tmp_path):
+    """Epic 6.12: cli.json lists the checkout's plugins/opencode (optional; absent until it does)."""
+    h, _ = home
+    cfg = h / ".config" / "opencode"
+    cfg.mkdir(parents=True)
+    root = ic.checkout()
+    assert ic.check_opencode_statusline(root).status == "absent"
+    (cfg / "cli.json").write_text(json.dumps({"$schema": "x", "plugins": ["other-plugin", str(root / "plugins" / "opencode")]}))
+    assert ic.check_opencode_statusline(root).status == "ok"
+    (cfg / "cli.json").write_text(json.dumps({"plugins": [{"package": str(tmp_path / "old" / "plugins" / "opencode")}]}))
+    got = ic.check_opencode_statusline(root)
+    assert got.status == "warn" and "gone" in got.detail
+    (cfg / "cli.json").write_text("{not json")
+    assert ic.check_opencode_statusline(root).status == "warn"
+
+
+def test_the_plugin_and_the_cli_agree():
+    """The plugin runs `localagents statusline --session <ids>`; the CLI parses exactly that."""
+    tui = (ROOT / "plugins" / "opencode" / "src" / "tui.tsx").read_text()
+    assert '"statusline", "--session"' in tui and '"session.composer.top"' in tui
+    assert '"--session" in args' in (ROOT / "src" / "localagents" / "__init__.py").read_text()
+    pkg = json.loads((ROOT / "plugins" / "opencode" / "package.json").read_text())
+    assert pkg["exports"]["./tui"] == "./src/tui.tsx"

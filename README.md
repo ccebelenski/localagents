@@ -116,7 +116,9 @@ prints its `models.yaml` entry.
    a name other than `local`, copy the file instead and fix its `tools:` line.
 
 6. **Optionally, the status line.** `localagents statusline` prints the running jobs
-   for your status line script; see [Status line](docs/using.md#status-line).
+   for your status line script; see [Status line](docs/using.md#status-line). In OpenCode
+   the same rows sit above the prompt: list `plugins/opencode` in OpenCode's `cli.json`
+   ([the status block](docs/opencode.md#the-status-block)).
 
 7. **Run a job.** Start a model on one of your servers, then ask Claude:
 

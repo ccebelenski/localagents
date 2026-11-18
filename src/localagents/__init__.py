@@ -7,10 +7,17 @@ def main() -> None:
     if sys.argv[1:2] == ["statusline"]:
         from .status import render, render_lines
 
-        if "--one-line" in sys.argv[2:]:
+        args = sys.argv[2:]
+        if "--one-line" in args:
             print(render())
         else:
-            lines = render_lines()
+            # Epic 6.12: `--session a,b` scopes to those OpenCode sessions (OpenCode's status
+            # block passes the open session and its relays); without it, the Claude Code
+            # session this runs under
+            sessions = None
+            if "--session" in args[:-1]:
+                sessions = frozenset(s for s in args[args.index("--session") + 1].split(",") if s)
+            lines = render_lines(sessions=sessions)
             # as render() always did in the empty case: exactly one empty line — the operator's
             # script -n-tests the output, so "nothing" is an empty line, not silence
             print("\n".join(lines) if lines else "")

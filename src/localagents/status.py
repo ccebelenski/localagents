@@ -311,6 +311,9 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
                     "last_activity": j["last_activity"],
                     "root": _job_root(j),
                     "owner": s["owner"],
+                    # Epic 6.12: the OpenCode session whose call started the job (null from Claude
+                    # Code), what OpenCode's status block scopes by
+                    "owner_session": j["owner_session"],
                     # the queue-order key of a queued job's entry (row order, _order_key)
                     "queue": None if j["q_rank"] is None else {
                         "rank": j["q_rank"], "enqueued": j["q_enqueued"] or 0,
@@ -418,15 +421,24 @@ def _job_row(e: dict[str, Any], now: float) -> str:
     return f"{head} · " + " · ".join(bits)
 
 
-def _split_by_owner(entries: list[dict[str, Any]], owner: int | None) -> tuple[list[dict[str, Any]], int]:
+def _split_by_owner(entries: list[dict[str, Any]], owner: int | None,
+                    sessions: frozenset[str] | None = None) -> tuple[list[dict[str, Any]], int]:
     """This session's entries, and the number of other-session jobs that count as traffic.
     A calibration probe is shown like any job when it is ours, but it is not traffic: another
-    session's probe adds nothing to the `+N` count (router 8, spec §10)."""
-    mine = [e for e in entries if owner is None or e.get("owner") == owner]
-    others = sum(
-        1 for e in entries
-        if not e.get("calibration") and not (owner is None or e.get("owner") == owner)
-    )
+    session's probe adds nothing to the `+N` count (router 8, spec §10).
+
+    ``sessions`` (Epic 6.12): an OpenCode session's family — itself and the relay subagents it
+    started — matched against each job's ``owner_session`` instead of the server's owner pid. An
+    OpenCode process tree has no Claude Code process to find, and a relay's job runs under the
+    relay's own session."""
+    if sessions is not None:
+        def ours(e: dict[str, Any]) -> bool:
+            return e.get("owner_session") in sessions
+    else:
+        def ours(e: dict[str, Any]) -> bool:
+            return owner is None or e.get("owner") == owner
+    mine = [e for e in entries if ours(e)]
+    others = sum(1 for e in entries if not e.get("calibration") and not ours(e))
     return mine, others
 
 
@@ -462,7 +474,8 @@ def render(now: float | None = None, prefix: str = "local: ", sep: str = " · ",
     return prefix + sep.join(parts)
 
 
-def render_lines(now: float | None = None, owner: int | None = None) -> list[str]:
+def render_lines(now: float | None = None, owner: int | None = None,
+                 sessions: frozenset[str] | None = None) -> list[str]:
     """The multi-line status line (story 1.11; the one-line render() is unchanged): one
     header per endpoint this session's jobs run on — first-seen order of the entries, which
     collect returns in row order (``_order_key``) — with that endpoint's sessions text when
@@ -480,9 +493,9 @@ def render_lines(now: float | None = None, owner: int | None = None) -> list[str
         return []
     if not entries:
         return []
-    if owner is None:
+    if owner is None and sessions is None:
         owner = my_owner()
-    mine, others = _split_by_owner(entries, owner)
+    mine, others = _split_by_owner(entries, owner, sessions)
     lines: list[str] = []
     for name in dict.fromkeys(e["endpoint"] or "?" for e in mine):
         header = f"local {name}"

@@ -75,6 +75,7 @@ finishes. A hand drop from the `queue` tool on such a waiting job closes it as
 | `router/` | the routing package, holding the d3 server, brief scoring, selection, the queue, the job gates and verdicts, and the command tools; `docs/router.md` explains the parts |
 | `agents/claude-code/local-agent.md` | Claude Code subagent that relays one job and reports its record; the fallback where auto-backgrounding is off (`agents/local-agent.md` is a symlink to it, for older installs) |
 | `agents/opencode/local-agent.md` | OpenCode's relay: the way to run several jobs at once from OpenCode |
+| `plugins/opencode/` | OpenCode's status block: a TUI plugin (`src/tui.tsx`, run by OpenCode itself, no build step) drawing `localagents statusline --session <ids>` above the prompt; tested live in a tmux-driven TUI, its contract with the CLI pinned in `tests/test_install_check.py` |
 
 A note on `agents/claude-code/local-agent.md`: the frontmatter must be valid YAML, so quote the
 description. The first version had an unquoted description containing `model: <served id>`;

@@ -169,8 +169,9 @@ its mark (`⟳ opencode Qwen3.8-27B ...`).
 "Live" means the heartbeat: a server is shown while its last beat is under a minute
 old (and its pid still exists). A server that exited or was killed drops off the line
 as its jobs age out; the next server to start marks that one's unfinished jobs `lost`.
-The line is scoped to the Claude Code session asking (OpenCode has no status line; its
-jobs record the calling OpenCode session as `owner_session` instead): each server records as its owner
+The line is scoped to the Claude Code session asking (OpenCode's counterpart, a block above
+the prompt, scopes by the OpenCode session in each job's `owner_session` instead; see
+[opencode.md](opencode.md#the-status-block)): each server records as its owner
 the nearest Claude Code process it runs under (native `claude`, or an npm install running
 as `node` with a `claude` entry in its command line; its parent pid when there is none),
 so a session's own jobs match their session whichever way the server was started

@@ -3404,9 +3404,32 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   an operator who sets it). The operator's client files: settings, OpenCode config, status line
   script byte-identical; `.claude.json`'s registrations unchanged (it changed only by a Claude
   Code start).
-- ☐ **6.12 OpenCode status line.** OpenCode's TUI has no status-line command (6.1); the jobs
+- ☑ **6.12 OpenCode status line.** OpenCode's TUI has no status-line command (6.1); the jobs
   view there is a TUI plugin (docs/build/plugins/cli) reading `localagents statusline`'s
   source, the shared database. Shape to settle with the operator.
+  **Shaped and built 2026-11-18.** The operator: "how close can we come to the one in Claude
+  Code? OpenCode has its own running display, which is okay as far as it goes, but it's not as
+  obvious as Claude's." A spike in a tmux-driven TUI (a scratch config) showed the slots:
+  `prompt.footer` is OpenCode's one hint row (a block there is crowded beside the hints);
+  `session.composer.top` takes a full-width multi-row block directly above the prompt. The
+  operator chose above the prompt, and no extras (no toast, no per-state colour, no home count,
+  no panel): as close to Claude Code's as OpenCode allows. Built: plugins/opencode, a TUI plugin
+  (Solid JSX, run by OpenCode itself, no build) that every 3 s runs `localagents statusline
+  --session <the open session and its family>` and draws its rows in the theme's info colour,
+  nothing while there is nothing to show. The rows are the same renderer's, so the two clients
+  never differ. status.py: `--session` scopes by each job's owner_session (an OpenCode process
+  tree has no Claude Code process to match, and a relay's job runs under the relay's child
+  session — the family covers it); everything else folds into `+N jobs in other sessions` as
+  ever. Install: INSTALL.md asks once for both clients' displays; step 4b lists the plugin in
+  OpenCode's cli.json (terminal settings, not opencode.json) as data, uninstall takes it out;
+  `check`'s `opencode.statusline` item (absent, ok, a listed directory that is gone, another
+  checkout's). Docs: opencode.md "The status block", using.md, README, CONTRIBUTING. Tests:
+  status (the session scoping, a relay's job as this session's), install_check (the item; the
+  plugin's command and the CLI's parse pinned to each other). **Live** (scratch OpenCode, the
+  `local` server and the plugin, coordinator on ai2): a job on ai9 started from the session drew
+  `local ai9 · 1/1 sessions` / `⟳ Qwen3.8-27B-NVFP4-MTP 3s · 1 call · ctx 5% · 137 t/s · Read:
+  calc.py` above the prompt, then `✓ … 9s · 1 file`; a job through the relay (its owner_session
+  the relay's child session, whose parent is the open one) drew as this session's.
 
 ## Epic 4: operations (V2, not scheduled)
 

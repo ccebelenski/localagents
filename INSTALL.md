@@ -54,9 +54,9 @@ Then ask the user:
   started with one. Ask whether any share a machine; those get the same `host:` name. If they
   do not know, offer to try `http://127.0.0.1:8080` and `http://127.0.0.1:8000`. A server
   doesn't have to be running now, but one that is can be identified for them.
-- **Claude Code only:** whether they want the status line (running jobs under the prompt).
-  If they already have a status line, say you will add two lines to their script, not
-  replace it.
+- Whether they want the running jobs on screen: in Claude Code, the status line under the
+  prompt (if they already have one, say you will add two lines to their script, not replace
+  it); in OpenCode, the same rows in a block above the prompt (a plugin).
 
 Then state the plan in a few lines (what you will install where, what files you will change)
 and go ahead once they agree.
@@ -215,7 +215,13 @@ The same name rule as 4a (`local`, tools `local_*`).
    change `local_*` in its permissions and the tool names in its text. Check:
    `opencode.relay` is `ok`.
 
-OpenCode has no status line; a job's record names the OpenCode session that started it.
+3. **The status block, if the user wants it**: a TUI plugin that shows, above the prompt, the
+   rows Claude Code's status line shows, for the open session and the relays it started. It
+   is listed by its directory in `~/.config/opencode/cli.json` (`$XDG_CONFIG_HOME/opencode/`
+   when that is set; OpenCode's terminal settings, not `opencode.json`). Edit it as data, after
+   a backup: add `"<checkout>/plugins/opencode"` to its `plugins` list, creating the list (or
+   the file, as `{"plugins": [...]}`) if needed, keeping every other entry. OpenCode reloads
+   `cli.json` on save. Check: `opencode.statusline` is `ok`.
 
 ## 5. Finish
 
@@ -260,7 +266,7 @@ file outside the checkout:
 - OpenCode: there is no `opencode mcp remove`. Remove the `local` entry from the file
   `check` names, keeping the rest of it exactly (it may be JSONC with comments; edit the
   entry, do not re-serialise the file). Remove `~/.config/opencode/agents/local-agent.md` if
-  it is this install's.
+  it is this install's. Take `<checkout>/plugins/opencode` out of `cli.json`'s `plugins`.
 - The package: `uv tool uninstall localagents`.
 - Ask before each of these: the config (`~/.config/localagents/`), the job records and
   database (`~/.local/state/localagents/`), the checkout.
@@ -281,6 +287,7 @@ Afterwards `check` cannot run (the package is gone): confirm with `claude mcp li
 | `claude-code` / `opencode` | absent | Not registered. Expected if the user did not pick that client. |
 | `claude-code` / `opencode` | warn | Registered with another config, without `--config`, or a different server under that name: show the user and ask. |
 | `claude-code` / `opencode` | fail | Registered, but its command does not resolve: step 2's PATH note, then re-register. |
+| `opencode.statusline` | warn | `cli.json` lists a plugin directory that is gone (a moved checkout) or another checkout's: list this one's. |
 | `*.relay` | warn | An old copy that differs from the checkout's, or a link whose target is gone: replace it with the link. |
 | `harness` | fail | `defaults.harness: opencode` without `opencode` on PATH: every job would fail. |
 | any | info | A fact, nothing to do: the default harness, a router entry, a relay with no checkout to compare it with. |

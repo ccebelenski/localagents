@@ -310,7 +310,37 @@ def check_opencode(name: str, config: Path, cwd: Path) -> list[Item]:
         relay = Item("", "absent", f"no {agents}", "INSTALL.md step 4b: link the relay")
     relay.id = "opencode.relay"
     items.append(relay)
+    items.append(check_opencode_statusline(root))
     return items
+
+
+def check_opencode_statusline(root: Path | None) -> Item:
+    """Epic 6.12: the TUI plugin that draws the jobs above the prompt, listed in OpenCode's
+    cli.json (terminal settings, apart from opencode.json) by its directory."""
+    cli = opencode_config_dir() / "cli.json"
+    shipped = root / "plugins" / "opencode" if root else None
+    try:
+        doc = json.loads(cli.read_text()) if cli.exists() else {}
+    except (OSError, ValueError):
+        return Item("opencode.statusline", "warn", f"{cli} is not readable as JSON; cannot see the plugins")
+    entries = _dict(doc).get("plugins")
+    paths = []
+    for e in entries if isinstance(entries, list) else []:
+        p = e.get("package") if isinstance(e, dict) else e
+        if isinstance(p, str) and (p.startswith(("/", "~", "file://")) or p.rstrip("/").endswith("plugins/opencode")):
+            paths.append(Path(p.removeprefix("file://")).expanduser())
+    ours = [p for p in paths if p.name == "opencode" and p.parent.name == "plugins"]
+    if not ours:
+        return Item("opencode.statusline", "absent", f"{cli} lists no localagents plugin (optional)",
+                    "INSTALL.md step 4b, the optional status block")
+    p = ours[0]
+    if not (p / "package.json").is_file():
+        return Item("opencode.statusline", "warn", f"{cli} lists {p}, which is gone (the checkout moved?)",
+                    "INSTALL.md step 4b: list this checkout's plugins/opencode instead")
+    if shipped is not None and p.resolve() != shipped.resolve():
+        return Item("opencode.statusline", "warn", f"{cli} lists {p}, not this checkout's {shipped}",
+                    "fine if that checkout is the one you run; else INSTALL.md step 4b")
+    return Item("opencode.statusline", "ok", f"{cli} lists {p}")
 
 
 def check_harness(reg: Registry | None) -> Item:

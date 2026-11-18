@@ -35,8 +35,25 @@ than `local`, copy the file and change `local_*` in its permissions and the tool
 text.
 
 Each job records the OpenCode session whose call started it (`owner_session`; for a relay's
-job that is the relay's own session) and each server row the client it answered (`client`). There is no OpenCode
-status line yet; `localagents statusline` is written for Claude Code's status line script.
+job that is the relay's own session) and each server row the client it answered (`client`).
+
+### The status block
+
+Claude Code shows running jobs in its status line. OpenCode's counterpart is a TUI plugin,
+`plugins/opencode`, that draws the same rows, from the same `localagents statusline`, directly
+above the prompt of an open session: a header per endpoint, a row per job, finished jobs for
+two minutes with their mark, `+N jobs in other sessions`. Nothing is drawn while there is
+nothing to show. It is scoped by OpenCode session: the open session's jobs and those of the
+relay subagents it started (`localagents statusline --session <ids>`, matched against each
+job's `owner_session`); every other job is folded into the `+N` line. List it in OpenCode's
+`cli.json` (the terminal settings, not `opencode.json`):
+
+```json
+{"plugins": ["/path/to/localagents/plugins/opencode"]}
+```
+
+It refreshes every three seconds; `{"package": "...", "options": {"refresh_ms": 5000,
+"command": ["localagents"]}}` changes that, or the command it runs.
 
 OpenCode can replace the `local` process a session talks to (after `opencode reload`, and
 sometimes on its own), and a subagent may get a process of its own. A job lives in the

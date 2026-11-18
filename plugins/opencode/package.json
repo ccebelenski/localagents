@@ -1,0 +1,9 @@
+{
+  "name": "localagents-opencode-statusline",
+  "private": true,
+  "type": "module",
+  "description": "localagents' status block for OpenCode's TUI: running local jobs above the prompt (Epic 6.12)",
+  "exports": {
+    "./tui": "./src/tui.tsx"
+  }
+}

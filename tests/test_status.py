@@ -914,3 +914,21 @@ def test_collect_on_a_long_history_is_fast(monkeypatch, tmp_path):
     took = time.perf_counter() - t0
     assert loads == {"llamacpp": "1/1 sessions q1"} and len(entries) == 3  # with the eid probe job
     assert took < 0.1, took
+
+
+def test_render_lines_scoped_to_opencode_sessions(monkeypatch, tmp_path):
+    """Epic 6.12: OpenCode's status block scopes by the jobs' owner_session — the open session
+    and its relays — not by the server's owner pid; everything else folds into +N as ever."""
+    store = _store(monkeypatch, tmp_path)
+    now = time.time()
+    rows = []
+    for sess in ("ses_main", "ses_relay", "ses_elsewhere", None):
+        j = _new(store, endpoint="ai9", base_url="http://ai9:8080", model="x/Qwen3.8-27B")
+        j.status, j.started_at = "running", now - 60
+        j.changed()
+        store.conn.execute("UPDATE jobs SET owner_session = ? WHERE id = ?", (sess, j.id))
+        rows.append(j)
+    lines = status.render_lines(now=now, sessions=frozenset({"ses_main", "ses_relay"}))
+    assert lines[0] == "local ai9" and len([ln for ln in lines if ln.startswith("  ⟳")]) == 2
+    assert lines[-1] == "+2 jobs in other sessions"
+    assert status.render_lines(now=now, sessions=frozenset({"ses_none"})) == ["+4 jobs in other sessions"]
