@@ -205,6 +205,11 @@ class Job:
     # line>, "pool": <pool name or None>} for a job the router placed; None for a named job.
     # The job's model/endpoint/base_url are always the real row's, never the router entry's.
     routed_by: dict[str, Any] | None = None
+    # Epic 6.4: the harness the session runs in (harnesses.names()), and the coordinator's own
+    # session id when its client sent one with the call (OpenCode does; Claude Code is matched by
+    # the server row's owner pid instead)
+    harness: str = "claude-code"
+    owner_session: str | None = None
     # usage, tool_calls, files_touched, ctx_tokens, gen_tps were the duplicated values story
     # 1.5b removed: the rows carry them, summary()/derive compute them at read time.
     # database identity (set by JobStore.new; NULL-ish defaults so a Job built directly still works)
@@ -594,14 +599,15 @@ class JobStore:
                     """INSERT INTO jobs (id, mcp_server_id, endpoint_id, model_id, task, cwd,
                                          isolation, status, created_at, updated, dump, log_events, worktree,
                                          context, num_turns, last_activity, priority, calibration,
-                                         routed_by)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         routed_by, harness, owner_session)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (jid, self.server_id, endpoint_id, model_id, job.task, job.cwd, job.isolation,
                      job.status, created_at, time.time(), 1 if job.dump else 0, 1 if job.log_events else 0,
                      json.dumps(job.worktree) if job.worktree is not None else None,
                      job.context, job.num_turns, job.last_activity,
                      job.priority, 1 if job.calibration else 0,
-                     json.dumps(job.routed_by) if job.routed_by is not None else None),
+                     json.dumps(job.routed_by) if job.routed_by is not None else None,
+                     job.harness, job.owner_session),
                 )
                 if on_insert is not None:
                     on_insert(self.conn, job)
@@ -615,6 +621,16 @@ class JobStore:
         return job
 
     # ----- server-row lifecycle (story 1.5a; spec Liveness) -----
+
+    def set_client(self, client: str) -> None:
+        """Epic 6.4: record the client this server answers (6.1: declared, or named at
+        initialize) on its row. Never raises: a database error is a line on stderr, the
+        handshake goes on."""
+        try:
+            with db.immediate(self.conn):
+                self.conn.execute("UPDATE mcp_servers SET client = ? WHERE id = ?", (client, self.server_id))
+        except Exception as e:  # noqa: BLE001
+            print(f"localagents: could not record the client on the server row: {e}", file=sys.stderr)
 
     def describe_server(self, **cols: Any) -> None:
         """Update this server's row with any of config, transport, shim_port (only the keys given)."""

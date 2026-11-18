@@ -760,6 +760,8 @@
       status: h("td", null, [
         statusPill(lost ? "lost" : job.status),
         job.calibration ? h("span", { class: "badge cal", text: "cal" }) : null,
+        // Epic 6.4: the harness, only when it is not the one every job ran in before the choice
+        job.harness && job.harness !== "claude-code" ? h("span", { class: "badge", text: job.harness }) : null,
       ]),
       started: timeTd(job.started_at, now),
       model: h("td", { class: "cut", title: job.model || "", text: job.model || "" }),

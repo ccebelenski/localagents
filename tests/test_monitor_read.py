@@ -395,6 +395,7 @@ def test_overview_running_jobs_carry_the_status_line_entry(world):
         "num_turns", "tool_calls", "errors", "last_tool", "last_activity", "ctx_pct", "ctx_tokens",
         "context", "gen_tps", "prefill_tps", "compactions", "files", "owner", "server_version",
         "server_live", "calibration",  # router 8: the §10 calibration flag
+        "harness",  # Epic 6.4: the page's mark for a job not run in Claude Code
     }
 
 

@@ -3077,7 +3077,7 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   Code's — `build_env`, `FOREGROUND_NOTE`/`FOREGROUND_DISALLOWED`, the `ClaudeAgentOptions`
   build and the `query` loop (`run(job, res, spec)`), the SDK message reading (`_apply_message`,
   `_track_task`, `_session_goes_on`, `_msg_to_dict`, `_handle_message`) — cut from runner.py by
-  script, byte-for-byte. runner.py (736 → 494 lines) keeps the worktree, the metrics, the clock,
+  script, byte-for-byte. runner.py (736 → 481 lines) keeps the worktree, the metrics, the clock,
   the status, the cancel, the finish and `_ended_after_result`; `run_job`'s signature is
   unchanged, so server.py and calibrate.py are untouched. One order change: the `[start]` line
   is now written before the options are built (an exception building them, never seen, used to
@@ -3093,6 +3093,46 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
 - ☐ **6.4 Harness on the job record.** A `harness` column on jobs (schema bump: the shared
   store's migration note applies), `run_agent(harness=)`, a default in `models.yaml`, shown in
   the status line, the monitor's tables and the job page.
+  **Built 2026-11-17 on branch `epic/6.4`, NOT merged** (the operator: "The additions seem
+  logical and useful, so yes the columns are good to add"; landing waits until no job runs on the
+  shared store, then every session reconnects — the status line migrates the store at once).
+  Schema 14, appends only: `jobs.harness` TEXT NOT NULL DEFAULT 'claude-code' (every earlier job
+  ran there, so the default is the truth), `jobs.owner_session` (OpenCode's
+  `_meta["ai.opencode/sessionID"]` from the tool call, `clients.owner_session`; NULL for Claude
+  Code, whose key stays the owner pid), `mcp_servers.client` (6.1's client, written by
+  `JobStore.set_client` when declared or at the handshake). `run_agent(harness=)` (bad_argument
+  for a name `harnesses.names()` lacks; a resume keeps its job's and refuses another),
+  `defaults.harness` (checked at load, a wrong value named on stderr and reset), run_job runs
+  `harnesses.get(job.harness)`; the job summary, the row summary and the monitor's running-job
+  entry carry `harness` (spec §5a updated); the job page's header shows it; the status line and
+  the Recent jobs table mark only a harness other than claude-code (none exists until 6.7). Not
+  described in run_agent's text: the description sits at Claude Code's 2048-character cap — 6.7
+  describes the argument and trims to fit (the 6.1 snapshot test now allows listed additions).
+  Live check: a standalone OpenCode session against the branch's server (scratch store) ran a
+  job on ai9; the row read harness `claude-code`, owner_session the OpenCode session's own id,
+  the server row `client` = `opencode`, user_version 14. Suite 1550 passed (tests/test_db.py's
+  v14 step; tests/test_harness_record.py, 8).
+  **Review of 6.3 + 6.4 together, before the landing (DeepSeek-V4.1-Flash/dgx1-a, job f352098f,
+  107 turns, 31 min, from OpenCode through the relay): no defect.** CLEAN: the 6.3 move
+  byte-for-byte by AST segment, and five scenarios the coordinator's replay did not cover (timeout
+  after a result with a live task, cancel mid-session, error_max_turns, an iterator that raises, a
+  resume) identical before and after; v14 on a read-only copy of the operator's store — 26 tables'
+  counts unchanged, 436/436 jobs `claude-code`, foreign keys clean, 0.03 s; the landing window — an
+  old server's open connection keeps writing jobs, tool calls and requests to the migrated file,
+  the rows reading `claude-code`, and an old status line on a v14 file is a clean blank line;
+  `_meta` over a real MCP tools/call is a plain dict and owner_session reads OpenCode's key.
+  POSSIBLE, folded test-first (red test, then fix): `harnesses.get(job.harness)` sat above
+  run_job's try, so a row naming a harness this install lacks (two installs sharing a store) left
+  the job queued and unsettled — now inside the try, the job fails naming the harness and
+  settles. NOTICED, folded: comments still giving moved code to runner.py (derive.py,
+  registry.py); 6.3's line count (481, not 494). NOTICED, kept for 6.7: the shared text still says
+  every job is "a headless Claude Code session" (true until a second harness); the resume's
+  refuse-another branch unreachable with one harness (the test reaches it by the record);
+  `harness` in the schema but not the description (6.7). NOTICED by the coordinator during the
+  review: OpenCode ran two `localagents` processes for one setup (its connection for this session
+  was replaced mid-session; the relay's job lived on the older one), so `cancel_job` and
+  `resume_job` from the parent may reach a server that does not own the job — the relay cancels
+  through its own connection; what makes OpenCode replace a session's MCP process is for 6.7/6.9.
 - ☐ **6.5 One tool vocabulary.** Each harness's own map from its tool names to the common kinds
   (edit, read, shell, web, MCP) and its input keys; derive.py, router/feedback.py, the monitor and the smoke read
   kinds through it, never names.

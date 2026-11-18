@@ -338,7 +338,6 @@ async def run_job(
     background_tasks: bool | None = None,
 ) -> None:
     d = reg.defaults
-    harness = harnesses.get(harnesses.DEFAULT)
     # the job's per-call settings resolve here against the config's defaults (max_turns,
     # permission_mode, timeout_s below): None is the config's. The resolved value is the job's
     # own, kept for a resume_job of it (server.run_agent reads it back)
@@ -354,6 +353,9 @@ async def run_job(
     try:
         # inside the try: a cancel landing in this first await must still run the finally, or
         # the job stays `running` for good (review of 1.7, finding 3)
+        # Epic 6.4: the job's own harness, recorded at its creation. Inside the try (the 6.3+6.4
+        # review): a row naming a harness this install lacks fails here and still settles
+        harness = harnesses.get(job.harness)
         metrics_before = await fetch_metrics(res.endpoint, d.probe_timeout_s)
         if job.isolation == "worktree":
             # to_thread: these are blocking git calls (story 1.7 item 7). subprocess.run would

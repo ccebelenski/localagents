@@ -76,6 +76,8 @@ RUN_AGENT = """Delegate a task to an agent on a local model and (with `wait_s`) 
       background_tasks: false: foreground only, the job ends at its result; true (config
         default) allows background commands; a resume keeps its job's.
     """
+# (Epic 6.4: run_agent takes `harness`, but it is not described above while claude-code is the
+# only one; the description sits at Claude Code's 2048-character cap. 6.7 describes it.)
 
 
 def from_client_info(params: Mapping[str, Any] | None) -> str | None:
@@ -84,6 +86,26 @@ def from_client_info(params: Mapping[str, Any] | None) -> str | None:
     info = (params or {}).get("clientInfo") or {}
     name = info.get("name") if isinstance(info, Mapping) else None
     return name if name in CLIENTS else None
+
+
+# OpenCode's key for the calling session on a tool call's ``_meta`` (its MCP docs, "Context":
+# "an opaque correlation value", absent for calls without session context)
+OPENCODE_SESSION_META = "ai.opencode/sessionID"
+
+
+def owner_session(ctx: Any) -> str | None:
+    """The calling client's own session id from the tool call's ``_meta`` (Epic 6.4), or None:
+    no context, no meta, or a client that sends none (Claude Code). Never raises: the job is
+    recorded either way."""
+    try:
+        meta = ctx.request_context.meta if ctx is not None else None
+    except Exception:  # noqa: BLE001 -- no request context
+        return None
+    if meta is None:
+        return None
+    value = meta.get(OPENCODE_SESSION_META) if isinstance(meta, Mapping) else getattr(meta, "model_extra", {}).get(
+        OPENCODE_SESSION_META) if getattr(meta, "model_extra", None) else None
+    return value if isinstance(value, str) and value else None
 
 
 def instructions(client: str) -> str:

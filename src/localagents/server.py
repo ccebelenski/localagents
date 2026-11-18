@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 from mcp.server.mcpserver import Context, MCPServer
 
-from . import clients, db, derive, jobs, status
+from . import clients, db, derive, harnesses, jobs, status
 from .jobs import Job, JobStore, oldest_first, prune, state_dir
 from .registry import ModelUnavailable, Registry, config_path, local_path
 from .router import dispatch
@@ -685,6 +685,8 @@ async def start_job(
     run_cwd: str | None = None,
     worktree: dict[str, Any] | None = None,
     background_tasks: bool | None = None,
+    harness: str | None = None,
+    owner_session: str | None = None,
 ) -> Job:
     """Record one job, pass it through admission and start its task: run_agent's dispatch
     between the tool's arguments and the running job (router 8, router 12).
@@ -704,6 +706,8 @@ async def start_job(
     ``strict_mcp_config``, ``setting_sources`` and ``background_tasks`` are handed to run_job
     (which resolves a None against the config); ``resume_session``,
     ``run_cwd`` and ``worktree`` carry a resumed job's state, run_agent owns that preamble.
+    ``harness`` (None: the config's ``defaults.harness``) is recorded on the job and runs its
+    session; ``owner_session`` is the calling client's session id, when it sent one (Epic 6.4).
     """
     if priority not in ("urgent", "normal", "background"):
         raise _bad("priority must be 'urgent', 'normal' or 'background'")
@@ -824,6 +828,8 @@ async def start_job(
             log_events=reg.defaults.log_events or os.environ.get("LOCALAGENTS_LOG_EVENTS") == "1",
             context=res.context,
             calibration=calibration,
+            harness=harness or reg.defaults.harness,
+            owner_session=owner_session,
             **({"routed_by": routed_by} if routed is None and routed_by is not None else {}),
         )
     except (sqlite3.Error, db.SchemaError) as e:
@@ -923,6 +929,7 @@ async def run_agent(
     tolerance: float | None = None,
     avoid_job: str | None = None,
     background_tasks: bool | None = None,
+    harness: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Delegate a task to an agent on a local model and (with `wait_s`) wait for the result.
@@ -934,6 +941,8 @@ async def run_agent(
         return {"error": "bad_argument", "message": "isolation must be 'none' or 'worktree'"}
     if background_tasks is not None and not isinstance(background_tasks, bool):
         return {"error": "bad_argument", "message": "background_tasks must be true, false or omitted"}
+    if harness is not None and harness not in harnesses.names():
+        return {"error": "bad_argument", "message": f"harness must be one of {', '.join(harnesses.names())}"}
     work = str(Path(cwd or os.getcwd()).expanduser().resolve())
     if not Path(work).is_dir():
         return {"error": "bad_argument", "message": f"cwd does not exist: {work}"}
@@ -961,6 +970,12 @@ async def run_agent(
         # the first run never reached run_job, which resolves it: the config's then)
         if background_tasks is None:
             background_tasks = prev._background_tasks
+        # a session resumes in the harness that holds it (Epic 6.4): another harness has no
+        # such session to resume
+        if harness is not None and harness != prev.harness:
+            return {"error": "bad_argument",
+                    "message": f"job {resume_job} ran in {prev.harness}; a resume runs in the same harness"}
+        harness = prev.harness
         # Continue where the session was. A worktree job keeps its tree: if the tree is gone
         # (removed because the job changed nothing) run_job recreates it at the same path, so
         # the paths the session remembers still resolve.
@@ -994,6 +1009,7 @@ async def run_agent(
             timeout_s=timeout_s, resume_session=resume_session, run_cwd=run_cwd,
             worktree=worktree, priority=priority, admit=admit, tolerance=tolerance,
             avoid_job=avoid_job, copy_ticket_from=copy_from, background_tasks=background_tasks,
+            harness=harness, owner_session=clients.owner_session(ctx),
         )
     except JobRefused as e:
         return e.reply
@@ -1520,8 +1536,12 @@ def main() -> None:
         pass
     if a.client:
         clients.apply(mcp, a.client)
+        store.set_client(a.client)  # Epic 6.4: on the server row
         print(f"localagents: serving {a.client} (declared)", file=sys.stderr)
     elif a.transport == "stdio":
-        clients.adapt_at_handshake(mcp, lambda client, info: print(
-            f"localagents: serving {client} (initialize clientInfo {info!r})", file=sys.stderr))
+        def named(client: str, info: Any) -> None:
+            store.set_client(client)
+            print(f"localagents: serving {client} (initialize clientInfo {info!r})", file=sys.stderr)
+
+        clients.adapt_at_handshake(mcp, named)
     mcp.run(transport=a.transport)

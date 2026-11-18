@@ -297,6 +297,7 @@ def collect(now: float | None = None, conn: sqlite3.Connection | None = None) ->
                     "status": j["status"],
                     # router 8: a calibration probe shows its `cal` mark and is not traffic
                     "calibration": bool(j["calibration"]),
+                    "harness": j["harness"],  # Epic 6.4
                     "started_at": j["started_at"] or j["created_at"],
                     "finished_at": j["finished_at"],
                     "tool_calls": derive.tool_call_count(conn, j["id"]),
@@ -384,9 +385,15 @@ def _row_bits(e: dict[str, Any]) -> list[str]:
     return bits
 
 
+# Epic 6.4: the harness every job ran in before there was a choice; only another one is marked
+DEFAULT_HARNESS = "claude-code"
+
+
 def _cal_mark(e: dict[str, Any]) -> str:
-    """The `cal` mark beside a calibration probe's status mark (router 8, spec §10)."""
-    return "cal " if e.get("calibration") else ""
+    """The marks beside a job's status mark: `cal` for a calibration probe (router 8, spec §10),
+    and the harness's name for a job that did not run in Claude Code (Epic 6.4)."""
+    harness = e.get("harness") or DEFAULT_HARNESS
+    return ("cal " if e.get("calibration") else "") + ("" if harness == DEFAULT_HARNESS else f"{harness} ")
 
 
 def render_entry(e: dict[str, Any], now: float) -> str:

@@ -47,7 +47,8 @@ MONITOR_INDEXES = {"probes_endpoint_t", "endpoint_events_endpoint_t", "host_prob
 # every column of every table, in the spec's order
 COLUMNS = {
     "mcp_servers": ["id", "pid", "owner", "cwd", "config", "version", "transport", "shim_port",
-                    "started", "updated", "stopped"],
+                    "started", "updated", "stopped",
+                    "client"],  # version 14 (Epic 6.4)
     "endpoints": ["id", "name", "base_url", "backend", "host", "first_seen", "last_active"],
     "endpoint_load": ["endpoint_id", "updated", "load"],
     "models": ["id", "served_id"],
@@ -63,7 +64,9 @@ COLUMNS = {
              "priority", "calibration", "gates",
              # version 12 (router 11): the rebuild keeps v11's columns in order and appends the
              # routing record (Task 12 fills it; design §4 "Consumer requirement")
-             "routed_by"],
+             "routed_by",
+             # version 14 (Epic 6.4): the job's harness and its coordinator's session
+             "harness", "owner_session"],
     "requests": ["job_id", "path_id", "t", "http_status", "ms", "gen_ms", "stream", "input_tokens",
                  "output_tokens", "cache_read_tokens", "cache_creation_tokens", "messages", "tools", "bytes",
                  "moved_system", "folded_text", "context_exceeded", "error"],
@@ -136,11 +139,12 @@ def test_fresh_file_comes_up_at_the_current_version_with_every_table(dbfile):
     references, rebuilt in place) and the version-12 step (router 11: jobs.routed_by,
     queue_entries.blocked_by, the status CHECK's 'dropped') and the version-13 step (router
     design §6 True-now 2026-11-15: queue_entries.est_wait_s, jobs_endpoint_model_finished), so
-    it comes up at version 13 with them."""
+    it comes up at version 13 with them; and version 14's appends (Epic 6.4: jobs.harness,
+    jobs.owner_session, mcp_servers.client), so it comes up at version 14."""
     conn = db.open_db()
     assert dbfile.exists()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
-    assert db.SCHEMA_VERSION == 13 == len(db.MIGRATIONS)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
+    assert db.SCHEMA_VERSION == 14 == len(db.MIGRATIONS)
     assert _names(conn, "table") == TABLES | MONITOR_TABLES
     assert _names(conn, "index") == INDEXES | MONITOR_INDEXES
     for table, cols in {**COLUMNS, **MONITOR_COLUMNS}.items():
@@ -751,7 +755,7 @@ def test_v10_creates_the_router_tables_with_not_null_keys(dbfile):
     the spec leaves optional are nullable: a ticket predates its choice and predates the pass
     it cites, a skipped probe never had a job."""
     conn = db.open_db()
-    assert db.SCHEMA_VERSION == 13 == len(db.MIGRATIONS)
+    assert db.SCHEMA_VERSION == 14 == len(db.MIGRATIONS)
     assert ROUTER_TABLES <= _names(conn, "table")
     nullable_refs, refs = set(), {}
     for table in sorted(ROUTER_TABLES):
@@ -1009,10 +1013,12 @@ def test_v12_rebuild_keeps_every_referencing_row_and_fk_check_is_clean(dbfile):
     for t in JOBS_CHILDREN:
         if t != "queue_entries":  # blocked_by appended there, NULL on the old row
             assert after["children"][t] == before["children"][t], t
-    assert after["jobs"] == [r + (None,) for r in before["jobs"]]  # routed_by NULL, rowids kept
+    # routed_by NULL, rowids kept; version 14 appends harness ('claude-code') and owner_session
+    assert after["jobs"] == [r + (None, "claude-code", None) for r in before["jobs"]]
     assert [r[0] for r in after["jobs"]] == [3, 7]
-    assert after["info"][:-1] == before["info"]  # type, NOT NULL, default, pk: column for column
-    assert after["info"][-1] == (len(before["info"]), "routed_by", "TEXT", 0, None, 0)
+    n = len(before["info"])
+    assert after["info"][:n] == before["info"]  # type, NOT NULL, default, pk: column for column
+    assert after["info"][n] == (n, "routed_by", "TEXT", 0, None, 0)
     # the rebuild hands every index back; version 13 then adds its one
     assert [r for r in after["indexes"] if r[0] != "jobs_endpoint_model_finished"] == before["indexes"]
     assert "jobs_by_hand" in {r[0] for r in after["indexes"]}
@@ -1187,10 +1193,10 @@ def test_v13_appends_the_entry_estimate_and_the_history_index(dbfile):
     before = _dump(dbfile)
     assert len(before["children"]["queue_entries"][0]) == 9   # rowid + v12's eight columns
     conn = db.open_db()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     conn.close()
     after = _dump(dbfile)
-    assert after["jobs"] == before["jobs"]
+    assert after["jobs"] == [r + ("claude-code", None) for r in before["jobs"]]  # v14's two appends
     assert after["children"]["queue_entries"] == [r + (None,) for r in before["children"]["queue_entries"]]
     for t in JOBS_CHILDREN:
         if t != "queue_entries":
@@ -1203,3 +1209,30 @@ def test_v13_appends_the_entry_estimate_and_the_history_index(dbfile):
     with pytest.raises(sqlite3.OperationalError):   # a second run is a bookkeeping bug, loud
         db.MIGRATIONS[12](raw)
     raw.close()
+
+
+def test_v14_appends_the_harness_the_owner_session_and_the_client(dbfile):
+    """Epic 6.4 (the operator: "The additions seem logical and useful"): a file at version 13
+    with jobs and a server row opens at version 14 with every row intact, ``jobs.harness``
+    NOT NULL DEFAULT 'claude-code' (every earlier job ran in Claude Code, so the default is the
+    truth), ``jobs.owner_session`` and ``mcp_servers.client`` nullable and NULL on old rows.
+    A re-run of the step fails loudly."""
+    raw = sqlite3.connect(dbfile)
+    for step in db.MIGRATIONS[:13]:
+        step(raw)
+    raw.execute("PRAGMA user_version = 13")
+    raw.execute("INSERT INTO mcp_servers (id, pid, owner) VALUES ('s1', 1, 1)")
+    raw.execute("INSERT INTO jobs (id, mcp_server_id, status, created_at) VALUES ('j1', 's1', 'succeeded', 1.0)")
+    raw.commit()
+    raw.close()
+    conn = db.open_db()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
+    row = conn.execute("SELECT harness, owner_session FROM jobs WHERE id = 'j1'").fetchone()
+    assert tuple(row) == ("claude-code", None)
+    assert conn.execute("SELECT client FROM mcp_servers WHERE id = 's1'").fetchone()[0] is None
+    info = {r["name"]: tuple(r) for r in conn.execute("PRAGMA table_info(jobs)")}
+    assert info["harness"][2:5] == ("TEXT", 1, "'claude-code'")
+    assert info["owner_session"][2:4] == ("TEXT", 0)
+    with pytest.raises(sqlite3.OperationalError, match="duplicate column"):
+        db.MIGRATIONS[13](conn)
+    conn.close()

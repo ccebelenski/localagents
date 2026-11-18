@@ -14,11 +14,11 @@ import re
 import sqlite3
 import time
 
-# the tools whose input carries a touched file path: the spec's write rule (runner.py imports
-# this one copy) and files_touched's read rule
+# the tools whose input carries a touched file path: the spec's write rule (harnesses.claude_code
+# imports this one copy) and files_touched's read rule
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 
-# What the tool_calls row stores (runner.py writes it; tests/test_tool_calls_db.py pins it):
+# What the tool_calls row stores (harnesses.claude_code writes it; tests/test_tool_calls_db.py pins it):
 # a Bash call's command up to COMMAND_CHARS; any other tool's input JSON up to
 # TOOL_INPUT_CHARS (a path-shaped tool stores its whole path, an edit tool without one NULL).
 TOOL_INPUT_CHARS = 120
@@ -767,6 +767,8 @@ def summary_from_row(conn: sqlite3.Connection, row: sqlite3.Row, include_result:
         "priority": row["priority"],
         "calibration": bool(row["calibration"]),
         "routed_by": json.loads(row["routed_by"]) if row["routed_by"] is not None else None,
+        "harness": row["harness"],  # Epic 6.4
+        "owner_session": row["owner_session"],
         "metrics": None if all(row[c] is None for c in _METRICS_COLUMNS) else {c: row[c] for c in _METRICS_COLUMNS},
         # the spec's read-time derivations (the in-memory duplicates story 1.5b removed from Job)
         "usage": usage,

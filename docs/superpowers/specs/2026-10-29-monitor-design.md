@@ -617,7 +617,10 @@ job's tool calls by `derive.classify_call`, the two ratios null for a job with n
 `diff_files` (list or null: a worktree job's diff file names, see job_status),
 `ctx_tokens`, `gen_tps`, `prefill_tps`, `elapsed_s` (to the wall clock while unfinished),
 `server_version` (story 1.14: the build stamp — `<version>+<short sha>`, `db.build_stamp` — of
-the MCP server that ran the job, its `mcp_servers.version`; null when that row is gone). No `result`.
+the MCP server that ran the job, its `mcp_servers.version`; null when that row is gone),
+`harness` (Epic 6.4: the agent harness the job's session ran in, `claude-code` for every job
+before schema version 14) and `owner_session` (Epic 6.4: the coordinating client's own session
+id when it sent one — OpenCode does — else null). No `result`.
 
 **Job detail** (`GET /api/jobs/{id}`): the same dict **with** `result`, and:
 

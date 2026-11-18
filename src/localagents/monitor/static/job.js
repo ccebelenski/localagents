@@ -515,6 +515,7 @@
         fig("request errors", fmt.int(requestErrors(detail.requests))),
         detail.compactions > 0 ? fig("compactions", fmt.int(detail.compactions)) : null,
         liveFig("last tool", "last_tool", oneLine(detail.last_tool)),
+        fig("harness", detail.harness || "claude-code"),  // Epic 6.4
         serverFig(),
       ].filter(Boolean);
       return h("div", { class: "job-header" }, [

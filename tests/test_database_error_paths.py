@@ -83,7 +83,7 @@ def test_run_agent_answers_database_error_when_its_final_summary_cannot_be_read(
     ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
 
     class FakeReg:
-        defaults = SimpleNamespace(dump_requests=False, log_events=False, probe_timeout_s=1.0)
+        defaults = SimpleNamespace(dump_requests=False, log_events=False, probe_timeout_s=1.0, harness="claude-code")
         endpoints = {"e": ep}
         pools: dict = {}  # router 12 (pin moved): admission reads the facts and the pool
 
@@ -159,7 +159,7 @@ def test_run_agent_answers_database_error_on_a_newer_schema_file(srv):
     ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
 
     class FakeReg:
-        defaults = SimpleNamespace(dump_requests=False, log_events=False, probe_timeout_s=1.0)
+        defaults = SimpleNamespace(dump_requests=False, log_events=False, probe_timeout_s=1.0, harness="claude-code")
         endpoints = {}
 
         async def resolve(self, model=None, endpoint=None):

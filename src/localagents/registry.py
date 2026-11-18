@@ -205,12 +205,15 @@ class Defaults:
     # the store's record (2026-11-16): 24 of 209 jobs backgrounded a test suite or a server and
     # all but one succeeded, none stuck after a result; the one stuck job was a smoke whose
     # brief demanded a foreground sleep the harness blocks. False (here, or a run_agent call
-    # for its own job) runs a job foreground only: harnesses.claude_code.build_env writes CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 and
-    # these two Bash timeouts (BASH_DEFAULT_TIMEOUT_MS / BASH_MAX_TIMEOUT_MS), run_job
-    # disallows Monitor and appends harnesses.claude_code.FOREGROUND_NOTE to the system prompt
+    # for its own job) runs a job foreground only; for Claude Code (harnesses.claude_code)
+    # build_env writes CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 and these two Bash timeouts
+    # (BASH_DEFAULT_TIMEOUT_MS / BASH_MAX_TIMEOUT_MS), and run() disallows Monitor and appends
+    # FOREGROUND_NOTE to the system prompt
     background_tasks: bool = True
     bash_timeout_s: int = 600
     bash_max_timeout_s: int = 1800
+    # Epic 6.4: the harness a job runs in when run_agent names none (harnesses.names())
+    harness: str = "claude-code"
 
     def check(self) -> None:
         """The foreground keys' values: a wrong type or a number under 1 is named on stderr and
@@ -218,6 +221,12 @@ class Defaults:
         ``max_concurrent: "1"`` is on an entry) and never a raise: the server re-reads the
         config on every call (I2). Registry.load calls it."""
         base = Defaults()
+        from . import harnesses  # here: harnesses imports this module
+
+        if self.harness not in harnesses.names():
+            print(f"localagents: defaults: harness must be one of {', '.join(harnesses.names())}, got "
+                  f"{self.harness!r}; using {base.harness}", file=sys.stderr)
+            self.harness = base.harness
         if not isinstance(self.background_tasks, bool):
             print(f"localagents: defaults: background_tasks must be true or false, got "
                   f"{self.background_tasks!r}; using {str(base.background_tasks).lower()}", file=sys.stderr)

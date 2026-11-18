@@ -113,6 +113,7 @@ async def run_agent(
     tolerance: float | None = None,
     avoid_job: str | None = None,
     background_tasks: bool | None = None,
+    harness: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Delegate a task to an agent on a local model and (with `wait_s`) wait for the result."""
@@ -123,7 +124,8 @@ async def run_agent(
                           "system_prompt_append": system_prompt_append,
                           "resume_job": resume_job, "timeout_s": timeout_s,
                           "priority": priority, "admit": admit, "tolerance": tolerance,
-                          "avoid_job": avoid_job, "background_tasks": background_tasks})
+                          "avoid_job": avoid_job, "background_tasks": background_tasks,
+                          "harness": harness})
     return dict(_REFUSAL)
 
 

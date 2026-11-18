@@ -738,11 +738,24 @@ _V13 = [
     "CREATE INDEX jobs_endpoint_model_finished ON jobs(endpoint_id, model_id, finished_at)",
 ]
 
-# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 13.
+# Version 14 (Epic 6.4, the operator's go 2026-11-17: "The additions seem logical and useful"):
+# ``jobs.harness``, the harness the job's session ran in (Epic 6.3's registry names; every job
+# before this version ran in Claude Code, so the default fills them truthfully);
+# ``jobs.owner_session``, the coordinator's own session id when the client sent one (OpenCode's
+# ``_meta["ai.opencode/sessionID"]`` on the tool call), NULL otherwise — the /proc walk's owner
+# pid stays the Claude Code key; ``mcp_servers.client``, the client the server answered (6.1:
+# declared, or named at initialize), NULL until it is known. Appends only; no row is rewritten.
+_V14 = [
+    "ALTER TABLE jobs ADD COLUMN harness TEXT NOT NULL DEFAULT 'claude-code'",
+    "ALTER TABLE jobs ADD COLUMN owner_session TEXT",
+    "ALTER TABLE mcp_servers ADD COLUMN client TEXT",
+]
+
+# MIGRATIONS[n] takes a file from user_version n to n + 1; a file comes up at version 14.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _statements(_V1), _statements(_V2), _statements(_V3), _statements(_V4), _statements(_V5), _v6,
     _statements(_V7), _statements(_V8), _v9, _statements(_V10), _statements(_V11), _v12,
-    _statements(_V13),
+    _statements(_V13), _statements(_V14),
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 # the steps that rebuild a table other tables reference: migrate() runs a pending one with

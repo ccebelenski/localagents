@@ -262,6 +262,7 @@ def _job_entry(conn: sqlite3.Connection, j: sqlite3.Row, now: float, frozen: boo
         "status": j["status"],
         # router 8: the page marks a calibration probe (`cal`) and the count below excludes it
         "calibration": bool(j["calibration"]),
+        "harness": j["harness"],  # Epic 6.4: a mark beside the status when not the default
         "started_at": start,
         "finished_at": j["finished_at"],
         "elapsed_s": elapsed,

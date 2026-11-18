@@ -39,10 +39,23 @@ def _tool_text() -> dict[str, str]:
     return {t.name: t.description for t in server.mcp._tool_manager.list_tools()}
 
 
+# what a later story added to the shared text, on purpose: (story, the anchor it follows, the text)
+ADDED_SINCE: list[tuple[str, str, str]] = []
+
+
+def _before_plus_additions(text: str) -> str:
+    for _story, anchor, added in ADDED_SINCE:
+        assert text.count(anchor) == 1, anchor
+        text = text.replace(anchor, anchor + added)
+    return text
+
+
 def test_claude_code_text_is_exactly_the_text_before_6_1(restore_default):
+    """Byte for byte the text before 6.1, plus only the additions listed in ADDED_SINCE."""
     clients.apply(server.mcp, "claude-code")
     assert server.mcp.instructions == BEFORE["instructions"]
-    assert _tool_text() == BEFORE["tools"]
+    expected = dict(BEFORE["tools"], run_agent=_before_plus_additions(BEFORE["tools"]["run_agent"]))
+    assert _tool_text() == expected
     # and the module's import-time default is the same text
     assert server.INSTRUCTIONS == BEFORE["instructions"]
 
@@ -114,7 +127,7 @@ def test_an_unknown_client_gets_the_default_text(monkeypatch, restore_default):
     result = ServerRunner._handle_initialize(runner, {"protocolVersion": "2025-11-25", "capabilities": {},
                                                       "clientInfo": {"name": "unknown", "version": "1"}})
     assert result.instructions == BEFORE["instructions"]
-    assert _tool_text()["run_agent"] == BEFORE["tools"]["run_agent"]
+    assert _tool_text()["run_agent"] == _before_plus_additions(BEFORE["tools"]["run_agent"])
 
 
 def test_client_modules_are_not_shared_text():
