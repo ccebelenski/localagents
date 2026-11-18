@@ -3385,7 +3385,25 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   the state directory removed, backups first, the OpenCode config's `local` entry cut with every
   other line intact, a localagents outside the sandbox (rehearsal PATH) left alone as not its
   own. Hardened after reading the run: `--config=path`, malformed settings files reported as
-  absent, never a traceback.
+  absent, never a traceback. A dangling relay link is a warn (`ln -s` would fail on it).
+  **Review (DeepSeek-V4.1-Flash/dgx1-a, job 64388b35, 87 turns, 21 min; registrations run for
+  real in a scratch HOME, the live fleet identified with and without /v1): three DEFECTs,
+  reproduced and fixed test-first by the reviewer, taken onto main** — a relay path that is a
+  directory raised IsADirectoryError out of check; a status line run through its interpreter
+  (`bash ~/x.sh`) read as not running localagents, so the step could never turn ok; INSTALL.md's
+  settings snippet ignored CLAUDE_CONFIG_DIR, so its own check could never turn ok. POSSIBLE,
+  folded: `local` in two scopes, uninstall now removes each scope check names; two boxes of one
+  kind by IP suggested one YAML key (PyYAML keeps the last, one server silently lost) — an IP's
+  suggestion now carries its last octet. NOTICED, folded: an unknown `defaults:` key was a
+  TypeError out of Registry.load — check's and every call of a running server's — now named on
+  stderr and skipped like an endpoint's; a hung opencode held check 60 s (now 20, said); an http
+  server under the name reads as a different server; a router-only config says why it is not
+  enough; `--url` answers that are not a model list say so in a sentence; every fix names a
+  step; the snippet keeps its `.bak-localagents`; Update covers a moved checkout; the table's
+  config-warn and info rows. Kept: `defaults.harness` is set by no step (the table's row is for
+  an operator who sets it). The operator's client files: settings, OpenCode config, status line
+  script byte-identical; `.claude.json`'s registrations unchanged (it changed only by a Claude
+  Code start).
 - ☐ **6.12 OpenCode status line.** OpenCode's TUI has no status-line command (6.1); the jobs
   view there is a TUI plugin (docs/build/plugins/cli) reading `localagents statusline`'s
   source, the shared database. Shape to settle with the operator.

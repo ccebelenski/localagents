@@ -143,8 +143,10 @@ everywhere below, and pass `--name <it>` to `check`.
 
    ```bash
    python3 - <<'EOF'
-   import json, pathlib
-   p = pathlib.Path("~/.claude/settings.json").expanduser()
+   import json, os, pathlib, shutil
+   p = pathlib.Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser() / "settings.json"
+   if p.exists():
+       shutil.copy2(p, p.with_name(p.name + ".bak-localagents"))
    d = json.loads(p.read_text()) if p.exists() else {}
    d.setdefault("env", {})["CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS"] = "10000"
    p.parent.mkdir(parents=True, exist_ok=True)
@@ -234,7 +236,10 @@ the restart; tell the user to ask *"list the local models"*.
 
 ## Update
 
-From the checkout: `git pull`, then `uv tool install -e . --force` (picks up new
+If the checkout has moved, `localagents` itself fails to start (the editable install points
+at the old place): run `uv tool install -e . --force` from the new place first, then
+`check` shows the relay links and status line that still point at the old one; make them
+again. Otherwise, from the checkout: `git pull`, then `uv tool install -e . --force` (picks up new
 dependencies; harmless when there are none). Then `localagents check`, and follow any fix it
 reports (a new release can add an install item). Running servers keep the old code until
 their client reconnects: Claude Code `/mcp` reconnect or restart; OpenCode `opencode reload`.
@@ -246,7 +251,8 @@ to do it when none are running (`localagents statusline`, or the monitor, shows 
 Start from `localagents check` and undo only what it shows is installed, asking before each
 file outside the checkout:
 
-- Claude Code: `claude mcp remove local --scope user` (the scope `check` named); remove
+- Claude Code: `claude mcp remove local --scope <scope>` for every scope `check` names
+  (it lists each one the server is registered in); remove
   `~/.claude/agents/local-agent.md` if it is the link (or the copy) this install made; take
   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS` out of `settings.json`'s `env` (ask: it may predate
   this install); take out the status line lines, or the `statusLine` key if it runs
@@ -267,7 +273,8 @@ Afterwards `check` cannot run (the package is gone): confirm with `claude mcp li
 | item | status | meaning, and what to do |
 |---|---|---|
 | `package` | fail | `localagents` is not on PATH: step 2's PATH note. |
-| `config` | fail | No file, unreadable YAML, or no endpoints: step 3. The message names the line. |
+| `config` | fail | No file, unreadable YAML, or no server: step 3. A YAML error names its line. |
+| `config` | warn | An entry is unusable (no `base_url`, a router without its `decision_url`): the message names it; the rest work. |
 | `endpoint:<name>` | warn, down | Nothing answers there now. Fine if the server is off; else the address or port is wrong. The hint says which (refused, unreachable, timed out). |
 | `endpoint:<name>` | warn, window | The model's window is under 128k: jobs compact constantly. Usable, not good. |
 | `endpoint:<name>` | warn, hint | A labelling fix, e.g. a Strata server marked `llama.cpp`. Do what it says. |
@@ -276,3 +283,4 @@ Afterwards `check` cannot run (the package is gone): confirm with `claude mcp li
 | `claude-code` / `opencode` | fail | Registered, but its command does not resolve: step 2's PATH note, then re-register. |
 | `*.relay` | warn | An old copy that differs from the checkout's, or a link whose target is gone: replace it with the link. |
 | `harness` | fail | `defaults.harness: opencode` without `opencode` on PATH: every job would fail. |
+| any | info | A fact, nothing to do: the default harness, a router entry, a relay with no checkout to compare it with. |

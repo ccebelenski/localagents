@@ -267,7 +267,14 @@ class Registry:
         local = _read_yaml(local_path(path))
         merged_endpoints = {**(raw.get("endpoints") or {}), **(local.get("endpoints") or {})}
         endpoints = {name: cls._build_endpoint(name, cfg or {}) for name, cfg in merged_endpoints.items()}
-        defaults = Defaults(**{**(raw.get("defaults") or {}), **(local.get("defaults") or {})})
+        # as an endpoint's: a key this package does not know is named on stderr and skipped, never
+        # a TypeError out of every call of a server that re-reads the file (I2; the 6.11 review)
+        known = {f.name for f in fields(Defaults)}
+        given = {**(raw.get("defaults") or {}), **(local.get("defaults") or {})}
+        for k in given:
+            if k not in known:
+                print(f"localagents: defaults: ignoring unknown key '{k}'", file=sys.stderr)
+        defaults = Defaults(**{k: v for k, v in given.items() if k in known})
         defaults.check()
         # A leftover ``models:`` section from older configs is ignored: served models are discovered.
         pools, refused = cls._read_pools(raw.get("pools"))

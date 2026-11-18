@@ -9,8 +9,12 @@ or opencode? The user just tells the LLM 'Use these instructions to install'."
 
 import asyncio
 import json
+import os
 import re
 import stat
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import httpx
@@ -61,7 +65,8 @@ def test_identify_strata_vllm_and_other(monkeypatch):
         "/props": (200, {"default_generation_settings": {"n_ctx": 65536}}),
     }, url="http://10.0.0.5:8080")
     # another machine by IP: a host line all the same (the rehearsal left two boxes as `local`)
-    assert out["backend"] == "strata" and out["entry"].startswith("  strata:\n") and "    host: strata" in out["entry"]
+    # the 6.11 review: two boxes of one kind by IP must not suggest one YAML key (one would be lost)
+    assert out["backend"] == "strata" and out["entry"].startswith("  strata-5:\n") and "    host: strata-5" in out["entry"]
     assert any("under 128k" in n for n in out["notes"])
     out = _identify(monkeypatch, {"/v1/models": (200, {"data": [{"id": "q", "owned_by": "llamacpp"}]}), "/props": (200, {})},
                     url="http://127.0.0.1:8080")
@@ -71,6 +76,13 @@ def test_identify_strata_vllm_and_other(monkeypatch):
     assert any("--enable-prompt-tokens-details" in n for n in out["notes"])
     out = _identify(monkeypatch, {"/v1/models": (200, {"data": [{"id": "x", "owned_by": "someone"}]})})
     assert out["backend"] == "other" and out["up"]
+
+
+def test_identify_says_what_is_wrong_with_an_answer(monkeypatch):
+    """The 6.11 review: an answer that is not a model list read as a raw AttributeError."""
+    for routes in ({"/v1/models": (200, ["a"])}, {"/v1/models": (200, {"data": "x"})}, {"/v1/models": (500, {})}):
+        out = _identify(monkeypatch, routes)
+        assert out["up"] and "not an OpenAI-compatible server" in out["error"], out
 
 
 def test_identify_a_key_and_a_dead_port(monkeypatch):
@@ -156,7 +168,9 @@ def test_claude_code_registration_problems(home, tmp_path):
     got = _items(ic.check_claude_code("local", cfg, tmp_path))
     assert got["claude-code"].status == "absent" and got["claude-code.statusline"].status == "absent"
     _exe(bindir, "someserver")
-    assert "not localagents" in reg({"command": "someserver", "args": []}).detail
+    assert "different server" in reg({"command": "someserver", "args": []}).detail
+    other = reg({"type": "http", "url": "https://elsewhere/mcp"})  # the 6.11 review: read as command ''
+    assert other.status == "warn" and "different server" in other.detail and "elsewhere" in other.detail
     (h / ".claude.json").write_text(json.dumps({}))
     (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"local": {"command": "localagents", "args": ["--config", str(cfg)]}}}))
     got = _items(ic.check_claude_code("local", cfg, tmp_path))["claude-code"]
@@ -213,6 +227,12 @@ def test_config_items(tmp_path):
     assert item.status == "ok" and reg is not None
     p.write_text("endpoints: [\n")
     assert ic.check_config(p)[0].status == "fail"
+    p.write_text("endpoints:\n  auto: {backend: router, decision_url: 'http://127.0.0.1:9'}\n")
+    assert "nothing to route to" in ic.check_config(p)[0].detail
+    # the 6.11 review: an unknown defaults key was a TypeError out of every load (the server's too)
+    p.write_text("defaults: {frobnicate: 1, max_turns: 7}\nendpoints:\n  a: {base_url: 'http://127.0.0.1:9'}\n")
+    item, reg = ic.check_config(p)
+    assert item.status == "ok" and reg.defaults.max_turns == 7
 
 
 def test_the_command_exits_1_on_a_fail(home, tmp_path, capsys):
@@ -247,3 +267,59 @@ def test_install_md_statusline_lines_are_the_shipped_scripts():
 
 def test_the_readme_sends_people_to_install_md():
     assert "INSTALL.md" in (ROOT / "README.md").read_text()
+
+
+# ---------- review 6.11: reproduced defects ----------
+
+
+def test_a_relay_that_is_a_directory_is_a_status(home, tmp_path):
+    """A relay path that exists and is not a file (a directory, or a link to one) is a warn
+    with the fix, never an IsADirectoryError out of the check."""
+    h, bindir = home
+    _exe(bindir, "claude")
+    (h / ".claude" / "agents" / "local-agent.md").mkdir(parents=True)
+    got = _items(ic.check_claude_code("local", tmp_path / "m.yaml", tmp_path))["claude-code.relay"]
+    assert got.status == "warn" and "not a file" in got.detail and got.fix
+    _exe(bindir, "opencode", "echo not json")
+    (h / ".config" / "opencode" / "agents" / "local-agent.md").mkdir(parents=True)
+    got = _items(ic.check_opencode("local", tmp_path / "m.yaml", tmp_path))["opencode.relay"]
+    assert got.status == "warn" and "not a file" in got.detail and got.fix
+
+
+def test_a_status_line_run_through_an_interpreter_is_found(home, tmp_path):
+    """INSTALL.md has the agent add the two lines to the user's own script, then says
+    claude-code.statusline is ok; `bash <script>` and a quoted path are how people write it."""
+    h, bindir = home
+    _exe(bindir, "claude")
+    script = tmp_path / "status.sh"
+    script.write_text("#!/bin/bash\nlocalagents statusline\n")
+    for command in (f"bash {script}", f"'{script}'", f'"{script}"', f"bash {script} --color"):
+        (h / ".claude" / "settings.json").write_text(
+            json.dumps({"statusLine": {"type": "command", "command": command}}))
+        got = _items(ic.check_claude_code("local", tmp_path / "m.yaml", tmp_path))["claude-code.statusline"]
+        assert got.status == "ok", command
+    # a script that does not run it still says absent, and a real inline command is ok
+    script.write_text("#!/bin/bash\necho hello\n")
+    (h / ".claude" / "settings.json").write_text(
+        json.dumps({"statusLine": {"type": "command", "command": f"bash {script}"}}))
+    assert _items(ic.check_claude_code("local", tmp_path / "m.yaml", tmp_path))["claude-code.statusline"].status == "absent"
+
+
+def _install_settings_snippet() -> str:
+    text = (ROOT / "INSTALL.md").read_text()
+    block = re.search(r"python3 - <<'EOF'\n(.*?)\n\s*EOF", text, re.S).group(1)
+    return textwrap.dedent(block)
+
+
+def test_install_md_snippet_writes_where_check_reads(home, tmp_path, monkeypatch):
+    """The auto-background snippet INSTALL.md gives (step 4a.2) must honour CLAUDE_CONFIG_DIR
+    as the step's own sentence does, or its check can never turn ok when that is set."""
+    h, bindir = home
+    _exe(bindir, "claude")
+    cfg = h / "cfg"
+    env = {**os.environ, "HOME": str(h), "CLAUDE_CONFIG_DIR": str(cfg)}
+    subprocess.run([sys.executable, "-c", _install_settings_snippet()], env=env, check=True)
+    assert (cfg / "settings.json").exists()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+    got = _items(ic.check_claude_code("local", tmp_path / "m.yaml", tmp_path))
+    assert got["claude-code.auto-background"].status == "ok"

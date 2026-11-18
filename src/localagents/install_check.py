@@ -75,7 +75,8 @@ def check_config(path: Path) -> tuple[Item, Registry | None]:
         return Item("config", "fail", f"{path}: {type(e).__name__}: {e}", "INSTALL.md step 3: fix models.yaml"), None
     real = [e for e in reg.endpoints.values() if not e.is_router]
     if not real:
-        return Item("config", "fail", f"{path} names no endpoint", "INSTALL.md step 3: add your servers"), reg
+        return Item("config", "fail", f"{path} names no server" + (" (a router entry alone has nothing to route to)"
+                    if reg.endpoints else ""), "INSTALL.md step 3: add your servers"), reg
     bad = [f"{e.name}: {e.invalid}" for e in reg.endpoints.values() if e.invalid]
     if bad:
         return Item("config", "warn", f"{path}: {len(reg.endpoints)} endpoints, ignored until fixed: " + "; ".join(bad),
@@ -115,12 +116,20 @@ def _same_relay(installed: Path, shipped: Path | None, server_name: str) -> Item
                     "remove the link and make it again to this checkout's relay")
     if not installed.exists():
         return None
+    if not installed.is_file():
+        # a directory, or a link to one: the operator's file, not ours, and never a read
+        return Item("", "warn", f"{installed} is not a file (a directory, or a link to one)",
+                    "remove it and make the relay again (INSTALL.md, the client's relay step)")
     if shipped is None:
         return Item("", "info", f"{installed} installed (no checkout to compare it with)")
     if installed.resolve() == shipped.resolve():
         return Item("", "ok", f"{installed} -> {shipped}")
-    text = installed.read_text(errors="replace")
-    if text == shipped.read_text():
+    try:
+        text, same = installed.read_text(errors="replace"), shipped.read_text()
+    except OSError as e:
+        return Item("", "warn", f"{installed} cannot be compared with {shipped}: {e}",
+                    "replace it with a link to the checkout's (INSTALL.md, the client's relay step)")
+    if text == same:
         return Item("", "ok", f"{installed} (a copy, identical to {shipped})")
     if server_name != "local" and server_name in text:
         return Item("", "ok", f"{installed} (a copy renamed for server '{server_name}')")
@@ -131,11 +140,15 @@ def _same_relay(installed: Path, shipped: Path | None, server_name: str) -> Item
 def _registration(entry: dict[str, Any] | None, where: str, config: Path, command: list[str]) -> Item:
     if entry is None:
         return Item("", "absent", "not registered")
+    if entry.get("url") or entry.get("type") in ("http", "sse", "remote"):
+        return Item("", "warn", f"{where}: a different server ({entry.get('type', 'remote')} {entry.get('url', '')}) "
+                    "is registered under this name", "INSTALL.md step 4a: ask the user for another name")
     if command[:1] and shutil.which(command[0]) is None and not Path(command[0]).exists():
         return Item("", "fail", f"{where}: its command {command[0]!r} is not on PATH",
                     "re-register it with `localagents` (INSTALL.md step 2 puts it on PATH)")
     if "localagents" not in " ".join(command):
-        return Item("", "warn", f"{where}: its command is {' '.join(command)!r}, not localagents")
+        return Item("", "warn", f"{where}: a different server ({' '.join(command)!r}) is registered under this name",
+                    "INSTALL.md step 4a: ask the user for another name")
     given = None
     for i, arg in enumerate(command):
         if arg == "--config" and i + 1 < len(command):
@@ -144,10 +157,10 @@ def _registration(entry: dict[str, Any] | None, where: str, config: Path, comman
             given = Path(arg.split("=", 1)[1]).expanduser()
     if given is None:
         return Item("", "warn", f"{where}: registered without --config, so the server looks in its working directory",
-                    f"re-register it with --config {config}")
+                    f"re-register it with --config {config} (INSTALL.md step 4a or 4b)")
     if given.resolve() != config.resolve():
         return Item("", "warn", f"{where}: registered with --config {given}, not {config}",
-                    "fine if that is the config you mean; else re-register it")
+                    "fine if that is the config you mean; else re-register it (INSTALL.md step 4a or 4b)")
     return Item("", "ok", f"{where}: localagents --config {given}")
 
 
@@ -209,7 +222,7 @@ def check_claude_code(name: str, config: Path, cwd: Path) -> list[Item]:
                           f"INSTALL.md step 4a: set it to 10000 in {cdir / 'settings.json'}"))
     else:
         items.append(Item("claude-code.auto-background", "ok" if ms <= AUTO_BACKGROUND_MAX_MS else "warn",
-                          f"{AUTO_BACKGROUND}={ms}", "" if ms <= AUTO_BACKGROUND_MAX_MS else "10000 is about right"))
+                          f"{AUTO_BACKGROUND}={ms}", "" if ms <= AUTO_BACKGROUND_MAX_MS else "INSTALL.md step 4a: 10000 is about right"))
 
     root = checkout()
     relay = _same_relay(cdir / "agents" / "local-agent.md",
@@ -225,11 +238,17 @@ def check_claude_code(name: str, config: Path, cwd: Path) -> list[Item]:
         items.append(Item("claude-code.statusline", "absent", "no statusLine (optional)",
                           "INSTALL.md step 4a, the optional status line"))
     else:
-        script = Path(cmd.split()[0]).expanduser()
-        try:
-            text = cmd + ("\n" + script.read_text(errors="replace") if script.is_file() else "")
-        except OSError:
-            text = cmd
+        # Every word of the command that is a file: a bare path (`<checkout>/tools/statusline.sh`,
+        # `~/x.sh`), a quoted one, and a script run through its interpreter (`bash ~/x.sh`) —
+        # INSTALL.md has the agent add the lines to the user's own script and then check ok.
+        text = cmd
+        for word in cmd.split():
+            try:
+                p = Path(word.strip("'\"")).expanduser()
+                if p.is_file():
+                    text += "\n" + p.read_text(errors="replace")
+            except (OSError, ValueError):
+                continue
         if "localagents statusline" in text:
             items.append(Item("claude-code.statusline", "ok", f"{cmd} runs `localagents statusline`"))
         else:
@@ -242,13 +261,17 @@ def opencode_config_dir() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config").expanduser() / "opencode"
 
 
+OPENCODE_TIMEOUT_S = 20  # it answers in under a second; a hung one must not hold every check for a minute
+
+
 def opencode_sources(cwd: Path) -> list[dict[str, Any]] | None:
     """OpenCode's own reading of its configuration (``opencode debug config``: every source with
     its parsed body — JSONC is OpenCode's to parse, not ours). ``--standalone``: without it the
     answer is the background service's, read in the service's environment, not this one's (a
     scratch ``XDG_CONFIG_HOME`` still showed the operator's config). None when it cannot be had."""
     try:
-        r = subprocess.run(["opencode", "debug", "config", "--standalone"], cwd=cwd, capture_output=True, text=True, timeout=60)
+        r = subprocess.run(["opencode", "debug", "config", "--standalone"], cwd=cwd, capture_output=True, text=True,
+                           timeout=OPENCODE_TIMEOUT_S)
         docs = json.loads(r.stdout)
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
@@ -260,7 +283,8 @@ def check_opencode(name: str, config: Path, cwd: Path) -> list[Item]:
         return [Item("opencode", "absent", "`opencode` is not on PATH (needed to coordinate from OpenCode or to run OpenCode jobs)")]
     sources = opencode_sources(cwd)
     if sources is None:
-        it = Item("opencode", "warn", "`opencode debug config` gave nothing readable; cannot see the registration")
+        it = Item("opencode", "warn", f"`opencode debug config --standalone` gave nothing readable within "
+                  f"{OPENCODE_TIMEOUT_S}s; cannot see the registration")
     else:
         found = None
         for doc in sources:
@@ -294,7 +318,7 @@ def check_harness(reg: Registry | None) -> Item:
     have = shutil.which("opencode")
     if want == "opencode" and not have:
         return Item("harness", "fail", "defaults.harness is opencode but `opencode` is not on PATH: every job would fail",
-                    "install OpenCode, or remove defaults.harness")
+                    "install OpenCode, or take harness out of models.yaml's defaults (INSTALL.md step 3)")
     return Item("harness", "info", f"jobs run in {want} by default; OpenCode jobs "
                 + ("available" if have else "unavailable (`opencode` not on PATH)"))
 
@@ -326,7 +350,10 @@ def _suggest_name(url: str, kind: str) -> tuple[str, str | None]:
         ip = None
     if host == "localhost" or (ip is not None and ip.is_loopback):
         return kind.replace(".", ""), None
-    label = kind.replace(".", "") if ip is not None else host.split(".")[0]
+    if ip is not None:  # unique per address, so two boxes of one kind never collide as YAML keys
+        label = f"{kind.replace('.', '')}-{str(ip).replace(':', '-').split('.')[-1]}"
+    else:
+        label = host.split(".")[0]
     return label, label
 
 
@@ -343,8 +370,18 @@ async def identify(url: str, api_key: str | None = None, timeout_s: float = 5.0)
             if r.status_code in (401, 403):
                 return {"url": url, "up": True, "error": f"HTTP {r.status_code}: the server wants an api_key",
                         "notes": ["run again with --api-key, and put it in the entry as api_key"]}
-            r.raise_for_status()
-            entries = [m for m in (r.json().get("data") or []) if isinstance(m, dict)]
+            if r.status_code != 200:
+                return {"url": url, "up": True, "error": f"/v1/models answered HTTP {r.status_code}: not an "
+                        "OpenAI-compatible server, or not its root address", "notes": notes}
+            try:
+                body = r.json()
+                data = body.get("data") if isinstance(body, dict) else None
+                if not isinstance(data, list):
+                    raise ValueError
+            except ValueError:
+                return {"url": url, "up": True, "error": "/v1/models answered, but not with a model list: not an "
+                        "OpenAI-compatible server, or not its root address", "notes": notes}
+            entries = [m for m in data if isinstance(m, dict)]
             owners = {m.get("owned_by") for m in entries}
             health: dict[str, Any] = {}
             try:
