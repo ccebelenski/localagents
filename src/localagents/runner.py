@@ -338,9 +338,9 @@ async def run_job(
     background_tasks: bool | None = None,
 ) -> None:
     d = reg.defaults
-    # the job's per-call settings resolve here against the config's defaults (max_turns,
-    # permission_mode, timeout_s below): None is the config's. The resolved value is the job's
-    # own, kept for a resume_job of it (server.run_agent reads it back)
+    # background_tasks and timeout_s resolve here against the config's defaults (None is the
+    # config's; the session's other settings resolve once in harnesses/policy.py, Epic 6.8). The
+    # resolved background value is the job's own, kept for a resume_job of it
     background = d.background_tasks if background_tasks is None else background_tasks
     job._background_tasks = background
     job.status = "running"

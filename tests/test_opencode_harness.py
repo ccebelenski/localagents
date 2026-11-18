@@ -290,3 +290,17 @@ def test_a_cancel_ends_the_process_group(live, monkeypatch):
 def test_both_harnesses_are_registered():
     assert harnesses.names() == ["claude-code", "opencode"]
     assert harnesses.get("opencode") is oc
+
+
+def test_a_refusal_from_the_configs_defaults_says_so(live, tmp_path, monkeypatch):
+    """The 6.8 review (Qwen3.8-27B, job 996fc805), NOTICED made a rule: an untranslatable value in
+    models.yaml refused every OpenCode job with the same words as a caller's, no hint it was the
+    config. Now the config's refusals say so; a caller's do not."""
+    reg = server._reg()
+    monkeypatch.setattr(reg, "defaults", Defaults(job_retention_days=0, allowed_tools=["Read", "TodoWrite"]))
+    out = asyncio.run(server.run_agent(task="t", model="served-model", harness="opencode", cwd=str(tmp_path)))
+    assert out["error"] == "bad_argument" and "TodoWrite" in out["message"]
+    assert "(from the config's defaults in models.yaml)" in out["message"]
+    out = asyncio.run(server.run_agent(task="t", model="served-model", harness="opencode", cwd=str(tmp_path),
+                                       allowed_tools=["Read", "Frobnicate"]))
+    assert "Frobnicate" in out["message"] and "from the config" not in out["message"]

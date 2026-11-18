@@ -711,21 +711,6 @@ async def start_job(
     """
     if priority not in ("urgent", "normal", "background"):
         raise _bad("priority must be 'urgent', 'normal' or 'background'")
-    defaults = _reg().defaults
-    if (harness or defaults.harness) == "opencode":
-        # Epic 6.8: the job's policy in OpenCode's terms; a setting with no equivalent is refused
-        # here, before the job exists, never dropped (harnesses/opencode_policy.py)
-        from .harnesses import SessionSpec, opencode_policy, policy
-
-        pol = policy.resolve(SessionSpec(
-            defaults=defaults, shim_base_url="", background=(defaults.background_tasks if background_tasks is None
-                                                             else background_tasks),
-            permission_mode=permission_mode, max_turns=max_turns, allowed_tools=allowed_tools,
-            system_prompt_append=system_prompt_append, mcp_servers=mcp_servers, thinking=thinking,
-            effort=effort, strict_mcp_config=strict_mcp_config, setting_sources=setting_sources))
-        refused = opencode_policy.translate(pol).refused
-        if refused:
-            raise _bad("the opencode harness cannot honour: " + "; ".join(refused))
     if admit not in ("queue", "now", "force"):
         raise _bad("admit must be 'queue', 'now' or 'force'")
     if tolerance is not None and (isinstance(tolerance, bool) or not isinstance(tolerance, (int, float))
@@ -733,6 +718,26 @@ async def start_job(
         raise _bad("tolerance must be a number of 0 or more")
 
     reg = _reg()
+    defaults = reg.defaults  # the 6.8 review: the check and the job read one config, not two
+    if (harness or defaults.harness) == "opencode":
+        # Epic 6.8: the job's policy in OpenCode's terms; a setting with no equivalent is refused
+        # here, before the job exists, never dropped (harnesses/opencode_policy.py)
+        from .harnesses import SessionSpec, opencode_policy, policy
+
+        def spec(**caller: Any) -> SessionSpec:
+            return SessionSpec(defaults=defaults, shim_base_url="", background=(
+                defaults.background_tasks if background_tasks is None else background_tasks), **caller)
+
+        refused = opencode_policy.translate(policy.resolve(spec(
+            permission_mode=permission_mode, max_turns=max_turns, allowed_tools=allowed_tools,
+            system_prompt_append=system_prompt_append, mcp_servers=mcp_servers, thinking=thinking,
+            effort=effort, strict_mcp_config=strict_mcp_config, setting_sources=setting_sources))).refused
+        if refused:
+            # a refusal the config's defaults alone produce says so (the 6.8 review: an
+            # untranslatable value in models.yaml refused every job with no hint it was the config)
+            from_config = set(opencode_policy.translate(policy.resolve(spec())).refused)
+            raise _bad("the opencode harness cannot honour: " + "; ".join(
+                r + (" (from the config's defaults in models.yaml)" if r in from_config else "") for r in refused))
     work = str(Path(cwd or os.getcwd()).expanduser().resolve())
     avoided = None
     if avoid_job is not None:

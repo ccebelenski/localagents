@@ -3295,6 +3295,20 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   ai2: `plan` gave the job glob, grep, read, webfetch — it diagnosed the planted bug, said it could
   not edit, the file unchanged; the calibration stub as an MCP server (`mcp__localagents`
   allowed) — the job called `localagents_list_models`, the stub logged it. Suite 1590 passed.
+  **Review (Qwen3.8-27B/ai9, job 996fc805, 74 turns, 21 min; one live run on ai2): no defect.**
+  CLEAN: Claude Code's options byte-identical before and after on 25,920 setting combinations;
+  48/48 translation cells match the rule re-derived independently (permitted sets, rule order
+  last-match-wins, plugins off), and live a `default` job with `allowed_tools: [Read]` was offered
+  exactly `read` and could not run a command; all six refusal kinds refused by name with no job
+  row written, a config default that cannot be translated refuses every OpenCode job while Claude
+  Code jobs are unaffected, and no Policy field is dropped without being refused or stated.
+  NOTICED, folded: a refusal coming from models.yaml read exactly like a caller's — it now ends
+  "(from the config's defaults in models.yaml)", with a test; start_job read the config twice
+  (the check and the job's record could see two versions) — one read now; runner.py's comment on
+  what resolves where. NOTICED, kept: run_agent does not carry mcp_servers, thinking, effort,
+  strict_mcp_config or setting_sources (start_job's callers — the router, calibration — do), so
+  a coordinator cannot give an OpenCode job an MCP server; `allowed_tools: []` resolves to the
+  config's while `setting_sources: []` means none (Claude Code's resolution, unchanged).
 - ☐ **6.9 Router and calibration across harnesses.** Calibration through the seam; whether
   capability cells and speed curves are keyed by harness as well as model (the same model may
   score differently under two harnesses) is a design question for the operator.
