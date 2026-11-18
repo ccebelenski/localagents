@@ -21,6 +21,7 @@ from localagents.jobs import Job
 from localagents.registry import Defaults, Endpoint, Registry, Resolution
 from localagents.router import definitions, feedback, scorecard
 from localagents.router.decision import BriefScores
+from localagents.harnesses import claude_code
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -355,7 +356,7 @@ def test_on_finish_failure_never_fails_the_job(conn, tmp_path, monkeypatch):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(runner, "fetch_metrics", no_metrics)
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
     monkeypatch.setattr(feedback, "_on_finish", boom)
     ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
     reg = Registry(path=None, endpoints={"e": ep}, defaults=Defaults(job_retention_days=0),

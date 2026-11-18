@@ -8,7 +8,7 @@ import pytest
 
 from localagents import server
 from localagents.registry import Defaults, Endpoint, Registry, fetch_metrics
-from localagents.runner import build_env
+from localagents.harnesses.claude_code import build_env
 from localagents.shim import Shim
 
 KEY = "sk-strata-secret-123"

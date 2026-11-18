@@ -205,9 +205,9 @@ class Defaults:
     # the store's record (2026-11-16): 24 of 209 jobs backgrounded a test suite or a server and
     # all but one succeeded, none stuck after a result; the one stuck job was a smoke whose
     # brief demanded a foreground sleep the harness blocks. False (here, or a run_agent call
-    # for its own job) runs a job foreground only: runner.build_env writes CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 and
+    # for its own job) runs a job foreground only: harnesses.claude_code.build_env writes CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 and
     # these two Bash timeouts (BASH_DEFAULT_TIMEOUT_MS / BASH_MAX_TIMEOUT_MS), run_job
-    # disallows Monitor and appends runner.FOREGROUND_NOTE to the system prompt
+    # disallows Monitor and appends harnesses.claude_code.FOREGROUND_NOTE to the system prompt
     background_tasks: bool = True
     bash_timeout_s: int = 600
     bash_max_timeout_s: int = 1800

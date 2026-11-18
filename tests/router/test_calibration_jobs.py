@@ -14,6 +14,7 @@ import pytest
 
 from localagents import jobs, server
 from localagents.registry import Defaults, Endpoint, Registry
+from localagents.harnesses import claude_code
 
 SERVING = {"first": ["default-model"], "second": ["big-model"]}
 
@@ -133,8 +134,8 @@ def test_strict_mcp_and_setting_sources_reach_the_options(reg, monkeypatch):
 
     monkeypatch.setattr(runner, "fetch_metrics", _no_metrics)
     monkeypatch.setattr(runner, "finish_worktree", lambda j: None)
-    monkeypatch.setattr(runner, "query", _empty_query)
-    monkeypatch.setattr(runner, "ClaudeAgentOptions", fake_options)
+    monkeypatch.setattr(claude_code, "query", _empty_query)
+    monkeypatch.setattr(claude_code, "ClaudeAgentOptions", fake_options)
 
     async def go(**kw):
         job = await server.start_job("t", **kw)
@@ -173,8 +174,8 @@ def test_run_job_maps_the_levers_onto_the_sdk_options(monkeypatch, tmp_path, thi
 
     monkeypatch.setattr(runner, "fetch_metrics", _no_metrics)
     monkeypatch.setattr(runner, "finish_worktree", lambda j: None)
-    monkeypatch.setattr(runner, "query", _empty_query)
-    monkeypatch.setattr(runner, "ClaudeAgentOptions", fake_options)
+    monkeypatch.setattr(claude_code, "query", _empty_query)
+    monkeypatch.setattr(claude_code, "ClaudeAgentOptions", fake_options)
     ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
     reg = Registry(path=None, endpoints={"e": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
     asyncio.run(runner.run_job(
@@ -196,14 +197,13 @@ def test_runner_logs_the_thinking_length(tmp_path):
     number, not by the truncated tail (final review M4)."""
     from claude_agent_sdk import AssistantMessage, ThinkingBlock
 
-    from localagents import runner
 
     store = jobs.JobStore()
     job = store.new(task="t", model="m", endpoint="e", base_url="http://e:8080",
                     backend="llama.cpp", host="local", cwd=str(tmp_path), run_cwd=str(tmp_path),
                     isolation="none")
     thinking = "x" * 700
-    runner._apply_message(job, AssistantMessage(
+    claude_code._apply_message(job, AssistantMessage(
         content=[ThinkingBlock(thinking=thinking, signature="")], model="m"))
     line = (Path(job.log_dir) / "transcript.txt").read_text()
     assert line == f"[thinking] ({len(thinking)} chars) {thinking[:500]}\n"

@@ -12,6 +12,7 @@ import time
 import pytest
 
 from localagents import db, derive, jobs, server
+from localagents.harnesses import claude_code
 
 
 def _store(monkeypatch, tmp_path):
@@ -158,15 +159,14 @@ def test_compact_boundary_counts_the_compaction(monkeypatch, tmp_path):
     summary_from_row both read it back."""
     from claude_agent_sdk import SystemMessage
 
-    from localagents import runner
 
     store = _store(monkeypatch, tmp_path)
     job = _new(store)
     msg = SystemMessage(subtype="compact_boundary", data={
         "compact_metadata": {"trigger": "auto", "pre_tokens": 150000},
     })
-    runner._apply_message(job, msg)
-    runner._apply_message(job, msg)
+    claude_code._apply_message(job, msg)
+    claude_code._apply_message(job, msg)
     assert job.compactions == 2
     job.changed()
     assert _row(store, job)["compactions"] == 2
@@ -769,7 +769,7 @@ def test_run_job_writes_the_worktree_before_the_first_message(monkeypatch, tmp_p
     monkeypatch.setattr(runner, "make_worktree", lambda j: dict(wt))
     monkeypatch.setattr(runner, "finish_worktree", lambda j: None)
     monkeypatch.setattr(runner, "fetch_metrics", no_metrics)
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
     ep = Endpoint(name="llamacpp", base_url="http://x:8080", backend="llama.cpp")
     reg = Registry(path=None, endpoints={"llamacpp": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
     asyncio.run(runner.run_job(
@@ -813,7 +813,7 @@ def test_a_metrics_failure_in_the_finally_cannot_strand_the_job(monkeypatch, tmp
     monkeypatch.setattr(runner, "fetch_metrics", fake_metrics)
     if fails == "metrics_delta":
         monkeypatch.setattr(runner, "metrics_delta", boom)
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
     monkeypatch.setattr(runner, "finish_worktree", lambda j: calls.__setitem__("finish_worktree", 1))
     ep = Endpoint(name="llamacpp", base_url="http://x:8080", backend="llama.cpp")
     reg = Registry(path=None, endpoints={"llamacpp": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})

@@ -8,6 +8,7 @@ import pytest
 
 from localagents import jobs, server
 from localagents.registry import Defaults, Endpoint, Registry
+from localagents.harnesses import claude_code
 
 SERVING = {"first": ["default-model"], "second": ["big-model"]}
 
@@ -192,19 +193,18 @@ def test_progress_line_omits_zero_errors_and_the_tail_until_the_first_tool(reg, 
 
 
 def test_progress_tail_shows_the_bash_command_the_runner_recorded(reg):
-    """Through the real runner._apply_message: a Bash call's row holds its command (not the
+    """Through the real claude_code._apply_message: a Bash call's row holds its command (not the
     input JSON with the description), so the line reads "...; Bash: uv run pytest -q"
     (review of 1.5b, finding 4)."""
     from claude_agent_sdk import AssistantMessage, ToolResultBlock, ToolUseBlock, UserMessage
 
-    from localagents import runner
 
     job = _prev_job()
     job.status = "running"
-    runner._apply_message(job, AssistantMessage(content=[
+    claude_code._apply_message(job, AssistantMessage(content=[
         ToolUseBlock(id="tu-1", name="Bash", input={"command": "uv run pytest -q", "description": "Run tests"}),
     ], model="m"))
-    runner._apply_message(job, UserMessage(content=[ToolResultBlock(tool_use_id="tu-1", content="1 failed", is_error=True)]))
+    claude_code._apply_message(job, UserMessage(content=[ToolResultBlock(tool_use_id="tu-1", content="1 failed", is_error=True)]))
     row = server.store.conn.execute("SELECT input FROM tool_calls WHERE job_id = ?", (job.id,)).fetchone()
     assert row["input"] == "uv run pytest -q"
     ctx = _Ctx()

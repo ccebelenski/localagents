@@ -234,7 +234,7 @@ class Job:
     _session_deadline: float | None = field(default=None, repr=False)
     _session_timeout_s: float | None = field(default=None, repr=False)
     _session_over: bool = field(default=False, repr=False)
-    # the runner's view of the SDK's task lifecycle (runner._track_task): the tasks started and
+    # the runner's view of the SDK's task lifecycle (harnesses.claude_code._track_task): the tasks started and
     # not yet seen ending, by task id, with their descriptions; _after_result while the latest
     # turn boundary is a ResultMessage (no [init] or assistant message since); _result_at the
     # latest result's time.time(), for the error a timeout or cancel after it writes
@@ -322,7 +322,7 @@ class Job:
 
     def record_tool_call(self, t: float, tool: str, tool_use_id: str, input_text: str | None) -> None:
         """One ``tool_calls`` row per ToolUseBlock. The ``input_text`` follows the current input
-        rule (spec; runner._apply_message builds it): an edit tool stores the path, or NULL when
+        rule (spec; harnesses.claude_code._apply_message builds it): an edit tool stores the path, or NULL when
         the input has none; a tool whose input carries a string ``command`` stores that command
         (Bash: its first derive.COMMAND_CHARS, any other tool: derive.TOOL_INPUT_CHARS); any
         other tool stores the first derive.TOOL_INPUT_CHARS of the input JSON.

@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolResultBlock, ToolUseBlock, UserMessage
 
 from localagents import derive, jobs, runner
+from localagents.harnesses import claude_code
 
 
 def _store(monkeypatch, tmp_path):
@@ -68,12 +69,12 @@ def _messages():
 
 
 def _feed(store, monkeypatch, job, times):
-    """runner._apply_message per message, with runner's time.time pinned to ``times[i]``."""
+    """claude_code._apply_message per message, with its module's time.time pinned to ``times[i]``."""
     clock = _Clock()
-    monkeypatch.setattr(runner, "time", clock)
+    monkeypatch.setattr(claude_code, "time", clock)
     for m, t in zip(_messages(), times):
         clock.now = t
-        runner._apply_message(job, m)
+        claude_code._apply_message(job, m)
 
 
 def _rows(store, job):
@@ -137,7 +138,7 @@ def test_last_activity_shows_the_same_text_as_the_row(monkeypatch, tmp_path):
          'Custom: {"command": ["ls", "-la"]}', '{"command": ["ls", "-la"]}'),
     ]
     for block, activity, row_input in cases:
-        runner._apply_message(job, AssistantMessage(content=[block], model="m"))
+        claude_code._apply_message(job, AssistantMessage(content=[block], model="m"))
         assert job.last_activity == activity
         row = store.conn.execute("SELECT input FROM tool_calls WHERE tool_use_id = ?", (block.id,)).fetchone()
         assert row["input"] == row_input
@@ -174,7 +175,7 @@ def test_path_shaped_tools_store_their_path(monkeypatch, tmp_path):
     ]
     for block, activity, row_input in cases:
         clock.now += 1.0
-        runner._apply_message(job, AssistantMessage(content=[block], model="m"))
+        claude_code._apply_message(job, AssistantMessage(content=[block], model="m"))
         assert job.last_activity == activity
         row = store.conn.execute("SELECT input FROM tool_calls WHERE tool_use_id = ?", (block.id,)).fetchone()
         assert row["input"] == row_input
@@ -204,7 +205,7 @@ def test_orphan_result_is_ignored(monkeypatch, tmp_path):
     job = _new(store)
     _feed(store, monkeypatch, job, [1000.0, 1001.0, 1002.0, 1003.0])
     before = _row_vals(store, job)
-    runner._apply_message(job, UserMessage(content=[
+    claude_code._apply_message(job, UserMessage(content=[
         ToolResultBlock(tool_use_id="tu-never-sent", content="who dis", is_error=True),
     ]))
     assert _row_vals(store, job) == before
@@ -218,9 +219,9 @@ def test_turns_count_live_and_the_result_reconciles(monkeypatch, tmp_path):
     store = _store(monkeypatch, tmp_path)
     job = _new(store)
     for i in range(3):
-        runner._apply_message(job, AssistantMessage(content=[TextBlock(text=f"turn {i}")], model="m"))
+        claude_code._apply_message(job, AssistantMessage(content=[TextBlock(text=f"turn {i}")], model="m"))
     assert job.num_turns == 3  # live, before any result
-    runner._apply_message(job, ResultMessage(
+    claude_code._apply_message(job, ResultMessage(
         subtype="success", duration_ms=5, duration_api_ms=4, is_error=False, num_turns=7,
         session_id="sess-1", usage=None, result="done",
     ))
@@ -232,7 +233,7 @@ def test_result_message_usage_stays_off_the_job(monkeypatch, tmp_path):
     longer parked on the Job (it counts the same traffic from the other side and differs)."""
     store = _store(monkeypatch, tmp_path)
     job = _new(store)
-    runner._apply_message(job, ResultMessage(
+    claude_code._apply_message(job, ResultMessage(
         subtype="success", duration_ms=5, duration_api_ms=4, is_error=False, num_turns=2,
         session_id="sess-1", usage={"input_tokens": 999, "output_tokens": 7}, result="done",
     ))
@@ -263,7 +264,7 @@ def test_db_error_does_not_break_tool_recording(monkeypatch, tmp_path):
         yield  # unreachable; makes this a context manager
 
     monkeypatch.setattr(jobs.db, "immediate", boom)
-    runner._apply_message(job, AssistantMessage(content=[
+    claude_code._apply_message(job, AssistantMessage(content=[
         ToolUseBlock(id="tu-boom", name="Bash", input={"command": "ls"}),
     ], model="m"))
     assert _row_vals(store, job) == []  # nothing inserted, no pending rowid remembered

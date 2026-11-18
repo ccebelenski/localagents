@@ -3030,11 +3030,29 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   (llama.cpp `/v1/messages`), confirming the operator's route on evidence rather than need.
   Not captured: vLLM (not allowed for this pass); a native-tool-error-heavy job; how a job's
   owner MCP sees `_meta` (6.1's).
-- ☐ **6.3 The harness seam, Claude Code behind it.** The job lifecycle every harness shares
+- ☑ **6.3 The harness seam, Claude Code behind it.** The job lifecycle every harness shares
   (worktree, timeout, cancel, heartbeat, the job record's writes) factored into a core; launch,
   environment, event parsing and resume are the harness's own version behind one interface. The
   Claude Code version is today's code moved, not rewritten. Gate: the suite unchanged in count and green; a replayed job's record identical
   before and after.
+  **Built 2026-11-17** (the coordinator). src/localagents/harnesses/: `SessionSpec` (the job's
+  resolved settings), `get`/`names`/`DEFAULT`, and claude_code.py holding everything Claude
+  Code's — `build_env`, `FOREGROUND_NOTE`/`FOREGROUND_DISALLOWED`, the `ClaudeAgentOptions`
+  build and the `query` loop (`run(job, res, spec)`), the SDK message reading (`_apply_message`,
+  `_track_task`, `_session_goes_on`, `_msg_to_dict`, `_handle_message`) — cut from runner.py by
+  script, byte-for-byte. runner.py (736 → 494 lines) keeps the worktree, the metrics, the clock,
+  the status, the cancel, the finish and `_ended_after_result`; `run_job`'s signature is
+  unchanged, so server.py and calibrate.py are untouched. One order change: the `[start]` line
+  is now written before the options are built (an exception building them, never seen, used to
+  come first). Tests: only moved seams (`runner.query`/`ClaudeAgentOptions`/`_apply_message`/
+  `build_env`/`FOREGROUND_NOTE`/... and one `runner.time` clock pin → `claude_code.*`, 14 files);
+  the count is unchanged at 1537 plus tests/test_harnesses.py (4: the registry, the core holds no
+  SDK import, Claude Code string or name — a planted `CLAUDE_CODE_` string fails it — the module
+  owns its session, run_job hands the harness one `SessionSpec`): 1541 passed. The gate's replay
+  (t/replay.py, scratch): one scripted session — thinking, four tool calls with an error result,
+  an edit without a path, a cut Bash command, a compaction, a background task's lifecycle, the
+  result, foreground-only — through the real run_agent → run_job on the tree before and after:
+  the record, the 17 transcript lines, the tool rows and the session options identical.
 - ☐ **6.4 Harness on the job record.** A `harness` column on jobs (schema bump: the shared
   store's migration note applies), `run_agent(harness=)`, a default in `models.yaml`, shown in
   the status line, the monitor's tables and the job page.

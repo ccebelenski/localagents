@@ -19,9 +19,10 @@ from pathlib import Path
 
 from claude_agent_sdk import AssistantMessage, ToolUseBlock
 
-from localagents import derive, jobs, runner, server
+from localagents import derive, jobs, server
 from localagents.monitor import read
 from localagents.router import feedback
+from localagents.harnesses import claude_code
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "bash_reads.json").read_text())
 WHOLE = FIXTURE["whole"]
@@ -43,8 +44,8 @@ def _new(store):
 
 
 def _bash(job, command, uid):
-    """The runner's write path: one Bash ToolUseBlock through runner._apply_message."""
-    runner._apply_message(job, AssistantMessage(content=[
+    """The runner's write path: one Bash ToolUseBlock through claude_code._apply_message."""
+    claude_code._apply_message(job, AssistantMessage(content=[
         ToolUseBlock(id=uid, name="Bash", input={"command": command, "description": "x"})], model="m"))
 
 

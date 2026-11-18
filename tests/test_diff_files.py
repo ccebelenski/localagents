@@ -17,6 +17,7 @@ import pytest
 from localagents import derive
 from localagents.jobs import JobStore
 from localagents.runner import finish_worktree, make_worktree
+from localagents.harnesses import claude_code
 
 # long enough that `git diff --stat` cuts it to ".../...": the diffstat alone does not name it
 LONG = "deeply/nested/directory/structure/for/the/review/REVIEW-of-the-long-story-name.md"
@@ -282,7 +283,7 @@ def test_run_job_hands_back_the_list_through_every_reader(repo, monkeypatch):
         return session()
 
     monkeypatch.setattr(runner, "fetch_metrics", no_metrics)
-    monkeypatch.setattr(runner, "query", writing_query)
+    monkeypatch.setattr(claude_code, "query", writing_query)
     ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
     reg = Registry(path=None, endpoints={"e": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
     store = JobStore()

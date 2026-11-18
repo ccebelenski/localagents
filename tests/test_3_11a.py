@@ -14,6 +14,7 @@ import pytest
 
 from localagents import jobs
 from localagents import shim as shim_mod
+from localagents.harnesses import claude_code
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src" / "localagents"
@@ -615,12 +616,12 @@ def test_a_failing_request_dump_still_forwards_the_reply(monkeypatch, capsys):
 
 
 def test_the_edit_tools_are_one_constant():
-    """Row 9: runner.EDIT_TOOLS (a set) and derive.EDIT_TOOLS (a tuple whose comment pointed at
+    """Row 9: claude_code.EDIT_TOOLS (a set) and derive.EDIT_TOOLS (a tuple whose comment pointed at
     runner's) were two lists of the same four tools: the write rule (an edit tool with no path
     stores NULL) and the read rule (files_touched) must name the same tools."""
-    from localagents import derive, runner
+    from localagents import derive
 
-    assert runner.EDIT_TOOLS is derive.EDIT_TOOLS
+    assert claude_code.EDIT_TOOLS is derive.EDIT_TOOLS
 
 
 def test_the_metrics_columns_and_the_task_cut_are_one_rule(monkeypatch):

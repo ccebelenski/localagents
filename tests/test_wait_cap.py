@@ -19,6 +19,7 @@ import pytest
 
 from localagents import jobs, runner, server
 from localagents.registry import Defaults, Endpoint, Registry
+from localagents.harnesses import claude_code
 
 SERVING = {"e": ["served-model"]}
 TEARDOWN_S = 0.5  # the fake SDK's close after a cancel: the CLI's graceful exit
@@ -64,7 +65,7 @@ def _slow_teardown_query(monkeypatch, teardown_s=TEARDOWN_S):
 
         return session()
 
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
 
 
 def test_run_agent_with_wait_s_equal_to_timeout_returns_the_settled_timeout(live, monkeypatch):
@@ -152,7 +153,7 @@ def test_a_session_whose_result_arrived_is_held_while_the_cli_exits(live, monkey
 
         return session()
 
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
     out = asyncio.run(server.run_agent(task="t", model="served-model", wait_s=1, timeout_s=60))
     assert out["status"] == "succeeded" and out["result"] == "done"
 
@@ -334,7 +335,7 @@ def _gated_query(monkeypatch):
 
         return session()
 
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
     return release
 
 

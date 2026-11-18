@@ -17,7 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from localagents import derive, jobs, runner
+from localagents import derive, jobs
+from localagents.harnesses import claude_code
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "bash_reads.json").read_text())
 ROWS = FIXTURE["rows"]
@@ -117,9 +118,9 @@ def test_the_input_cut_has_one_owner():
     """runner writes the cuts, feedback and classify_call read them back (through
     derive.command_may_be_cut), last_tool and last_activity show them (derive.activity_line):
     the constants are derive's, runner's names are the same objects."""
-    assert runner.TOOL_INPUT_CHARS is derive.TOOL_INPUT_CHARS
-    assert runner.COMMAND_CHARS is derive.COMMAND_CHARS
-    assert runner.activity_line is derive.activity_line
+    assert claude_code.TOOL_INPUT_CHARS is derive.TOOL_INPUT_CHARS
+    assert claude_code.COMMAND_CHARS is derive.COMMAND_CHARS
+    assert claude_code.activity_line is derive.activity_line
 
 
 # --- the record --------------------------------------------------------------------------------

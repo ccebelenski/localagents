@@ -8,6 +8,7 @@ import pytest
 
 from localagents.jobs import Job, state_dir
 from localagents.runner import finish_worktree, make_worktree
+from localagents.harnesses import claude_code
 
 RESUME_KEYS = ("repo", "path", "root", "branch", "base")
 
@@ -134,7 +135,7 @@ def test_run_job_offloads_worktree_git_to_a_thread(repo, tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "make_worktree", record("make", runner.make_worktree))
     monkeypatch.setattr(runner, "finish_worktree", record("finish", runner.finish_worktree))
     monkeypatch.setattr(runner, "fetch_metrics", no_metrics)
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
     ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
     reg = Registry(path=None, endpoints={"e": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
     asyncio.run(runner.run_job(
@@ -182,7 +183,7 @@ def _drive_setup(monkeypatch, *, metrics=None):
         return nothing()
 
     monkeypatch.setattr(runner, "fetch_metrics", metrics or no_metrics)
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
     ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
     reg = Registry(path=None, endpoints={"e": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
     kw = dict(permission_mode=None, max_turns=None, allowed_tools=None, system_prompt_append=None,
@@ -794,7 +795,6 @@ def _blocking_query(monkeypatch):
     """A session that never ends on its own: only a cancel stops it."""
     import asyncio
 
-    from localagents import runner
 
     def fake_query(prompt, options):
         async def forever():
@@ -803,7 +803,7 @@ def _blocking_query(monkeypatch):
 
         return forever()
 
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
 
 
 @pytest.mark.parametrize("where", ["finish_worktree", "metrics"])

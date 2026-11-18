@@ -20,7 +20,7 @@ Normalisations (all no-ops when not needed):
   context length") are rewritten into Anthropic's ``prompt is too long: N tokens > M maximum``
   envelope, which Claude Code recognises and answers by compacting the conversation. This is the
   backstop; the primary guard is ``CLAUDE_CODE_MAX_CONTEXT_TOKENS`` set from the probed window
-  (see ``runner.build_env``) so auto-compact runs *before* the backend overflows.
+  (see ``harnesses.claude_code.build_env``) so auto-compact runs *before* the backend overflows.
 """
 
 from __future__ import annotations

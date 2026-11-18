@@ -24,6 +24,7 @@ from localagents import runner
 from localagents.jobs import Job, JobStore
 from localagents.router import feedback
 from localagents.runner import finish_worktree, make_worktree
+from localagents.harnesses import claude_code
 
 REAL_GIT = shutil.which("git")
 
@@ -199,7 +200,7 @@ def test_a_hung_git_lets_the_job_settle(repo, tmp_path, hanging_git, monkeypatch
         return session()
 
     monkeypatch.setattr(runner, "fetch_metrics", no_metrics)
-    monkeypatch.setattr(runner, "query", quiet_query)
+    monkeypatch.setattr(claude_code, "query", quiet_query)
     ep = Endpoint(name="e", base_url="http://e:8080", backend="llama.cpp")
     reg = Registry(path=None, endpoints={"e": ep}, defaults=Defaults(job_retention_days=0), raw={}, local={})
     store = JobStore()

@@ -21,6 +21,7 @@ from claude_agent_sdk._internal.message_parser import parse_message
 
 from localagents import runner, server
 from localagents.registry import Defaults, Endpoint, Registry
+from localagents.harnesses import claude_code
 
 SERVING = {"e": ["served-model"]}
 
@@ -113,7 +114,7 @@ def scripted(monkeypatch, steps, then_hang=True, seen=None):
 
         return session()
 
-    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(claude_code, "query", fake_query)
 
 
 # ---- step 1: the incident, reproduced ----
@@ -145,22 +146,22 @@ def _res(env=None):
 
 
 def test_build_env_foreground_by_default():
-    env = runner.build_env(_res(), "http://127.0.0.1:1/job/x", Defaults(), False)
+    env = claude_code.build_env(_res(), "http://127.0.0.1:1/job/x", Defaults(), False)
     assert env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
     assert env["BASH_DEFAULT_TIMEOUT_MS"] == "600000" and env["BASH_MAX_TIMEOUT_MS"] == "1800000"
     d = Defaults(bash_timeout_s=30, bash_max_timeout_s=90)
-    env = runner.build_env(_res(), "http://127.0.0.1:1/job/x", d, False)
+    env = claude_code.build_env(_res(), "http://127.0.0.1:1/job/x", d, False)
     assert env["BASH_DEFAULT_TIMEOUT_MS"] == "30000" and env["BASH_MAX_TIMEOUT_MS"] == "90000"
 
 
 def test_build_env_with_background_tasks_sets_none_of_it():
-    env = runner.build_env(_res(), "http://127.0.0.1:1/job/x", Defaults(), True)
+    env = claude_code.build_env(_res(), "http://127.0.0.1:1/job/x", Defaults(), True)
     assert not set(FOREGROUND_ENV) & set(env), env
 
 
 def test_build_env_the_endpoint_env_wins_over_the_foreground_keys():
     over = {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "0", "BASH_MAX_TIMEOUT_MS": "5000"}
-    env = runner.build_env(_res(over), "http://127.0.0.1:1/job/x", Defaults(), False)
+    env = claude_code.build_env(_res(over), "http://127.0.0.1:1/job/x", Defaults(), False)
     assert env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "0" and env["BASH_MAX_TIMEOUT_MS"] == "5000"
     assert env["BASH_DEFAULT_TIMEOUT_MS"] == "600000"  # what the endpoint did not name stays
 
@@ -182,7 +183,7 @@ def _foreground(opts, transcript):
     append = opts.system_prompt.get("append") or ""
     return (opts.env.get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS") == "1",
             "Monitor" in opts.disallowed_tools,
-            runner.FOREGROUND_NOTE in append,
+            claude_code.FOREGROUND_NOTE in append,
             "background_tasks=off" in transcript)
 
 
@@ -201,7 +202,7 @@ def test_a_config_default_of_false_runs_foreground_only(live, monkeypatch):
     assert _foreground(opts, transcript) == (True, True, True, True)
     assert opts.env["BASH_DEFAULT_TIMEOUT_MS"] == "600000" and opts.env["BASH_MAX_TIMEOUT_MS"] == "1800000"
     assert {"Agent", "Task"} <= set(opts.disallowed_tools)  # the config's own list is kept
-    assert opts.system_prompt["append"].count(runner.FOREGROUND_NOTE) == 1
+    assert opts.system_prompt["append"].count(claude_code.FOREGROUND_NOTE) == 1
 
 
 def test_a_config_default_of_true_runs_as_today(live, monkeypatch):
@@ -311,7 +312,7 @@ def _bare_job():
 
 def _feed(job, *msgs):
     for m in msgs:
-        runner._handle_message(job, m)
+        claude_code._handle_message(job, m)
     return job
 
 
