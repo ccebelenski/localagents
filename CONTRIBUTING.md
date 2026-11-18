@@ -38,9 +38,11 @@ server. Anything that does — a real job against llama.cpp or vLLM — is done 
 if you change `runner.py` or `shim.py`, run a short job and compare its rows in the
 `requests` table of `~/.local/state/localagents/localagents.db` before and after.
 
-A checkout that is a git worktree refuses the default state directory, so a test
-server or a probe run from one cannot touch your real database and job directories:
-set `XDG_STATE_HOME` (and `LOCALAGENTS_DB`) to a directory of its own.
+A checkout whose path has a directory named `worktrees` in it (`.claude/worktrees/`, where
+Claude Code puts its worktrees) refuses the default state directory, so a test server or a
+probe run from one cannot touch your real database and job directories: set
+`XDG_STATE_HOME` (and `LOCALAGENTS_DB`) to a directory of its own. The check is on the
+path, not on git, so a worktree elsewhere is not protected.
 
 The routing smoke needs a live fleet but not much of one. Calibrate one small endpoint
 (`localagents calibrate <name>`), add a `router` entry naming a `decision_url`, start
@@ -60,7 +62,7 @@ finishes. A hand drop from the `queue` tool on such a waiting job closes it as
 | file | what |
 |---|---|
 | `server.py` | the MCP tools; thin, mostly argument handling |
-| `registry.py` | `models.yaml` (endpoints only), endpoint probing (health, served ids, context window, slots, metrics), model resolution |
+| `registry.py` | `models.yaml` (endpoints, defaults, the router's pools; the `monitor:` section is the monitor's own), endpoint probing (health, served ids, context window, slots, metrics), model resolution |
 | `runner.py` | one job, whatever its harness: worktrees, the shim, the job's lifetime, cancel and timeout |
 | `harnesses/` | the session a job runs: `claude_code.py` (the Agent SDK) and `opencode.py` (`opencode run`), each with its tool vocabulary (`*_tools.py`, shared kinds in `tools.py`); `policy.py` resolves a job's settings once and `opencode_policy.py` translates them for OpenCode |
 | `clients/` | the coordinator a server answers (Claude Code or OpenCode): the tool descriptions and instructions, shared text in `__init__.py`, each client's own sentences in its module |
@@ -92,7 +94,8 @@ module under `harnesses/`; the runner holds only what every harness shares.
 The monitor's route tests and browser smokes (`tools/smoke/`) run against a **seeded**
 database, built offline and deterministically from the captured fixtures under
 `tests/fixtures/monitor/` with every timestamp shifted to `--now` (the current time by
-default). To see the page with data and no servers:
+default; `--db PATH` writes elsewhere than `LOCALAGENTS_DB`). To see the page with data and
+no servers:
 
 ```bash
 LOCALAGENTS_DB=/tmp/seed.db localagents seed

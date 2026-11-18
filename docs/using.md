@@ -53,7 +53,8 @@ If nothing suitable is running you'll be asked to start one:
 > Currently serving: {'gpu-server': ['GLM-5.3-Flash-EXL3']}
 
 Start whatever you like, however you normally do, say "it's up", and Claude retries.
-Which model that is, is your call; the config does not name one. It also means anything
+Which model that is, is your call; the config names at most a standing preference
+(`defaults.model`). It also means anything
 you leave running may get used. Claude is told to name the model it's about to use and
 to check with you if the id looks unfamiliar, and `list_models` flags windows under
 128k.
@@ -63,7 +64,7 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 | tool | what it does |
 |---|---|
 | `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
-| `run_agent` | start a job: `task`, `model`, `endpoint`, `harness` (`claude-code`/`opencode`), `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `timeout_s`, `max_turns`, `permission_mode`, `allowed_tools`, `system_prompt_append`, `resume_job`, `background_tasks`, `priority`, … |
+| `run_agent` | start a job: `task`, `model`, `endpoint`, `harness` (`claude-code`/`opencode`), `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `timeout_s`, `max_turns`, `permission_mode`, `allowed_tools`, `system_prompt_append`, `resume_job`, `background_tasks`, `priority`, and the router's `admit`, `tolerance` and `avoid_job` ([router.md](router.md)) |
 | `wait_job` / `wait_jobs` / `cancel_job` | the waits block on any server's job — another server's is polled from its row in the shared database — reporting progress while they block; `wait_jobs` takes several ids (`mode` all/any); `cancel_job` stops a job this server started and returns its final record once the session's teardown has settled it (up to two minutes, with progress; a `note` says when it has not) |
 | `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls and carries a `note` when neither the finished job's `transcripts` row nor its directory exists — a finished job's transcript is read from the database, so it outlives the file's retention — `job_log(tail_lines=0)` returns the whole transcript, `list_jobs(all=True)` spans every server's, and the listing answers with the 50 newest by default (`limit=0` lists everything) |
 | `foreign_job` | the answer only `cancel_job` and `run_agent(resume_job=…)` give for a job another server started (they need its process); the waits and the three reads above work on any job |
@@ -98,7 +99,8 @@ and slot occupancy, the conversation, and your instructions. The relay has none 
 that, so it never picks a model for you. With
 no `model:` it refuses to start, and if the model isn't up it returns the
 `model_unavailable` error so Claude asks you as usual. Other header keys: `endpoint`,
-`cwd`, `max_turns`, `timeout_s`, `permission_mode`, `resume_job`. A resume header is
+`cwd`, `isolation`, `max_turns`, `timeout_s`, `permission_mode`, `resume_job`,
+`background_tasks`. A resume header is
 the one case where `model:` can be left out: a resumed job continues on the model that
 ran the original session.
 
@@ -181,7 +183,7 @@ traceback: the database is another process's file, so a too-new schema or a lock
 renders as the empty line, and with no database yet it prints one empty line and
 creates nothing. Append it to your status line script and set `refreshInterval` in
 the `statusLine` settings block so the elapsed times tick while the session is idle.
-Your script is `~/.claude/statusline-command.sh`; it prints your own first line and
+Say your script is `~/.claude/statusline-command.sh`; it prints your own first line and
 the local lines after it (shape only — the script is yours, not in the repo):
 
 ```bash

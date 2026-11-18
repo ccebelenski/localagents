@@ -90,11 +90,12 @@ sparkline, the jobs that ran on it, its restarts and outages, and its requests. 
 opens the job page: the usage and `/metrics` numbers, the harness it ran in, the files
 it touched, a timeline of its tool calls with errors in red, its requests, and the
 transcript tail. The job page also shows the build stamp of the MCP server that ran it, with a note when the
-monitor's own code is newer; that is how you notice a server left running on old code.
+monitor's own code differs from it; that is how you notice a server left running on old code.
 
-Two rows in the request tables are not what they look like. Claude Code's connection
-warm-up (`/api/hello`) is answered by the shim itself and labelled `handshake`, outside
-the error counts. And a backend that reports no cache fields (vLLM without
+Two rows in the request tables are not what they look like. In a database from before
+story 3.7t, Claude Code's connection warm-up (`/api/hello`) was forwarded and recorded; such
+a row is labelled `handshake`, outside the error counts (the shim now answers it and
+records nothing). And a backend that reports no cache fields (vLLM without
 `--enable-prompt-tokens-details`) gets a prefill speed that is an upper bound; the cell's
 tooltip says so.
 
@@ -102,7 +103,8 @@ tooltip says so.
 
 `localagents smoke --endpoint NAME --model SERVED_ID` is the online acceptance run: a
 few short `/v1/messages` requests to the named endpoint, one real agent job through the
-shim and runner with a fixed brief (`--skip-job` leaves it out; `--timeout-s` caps it),
+shim and runner with a fixed brief (`--requests N` sets how many direct requests, 3 by default and 0 for none;
+`--skip-job` leaves the job out; `--timeout-s` caps it),
 a probe of a port nothing listens on, and a printed checklist of the rows and states
 that appeared (exit 1 on any missing row). It needs a model actually running on that
 endpoint (it runs a real job there, Bash included), and it writes real rows — into

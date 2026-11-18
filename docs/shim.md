@@ -4,6 +4,7 @@ Every job's requests go through an in-process shim on their way to the backend. 
 records each one (timing, message count, byte size, the backend's usage) in the
 `requests` table, puts the endpoint's real `api_key` on it so the session never sees the
 key, and writes the `thinking`/`effort` levers into the body when a caller set them.
+(Claude Code's `/api/hello` warm-up is answered by the shim and never recorded, below.)
 It speaks two APIs, one per harness: Anthropic's `/v1/messages` for Claude Code jobs and
 OpenAI's `/v1/chat/completions` for OpenCode jobs. llama.cpp, Strata and vLLM serve both.
 
@@ -41,6 +42,10 @@ the next section.
 Claude Code opens every session with a request to `/api/hello`,
 which no local backend serves. The shim answers it itself, so the backend never sees
 it and it is not counted as an error.
+
+Claude Code asks `/v1/messages/count_tokens` for token counts. llama.cpp answers it 404,
+vLLM 405, and a gateway may say 501; for those three the shim answers with an estimate
+(the body's length over four). Any other failure, a 500 included, goes back as it was.
 
 Claude Code's ToolSearch tool answers with a `tool_reference` item inside a tool result.
 llama.cpp's Qwen template accepts only text there and fails the request with HTTP 500

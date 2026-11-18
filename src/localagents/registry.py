@@ -724,7 +724,7 @@ async def _strata_hint(c: httpx.AsyncClient, ep: Endpoint) -> str | None:
     try:
         r = await c.get(f"{ep.url}/health")
         if r.status_code == 200 and isinstance(r.json(), dict) and r.json().get("service") == "strata":
-            return f"/health reports strata; set `backend: strata` for endpoint '{ep.name}' to get slot occupancy and per-job metrics"
+            return f"/health reports strata; set `backend: strata` for endpoint '{ep.name}' to get slot occupancy"
     except (httpx.HTTPError, ValueError):
         pass
     return None

@@ -32,9 +32,9 @@ localagents ── spawns ──▶ headless `claude` (Agent SDK)   or   `openco
 Pointing an agent at a local server almost works by itself. localagents adds three things
 on top. The config is a list of servers. The model each one is serving, the real context
 window and how many slots are busy are read from the server on every call. You start and
-stop models yourself. A shim between the agent and the backend records every request,
-keeps the session inside the real context window and smooths over what local servers do
-differently ([what the shim does](docs/shim.md)). Every result is recorded in one SQLite
+stop models yourself. The session is told the model's real context window, and a shim
+between the agent and the backend records every request and smooths over what local
+servers do differently, context overflows included ([what the shim does](docs/shim.md)). Every result is recorded in one SQLite
 database, so the coordinator can read a job after the work is completed.
 
 ## Quick start
@@ -81,8 +81,8 @@ per request. Qwen3.8-27B works well. Smaller windows work but compact constantly
    same applies after every `git pull` of this repo — a running server keeps the
    code it started with until you reconnect.
 
-4. **Shorten the auto-background delay.** `run_agent` blocks until the job ends, and
-   Claude Code only moves a blocking MCP call to a background task after
+4. **Shorten the auto-background delay.** `run_agent` with `wait_s` set blocks until
+   the job ends, and Claude Code only moves a blocking MCP call to a background task after
    `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS` milliseconds — two minutes by default, per
    agent you launch. Ten seconds is about right; `list_models` and the other quick
    calls still return inline:
@@ -110,8 +110,8 @@ per request. Qwen3.8-27B works well. Smaller windows work but compact constantly
 
    Claude calls `list_models`, picks a served model, and runs `run_agent` with the
    brief. If nothing suitable is up it asks you to start something. Which model that
-   is, is your call; the config does not name one, and anything you leave running
-   may get used.
+   is, is your call: the config names at most a standing preference (`defaults.model`),
+   and anything you leave running may get used.
 
 ### With OpenCode
 
@@ -150,7 +150,7 @@ on how you start it. The `backend:` key in `models.yaml` picks the probe.
 | GPU, VRAM, temperature, power | — | `/metrics` | — |
 
 Nothing here is required for a job to run; a figure the server doesn't expose is left
-out of `list_models` and shows as a dash in the status line and the monitor. The two
+out of `list_models` and the status line. The two
 flags in bold are the ones that get forgotten.
 
 ### llama.cpp
@@ -187,7 +187,7 @@ are always on and `/metrics` is JSON (cumulative totals, queue depth and the GPU
 figures), so no flags are needed: `list_models` shows `{total, busy, free}` plus
 `requests_waiting`, jobs get the same cache and throughput record as on llama.cpp, and
 the monitor draws its hardware tiles. Marked `llama.cpp` it still works, but without
-occupancy or per-job metrics, and `list_models` says so in a `hint`. Strata counts
+slot occupancy, and `list_models` says so in a `hint`. Strata counts
 `max_tokens` against the window instead of clamping it, so it refuses a request
 earlier than llama-server would; the shim translates that refusal, or set
 `"fit_max_tokens": true` in its `strata-<model>.json` to clamp.
@@ -291,7 +291,8 @@ endpoints:
     host: gpu-server
 ```
 
-`endpoints` are the servers, and that is all the file holds; which
+`endpoints` are the servers; besides them the file holds only the optional `defaults:`,
+the router's `pools:` ([docs/router.md](docs/router.md)) and the monitor's `monitor:`; which
 model a server is serving is found by probing it. Order is priority: with no model
 named, the first endpoint that is up and serving something wins. `backend`
 (`llama.cpp`, `vllm`, `strata`, `other`) selects the probe; `host` groups endpoints

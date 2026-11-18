@@ -3317,7 +3317,32 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   already". Nothing of 6.9 is started. What it would need stays as written above; the router and
   calibration keep running Claude Code jobs only (calibration passes no harness, so its jobs take
   the default).
-- ☐ **6.10 Docs.** README and docs/using.md for both clients and both harnesses.
+- ☑ **6.10 Docs.** README and docs/using.md for both clients and both harnesses.
+  **Built 2026-11-18** (the operator: "Do 6.10 now - bring it up to date with new features and
+  any existing gaps"). New features (643ddad): docs/opencode.md — OpenCode as the coordinator
+  (registration, the relay, the process caveat for cancel/resume) and as the harness (how a job
+  runs, what is kept apart, the translation table of 6.8, what differs from a Claude Code job);
+  README, using.md, shim.md (the two API versions, tool_reference, OpenCode's context handling),
+  monitor.md (the harness badge and figure), CONTRIBUTING (harnesses/, clients/, the shim's
+  modules, both relays). Calibration jobs name claude-code as their harness (6.9 on hold; the
+  probes are Claude Code's), with a test. Existing gaps: a read-only audit of the five user
+  docs, sentence by sentence against the code (DeepSeek-V4.1-Flash/dgx1-a, job 637ec371, 126
+  turns, 46 min; 277 sentences; Epic 6 out of its scope). Every row checked against the code
+  before folding; those the first half had not already fixed are folded: the config names a
+  standing preference (`defaults.model`), not nothing; the file holds `defaults:`, `pools:`,
+  `monitor:` besides endpoints; a missing figure is left out of the status line, not a dash;
+  `run_agent` blocks with `wait_s`; strata marked llama.cpp loses only slot occupancy (per-job
+  metrics sniff the body) — the probe's own hint said the same and is corrected in
+  registry.py; the run_agent row names the router's arguments and the relay headers
+  `isolation` and `background_tasks`; the statusline script path is an example; shim.md names
+  count_tokens' estimate and that /api/hello is never recorded; monitor.md's `handshake` rows
+  are history (3.7t), its build note fires on any difference, smoke's `--requests`;
+  CONTRIBUTING's registry row, the worktree guard (a `worktrees` path component, not git) and
+  seed's `--db`. Kept: the UNVERIFIABLE rows (measurements and external programs' help);
+  `foreign_job` in using.md's tools table is an answer, and the row says so. Noticed, not
+  changed: list_models merges a failed probe's `host` (up/down/unknown) over the configured
+  one (server.py `"host": e.host, **probes[n]`); `backend: ollama` is accepted and probes like
+  `other`. Suite 1592 passed.
 - ☐ **6.11 Installation (placeholder, to shape).** Today install is the README's seven manual
   steps (`uv tool install -e .`, copy `models.example.yaml`, `claude mcp add`, the auto-background
   env, the relay agent symlink, the status line). The operator: automate it. Shape to settle: a
