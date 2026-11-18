@@ -594,3 +594,31 @@ def test_hello_handshake_unknown_job_is_still_404():
     assert resp.status_code == 404
     assert json.loads(resp.content)["error"]["type"] == "not_found"
     assert calls == []
+
+
+def test_a_tool_reference_in_a_tool_result_reaches_the_backend_as_text():
+    """The 6.1 review job on ai9 (725b4456, 2026-11-17) ended on HTTP 500 "Jinja Exception:
+    Unexpected item type in content": Claude Code's ToolSearch answered with a tool_reference
+    item (the shape below is the job's own transcript line), which the shim relayed and llama.cpp's
+    template refused. It is text by the time the body leaves the shim; other items are untouched,
+    a string result is untouched, and the count rides the note (popped before relaying)."""
+    from localagents.shim import normalise_messages_body
+
+    body = {"messages": [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "ToolSearch",
+                                           "input": {"query": "select:TaskStop", "max_results": 1}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": [{"type": "tool_reference", "tool_name": "TaskStop"},
+                         {"type": "text", "text": "kept"}]},
+            {"type": "tool_result", "tool_use_id": "t2", "content": "a string result"}]},
+    ]}
+    out = normalise_messages_body(body)
+    results = out["messages"][2]["content"]
+    assert results[0]["content"] == [{"type": "text", "text": "tool_reference: TaskStop"},
+                                     {"type": "text", "text": "kept"}]
+    assert results[1]["content"] == "a string result"
+    assert out["_localagents"]["tool_references_as_text"] == 1
+    assert "tool_reference" not in json.dumps({k: v for k, v in out.items() if k != "_localagents"}).replace(
+        "tool_reference: ", "")

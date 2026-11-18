@@ -88,9 +88,34 @@ def _fold_text_into_tool_results(msgs: list[dict[str, Any]]) -> int:
     return folded
 
 
+def _text_tool_references(msgs: list[dict[str, Any]]) -> int:
+    """Rewrite each ``tool_reference`` item inside a ``tool_result``'s content as a text item
+    naming the tool. Claude Code's ToolSearch answers with them (``[{"type": "tool_reference",
+    "tool_name": "TaskStop"}]``: the deferred tool it loaded); a local backend's chat template
+    accepts only text and images there, and llama.cpp's Qwen template raised "Unexpected item type
+    in content" (HTTP 500) and ended the 6.1 review job on ai9 (job 725b4456, 2026-11-17). The
+    tool itself reaches the session as a tool definition on the next request either way. Returns
+    the number rewritten."""
+    n = 0
+    for m in msgs:
+        content = m.get("content")
+        if m.get("role") != "user" or not isinstance(content, list):
+            continue
+        for b in content:
+            if not (isinstance(b, dict) and b.get("type") == "tool_result" and isinstance(b.get("content"), list)):
+                continue
+            items = b["content"]
+            for i, item in enumerate(items):
+                if isinstance(item, dict) and item.get("type") == "tool_reference":
+                    items[i] = {"type": "text", "text": f"tool_reference: {item.get('tool_name', '?')}"}
+                    n += 1
+    return n
+
+
 def normalise_messages_body(body: dict[str, Any]) -> dict[str, Any]:
     """Fold ``role: system`` entries in ``messages`` into an adjacent user message, then fold
-    text blocks that share a user message with tool results into the last tool result.
+    text blocks that share a user message with tool results into the last tool result. A tool
+    result's ``tool_reference`` items become text first (_text_tool_references).
 
     System text keeps its position (appended to the nearest preceding user message, or
     prepended to the next one) rather than being hoisted into the top-level ``system`` field, so
@@ -100,6 +125,9 @@ def normalise_messages_body(body: dict[str, Any]) -> dict[str, Any]:
     msgs = body.get("messages")
     if not isinstance(msgs, list):
         return body
+    refs = _text_tool_references(msgs)
+    if refs:
+        body.setdefault("_localagents", {})["tool_references_as_text"] = refs
     if not any(m.get("role") == "system" for m in msgs):
         folded = _fold_text_into_tool_results(msgs)
         if folded:
