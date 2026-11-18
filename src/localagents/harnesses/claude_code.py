@@ -35,7 +35,7 @@ from ..derive import activity_line, background_tasks_named, held_open, held_open
 from .claude_code_tools import VOCABULARY
 from ..jobs import Job
 from ..registry import Defaults, Resolution
-from . import SessionSpec
+from . import SessionSpec, policy
 
 NAME = "claude-code"
 
@@ -100,42 +100,40 @@ async def run(job: Job, res: Resolution, spec: SessionSpec) -> None:
     """Run the job's session to its end: the SDK's ``query`` with the options below, every
     message applied to the job as it arrives. The caller (runner.run_job) owns the clock, the
     status and the finish; this raises what the SDK raises."""
+    # Epic 6.8: the settings read once (harnesses/policy.py) in the vocabulary Claude Code takes
+    # as it is; this module adds only what is its own (the foreground rule, the env, the preset)
+    pol = policy.resolve(spec)
     d = spec.defaults
-    background = spec.background
-    system_prompt_append, thinking, effort = spec.system_prompt_append, spec.thinking, spec.effort
-    permission_mode, max_turns, allowed_tools = spec.permission_mode, spec.max_turns, spec.allowed_tools
-    setting_sources, strict_mcp_config = spec.setting_sources, spec.strict_mcp_config
-    resume_session, mcp_servers, shim_base_url = spec.resume_session, spec.mcp_servers, spec.shim_base_url
-    foreground = () if background else (FOREGROUND_NOTE,)
-    append = "\n\n".join(s for s in (d.system_prompt_append, *foreground, system_prompt_append) if s)
-    disallowed = list(d.disallowed_tools)
-    disallowed += [t for t in (() if background else FOREGROUND_DISALLOWED) if t not in disallowed]
+    foreground = () if pol.background else (FOREGROUND_NOTE,)
+    append = "\n\n".join(s for s in (pol.config_append, *foreground, pol.caller_append) if s)
+    disallowed = list(pol.disallowed_tools)
+    disallowed += [t for t in (() if pol.background else FOREGROUND_DISALLOWED) if t not in disallowed]
     # router 8: the caller's levers, when it passed one. `thinking` is a bool at that
     # interface and a config object for the SDK; None leaves the field unset, as does a
-    # None effort. The shim's translation of either for a local backend is a later story.
+    # None effort. The shim also writes them into each relayed body (job.levers).
     levers: dict[str, Any] = {}
-    if thinking is not None:
-        levers["thinking"] = {"type": "adaptive" if thinking else "disabled"}
-    if effort is not None:
-        levers["effort"] = effort
+    if pol.thinking is not None:
+        levers["thinking"] = {"type": "adaptive" if pol.thinking else "disabled"}
+    if pol.effort is not None:
+        levers["effort"] = pol.effort
     opts = ClaudeAgentOptions(
         model=res.served_model,
-        env=build_env(res, shim_base_url, d, background),
+        env=build_env(res, spec.shim_base_url, d, pol.background),
         cwd=job.run_cwd,
-        permission_mode=permission_mode or d.permission_mode,
-        allowed_tools=allowed_tools or d.allowed_tools,
+        permission_mode=pol.permission_mode,  # type: ignore[arg-type]
+        allowed_tools=list(pol.allowed_tools),
         disallowed_tools=disallowed,
-        max_turns=max_turns or d.max_turns,
+        max_turns=pol.max_turns,
         # the caller's setting_sources override the config's (a calibration job passes [],
         # so no ancestor CLAUDE.md or settings reach the session); None keeps the config's
-        setting_sources=(d.setting_sources if setting_sources is None else setting_sources),  # type: ignore[arg-type]
+        setting_sources=list(pol.setting_sources),  # type: ignore[arg-type]
         system_prompt={"type": "preset", "preset": "claude_code", **({"append": append} if append else {})},
-        resume=resume_session,
+        resume=spec.resume_session,
         stderr=lambda line: job.log_text(f"[stderr] {line}"),
-        mcp_servers=mcp_servers or {},
+        mcp_servers=pol.mcp_servers,
         **levers,
         # None keeps the SDK's own default (the server's MCP config not filtered out)
-        **({} if strict_mcp_config is None else {"strict_mcp_config": strict_mcp_config}),
+        **({} if pol.strict_mcp_config is None else {"strict_mcp_config": pol.strict_mcp_config}),
     )
     async for m in query(prompt=job.task, options=opts):
         _handle_message(job, m)

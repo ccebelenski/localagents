@@ -29,7 +29,6 @@ import json
 import os
 import shutil
 import signal
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -37,7 +36,7 @@ from typing import Any
 from ..derive import activity_line
 from ..jobs import Job, state_dir
 from ..registry import Resolution
-from . import SessionSpec
+from . import SessionSpec, opencode_policy, policy
 from .opencode_tools import VOCABULARY
 
 NAME = "opencode"
@@ -48,33 +47,11 @@ DEFAULT_CONTEXT = 131072  # a window the probe could not read: the smallest the 
 RETRY_CAP = 6  # consecutive transport retries before the session is ended (OpenCode has no cap)
 KILL_GRACE_S = 20.0
 CHECKPOINT = "<conversation-checkpoint>"
-# the tools a job never gets: interactive (question), its own agents (subagent: Claude Code jobs
-# disallow Agent/Task), web search, image generation, skills (the operator's own), code mode (no
-# MCP server is configured for a job) and OpenCode's own management tools, which surface directly
-# once `execute` is denied — worktree create/remove, session move/rename, models, MCP resources
-# (the 6.6+6.7 review saw them offered to a job)
-DENIED = ("question", "subagent", "websearch", "experimental_image_generate", "skill", "execute", "opencode_*")
-# ...and the built-in plugins behind them, switched off in the job's config so their tools are not
-# offered at all: a permission rule does not reach OpenCode's own management tools — the 6.7
-# fold's live check called `opencode_worktree_remove` under a deny and it ran (it failed only on
-# the nonexistent path it was given)
-DISABLED_PLUGINS = ("opencode.tools", "opencode.tools.mcp-resources", "opencode.tool.question",
-                    "opencode.tool.subagent", "opencode.tool.websearch", "opencode.tool.image-generate",
-                    "opencode.tool.skill")
-# the arguments this harness cannot honour yet (the policy translation is 6.8): refused at
-# start_job, never silently dropped
-UNSUPPORTED = ("permission_mode", "allowed_tools", "mcp_servers", "thinking", "effort", "strict_mcp_config")
-
 FOREGROUND_NOTE = (
     "Background tasks are off in this session: never pass background: true to the shell tool; run "
     "every command in the foreground and wait for it to finish, do not start watchers or background "
     "processes and do not poll with sleep, and give a long command a larger timeout instead."
 )
-
-
-def unsupported(**given: Any) -> list[str]:
-    """The run_agent arguments set (not None) that this harness does not translate yet."""
-    return [k for k in UNSUPPORTED if given.get(k) is not None]
 
 
 def data_dirs() -> tuple[Path, Path]:
@@ -87,40 +64,14 @@ def data_dirs() -> tuple[Path, Path]:
     return data, state
 
 
-def _git_root(path: str) -> Path | None:
-    try:
-        out = subprocess.run(["git", "-C", path, "rev-parse", "--show-toplevel"], capture_output=True,
-                             text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() else None
-
-
-def project_instructions(run_cwd: str, sources: list[str]) -> list[str]:
-    """The project's CLAUDE.md files a Claude Code job would load with the ``project`` setting
-    source: the job's directory's and every ancestor's up to the repository root (none outside a
-    repository but the directory's own). Nothing without ``project`` in the sources."""
-    if "project" not in sources:
-        return []
-    here = Path(run_cwd).resolve()
-    root = _git_root(str(here)) or here
-    out: list[str] = []
-    for d in [here, *here.parents]:
-        f = d / "CLAUDE.md"
-        if f.is_file():
-            out.append(str(f))
-        if d == root:
-            break
-    return list(reversed(out))  # outermost first, as a reader would layer them
-
-
-def config(job: Job, res: Resolution, spec: SessionSpec, instructions: list[str]) -> dict[str, Any]:
-    d = spec.defaults
+def config(job: Job, res: Resolution, spec: SessionSpec, pol: policy.Policy, t: opencode_policy.Translation,
+           instructions: list[str]) -> dict[str, Any]:
+    """The job's whole OpenCode configuration: the provider at the shim, the model's window, the
+    translated policy (opencode_policy.py: permissions, plugins switched off, MCP servers) and
+    the instruction files."""
     context = res.context or DEFAULT_CONTEXT
     output = max(8192, min(32768, context // 8))
-    permissions = [{"action": "*", "resource": "*", "effect": "allow"}]
-    permissions += [{"action": t, "resource": "*", "effect": "deny"} for t in DENIED]
-    return {
+    cfg: dict[str, Any] = {
         "$schema": "https://opencode.ai/config.json",
         "model": f"{PROVIDER}/{MODEL_KEY}",
         "default_agent": "job",
@@ -136,11 +87,14 @@ def config(job: Job, res: Resolution, spec: SessionSpec, instructions: list[str]
                 "limit": {"context": context, "output": output},
             }},
         }},
-        "plugins": [f"-{p}" for p in DISABLED_PLUGINS],
-        "permissions": permissions,
+        "plugins": [f"-{p}" for p in t.plugins_off],
+        "permissions": t.permissions,
         "instructions": instructions,
-        "agents": {"job": {"mode": "primary", "steps": spec.max_turns or d.max_turns, "permissions": permissions}},
+        "agents": {"job": {"mode": "primary", "steps": pol.max_turns, "permissions": t.permissions}},
     }
+    if t.mcp:
+        cfg["mcp"] = {"servers": t.mcp}
+    return cfg
 
 
 def environment(job: Job, config_home: Path) -> dict[str, str]:
@@ -292,19 +246,21 @@ async def run(job: Job, res: Resolution, spec: SessionSpec) -> None:
     exe = shutil.which("opencode")
     if exe is None:
         raise RuntimeError("opencode is not on PATH")
-    d = spec.defaults
+    pol = policy.resolve(spec)
+    t = opencode_policy.translate(pol, job.run_cwd)
+    if t.refused:  # start_job refuses these before the job exists; a guard, never reached
+        raise RuntimeError("the opencode harness cannot honour: " + "; ".join(t.refused))
     home = Path(job.log_dir) / "opencode-config"
     (home / "opencode").mkdir(parents=True, exist_ok=True)
-    parts = [d.system_prompt_append, *(() if spec.background else (FOREGROUND_NOTE,)), spec.system_prompt_append]
+    parts = [pol.config_append, *(() if pol.background else (FOREGROUND_NOTE,)), pol.caller_append]
     appended = "\n\n".join(p for p in parts if p)
-    instructions = project_instructions(job.run_cwd, d.setting_sources if spec.setting_sources is None
-                                        else spec.setting_sources)
+    instructions = list(t.instruction_files)
     if appended:
         f = home / "instructions.md"
         f.write_text(appended + "\n")
         instructions.append(str(f))
-    steps = spec.max_turns or d.max_turns
-    (home / "opencode" / "opencode.json").write_text(json.dumps(config(job, res, spec, instructions), indent=1))
+    steps = pol.max_turns
+    (home / "opencode" / "opencode.json").write_text(json.dumps(config(job, res, spec, pol, t, instructions), indent=1))
     argv = [exe, "run", "--standalone", "--format", "json", "--auto", "--archived",
             "--model", f"{PROVIDER}/{MODEL_KEY}", "--agent", "job", "--title", f"localagents {job.id[:8]}"]
     if spec.resume_session:
@@ -312,11 +268,8 @@ async def run(job: Job, res: Resolution, spec: SessionSpec) -> None:
     argv.append(job.task)
     job.log_text(f"[opencode] {exe} steps={steps} instructions={len(instructions)} cwd={job.run_cwd}"
                  + (f" resume={spec.resume_session}" if spec.resume_session else ""))
-    # the 6.6+6.7 review: the config's tool policy is Claude Code's vocabulary and is not applied
-    # here until 6.8 translates it; say so on every job rather than drop it without a word
-    job.log_text(f"[opencode] the config's permission_mode ({d.permission_mode}), allowed_tools and "
-                 "disallowed_tools are Claude Code's and not applied (Epic 6.8); this job's tools: "
-                 "edit, glob, grep, read, shell, webfetch, write")
+    for line in t.stated:  # Epic 6.8: each mapping stated
+        job.log_text(f"[opencode] policy: {line}")
     reader = Reader(job, steps)
     job._on_request = CompactionCounter(job)
     proc = await asyncio.create_subprocess_exec(

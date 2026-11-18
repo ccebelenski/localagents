@@ -711,16 +711,21 @@ async def start_job(
     """
     if priority not in ("urgent", "normal", "background"):
         raise _bad("priority must be 'urgent', 'normal' or 'background'")
-    if (harness or _reg().defaults.harness) == "opencode":
-        # Epic 6.7: what the OpenCode harness cannot honour yet is refused, never dropped (the
-        # policy translation is 6.8)
-        from .harnesses import opencode as _opencode
+    defaults = _reg().defaults
+    if (harness or defaults.harness) == "opencode":
+        # Epic 6.8: the job's policy in OpenCode's terms; a setting with no equivalent is refused
+        # here, before the job exists, never dropped (harnesses/opencode_policy.py)
+        from .harnesses import SessionSpec, opencode_policy, policy
 
-        refused = _opencode.unsupported(permission_mode=permission_mode, allowed_tools=allowed_tools,
-                                        mcp_servers=mcp_servers, thinking=thinking, effort=effort,
-                                        strict_mcp_config=strict_mcp_config)
+        pol = policy.resolve(SessionSpec(
+            defaults=defaults, shim_base_url="", background=(defaults.background_tasks if background_tasks is None
+                                                             else background_tasks),
+            permission_mode=permission_mode, max_turns=max_turns, allowed_tools=allowed_tools,
+            system_prompt_append=system_prompt_append, mcp_servers=mcp_servers, thinking=thinking,
+            effort=effort, strict_mcp_config=strict_mcp_config, setting_sources=setting_sources))
+        refused = opencode_policy.translate(pol).refused
         if refused:
-            raise _bad(f"the opencode harness does not take {', '.join(refused)} yet (Epic 6.8)")
+            raise _bad("the opencode harness cannot honour: " + "; ".join(refused))
     if admit not in ("queue", "now", "force"):
         raise _bad("admit must be 'queue', 'now' or 'force'")
     if tolerance is not None and (isinstance(tolerance, bool) or not isinstance(tolerance, (int, float))

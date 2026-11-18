@@ -132,14 +132,20 @@ def test_the_generated_config_and_environment(tmp_path, monkeypatch):
     spec = SessionSpec(defaults=Defaults(max_turns=60), shim_base_url="http://127.0.0.1:9/job/j", background=True)
     job = jobs.Job(id="j", task="t", model="m", endpoint="e", base_url="b", cwd=str(tmp_path), run_cwd=str(tmp_path),
                    isolation="none", log_dir=str(tmp_path))
-    cfg = oc.config(job, res, spec, ["/x/CLAUDE.md"])
+    from localagents.harnesses import opencode_policy, policy
+
+    pol = policy.resolve(spec)
+    cfg = oc.config(job, res, spec, pol, opencode_policy.translate(pol), ["/x/CLAUDE.md"])
     prov = cfg["providers"]["localagents"]
     assert prov["settings"]["baseURL"] == "http://127.0.0.1:9/job/j/v1" and prov["settings"]["apiKey"] == "local"
     model = prov["models"]["job"]
     assert model["modelID"] == "org/model:Q4" and model["limit"] == {"context": 212992, "output": 26624}
     assert cfg["agents"]["job"]["steps"] == 60 and cfg["instructions"] == ["/x/CLAUDE.md"]
     denied = {p["action"] for p in cfg["permissions"] if p["effect"] == "deny"}
-    assert denied == set(oc.DENIED) and cfg["permissions"][0] == {"action": "*", "resource": "*", "effect": "allow"}
+    # the config's defaults (acceptEdits, Read Edit Write Glob Grep Bash WebFetch) in OpenCode's terms
+    assert denied == {"subagent", "websearch", "skill", "question", "experimental_image_generate", "execute",
+                      "opencode_*"}, denied
+    assert cfg["permissions"][0] == {"action": "*", "resource": "*", "effect": "allow"}
     # the 6.6+6.7 review's fold: OpenCode's own management tools (worktree remove, session move...)
     # are switched off by plugin, a deny does not reach them (checked live)
     assert {"-opencode.tools", "-opencode.tools.mcp-resources"} <= set(cfg["plugins"])
@@ -152,6 +158,8 @@ def test_the_generated_config_and_environment(tmp_path, monkeypatch):
 
 
 def test_project_instructions_are_the_repositorys_claude_md_files(tmp_path):
+    from localagents.harnesses.opencode_policy import instruction_files
+
     repo = tmp_path / "repo"
     sub = repo / "pkg"
     sub.mkdir(parents=True)
@@ -159,8 +167,15 @@ def test_project_instructions_are_the_repositorys_claude_md_files(tmp_path):
     (tmp_path / "CLAUDE.md").write_text("outside the repository")
     (repo / "CLAUDE.md").write_text("root")
     (sub / "CLAUDE.md").write_text("package")
-    assert oc.project_instructions(str(sub), ["project", "local"]) == [str(repo / "CLAUDE.md"), str(sub / "CLAUDE.md")]
-    assert oc.project_instructions(str(sub), []) == []  # a calibration job's empty sources
+    (sub / "CLAUDE.local.md").write_text("mine")
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "CLAUDE.md").write_text("the operator's")
+    assert instruction_files(str(sub), ("project",), home) == [str(repo / "CLAUDE.md"), str(sub / "CLAUDE.md")]
+    assert instruction_files(str(sub), ("project", "local"), home) == [
+        str(repo / "CLAUDE.md"), str(sub / "CLAUDE.md"), str(sub / "CLAUDE.local.md")]
+    assert instruction_files(str(sub), ("user", "project"), home)[0] == str(home / ".claude" / "CLAUDE.md")
+    assert instruction_files(str(sub), (), home) == []  # a calibration job's empty sources
 
 
 # --- run() through the real run_agent -> run_job, a fake opencode on PATH ----------------------------
@@ -239,11 +254,18 @@ def test_a_job_runs_in_opencode_end_to_end(live, tmp_path):
     assert second["argv"][i + 1] == out["session_id"]
 
 
-def test_what_the_harness_cannot_honour_is_refused(live):
-    out = asyncio.run(server.run_agent(task="t", model="served-model", harness="opencode", permission_mode="plan"))
-    assert out["error"] == "bad_argument" and "permission_mode" in out["message"] and "6.8" in out["message"]
-    out = asyncio.run(server.run_agent(task="t", model="served-model", harness="opencode", allowed_tools=["read"]))
-    assert out["error"] == "bad_argument" and "allowed_tools" in out["message"]
+def test_only_what_has_no_equivalent_is_refused(live, tmp_path):
+    """6.8: a setting with no OpenCode equivalent is refused before the job exists; one that has
+    one runs (default mode with the allowed tools)."""
+    for kw, word in (({"permission_mode": "dontAsk"}, "permission_mode"),
+                     ({"allowed_tools": ["Read", "TodoWrite"]}, "TodoWrite"),
+                     ({"allowed_tools": ["Read"], "permission_mode": "default"}, None)):
+        out = asyncio.run(server.run_agent(task="t", model="served-model", harness="opencode", cwd=str(tmp_path),
+                                           wait_s=30, **kw))
+        if word is None:
+            assert out["status"] == "succeeded", out
+        else:
+            assert out["error"] == "bad_argument" and word in out["message"], out
 
 
 def test_a_cancel_ends_the_process_group(live, monkeypatch):

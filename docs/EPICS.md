@@ -3263,10 +3263,38 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   (OpenCode emits tool_use only in its final state); a non-object request body is now relayed
   rather than raising (an input Claude Code never sends); an overflow on a path matching neither
   API passes through unrewritten.
-- ☐ **6.8 Policy translation.** `permission_mode`, `allowed_tools`, `disallowed_tools`,
+- ☑ **6.8 Policy translation.** `permission_mode`, `allowed_tools`, `disallowed_tools`,
   `max_turns`, `system_prompt_append`, `setting_sources`, `background_tasks`: the common
   fields read once, each harness's translation its own module, each mapping stated (and refused where there is no equivalent, never silently
   dropped).
+  **Built 2026-11-18** (the operator: "Okay, clear - we should do 6.8 next then", after the
+  coordinator's statement that 6.7's refusals were a stopgap and 6.8 makes one call mean the same
+  in either harness). harnesses/policy.py reads the job's settings once (`resolve(spec)` -> a
+  `Policy`: the caller's value, else the config's, exactly as Claude Code's options always
+  resolved them — the Claude Code replay identical before and after). Claude Code takes the
+  policy as it is (its options build reads it). harnesses/opencode_policy.py translates it for
+  OpenCode, each mapping stated in the job's transcript (`[opencode] policy: ...`):
+  tool names — Claude Code's map to OpenCode's (`Bash`->shell, `Edit`/`MultiEdit`/`NotebookEdit`
+  ->edit+patch, `Write`->write, `Read`/`LS`/`NotebookRead`->read, `Glob`, `Grep`, `WebFetch`,
+  `WebSearch`, `Agent`/`Task`->subagent, `Skill`), OpenCode's own taken as they are,
+  `mcp__<server>[__<tool>]` -> `<server>_*`/`<server>_<tool>`, any other refused; permission
+  modes for a headless run that cannot ask — `default` exactly the allowed tools, `acceptEdits`
+  those plus the edit tools, `bypassPermissions` every tool, `plan` the allowed minus edit,
+  patch, write and shell, the disallowed taken out after, another mode refused; a tool not
+  permitted is switched off by its plugin and denied (never offered), OpenCode's management
+  tools, question, image generation and code mode never; MCP servers — stdio -> `local`,
+  http/sse -> `remote`, tools listed directly, `strict_mcp_config: false` refused (the operator's
+  own servers never reach a job); setting sources — `project` the CLAUDE.md files to the
+  repository root, `local` their CLAUDE.local.md siblings, `user` ~/.claude/CLAUDE.md, another
+  refused; thinking/effort — the shim's levers, both APIs. start_job refuses from the
+  translation before the job exists. With the config's defaults an OpenCode job gets the same
+  seven tools (plus `patch`, Edit's other half) as before; the "not applied" line is gone.
+  Tests: tests/test_opencode_policy.py (7: the resolution, the defaults, each mode, the name
+  mapping, MCP servers and their rules' order, the refusals, the statements); the harness tests
+  re-pinned (the refusals now only of what has no equivalent; a default-mode job runs). Live on
+  ai2: `plan` gave the job glob, grep, read, webfetch — it diagnosed the planted bug, said it could
+  not edit, the file unchanged; the calibration stub as an MCP server (`mcp__localagents`
+  allowed) — the job called `localagents_list_models`, the stub logged it. Suite 1590 passed.
 - ☐ **6.9 Router and calibration across harnesses.** Calibration through the seam; whether
   capability cells and speed curves are keyed by harness as well as model (the same model may
   score differently under two harnesses) is a design question for the operator.
