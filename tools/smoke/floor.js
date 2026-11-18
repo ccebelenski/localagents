@@ -19,16 +19,21 @@
   });
   var capOk = window.innerWidth <= 760 || cards.every(function (w) { return w <= floor * 1.5 + 1; });
   var minOk = cards.every(function (w) { return w >= track - 1; });
+  // 3.15-fold (the 3.15 review: a page pinning every card at 750 px passed the three gates
+  // above): every card IS its track — the grid's width shared by the columns, capped at 1.5
+  // floors above the narrow query
+  var trackW = window.innerWidth <= 760 ? W : Math.min((W - (expectCols - 1) * gap) / expectCols, floor * 1.5);
+  var trackOk = cards.every(function (w) { return Math.abs(w - trackW) <= 1; });
   var page = document.documentElement;
   var out = {
     w: window.innerWidth, floor: floor, hostsWidth: W, columns: columns, expectCols: expectCols,
     cards: cards,
     floorFixed: floor === FLOOR && !hostsEl.style.getPropertyValue("--card-floor"),
-    columnsOk: columns === expectCols, capOk: capOk, minOk: minOk,
+    columnsOk: columns === expectCols, capOk: capOk, minOk: minOk, trackOk: trackOk,
     pageScroll: page.scrollWidth + "/" + page.clientWidth,
     noSideways: page.scrollWidth <= page.clientWidth,
   };
-  out.ok = out.floorFixed && out.columnsOk && capOk && minOk && out.noSideways;
+  out.ok = out.floorFixed && out.columnsOk && capOk && minOk && trackOk && out.noSideways;
   window.__floor = out;
   return JSON.stringify(out);
 })()

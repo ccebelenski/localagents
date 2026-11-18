@@ -2805,6 +2805,25 @@ lands; 3.12c after 3.12b.
   replaced across 7 pushes or the in-place hand render, at 900 and 1400) and unknown.js green;
   lines.js folded into wide.js and removed. Review: none yet (a cross-model read of the diff is
   the operator's call).
+  **Review (Qwen3.8-Flash/ai2, job 96022f0f, 59 turns, 26 min, dispatched from OpenCode through
+  the 6.1 relay; nothing committed in its tree): no defect in the rule as written.** CLEAN:
+  every listed line ellipsised with its title at 1400/1032/520, no text moved a card's height,
+  titles stay true on the skip, in-place and swap paths, nothing of the measured floor left,
+  50 page tests. Its three other finds, verified and folded by the coordinator (3.15-fold):
+  (1) NOTICED, a gap in the coordinator's own spec: the head's name and tag did not shrink, so a
+  60-char name and a 40-char tag were cut mid-glyph with no mark, the state dot shrank to 0 and
+  the active phrase left the box — now the model gives way first (shrink weight 1000), then the
+  name and the tag, each ending in "…" with a title (`endpointLink` and both `.tag` builders
+  carry one); the dot and the active phrase keep their width. wide.js renders that name and tag
+  and gains a `head` gate (dot 8 px, active phrase inside, every cut child ellipsised with its
+  title); with the fold's CSS removed it fails exactly as the review described (dot 0, active
+  outside). (2) POSSIBLE, older than 3.15 and real: the timeline's last axis label, centred on a
+  tick near now, hung ~10 px past the window and scrolled the page sideways (the reviewer's
+  deterministic repro, a tick-aligned now: 1410/1400) — a label past 97 % now ends at its tick
+  (`tl-tick-end`): 1400/1400, 885/885, 585/585 on the same repro. (3) NOTICED: floor.js's gates
+  passed a page pinning every card at 750 px — it now checks every card IS its track (`trackOk`).
+  floor.mjs green at its seven widths, wide.js green at 1840/1400/900/600 (6 lines ellipsised),
+  keep.js `replaced` [] at 900 and 1400; suite 1541.
 
 ## Epic 5: the router (spec docs/superpowers/specs/2026-11-02-router-design.md; plan docs/superpowers/plans/2026-11-02-router.md)
 

@@ -321,7 +321,8 @@ ELLIPSIS_OUTSIDE_CARDS = {
 }
 ELLIPSIS_ON_CARDS = {
     ".host .ep-job-figs", ".host .ep-act", ".host .ep-line",  # the job row's two lines, every .ep-line
-    ".host .ep-head .ep-model",  # the live head's model id: the head's one item that gives way
+    ".host .ep-head .ep-model",  # the live head's model id: the first item that gives way
+    ".host .ep-head .ep-name", ".host .ep-head .tag",  # then the name and the tag (3.15-fold)
     ".figures .fig .label", ".figures .fig .num",  # the tiles, below the floor (a narrow window)
 }
 # the classes of the card's one-line texts: each must be clipped by some .host rule
@@ -395,6 +396,10 @@ def test_every_card_line_carries_its_whole_text_in_the_title():
     assert re.search(r'class: "ep-act", title: act', row), row
     assert 'figs.setAttribute("title", figs.textContent);' in row
     assert re.search(r'class: "ep-model", title: ep\.model', _js_function(js, "liveEndpoint"))
+    # 3.15-fold: the name and the tag too, on every head that draws them
+    assert 'title: name, text: name' in _js_function(js, "endpointLink")
+    for builder in ("liveEndpoint", "downEndpoint"):
+        assert 'class: "tag", title: ep.backend, text: ep.backend' in _js_function(js, builder), builder
 
 
 def test_ep_job_row_cuts_no_text():

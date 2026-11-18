@@ -451,6 +451,8 @@ th.sort-desc::after { content: "▼"; margin-left: 4px; font-size: 11px; color: 
 .tl-axis-inner { flex: 1 1 auto; position: relative; min-width: 0; height: 16px; }
 .tl-axis-inner span { position: absolute; top: 0; font-size: 12px; color: var(--muted);
   white-space: nowrap; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+/* 3.15-fold: the last tick's label ends at its tick (a centred one hung past the window) */
+.tl-axis-inner span.tl-tick-end { transform: translateX(-100%); }
 
 /* 3.7-fold-5 */
 /* the card's job row as two FIXED lines (the coordinator's screenshot read: the one-line row
@@ -482,7 +484,14 @@ th.sort-desc::after { content: "▼"; margin-left: 4px; font-size: 11px; color: 
 .host .ep-job-figs, .host .ep-act, .host .ep-line { overflow: hidden; text-overflow: ellipsis; }
 .host .ep-line { white-space: nowrap; height: 1.4em; min-width: 0; }
 .host .endpoint.state-dormant { height: calc(1.4em + 9px); }
-/* in a flex row (the head, the host head) the text item gives way, the rest keep their width:
-   the model id on a live head, the last-seen span on a down head, the note beside the host name
-   (the .ep-line rule above) */
-.host .ep-head .ep-model { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* in a flex row (the head, the host head) the text items give way in order: the model id first
+   (its shrink weight is far above the others', so it goes to nothing before they move), then the
+   name and the tag, each ending in "…" with its whole text in its title (3.15-fold, the 3.15
+   review: a 60-character name and a 40-character tag were cut mid-glyph with no mark, the state
+   dot shrank to nothing, and the active phrase was pushed out of the box). The dot and the
+   active phrase keep their width; on a down head the last-seen span gives way (the .ep-line
+   rule above), as the host note does beside the host name. */
+.host .ep-head .ep-model { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.host .ep-head .ep-name, .host .ep-head .tag { flex: 0 1 auto; min-width: 1.5em; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.host .ep-head .sdot { flex: none; }

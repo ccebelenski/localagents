@@ -25,7 +25,9 @@ node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/a.png '#/endpoin
 # activity, speeds note and down error, a stuffed figures line, a 200-char dormant name) ->
 # seeded and reads `u.gates`: gridWidths (every card its grid track), oneLine, ellipsis (every
 # overflowing line hidden + ellipsis), titles (the names of long texts NOT whole in a title: []),
-# noSideways. Run it at several widths (1840, 1400, 900, 600).
+# noSideways, and head (3.15-fold: a 60-char endpoint name and a 40-char backend tag on every
+# live head: the dot keeps 8 px, the active phrase stays inside, every cut child ends in "…" with
+# its title). Run it at several widths (1840, 1400, 900, 600).
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/a.png "js:$(cat tools/smoke/wide.js)"
 # 3.9D D1: nodes.js renders the states the seed does not produce (node down, unknown host, empty
 # table) and then the transition it gatekeeps — one render hiding a card's only drawn endpoint

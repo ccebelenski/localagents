@@ -177,7 +177,8 @@
   function shortId(id) { return String(id).slice(0, 8); }
   function jobLink(id) { return h("a", { href: "#/job/" + encodeURIComponent(id), title: id, text: shortId(id) }); }
   function endpointLink(name) {
-    return h("a", { class: "ep-name", href: "#/endpoint/" + encodeURIComponent(name), text: name });
+    // 3.15-fold: the name carries itself in its title, for a card head that ends it in "…"
+    return h("a", { class: "ep-name", href: "#/endpoint/" + encodeURIComponent(name), title: name, text: name });
   }
 
   // --- page state -----------------------------------------------------------------------------
@@ -532,7 +533,7 @@
       // the state dot (3.7f): the first thing on the head; the down/dormant kinds take the
       // same span with their variant (their CSS lives here too — see the 3.7d-f block)
       h("div", { class: "ep-head" }, [h("span", { class: "sdot sdot-live", "aria-hidden": "true" }),
-        endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
+        endpointLink(ep.name), h("span", { class: "tag", title: ep.backend, text: ep.backend }),
         ep.model ? h("span", { class: "ep-model", title: ep.model, text: shortModel(ep.model) }) : null,
         // 3.7-fold-3 (3.7s page half): the last-active phrase at the right of the head line;
         // down/dormant endpoints keep their "last seen" lines and gain nothing here
@@ -554,7 +555,7 @@
     return h("div", { class: "endpoint state-down", "data-endpoint": ep.name }, [
       // the state dot (3.7c lane contract): first child of the head; lane B styles .sdot
       h("div", { class: "ep-head" }, [h("span", { class: "sdot sdot-" + ep.state, "aria-hidden": "true" }),
-        endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
+        endpointLink(ep.name), h("span", { class: "tag", title: ep.backend, text: ep.backend }),
         h("span", { class: "ep-seen ep-line", title: seen || null, text: seen })]),
       ep.error && !quiet ? h("div", { class: "ep-error ep-line", title: ep.error, text: ep.error }) : null,
       // the id beside the name makes the sentence clickable; the name alone stays plain text
@@ -2133,7 +2134,10 @@
       for (var t = Math.ceil(t0 / step) * step; t <= now; t += step) {
         var pos = pct(t).toFixed(2) + "%";
         lines.appendChild(h("span", { class: "tl-grid", style: "left:" + pos }));
-        axisInner.appendChild(h("span", { style: "left:" + pos, text: useDate ? fmt.dayClock(t) : fmt.clock(t) }));
+        // 3.15-fold (the 3.15 review): a label centred on a tick near the right end hung past the
+        // window and scrolled the whole page sideways; there it ends at its tick instead
+        axisInner.appendChild(h("span", { class: pct(t) > 97 ? "tl-tick-end" : null, style: "left:" + pos,
+          text: useDate ? fmt.dayClock(t) : fmt.clock(t) }));
       }
       lines.appendChild(h("span", { class: "tl-now", title: "now" }));
 

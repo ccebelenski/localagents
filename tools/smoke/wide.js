@@ -13,6 +13,10 @@
 //   oneLine     every card line is at most one line box tall (3.7n);
 //   ellipsis    every card line wider than its box is overflow: hidden + text-overflow: ellipsis;
 //   titles      every long text is whole in its element's title;
+//   head        (3.15-fold) on every live head with a 60-char endpoint name and a 40-char backend
+//               tag: the state dot keeps its 8 px, the active phrase ends inside the head, and
+//               every head child wider than its box ends in an ellipsis with its whole text in
+//               its title;
 //   noSideways  the page never scrolls sideways.
 fetch("/api/snapshot").then(r => r.json()).then(seed => {
   const M = localagentsMonitor;
@@ -22,6 +26,8 @@ fetch("/api/snapshot").then(r => r.json()).then(seed => {
   const REASON = rep("the last probe has no counters and ", 300);
   const ERROR = rep("engine unreachable: connection refused after ", 300);
   const DORMANT = rep("wide-dormant-endpoint-", 200);
+  const NAME = rep("wide-endpoint-name-", 60);
+  const TAG = rep("wide-backend-", 40);
   const q = (s) => Array.from(document.querySelectorAll(s));
   const LINES = ".host .ep-head, .host .ep-model, .host .ep-job-figs, .host .ep-act, .host .ep-line";
   const measure = (tag) => {
@@ -66,18 +72,35 @@ fetch("/api/snapshot").then(r => r.json()).then(seed => {
         error: q(".host .ep-error").some(e => e.title === ERROR),
         dormant: q(".host .endpoint.state-dormant").some(e => e.title.indexOf(DORMANT) === 0),
       },
+      heads: q(".host .endpoint.state-live .ep-head").map(head => {
+        const box = head.getBoundingClientRect();
+        const dot = head.querySelector(".sdot").getBoundingClientRect().width;
+        const act = head.querySelector(".ep-active").getBoundingClientRect();
+        const cut = Array.from(head.children).filter(c => c.scrollWidth > c.clientWidth + 1).map(c => {
+          const st = getComputedStyle(c);
+          return { cls: c.className, ellipsis: st.textOverflow === "ellipsis" && st.overflowX === "hidden",
+            title: c.getAttribute("title") === c.textContent || (c.classList.contains("ep-model")) };
+        });
+        return { dot, activeInside: act.right <= box.right + 0.5 && act.width > 0, cut };
+      }),
       pageScroll: page.scrollWidth + "/" + page.clientWidth,
       noSideways: page.scrollWidth <= page.clientWidth,
     };
   };
   const out = [measure("seeded")];
   const wide = JSON.parse(JSON.stringify(seed));
+  const renamed = {};
   wide.hosts.forEach(h => h.endpoints.forEach(ep => {
-    if (ep.state === "live") { ep.model = MODEL; ep.rates = Object.assign({}, ep.rates, { reason: REASON }); }
+    if (ep.state === "live") {
+      renamed[ep.name] = NAME;
+      ep.model = MODEL; ep.rates = Object.assign({}, ep.rates, { reason: REASON });
+      ep.name = NAME; ep.backend = TAG;
+    }
     if (ep.state === "down") ep.error = ERROR;
     if (ep.state === "dormant") ep.name = DORMANT;
   }));
   wide.jobs.forEach(j => {
+    if (renamed[j.endpoint]) j.endpoint = renamed[j.endpoint]; // the job stays on its renamed card
     if (j.status !== "running") return;
     Object.assign(j, { last_activity: ACT, tool_calls: 123456789, files: 98765, compactions: 4321, errors: 5678,
       ctx_pct: 87, ctx_tokens: 228000, context: 262144, gen_tps: 1234.5 });
@@ -94,6 +117,8 @@ fetch("/api/snapshot").then(r => r.json()).then(seed => {
       oneLine: out.every(m => m.tall.length === 0),
       ellipsis: out.every(m => m.overflowing.every(o => o.ellipsis)),
       titles: Object.keys(w.titles).filter(k => !w.titles[k]),
+      head: w.heads.length > 0 && w.heads.every(hd => Math.abs(hd.dot - 8) < 0.5 && hd.activeInside
+        && hd.cut.every(c => c.ellipsis && c.title)),
       wideOverflows: w.overflowing.length,
       noSideways: out.every(m => m.noSideways),
     },
