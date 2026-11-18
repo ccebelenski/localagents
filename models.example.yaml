@@ -35,7 +35,7 @@ endpoints:
     backend: vllm
     host: gpu-server
   strata-box:
-    base_url: http://strata-box.lan:8080   # strata (llama.cpp-compatible); llama.cpp also works, minus occupancy and metrics
+    base_url: http://strata-box.lan:8080   # strata (llama.cpp-compatible); llama.cpp also works, minus slot occupancy
     backend: strata
     host: strata-box
     # api_key: sk-...                      # for a server started with --api-key; sent on every call, never shown to the agent

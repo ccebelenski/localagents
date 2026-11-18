@@ -47,6 +47,20 @@ to drive a coding agent: solid native tool calling and a context window of 128k 
 per request. Qwen3.8-27B works well. Smaller windows work but compact constantly; see
 [Context windows](docs/shim.md#context-windows).
 
+**The quick way:** open Claude Code or OpenCode and say
+
+> Install localagents by following https://github.com/ccebelenski/localagents/blob/main/INSTALL.md
+
+[INSTALL.md](INSTALL.md) is written for the agent. It asks you which clients to set up and
+where your servers are, identifies each server, writes the config, registers the server
+with your clients, and shows you every change to a file of yours before making it. Say
+*update* or *uninstall* instead of *install* for those. `localagents check` reports the
+state of the install item by item whenever you want to look yourself, and
+`localagents check --url http://host:port` tells you what is serving at an address and
+prints its `models.yaml` entry.
+
+**By hand**, the same steps:
+
 1. **Install it.** Editable, so edits in the checkout take effect:
 
    ```bash

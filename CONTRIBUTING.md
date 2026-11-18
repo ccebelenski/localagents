@@ -70,6 +70,7 @@ finishes. A hand drop from the `queue` tool on such a waiting job closes it as
 | `db.py` | the shared SQLite file: path, schema, migrations, `open_db` (WAL, busy timeout) |
 | `jobs.py` | job records: the `jobs` and `mcp_servers` rows, the job directory and transcript, retention pruning, the startup lost-job mark |
 | `derive.py` | read-time derivations over the `requests`/`tool_calls` rows: usage totals, per-tool counts, the last tool, the whole `job_status` dict for a row |
+| `install_check.py` | `localagents check`: the install's state item by item, and `--url`'s identification of a server; INSTALL.md (the agent's install brief) reads it, so an item it names must exist here (`tests/test_install_check.py` pins that) |
 | `status.py` | the status-line renderer: reads every live server's jobs from the shared database; `localagents statusline` runs it without importing the server |
 | `router/` | the routing package, holding the d3 server, brief scoring, selection, the queue, the job gates and verdicts, and the command tools; `docs/router.md` explains the parts |
 | `agents/claude-code/local-agent.md` | Claude Code subagent that relays one job and reports its record; the fallback where auto-backgrounding is off (`agents/local-agent.md` is a symlink to it, for older installs) |

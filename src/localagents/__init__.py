@@ -22,6 +22,12 @@ def main() -> None:
 
         smoke_main(sys.argv[2:])
         return
+    if sys.argv[1:2] == ["check"]:
+        # Epic 6.11: the install's state for INSTALL.md (and the operator), read-only
+        from .install_check import main as check
+
+        check(sys.argv[2:])
+        return
     if sys.argv[1:2] == ["prune"]:
         import argparse
 

@@ -1526,8 +1526,9 @@ def main() -> None:
     # `localagents --help` lists what works (operator 2026-11-04: calibrate was missing)
     ap.add_argument(
         "command", nargs="?", default="serve",
-        choices=["serve", "statusline", "smoke", "prune", "seed", "monitor", "d3", "router", "calibrate"],
+        choices=["serve", "statusline", "check", "smoke", "prune", "seed", "monitor", "d3", "router", "calibrate"],
         help="serve (default): run the MCP server; statusline: running local jobs for a status bar; "
+             "check: the install's state, or with --url what serves at an address; "
              "smoke: the monitor's browser smoke; prune: delete old job directories; "
              "seed: an offline monitor database from the fixtures; monitor: the monitor page; "
              "d3: serve the router's decision model; router: the router's MCP server; "
