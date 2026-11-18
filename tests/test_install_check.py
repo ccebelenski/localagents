@@ -168,6 +168,11 @@ def test_a_stale_relay_copy_and_a_renamed_one(home, tmp_path):
     _exe(bindir, "claude")
     (h / ".claude" / "agents").mkdir()
     relay = h / ".claude" / "agents" / "local-agent.md"
+    # a link into a checkout that moved: there, so `ln -s` would fail — never "absent"
+    relay.symlink_to(tmp_path / "old-checkout" / "local-agent.md")
+    got = _items(ic.check_claude_code("local", tmp_path / "m.yaml", tmp_path))["claude-code.relay"]
+    assert got.status == "warn" and "gone" in got.detail
+    relay.unlink()
     relay.write_text("an old relay")
     assert _items(ic.check_claude_code("local", tmp_path / "m.yaml", tmp_path))["claude-code.relay"].status == "warn"
     relay.write_text((ROOT / "agents" / "claude-code" / "local-agent.md").read_text().replace("mcp__local__", "mcp__lab__"))

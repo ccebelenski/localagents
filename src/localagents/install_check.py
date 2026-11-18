@@ -110,6 +110,9 @@ async def check_endpoints(reg: Registry) -> list[Item]:
 def _same_relay(installed: Path, shipped: Path | None, server_name: str) -> Item | None:
     """None when no relay is installed; else whether it is this checkout's (a link to it, or the
     same text) or a copy renamed for another server name."""
+    if installed.is_symlink() and not installed.exists():
+        return Item("", "warn", f"{installed} is a link to {os.readlink(installed)}, which is gone (the checkout moved?)",
+                    "remove the link and make it again to this checkout's relay")
     if not installed.exists():
         return None
     if shipped is None:

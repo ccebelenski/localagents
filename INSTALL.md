@@ -274,5 +274,5 @@ Afterwards `check` cannot run (the package is gone): confirm with `claude mcp li
 | `claude-code` / `opencode` | absent | Not registered. Expected if the user did not pick that client. |
 | `claude-code` / `opencode` | warn | Registered with another config, without `--config`, or a different server under that name: show the user and ask. |
 | `claude-code` / `opencode` | fail | Registered, but its command does not resolve: step 2's PATH note, then re-register. |
-| `*.relay` | warn | An old copy that differs from the checkout's: replace it with the link. |
+| `*.relay` | warn | An old copy that differs from the checkout's, or a link whose target is gone: replace it with the link. |
 | `harness` | fail | `defaults.harness: opencode` without `opencode` on PATH: every job would fail. |
