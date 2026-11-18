@@ -2,6 +2,16 @@
 
 Resume note for the next session. Rewritten at every session close; history is in git.
 
+**2026-11-18 (evening): Epic 6 complete but for 6.9 (ON HOLD) and PUSHED to GitHub at the
+operator's word ("Then I think the last step is to push to github, and let the world use it").**
+Main at the commit this note rides on, suite 1613 passed, 1 skipped. Since the overnight entry
+below: 6.8 policy translation, 6.10 docs (with a docs-vs-code audit), 6.11 the install
+(INSTALL.md, a brief for the coding agent, and `localagents check`), 6.12 OpenCode's status
+block (plugins/opencode, in the operator's own cli.json); each reviewed on a local lane and
+folded (docs/EPICS.md Epic 6). The pre-push check: no secrets in the 130 commits; the only
+home-directory paths are in captured test fixtures, as before. The operator's `local` server
+was reconnected on 03d26a3.
+
 **2026-11-18 (overnight, the operator away: "tackle 6.5, 6.6, and 6.7 without me ... Stop before
 6.8"): Epic 6 through 6.7 is on main; a job can run in OpenCode.** Main at the commit this note
 rides on, nothing pushed. This session was itself an OpenCode coordinator using the server (6.1),
