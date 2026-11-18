@@ -711,6 +711,16 @@ async def start_job(
     """
     if priority not in ("urgent", "normal", "background"):
         raise _bad("priority must be 'urgent', 'normal' or 'background'")
+    if (harness or _reg().defaults.harness) == "opencode":
+        # Epic 6.7: what the OpenCode harness cannot honour yet is refused, never dropped (the
+        # policy translation is 6.8)
+        from .harnesses import opencode as _opencode
+
+        refused = _opencode.unsupported(permission_mode=permission_mode, allowed_tools=allowed_tools,
+                                        mcp_servers=mcp_servers, thinking=thinking, effort=effort,
+                                        strict_mcp_config=strict_mcp_config)
+        if refused:
+            raise _bad(f"the opencode harness does not take {', '.join(refused)} yet (Epic 6.8)")
     if admit not in ("queue", "now", "force"):
         raise _bad("admit must be 'queue', 'now' or 'force'")
     if tolerance is not None and (isinstance(tolerance, bool) or not isinstance(tolerance, (int, float))

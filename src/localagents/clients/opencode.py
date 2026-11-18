@@ -24,6 +24,5 @@ WAIT_MORE = ""
 REVIEWER = "a frontier model"
 
 WAIT_S = """\
-OpenCode waits on the call
-        (and the session with it) until it returns. Use for every job; run several through
-        one `local-agent` subagent each."""
+OpenCode waits on the call.
+        Use for every job; run several through one `local-agent` subagent each."""

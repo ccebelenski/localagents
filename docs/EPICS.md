@@ -3154,6 +3154,19 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   captured calls, the write rule on captured inputs and on the Claude reader's old cases, the
   readers on an OpenCode job's rows, the SDK-free import). The Claude Code replay (t/replay.py)
   identical before and after. Suite 1559 passed.
+  **Review (Qwen3.8-27B/ai9, job d920f7d2, 65 turns, 16 min): no defect.** CLEAN: no reader in
+  src/ decides a kind by name outside the tables (the surviving literals are a harness's own
+  configuration — the defaults' tool lists, the smoke's `allowed_tools`, calibration's stub
+  prefix — or other domains); an OpenCode job built from the captured events reads right through
+  every reader (files, read share, last tool, errors, the tests gate, the monitor's log), and the
+  same rows as `claude-code` change exactly as the rule predicts; `stored_input` equals the old
+  inline rule on 437 constructed inputs. NOTICED, folded: a row naming a harness this install
+  lacks made `vocabulary()` raise inside the monitor's reads — an unknown name now gets an empty
+  vocabulary (every tool `other`, nothing claimed as an edit or a read, nothing raised), with a
+  test. NOTICED, kept: `execute` reads as `mcp`, so a code-mode test run would be invisible to the
+  tests gate (jobs deny `execute`, 6.7); an `IN ()` over a kind a table lacks returns nothing
+  silently; the tests gate reads `is_error`, so `pytest | tail` exiting 0 hides a red run
+  (older than 6.5).
 - ☑ **6.6 The shim's OpenAI version.** The relay core (per-job routing, request rows, timing,
   stall data, the endpoint's api_key) factored out of the Anthropic version; an OpenAI version
   over it (`/v1/chat/completions`, OpenAI SSE usage into the same request rows, the backend's
@@ -3179,12 +3192,47 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
   (8, every backend reply a 6.2 capture byte for byte: both streams pass whole with the right row,
   the cached mapping, both overflows unrewritten and noted, the hook seen and unable to fail a
   request, the clock's start). Suite 1567 passed.
-- ☐ **6.7 The OpenCode harness.** Per-job standalone run in the job's worktree with a generated
+- ☑ **6.7 The OpenCode harness.** Per-job standalone run in the job's worktree with a generated
   config (an OpenAI-compatible provider at the shim's OpenAI version (6.6), model, context limit,
   compaction, permissions, steps, instructions);
   the event parser from 6.2's captures onto the same job fields (turns, tool calls and results,
   session ID, result, error, compactions, last activity); resume by session; cancel with the
   private server torn down; foreground-only's equivalent or a stated no-op.
+  **Built 2026-11-18** (the coordinator). harnesses/opencode.py, registered beside Claude Code's:
+  one `opencode run --standalone --format json --auto --archived --model localagents/job --agent
+  job --title ...` per job, `--session <id>` on a resume; `PWD` and the cwd the job's directory;
+  `XDG_CONFIG_HOME` the job's own generated config (an OpenAI-compatible provider at the shim's
+  OpenAI version with the real model id, the window as `limit.context`, an output budget of
+  window/8 within 8k-32k, a 15-minute header timeout; allow-all then deny `question`, `subagent`,
+  `websearch`, image generation, `skill`, `execute`; an agent `job` with `steps` = max_turns;
+  `instructions` = the project's CLAUDE.md files from the directory up to the repository root when
+  the setting sources include `project`, plus a file with the system-prompt appends and, for a
+  foreground-only job, a note against `background: true` on the shell tool); data and state
+  directories localagents' own and shared (a resume finds the session); OPENCODE_DISABLE_CLAUDE_CODE
+  (the 6.7 checks: without it the operator's ~/.claude CLAUDE.md and skills reach the job; the
+  compatibility flags never load a project CLAUDE.md, hence `instructions`); the server's own
+  OPENCODE markers dropped. The reader: step_start a turn, text the activity and the final result
+  (the last step ending `stop`), reasoning a [thinking] line, tool_use one row each through the
+  vocabulary's write rule with its result, retry a line (six in a row end the session: OpenCode
+  has no cap), a step limit reached recorded as `max_turns: ...` (OpenCode's cap is silent),
+  a non-zero exit as an error naming it; compactions counted by the shim's request hook, one per
+  new `<conversation-checkpoint>`; a cancel or timeout ends the process group (SIGTERM, then
+  SIGKILL after 20 s). start_job refuses what OpenCode cannot honour yet (permission_mode,
+  allowed_tools, mcp_servers, thinking, effort, strict_mcp_config) as bad_argument naming 6.8,
+  never dropping it. The client text is harness-neutral now and describes `harness`; four
+  argument sentences were tightened to keep both clients under Claude Code's 2048-character cap
+  (model's "names the real endpoint and model" and endpoint's "a real model or endpoint beside it
+  is bad_argument" said shorter; tests/test_clients.py lists every change since the 6.1 snapshot).
+  Tests: tests/test_opencode_harness.py (12: every captured stream through the reader into a real
+  row — the record, a tool error, the silent cap, reasoning, retries, a cancelled stream; the
+  compaction counter on the captured checkpoint; the config and the environment; the project's
+  CLAUDE.md files; and run() through the real run_agent -> run_job with a fake `opencode` on PATH
+  replaying a capture: argv, PWD, the config, a resume's `--session`, the refusals, and a cancel
+  that leaves no process). Live (scratch store, the real binary and shim, a three-file repo with
+  a planted bug and a project CLAUDE.md rule): on ai2 (Strata) and on ai9 (llama.cpp) a job and
+  its resume both succeeded in OpenCode, same session, the rule followed, every request
+  `/v1/chat/completions` with usage, cache reads growing, ctx/gen/prefill derived, the fix and
+  the new function in the diff. Suite 1581 passed.
 - ☐ **6.8 Policy translation.** `permission_mode`, `allowed_tools`, `disallowed_tools`,
   `max_turns`, `system_prompt_append`, `setting_sources`, `background_tasks`: the common
   fields read once, each harness's translation its own module, each mapping stated (and refused where there is no equivalent, never silently

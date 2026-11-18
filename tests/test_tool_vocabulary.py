@@ -38,8 +38,9 @@ def test_every_kind_is_known_and_every_table_maps_into_them():
         assert set(v.kinds.values()) <= set(tools.KINDS)
     with pytest.raises(ValueError, match="unknown tool kinds"):
         tools.Vocabulary(harness="x", kinds={"a": "nope"}, path_keys=(), command_key="c")
-    with pytest.raises(ValueError, match="no tool vocabulary"):
-        tools.vocabulary("nope")
+    # a harness this install does not know: an empty table, every tool `other`, never a raise
+    unknown = tools.vocabulary("nope")
+    assert unknown.harness == "nope" and unknown.kind("shell") == "other" and unknown.names("edit") == ()
     assert tools.vocabulary(None) is tools.vocabulary("claude-code")  # a row from before schema 14
 
 
@@ -125,3 +126,19 @@ def test_the_vocabulary_stays_out_of_the_sdk():
             " 'localagents.harnesses.claude_code')) and m != 'localagents.harnesses.claude_code_tools'))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
     assert out.strip() == "[]", out
+
+
+def test_a_job_of_an_unknown_harness_reads_without_failing(tmp_path, monkeypatch):
+    """The 6.5 review (Qwen3.8-27B, job d920f7d2), NOTICED made a rule: a row naming a harness
+    this install lacks made vocabulary() raise inside the monitor's reads. Every reader answers:
+    no files claimed, every call `other`, the last tool shown as stored."""
+    monkeypatch.setenv("LOCALAGENTS_DB", str(tmp_path / "u.db"))
+    conn = db.open_db()
+    _job_with_calls(conn, "a-newer-harness", [("edit", "/w/a.py", 0), ("shell", "ls", 0)])
+    assert derive.files_touched(conn, "j") == []
+    mix = derive.tool_mix(conn, "j", 10)
+    assert (mix["reads"], mix["edits"], mix["other"]) == (0, 0, 2)
+    assert derive.last_tool(conn, "j") == "shell: ls"
+    row = conn.execute("SELECT * FROM jobs WHERE id = 'j'").fetchone()
+    assert derive.summary_from_row(conn, row)["harness"] == "a-newer-harness"
+    conn.close()

@@ -39,31 +39,53 @@ def _tool_text() -> dict[str, str]:
     return {t.name: t.description for t in server.mcp._tool_manager.list_tools()}
 
 
-# what a later story added to the shared text, on purpose: (story, the anchor it follows, the text)
-ADDED_SINCE: list[tuple[str, str, str]] = []
+# what a later story changed in the shared text, on purpose: (story, the old text, the new).
+# 6.7: the job sentences harness-neutral, `harness` described, four argument sentences tightened
+# to stay under Claude Code's 2048-character cap (no fact dropped).
+CHANGED_SINCE: list[tuple[str, str, str]] = [
+    ('6.7', 'job is a headless Claude Code session (same tools, CLAUDE.md, working tree) on a local model.\n',
+     'job is a headless agent session (Claude Code, or OpenCode with harness=) on a local model.\n'),
+    ('6.7', '    A headless Claude Code session (same tools, project CLAUDE.md, working tree): brief it\n    like a junior engineer (what, where, how to verify).\n',
+     '    A headless agent session in the working tree (project CLAUDE.md): brief it like a\n    junior engineer (what, where, how to verify).\n'),
+    ('6.7', "      model: Served id, glob or fuzzy name (list_models), or a router entry's name to route\n        (the record names the real endpoint and model, plus `routed_by`).\n",
+     "      model: Served id, glob or fuzzy name (list_models), or a router entry's name to route\n        (the record carries `routed_by`).\n"),
+    ('6.7', '      endpoint: Force an endpoint (no `model`: whatever it serves). A router entry routes\n        alone: a real `model` or `endpoint` beside it is bad_argument.\n',
+     '      endpoint: Force an endpoint (no `model`: whatever it serves); never beside a router entry.\n'),
+    ('6.7', "      background_tasks: false: foreground only, the job ends at its result; true (config\n        default) allows background commands; a resume keeps its job's.\n",
+     "      background_tasks: false: foreground only, the job ends at its result; true (config\n        default) allows background commands; a resume keeps its job's.\n      harness: claude-code (config default) | opencode; a resume keeps its job's.\n"),
+]
 
 
-def _before_plus_additions(text: str) -> str:
-    for _story, anchor, added in ADDED_SINCE:
-        assert text.count(anchor) == 1, anchor
-        text = text.replace(anchor, anchor + added)
+def _before_plus_changes(text: str) -> str:
+    for _story, old, new in CHANGED_SINCE:
+        if old in text:
+            assert text.count(old) == 1, old
+            text = text.replace(old, new)
     return text
 
 
 def test_claude_code_text_is_exactly_the_text_before_6_1(restore_default):
-    """Byte for byte the text before 6.1, plus only the additions listed in ADDED_SINCE."""
+    """Byte for byte the text before 6.1, changed only as CHANGED_SINCE lists (each change
+    applies to exactly one of the two texts, once)."""
     clients.apply(server.mcp, "claude-code")
-    assert server.mcp.instructions == BEFORE["instructions"]
-    expected = dict(BEFORE["tools"], run_agent=_before_plus_additions(BEFORE["tools"]["run_agent"]))
+    assert server.mcp.instructions == _before_plus_changes(BEFORE["instructions"])
+    expected = dict(BEFORE["tools"], run_agent=_before_plus_changes(BEFORE["tools"]["run_agent"]))
     assert _tool_text() == expected
+    joined = BEFORE["instructions"] + BEFORE["tools"]["run_agent"]
+    assert all(joined.count(old) == 1 for _story, old, _new in CHANGED_SINCE)
+
+
+def test_both_clients_texts_fit_claude_codes_cap(restore_default):
+    for c in ("claude-code", "opencode"):
+        assert len(clients.instructions(c)) <= 2048 and len(clients.run_agent_description(c)) <= 2048, c
     # and the module's import-time default is the same text
-    assert server.INSTRUCTIONS == BEFORE["instructions"]
+    assert server.INSTRUCTIONS == _before_plus_changes(BEFORE["instructions"])
 
 
 def test_opencode_text_carries_nothing_of_claude_codes_mechanics(restore_default):
     text = clients.instructions("opencode") + clients.run_agent_description("opencode")
     for claude_only in ("CLAUDE_CODE_", "CLAUDE_AUTO_BACKGROUND", "task notification", "task id",
-                        "auto-background", "than Claude"):
+                        "auto-background", "than Claude", "Claude Code backgrounds"):
         assert claude_only not in text, claude_only
     assert "`local-agent` subagent" in clients.instructions("opencode")
     assert "OpenCode" in clients.run_agent_description("opencode")
@@ -126,8 +148,8 @@ def test_an_unknown_client_gets_the_default_text(monkeypatch, restore_default):
     runner = _runner()
     result = ServerRunner._handle_initialize(runner, {"protocolVersion": "2025-11-25", "capabilities": {},
                                                       "clientInfo": {"name": "unknown", "version": "1"}})
-    assert result.instructions == BEFORE["instructions"]
-    assert _tool_text()["run_agent"] == _before_plus_additions(BEFORE["tools"]["run_agent"])
+    assert result.instructions == _before_plus_changes(BEFORE["instructions"])
+    assert _tool_text()["run_agent"] == _before_plus_changes(BEFORE["tools"]["run_agent"])
 
 
 def test_client_modules_are_not_shared_text():

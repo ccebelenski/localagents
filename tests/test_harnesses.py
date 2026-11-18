@@ -22,7 +22,7 @@ SRC = Path(runner.__file__).resolve().parent
 
 
 def test_the_registry_names_each_harness_once():
-    assert harnesses.names() == ["claude-code"]
+    assert harnesses.names() == ["claude-code", "opencode"]  # 6.7 registered OpenCode's
     assert harnesses.DEFAULT == "claude-code"
     assert harnesses.get("claude-code") is claude_code
     with pytest.raises(ValueError, match="unknown harness 'nope'"):

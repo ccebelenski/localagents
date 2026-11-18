@@ -100,10 +100,12 @@ DEFAULT = "claude-code"
 
 def vocabulary(harness: str | None) -> Vocabulary:
     """A harness's vocabulary; None (a row from before schema 14 read through an old path, a Job
-    built by hand) is Claude Code's, the harness every such job ran in. An unknown name raises:
-    a reader must not guess another harness's tools."""
+    built by hand) is Claude Code's, the harness every such job ran in. A name this install does
+    not know (a newer install's job in a shared store) gets an EMPTY vocabulary: every tool reads
+    as ``other``, so no reader guesses another harness's names into edits or reads, and none
+    fails (the 6.5 review: the monitor's snapshot would have raised on one such row)."""
     tables = _tables()
     name = harness or DEFAULT
     if name not in tables:
-        raise ValueError(f"no tool vocabulary for harness {name!r}; one of {', '.join(sorted(tables))}")
+        return Vocabulary(harness=name, kinds={}, path_keys=(), command_key="command")
     return tables[name]

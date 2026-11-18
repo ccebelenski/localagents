@@ -41,9 +41,9 @@ class SessionSpec:
 
 def _modules() -> dict[str, ModuleType]:
     # imported here, not at the top: a harness module imports SessionSpec from this package
-    from . import claude_code
+    from . import claude_code, opencode
 
-    return {claude_code.NAME: claude_code}
+    return {claude_code.NAME: claude_code, opencode.NAME: opencode}
 
 
 DEFAULT = "claude-code"

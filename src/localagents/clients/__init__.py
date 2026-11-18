@@ -8,9 +8,8 @@ the client gives in its ``initialize`` request (``clientInfo.name``: Claude Code
 2.3.1); else Claude Code, every registration made before 6.1. OpenCode does not mark the
 environment of the MCP servers it starts (6.1's end-to-end run), so the environment says nothing.
 
-Nothing here is about the harness a job runs in: a job is a headless Claude Code session
-whichever client started it, so the sentences saying so are shared text (they move to the
-harness modules with Epic 6.3).
+Nothing here is about the harness a job runs in (harnesses/): which harness runs a job is
+``run_agent(harness=)``'s, whichever client started it, so the sentences about it are shared.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ DEFAULT = claude_code.NAME
 # model_unavailable lines), `reviewer` (what the local models are compared with).
 INSTRUCTIONS = """\
 Delegate work to agents on LOCAL models (llama.cpp / vLLM) on the user's hardware. A `run_agent`
-job is a headless Claude Code session (same tools, CLAUDE.md, working tree) on a local model.
+job is a headless agent session (Claude Code, or OpenCode with harness=) on a local model.
 
 Workflow:
   1. `list_models`: live endpoints and what they serve. Nothing is vetted; you judge suitability.
@@ -50,15 +49,14 @@ Workflow:
 # `wait_s` (the client's half of the wait_s argument).
 RUN_AGENT = """Delegate a task to an agent on a local model and (with `wait_s`) wait for the result.
 
-    A headless Claude Code session (same tools, project CLAUDE.md, working tree): brief it
-    like a junior engineer (what, where, how to verify).
+    A headless agent session in the working tree (project CLAUDE.md): brief it like a
+    junior engineer (what, where, how to verify).
 
     Args:
       task: The brief; be explicit, local models infer less than {infer}.
       model: Served id, glob or fuzzy name (list_models), or a router entry's name to route
-        (the record names the real endpoint and model, plus `routed_by`).
-      endpoint: Force an endpoint (no `model`: whatever it serves). A router entry routes
-        alone: a real `model` or `endpoint` beside it is bad_argument.
+        (the record carries `routed_by`).
+      endpoint: Force an endpoint (no `model`: whatever it serves); never beside a router entry.
       cwd: Working directory (default: the server's).
       isolation: none | worktree (git worktree on local-agent/<job id>, kept only if changed).
       wait_s: If > 0, block (through the queue: `queued #n, ~m min`) for the final record,
@@ -75,9 +73,11 @@ RUN_AGENT = """Delegate a task to an agent on a local model and (with `wait_s`) 
         bad_argument.
       background_tasks: false: foreground only, the job ends at its result; true (config
         default) allows background commands; a resume keeps its job's.
+      harness: claude-code (config default) | opencode; a resume keeps its job's.
     """
-# (Epic 6.4: run_agent takes `harness`, but it is not described above while claude-code is the
-# only one; the description sits at Claude Code's 2048-character cap. 6.7 describes it.)
+# (Epic 6.7: `harness` described, the job sentences harness-neutral; four argument sentences
+# tightened to stay under Claude Code's 2048-character description cap. tests/test_clients.py
+# lists every change since the 6.1 snapshot.)
 
 
 def from_client_info(params: Mapping[str, Any] | None) -> str | None:
