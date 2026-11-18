@@ -1,0 +1,8 @@
+STATUS 400
+Server: llama.cpp
+Access-Control-Allow-Origin: 
+Content-Type: application/json; charset=utf-8
+Connection: close
+Content-Length: 203
+
+{"error":{"code":400,"message":"request (585373 tokens) exceeds the available context size (212992 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":585373,"n_ctx":212992}}

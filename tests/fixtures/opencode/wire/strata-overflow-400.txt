@@ -1,0 +1,8 @@
+STATUS 400
+Server: BaseHTTP/0.6 Python/3.12.3
+Date: Wed, 18 Nov 2026 02:16:49 GMT
+Content-Type: application/json
+Content-Length: 196
+Connection: close
+
+{"error": {"type": "invalid_request_error", "message": "request exceeds the context window: prompt (390295 tokens) leaves no room to answer in the context (131072); requests are never truncated"}}

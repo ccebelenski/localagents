@@ -2926,7 +2926,7 @@ from a too-long rejection, with `session.compaction.*` events; MCP tool calls de
 execution timeout and carry the calling session in `_meta["ai.opencode/sessionID"]`. Unverified:
 the `--format json` event shapes, how a standalone run takes a per-job config, whether an
 Anthropic-compatible provider works through the shim, whether the overflow recovery fires on
-local backends' errors.
+local backends' errors. (True now: settled by 6.2's captures, below.)
 
 - ☐ **6.1 OpenCode as the coordinator.** Register the server in `opencode.json`
   (`mcp.servers.<name>`, `type: "local"`); the job's owner from `_meta["ai.opencode/sessionID"]`
@@ -2939,13 +2939,67 @@ local backends' errors.
   `agents/local-agent.md`; the status line's OpenCode equivalent if there is one (to check).
   Gate: suite; an OpenCode session lists models, runs and waits on a job, and its owner is the
   session ID; a Claude Code session unchanged.
-- ☐ **6.2 Capture experiment.** `opencode run --standalone --format json` against real
+- ☑ **6.2 Capture experiment.** `opencode run --standalone --format json` against real
   endpoints with an OpenAI-compatible provider (the route the operator prefers), plus one
   Anthropic-compatible run for comparison. Endpoints the operator allowed (2026-11-17): ai9
   (llama.cpp), ai1 and ai2 (Strata); no vLLM. Captured into tests/fixtures: the event stream of
   a job with tool calls, a tool error, a compaction, a step cap, a cancel and a resume; and each
   backend's OpenAI-side shapes the shim's OpenAI version must read (SSE usage, an overflow
   error). Settles every "unverified" above.
+  **Captured 2026-11-17** (the coordinator; scratch driver t/oc/run.py and recording proxy
+  t/oc/proxy.py, not committed; fixtures in tests/fixtures/opencode/ with a README). 16 runs on
+  ai2, ai1 and ai9, all idle beforehand. Facts, each from a capture:
+  (1) **The working directory is `$PWD`, not the process cwd.** The first run, started with
+  `cwd=` a scratch project, worked in the inherited `$PWD` — this repository: it ran the full
+  suite and read files there (nothing written; `git status` clean after). Shell `pwd`: inherited
+  → the repo, `PWD` set → the project. The harness sets `PWD` to the job's directory.
+  (2) **Config injection.** `XDG_CONFIG_HOME` replaces the global config (`opencode debug config`
+  lists only the job's file); `OPENCODE_CONFIG=<file>` and `OPENCODE_CONFIG_CONTENT=<json>` layer
+  on top of the user's global. Project `opencode.json` files are still discovered from the
+  directory up.
+  (3) **Claude Code compatibility leaks the user's instructions.** With the config isolated, every
+  job's system prompt still carried `~/.claude/CLAUDE.md` and the 13 skills under `~/.claude`
+  (Claude Code jobs get neither: `setting_sources: [project, local]`).
+  `OPENCODE_DISABLE_CLAUDE_CODE=1` removes both (system prompt 21.9k → 11.4k chars; four skills
+  left from other sources, deniable by permission); `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=1` only
+  the CLAUDE.md.
+  (4) **Events** (`--format json`): `step_start`, `text`, `reasoning` (only with `--thinking`),
+  `tool_use` (one per call, final state only: `state.status` completed/error, `input`, `output`
+  or `error`, `time`), `step_finish` (`reason` tool-calls/stop, `tokens` input/output/reasoning/
+  cache.read), `retry` (`attempt`, `nextRetryAt`, `error`). Every event carries `sessionID`; there
+  is no start or result event — the result is the last `text`, the session ID any event's.
+  `reasoning` tokens read 0 on both backends. Tool names: edit, glob, grep, read, shell, write,
+  webfetch, websearch, skill, subagent, question, execute, experimental_image_generate — a job
+  must deny `question` (interactive), `subagent`, `execute`, image generation and web search
+  unless wanted.
+  (5) **Step cap is silent.** At `steps` the last step runs without tools, the model writes a
+  "maximum steps reached" text, `reason: stop`, exit 0: the harness detects a cap by counting
+  `step_start` against its `steps`.
+  (6) **Resume** by `--session <id>` (same data dir, same directory) continues the session; the
+  backend's prompt cache is read (11.4k cached of 11.4k).
+  (7) **Cancel**: SIGTERM to the process group → exit 143, the stream ends at a step boundary,
+  nothing of the group left alive.
+  (8) **Compaction is invisible in the events.** OpenCode's own (a 32k limit) sends summary
+  requests that KEEP the tools (for the prompt cache) and end in a user message "You MUST
+  summarize the conversation above…" (an update: "Update the existing checkpoint…"); the next
+  request opens with `<conversation-checkpoint>`. The shim sees all of it: that is where the
+  compaction count comes from. Small windows compact every step (the 16k minimum buffer).
+  (9) **Overflow recovery works with both backends' real errors**, injected by the proxy past
+  100 kB: Strata's 400 `invalid_request_error` "request exceeds the context window: prompt (N
+  tokens)…" and llama.cpp's 400 `exceed_context_size_error` with `n_prompt_tokens`/`n_ctx`. Each
+  was followed by a summary request (llama.cpp's: rejected too, retried shortened, then 200) and
+  the job resumed and finished — the shim passes the backend's 400 through unchanged, no
+  rewrite. Transport errors are retried with backoff (`retry` events) with no visible cap: the
+  harness bounds them.
+  (10) **Wire**: `/v1/chat/completions`, `stream_options.include_usage`, `max_completion_tokens`;
+  one extra no-tools request per job names the session (the hidden title agent: the
+  `--title` flag or the agent's config may avoid it — to check). Usage: Strata on the
+  `finish_reason` chunk, llama.cpp on a trailing empty-`choices` chunk; both add `timings`
+  (prompt/predicted counts, rates, draft acceptance) — more than the Anthropic side gives.
+  Reasoning streams as `reasoning_content`. The Anthropic-compatible provider also worked
+  (llama.cpp `/v1/messages`), confirming the operator's route on evidence rather than need.
+  Not captured: vLLM (not allowed for this pass); a native-tool-error-heavy job; how a job's
+  owner MCP sees `_meta` (6.1's).
 - ☐ **6.3 The harness seam, Claude Code behind it.** The job lifecycle every harness shares
   (worktree, timeout, cancel, heartbeat, the job record's writes) factored into a core; launch,
   environment, event parsing and resume are the harness's own version behind one interface. The

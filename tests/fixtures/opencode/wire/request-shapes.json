@@ -1,0 +1,116 @@
+{
+ "_note": "request shapes only (bodies dropped: the system prompt carried the operator's own instruction file); captured 2026-11-17, opencode v2.3.1",
+ "title_request": {
+  "path": "/v1/chat/completions",
+  "keys": [
+   "messages",
+   "model",
+   "stream",
+   "stream_options"
+  ],
+  "params": {
+   "model": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   }
+  },
+  "tools": [],
+  "messages": [
+   {
+    "role": "system",
+    "chars": 1806,
+    "tool_calls": false
+   },
+   {
+    "role": "user",
+    "chars": 245,
+    "tool_calls": false
+   }
+  ]
+ },
+ "openai_chat_turn": {
+  "path": "/v1/chat/completions",
+  "keys": [
+   "max_completion_tokens",
+   "messages",
+   "model",
+   "stream",
+   "stream_options",
+   "tools"
+  ],
+  "params": {
+   "model": "qwen3.8-flash-next-unsloth-ud-q4_k_xl",
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   },
+   "max_completion_tokens": 16384
+  },
+  "tools": [
+   "edit",
+   "experimental_image_generate",
+   "glob",
+   "grep",
+   "question",
+   "read",
+   "shell",
+   "skill",
+   "subagent",
+   "webfetch",
+   "websearch",
+   "write",
+   "execute"
+  ],
+  "messages": [
+   {
+    "role": "system",
+    "chars": 21917,
+    "tool_calls": false
+   },
+   {
+    "role": "user",
+    "chars": 148,
+    "tool_calls": false
+   }
+  ]
+ },
+ "anthropic_messages_turn": {
+  "path": "/v1/messages",
+  "keys": [
+   "max_tokens",
+   "messages",
+   "model",
+   "stream",
+   "system",
+   "tools"
+  ],
+  "params": {
+   "model": "esatapedico/Qwen3.8-27B-NVFP4-MTP-GGUF",
+   "stream": true,
+   "max_tokens": 16384
+  },
+  "tools": [
+   "edit",
+   "experimental_image_generate",
+   "glob",
+   "grep",
+   "question",
+   "read",
+   "shell",
+   "skill",
+   "subagent",
+   "webfetch",
+   "websearch",
+   "write",
+   "execute"
+  ],
+  "messages": [
+   {
+    "role": "user",
+    "chars": 218,
+    "tool_calls": false
+   }
+  ]
+ }
+}
