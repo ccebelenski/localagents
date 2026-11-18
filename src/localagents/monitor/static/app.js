@@ -371,9 +371,9 @@
   // 3.7-fold-5 (the coordinator's read): the status line's activity tail no longer rides the
   // figures' line — at card width the row cut after "2 files · …" and hid the ctx bar, the
   // speed and the errors, the very figures the row exists for. Two FIXED lines instead:
-  // `.ep-job-figs` carries the figures; `.ep-act` is the activity's own line, muted (3.7u: both
-  // drawn whole — the 60-char cut and the ellipsis are gone, the card's column floor grows to
-  // the widest line instead, raiseCardFloor below), ALWAYS present — an empty activity is
+  // `.ep-job-figs` carries the figures; `.ep-act` is the activity's own line, muted (3.15: both
+  // end in the stylesheet's ellipsis when wider than the card, the whole text in the title; no
+  // cut in the script), ALWAYS present — an empty activity is
   // an empty line of the same height, so the row's height is two pinned lines whatever the
   // job carries (3.7n: a card's height never depends on its values).
   function epJobRow(job) {
@@ -410,11 +410,13 @@
         text: fmt.int(job.errors) + " tool error" + (job.errors === 1 ? "" : "s"),
       }));
     }
-    // 3.7u: the activity is drawn whole — no 60-char cut, no ellipsis; the card grows to hold
-    // it (raiseCardFloor). The title keeps the same text for a capped card whose line scrolls.
+    // 3.15: both lines carry their whole text in the title; the stylesheet ends a line that is
+    // wider than the card in an ellipsis (the card's width is the grid's, never its text's)
     var act = oneLine(job.last_activity);
+    var figs = h("div", { class: "ep-job-figs" }, row);
+    figs.setAttribute("title", figs.textContent);
     return h("div", { class: "ep-job" }, [
-      h("div", { class: "ep-job-figs" }, row),
+      figs,
       h("div", { class: "ep-act", title: act || null, text: act || "" }),
     ]);
   }
@@ -537,23 +539,27 @@
         h("span", { class: "ep-active muted", title: act.title || null, text: act.text })]),
       stateStrip(ep, snap.now),
       fieldGrid(snap, ep),
-      rates.reason ? h("div", { class: "ep-note ep-line muted", text: "speeds: " + rates.reason }) : null,
+      rates.reason ? h("div", { class: "ep-note ep-line muted", title: "speeds: " + rates.reason,
+        text: "speeds: " + rates.reason }) : null,
       jobsBlock(snap, ep),
     ]);
   }
 
   // `quiet`: the host card already carries the one alert (a node-down card, spec §4: "one alert
   // at the host card; endpoints greyed, not each alarming"), so the endpoint's sentence is left out
+  // 3.15: every one-line text here carries its whole text in the title (the stylesheet's
+  // ellipsis ends it at the card's edge)
   function downEndpoint(snap, ep, quiet) {
+    var seen = ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "";
     return h("div", { class: "endpoint state-down", "data-endpoint": ep.name }, [
       // the state dot (3.7c lane contract): first child of the head; lane B styles .sdot
       h("div", { class: "ep-head" }, [h("span", { class: "sdot sdot-" + ep.state, "aria-hidden": "true" }),
         endpointLink(ep.name), h("span", { class: "tag", text: ep.backend }),
-        h("span", { class: "ep-seen ep-line", text: ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "" })]),
-      ep.error && !quiet ? h("div", { class: "ep-error ep-line", text: ep.error }) : null,
+        h("span", { class: "ep-seen ep-line", title: seen || null, text: seen })]),
+      ep.error && !quiet ? h("div", { class: "ep-error ep-line", title: ep.error, text: ep.error }) : null,
       // the id beside the name makes the sentence clickable; the name alone stays plain text
-      ep.dropped_job_id ? h("div", { class: "ep-jobs ep-line" }, ["running when it dropped: ",
-        jobLink(ep.dropped_job_id)]) : null,
+      ep.dropped_job_id ? h("div", { class: "ep-jobs ep-line", title: "running when it dropped: " + ep.dropped_job_id },
+        ["running when it dropped: ", jobLink(ep.dropped_job_id)]) : null,
     ]);
   }
 
@@ -561,7 +567,8 @@
     var seen = ep.last_seen != null ? "last seen " + fmt.date(ep.last_seen) : "never seen";
     // the state dot (3.7c lane contract) is the first child of this one-line element; it has no
     // ep-head of its own; lane B styles .sdot
-    return h("div", { class: "endpoint state-dormant ep-line", "data-endpoint": ep.name },
+    return h("div", { class: "endpoint state-dormant ep-line", "data-endpoint": ep.name,
+      title: ep.name + " " + ep.backend + ", " + seen },
       [h("span", { class: "sdot sdot-" + ep.state, "aria-hidden": "true" }),
        endpointLink(ep.name), " ", h("span", { text: ep.backend + ", " + seen })]);
   }
@@ -1772,6 +1779,8 @@
         var seen = hosts.querySelector(sel + ".ep-seen");
         if (seen) {
           seen.textContent = ep.last_seen != null ? "last seen " + fmt.ago(ep.last_seen, snap.now) : "";
+          if (seen.textContent) seen.setAttribute("title", seen.textContent);
+          else seen.removeAttribute("title");
         }
       });
     });
@@ -1800,37 +1809,13 @@
   // DOM re-serialisation difference (attribute order, colour form) means one extra swap, never
   // a missed one; node identity is kept at the endpoint and host level, which is what the
   // hover state and the smoke's identity probe rest on.
-  // P-2 (Opus review of the page folds, 3.7u-fix): the comparisons below read a live node as it
-  // was BUILT. raiseCardFloor marks a scrolling line with the `overflows` class on the live node
-  // after every render; a freshly built node never carries it, so comparing raw outerHTML or
-  // className made every marked line look changed — each push replaced the whole endpoint whose
-  // direct child scrolled (strip, figures and jobs with it) and the host head whose note
-  // scrolled. The mark is masked from the live side (a clone with it removed, made only when a
-  // mark is there); a node that is swapped in arrives unmarked and raiseCardFloor, which runs
-  // after the in-place update, marks it again. Masking, rather than moving the mark to a data
-  // attribute: an attribute is serialised by outerHTML too, so it would need the same masking,
-  // and the class keeps the CSS and the smoke's selectors as they are.
-  var OVERFLOW_MARK = "overflows";
-  function builtHTML(el) {
-    if (!el.classList.contains(OVERFLOW_MARK) && !el.querySelector("." + OVERFLOW_MARK)) return el.outerHTML;
-    var copy = el.cloneNode(true);
-    copy.classList.remove(OVERFLOW_MARK);
-    Array.prototype.forEach.call(copy.querySelectorAll("." + OVERFLOW_MARK), function (e) {
-      e.classList.remove(OVERFLOW_MARK);
-    });
-    return copy.outerHTML;
-  }
-  function builtClass(el) {
-    if (!el.classList.contains(OVERFLOW_MARK)) return el.className;
-    return Array.prototype.filter.call(el.classList, function (c) { return c !== OVERFLOW_MARK; }).join(" ");
-  }
-  function sameAsBuilt(liveEl, builtEl) { return builtHTML(liveEl) === builtEl.outerHTML; }
+  function sameAsBuilt(liveEl, builtEl) { return liveEl.outerHTML === builtEl.outerHTML; }
 
   function swapEndpointSubBlocks(oldEp, newEp) {
     if (oldEp.children.length !== newEp.children.length) return false;
     var i;
     for (i = 0; i < newEp.children.length; i++) {
-      if (builtClass(oldEp.children[i]) !== newEp.children[i].className) return false;
+      if (oldEp.children[i].className !== newEp.children[i].className) return false;
     }
     var newKids = Array.prototype.slice.call(newEp.children);
     for (i = 0; i < newKids.length; i++) {
@@ -1872,100 +1857,6 @@
       return { text: "active " + fmt.date(ep.last_active), title: fmt.date(ep.last_active) };
     }
     return { text: "active " + fmt.ago(ep.last_active, snap.now), title: fmt.date(ep.last_active) };
-  }
-
-  // --- 3.7u: the card's column floor, a high-water mark ----------------------------------------
-  // The operator (2026-10-30): "I don't like the '...' convention because it hides information -
-  // either set a minimum card width that can accomodate the widest text, or dynamically size the
-  // card to not truncate (and use that as min size so it can't shrink below that high water
-  // mark). We get fewer cards horizontally, but more complete information."
-  // After every render the page measures every card's one-line rows at their whole width — the
-  // endpoint head, the job row's figures line (the activity line scrolls but is not measured —
-  // 3.10g(1), below), every other one-line text on the
-  // card (the .ep-line class: the speeds note, the last-seen span, a down card's error and its
-  // dropped-job line, the host note, a dormant line) and the field grid (its column count times
-  // the widest tile text, plus the gaps) — each plus the card's own chrome around
-  // it, and raises the #hosts grid's --card-floor to the widest need. The floor is never lowered
-  // during the page's life, so a card never narrows (and the grid never re-flows) when a long
-  // job ends. The stylesheet caps the floor at the grid's own width (min(--card-floor, 100%));
-  // past the cap the line still wider than its card scrolls in its own fixed-height box.
-  var CARD_FLOOR_MIN = 360; // app.css .hosts --card-floor (a test pins the copy)
-  // floor: the high-water mark in px (what --card-floor holds); need: the last measurement's
-  // widest card; raised: how many times the floor went up (the smoke reads all three)
-  var cardLayout = { floor: CARD_FLOOR_MIN, need: 0, raised: 0 };
-
-  function raiseCardFloor() {
-    var hostsEl = byId("hosts");
-    if (!hostsEl || !hostsEl.clientWidth) return; // behind a detail page: nothing laid out to read
-    var each = function (list, fn) { Array.prototype.forEach.call(list, fn); };
-    // pass 1, at the cards' own widths: the chrome around each line (the card's padding and
-    // border; a down endpoint's own box) and each field grid's column count and gap. The line
-    // selector here and the CSS rules that scroll those lines name one set — a test pins the
-    // two lists against each other (U1: an unmeasured line wraps, an unstyled one hides).
-    // P-1 (Opus review of the page folds): a line that is itself a flex item (.ep-seen in a down
-    // endpoint's head, .host-note beside the host name) is measured through its ROW. Its own box
-    // is only part of the row, so card width minus its width counted the row's free space (the
-    // space-between, an auto margin, the room a wide card gives) as chrome: every such line
-    // "needed" exactly its card's current width, and the floor followed the window up and never
-    // came down (one column for the page's life after one narrowing). The row's max-content width
-    // is its items' text plus its gaps; the chrome around the row is the card's own padding and
-    // border (the row is block-level). app.css's .measuring rule gives each such row max-content
-    // (a test pins every flex row that holds an .ep-line to that rule). `marked` keeps the
-    // original lines: the overflows mark below stays on the line that scrolls.
-    var items = [];
-    var marked = [];
-    each(hostsEl.children, function (card) {
-      var cardW = card.getBoundingClientRect().width;
-      var rows = [];
-      each(card.querySelectorAll(".ep-head, .ep-job-figs, .ep-act, .ep-line"), function (line) {
-        marked.push(line);
-        // 3.10g(1) (the operator, 2026-11-01: one running job's tool command made "very wide
-        // cards for no obvious reason"): the activity line is the one unbounded text on a card.
-        // It is marked (it scrolls barless, full text in its title) but never measured, so the
-        // floor follows the head, the figures line and the tile grid — bounded, structural —
-        // and a long tool command widens nothing but its own scroll box.
-        if (line.classList.contains("ep-act")) return;
-        var box = line;
-        if (line.parentNode !== card && /flex/.test(getComputedStyle(line.parentNode).display)) box = line.parentNode;
-        if (rows.indexOf(box) >= 0) return; // the row is measured once (.ep-head is a line itself)
-        rows.push(box);
-        items.push({ line: box, chrome: cardW - box.getBoundingClientRect().width });
-      });
-      each(card.querySelectorAll(".figures"), function (grid) {
-        var style = getComputedStyle(grid);
-        items.push({ texts: grid.querySelectorAll(".fig > .label, .fig > .num, .fig > .kv"),
-          chrome: cardW - grid.getBoundingClientRect().width,
-          columns: style.gridTemplateColumns.split(" ").length, gap: parseFloat(style.columnGap) || 0 });
-      });
-    });
-    // pass 2, every measured element at its max-content width (app.css's .measuring rules): the
-    // text's own width, never the width a stretched 1fr column happens to give it
-    hostsEl.classList.add("measuring");
-    var need = 0;
-    items.forEach(function (it) {
-      var w = 0;
-      if (it.line) w = it.line.getBoundingClientRect().width;
-      else {
-        each(it.texts, function (t) { w = Math.max(w, t.getBoundingClientRect().width); });
-        w = it.columns * w + (it.columns - 1) * it.gap;
-      }
-      need = Math.max(need, w + it.chrome);
-    });
-    hostsEl.classList.remove("measuring");
-    cardLayout.need = Math.ceil(need);
-    if (cardLayout.need > cardLayout.floor) {
-      cardLayout.floor = cardLayout.need;
-      cardLayout.raised++;
-      hostsEl.style.setProperty("--card-floor", cardLayout.floor + "px");
-    }
-    // 3.7u-fix U3: the overflow affordance is a class, not a scrollbar — a bar steals height
-    // from a pinned line box (measured: 10 px off a 21.75 px line). Set on each measured line
-    // after the floor is applied, reading the layout the new floor produced: the band and the
-    // ew-resize cursor mark exactly the lines that scroll in their own box (app.css
-    // .overflows; lines that fit never wear it).
-    marked.forEach(function (line) {
-      line.classList.toggle("overflows", line.scrollWidth > line.clientWidth);
-    });
   }
 
   // 3.9D D4 (fold-3 review): the detail pages' liveness hook. The endpoint page used to watch
@@ -2010,7 +1901,6 @@
       renders.skipped++;
       setUpdatedLine(snap);
       refreshAgoTexts(snap);
-      raiseCardFloor(); // 3.7u: an "active …" phrase can grow by a few characters here
       snapshotListeners.slice().forEach(function (fn) { fn(); }); // 3.9D D4: pages stay live here too
       return;
     }
@@ -2089,7 +1979,6 @@
       hiddenLine.hidden = true;
       hiddenLine.textContent = "";
     }
-    raiseCardFloor(); // 3.7u: the cards are in place; the floor follows their widest line
     renders[rebuilt ? "full" : "inPlace"]++;
     // 3.10b: the overview passes the snapshot's rows and its own note; the endpoint page calls
     // the same renderer from endpoint.js. 3.12b: the renderer returns the PERSISTENT container
@@ -2424,8 +2313,6 @@
     if (!m) {
       detail.hidden = true;
       overview.hidden = false;
-      // 3.7u: renders behind a detail page measured nothing (no layout); measure now
-      raiseCardFloor();
       // back from a detail page: the overview fetched nothing meanwhile, so fetch once now
       if (wasDetail) scheduleHistory(true);
       return;
@@ -2735,7 +2622,6 @@
     jobsTable: jobsTable, // 3.10b: the one renderer both jobs tables draw through
     renders: renders, // 3.7-fold-3 smoke: {full, inPlace, skipped} counts of render passes
     onSnapshot: onSnapshot, // 3.9D D4: the detail pages' snapshot hook; returns the remover
-    cardLayout: cardLayout, // 3.7u smoke: {floor, need, raised} — the column floor's high-water mark
     shortId: shortId, // 3.10f-2: the one short-id rule, exported for the detail pages and the smoke
     jobLink: jobLink, // 3.10f-2: the short id as a link, full id in the title
     dataTable: dataTable, // 3.10c: the one table helper (page, sort, filter)

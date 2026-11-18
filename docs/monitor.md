@@ -67,7 +67,9 @@ throughput, cache hit, KV fill, context window, and the GPU figures on Strata �
 jobs running on it listed at the foot. An endpoint that went down recently is drawn in
 the alert colour with the probe's own sentence ("connection refused" and the like); one
 that has been down longer than the attention window fades to a "last seen" line;
-endpoints never seen at all aren't drawn, just counted under the cards.
+endpoints never seen at all aren't drawn, just counted under the cards. Cards are at least
+500 px wide and share the window's width, so the number across follows the window; a line
+too long for its card ends in "…", and hovering it shows the whole text.
 
 Under the cards is the **Recent jobs** table: running and queued jobs, then the last ten
 finished. Each row has a status pill — one of them is `lost`, for a job whose MCP server

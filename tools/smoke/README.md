@@ -21,9 +21,11 @@ node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/overview.png
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/a.png '#/endpoint/ai1' t/b.png
 # hash-after may be `js:<expression>` to run any script after the first probe, e.g. a render()
 # of a hand-edited snapshot (see nodes.js: states the seed does not produce)
-# 3.7u: the card width (no ellipsis; the column floor only rises): wide.js renders seeded ->
-# wide (a 200-char job name, a 120-char model id, a 300-char activity) -> seeded and measures
-# after each render into `u` (floor, columns, overflowing lines, scrolling lines, heights)
+# 3.15: no text widens a card. wide.js renders seeded -> wide (a 120-char model id, a 300-char
+# activity, speeds note and down error, a stuffed figures line, a 200-char dormant name) ->
+# seeded and reads `u.gates`: gridWidths (every card its grid track), oneLine, ellipsis (every
+# overflowing line hidden + ellipsis), titles (the names of long texts NOT whole in a title: []),
+# noSideways. Run it at several widths (1840, 1400, 900, 600).
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/a.png "js:$(cat tools/smoke/wide.js)"
 # 3.9D D1: nodes.js renders the states the seed does not produce (node down, unknown host, empty
 # table) and then the transition it gatekeeps — one render hiding a card's only drawn endpoint
@@ -45,10 +47,10 @@ node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/nodes.png "js:$(
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/neverseen.png "js:$(cat tools/smoke/neverseen.js)"
 # F1 (fold of the page-batch review 2026-10-30; spec §4 True-now): unknown.js renders a fourth
 # host ai9, node state "unknown", whose one endpoint is state "down" with last_seen 2 h before
-# snap.now and a 300-char error. Two reads into __d1.cases[]: cardLayout.need/floor before and
+# snap.now and a 300-char error. Two reads into __d1.cases[]: the first card's width before and
 # after the render, and after it the head note "unknown" with the sentence in its title, no
-# `.ep-error` child and the sentence absent from the card's text. The need must not move
-# between the two reads — the regression F1 found (946 -> 2634 when the sentence was drawn).
+# `.ep-error` child and the sentence absent from the card's text. (F1's regression was the 3.7u
+# floor following the sentence, 946 -> 2634; 3.15 fixed the floor, the width is a guard only.)
 node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 1400 900 t/unknown.png "js:$(cat tools/smoke/unknown.js)"
 # 3.7v/F3+F4 (commit 39fdb3a; fold of the page-batch review 2026-10-30): handshake.js hand-renders
 # the shared requests table with the eight row shapes — three /api/hello handshakes (501, no
@@ -106,6 +108,12 @@ small `refresh_s` in the monitor's models.yaml to get many pushes quickly. Read 
 
 ## floor.mjs: the column floor is the text's, never the window's (P-1)
 
+True now (3.15, 2026-11-17): the floor is app.css's fixed 500 px; floor.js and floor.mjs are
+reworked to check that — the floor unmoved, the columns the window's auto-fill arithmetic, every
+card at least one track and at most 1.5 floors above 760 px, no sideways scroll — over the default
+widths 2200,1840,1600,1400,1000,760,2200 (seeded: 4/3/3/2/1/1/4 columns). The rest of this section
+is the measured floor's record.
+
 `node tools/smoke/floor.mjs <devtools-port> <url> [widths=2200,2000,2200,1400,2200] [settle_s=3]` opens
 the overview at the first width, resizes through the rest (waiting `settle_s` of pushes: the floor is
 measured after every render, there is no resize listener) and evaluates `floor.js` at each step. floor.js
@@ -125,6 +133,10 @@ the seeded floor is 530 (ai1's `ep-job-figs`) at every step of 2200,1712,1400,10
 columns read 4/3/2/1/4; the figures above are the record of the fold's day.
 
 ## keep.js: the overflow mark never costs a node its identity (P-2)
+
+True now (3.15): the `overflows` mark is gone (a long line ends in an ellipsis); keep.js still
+stamps the nodes and its `overflowing` lists the ellipsised card lines. Seeded, at 900 and 1400:
+`pushes.replaced` [] (kept 6), `inPlace.replaced` [] (kept 8). The rest is the 3.7u-fix record.
 
 `node tools/smoke/cdp.mjs 9231 http://127.0.0.1:8771/ 900 900 t/keep.png "js:$(cat tools/smoke/keep.js)"`
 (run at 900 and at 1400). Read `keep` in the AFTER_JSON line: `pushes` stamps every `.endpoint` and

@@ -2770,6 +2770,42 @@ lands; 3.12c after 3.12b.
   lost the overflow-error sentences (now one paragraph in docs/shim.md). The operator reviews the
   299 lines; the moved pages wait for a later pass.
 
+### 3.15 Card width from the window, not the text (operator 2026-11-17)
+
+- ☑ **3.15 A fixed card floor; long card text ends in an ellipsis.** Operator (2026-11-17, a
+  screenshot at ~1840 px, three cards of ~600 px): "The endpoint cards currently adjust size
+  dynamically with the job output ... Previously I ruled that they should not clip the tools output
+  and adjust dynamically for that. I want to reverse that decision because when a tool output is too
+  long, or there is an endpoint down, the screen becomes unusable with only a single card per line.
+  I think we should limit the size of the cards to something reasonable, still allow the dynamic
+  resizing with the screen itself, but not allow the text to cause the resize." Asked how a line
+  wider than its card should read, the operator chose "Ellipsis + tooltip" over 3.7u's barless
+  scroll; on the size, "having a minimum size would be the better route? Then they can grow and
+  shrink with the screen width", and "We already have an effective minimum screen with the Recent
+  jobs table." Measured on the live page: the Recent jobs table's nowrap cells are 1561.5 px at
+  min-content, so the floor is 500 px — three columns from ~1600 px (and at the operator's 1840),
+  two at 1400, one below ~1024; a card still grows with its track up to 3.10g's 1.5 floors (750).
+  This retires 3.7u's measured floor and the 3.10g(1) skip that patched it: `raiseCardFloor`, the
+  `cardLayout` export, the `overflows` mark and its masking in the in-place compare, the
+  `.measuring` rules, the barless scroll boxes. Every one-line card text (`.ep-head`'s model,
+  `.ep-job-figs`, `.ep-act`, every `.ep-line`) is `overflow: hidden; text-overflow: ellipsis` with
+  its whole text in the title (the figures line's title is its own text; the down card's error, the
+  dropped-job line, the speeds note, the last-seen span and the dormant line gained one); in a flex
+  head the model (or the last-seen span, or the host note) gives way, the name, tag and active
+  phrase keep their width. The tile label and value ellipsise too, which only shows below the floor
+  (a window narrower than 500 px). The heights are pinned as before (3.7n). The endpoint page's
+  tiles keep 3.10d's grow-never-cut rule: that page is not a card grid. Built by the coordinator
+  directly (the operator's choice); suite 1522 passed, 1 skipped. Smokes (seeded world, headless
+  Chromium): floor.mjs reworked (the floor fixed at 500, the columns the window's auto-fill
+  arithmetic, every card one track and at most 1.5 floors, no sideways scroll) green at
+  2200/1840/1600/1400/1000/760/2200 → 4/3/3/2/1/1/4 columns; wide.js reworked (a 120-char model,
+  300-char activity, speeds note and down error, a stuffed figures line, a 200-char dormant name):
+  at 1840/1400/900/600 every card its grid track at all three renders, six lines ellipsised with
+  their whole text in the title, every line one line box, no sideways scroll; keep.js (no node
+  replaced across 7 pushes or the in-place hand render, at 900 and 1400) and unknown.js green;
+  lines.js folded into wide.js and removed. Review: none yet (a cross-model read of the diff is
+  the operator's call).
+
 ## Epic 5: the router (spec docs/superpowers/specs/2026-11-02-router-design.md; plan docs/superpowers/plans/2026-11-02-router.md)
 
 Phase 1 (infrastructure), built 2026-11-02, all landed on main via tools/land.sh after a

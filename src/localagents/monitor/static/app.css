@@ -67,17 +67,16 @@ h2 { font-size: 16.5px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 60
 }
 
 /* host cards */
-/* 3.7u (operator 2026-10-30: "I don't like the '...' convention because it hides information"):
-   the column floor is the card's widest one-line text, measured by app.js after every render and
-   set here as --card-floor; it is raised, never lowered, for the page's life (the high-water
-   mark), so a card never narrows and re-flows when a long job ends. 360px is the floor it starts
-   from (app.js's CARD_FLOOR_MIN; a test pins the copy). min(…, 100%) caps the floor at the
-   grid's own width: a floor wider than the window is one full-width column, and the line that
-   is still wider scrolls inside its own fixed-height box (the .ep-head / .ep-job-figs / .ep-act
-   block at the end) — never wraps (a card's height never depends on its text), never hides. */
+/* 3.15 (operator 2026-11-17, reversing 3.7u: "when a tool output is too long, or there is an
+   endpoint down, the screen becomes unusable with only a single card per line"): the column
+   floor is a fixed minimum, never the cards' text. Columns follow the window alone; a card's
+   one-line text that does not fit ends in an ellipsis with the whole text in its title (the
+   3.15 block at the end). 500px: three columns at the Recent jobs table's own minimum width
+   (~1560px of nowrap cells, measured on the live page). min(…, 100%) keeps one full-width
+   column on a window narrower than the floor. */
 .hosts {
   display: grid; gap: 12px; margin-top: 16px;
-  --card-floor: 360px;
+  --card-floor: 500px;
   grid-template-columns: repeat(auto-fill, minmax(min(var(--card-floor), 100%), 1fr));
 }
 /* 3.10g (operator 2026-10-30, a 1712-px window: "A window that is just not quite wide enough
@@ -87,8 +86,8 @@ h2 { font-size: 16.5px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 60
    the sparklines stretched between; the cap is the card's own, so the lone column packs left
    and leaves the space on the right instead. The cap travels with the floor, not the track:
    the cap at min(--card-floor, 100%) is untouched — past it one full-width column stays
-   full-width (the cap exceeds the narrower track), the 3.7u scrolling lines unchanged. The
-   narrow media query releases it: a phone's card is the window, there is nothing to spread. */
+   full-width (the cap exceeds the narrower track). The narrow media query releases it: a
+   phone's card is the window, there is nothing to spread. */
 .host {
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
   min-width: 0;
@@ -112,12 +111,11 @@ h2 { font-size: 16.5px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 60
   font-size: 12px; color: var(--ink-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px;
 }
 /* the model id never wraps the head to a second line (3.7-fold-3 noticed; fold-4 fixed it with
-   an ellipsis). 3.7u: no ellipsis — the id is drawn whole at its own width (flex: none), the
-   head is one nowrap line inside a card (the 3.7u block at the end), and the card's column
-   floor grows to fit the head; the short form is still status.py's short_model, the full
-   served id in the title */
+   an ellipsis). 3.15: the model is the head's one item that gives way — it shrinks to the room
+   the name, the tag and the active phrase leave and ends in an ellipsis (the 3.15 block at the
+   end); the short form is still status.py's short_model, the full served id in the title */
 .ep-model { color: var(--ink-2); font-family: var(--mono); font-size: 13px;
-  flex: none; white-space: nowrap;
+  white-space: nowrap;
   display: inline-block; vertical-align: bottom; }
 .endpoint.state-down {
   border: 1px solid var(--critical); border-radius: 6px; background: var(--critical-wash);
@@ -141,11 +139,12 @@ h2 { font-size: 16.5px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 60
   font-size: 14.5px; margin-top: 4px; }
 .figures .fig { display: flex; flex-direction: column; min-width: 0; white-space: normal; }
 /* 3.7n: one label line, one value line, whatever the value — a card's height never
-   depends on it (the unit sits in the label, so the values are short). 3.7u: no ellipsis —
-   the column floor counts four of the widest tile text plus the gaps, so a tile holds its
-   text whole at any width the floor reaches */
-.figures .fig .label { color: var(--muted); font-size: 12px; margin-right: 0; white-space: nowrap; }
-.figures .fig .num { font-weight: 600; white-space: nowrap; }
+   depends on it (the unit sits in the label, so the values are short). 3.15: the fixed floor
+   holds every tile's text at a quarter-card; below it (a window narrower than the floor) a
+   tile's text ends in an ellipsis rather than running into its neighbour */
+.figures .fig .label { color: var(--muted); font-size: 12px; margin-right: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.figures .fig .num { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fig { white-space: nowrap; }
 .fig .label { color: var(--muted); margin-right: 4px; }
 .fig svg { vertical-align: middle; margin-left: 4px; }
@@ -306,8 +305,8 @@ h3 { font-size: 14.5px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; 
 .ep-job { line-height: 1.5; }
 .ep-job + .ep-job { margin-top: 3px; }
 /* the activity's own line (3.7-fold-5): its height is pinned to one line-box whether it
-   carries text or not. 3.7u: drawn whole (no 60-char cut, no ellipsis); the overflow rule is
-   the 3.7u block's at the end */
+   carries text or not. No 60-char cut in the script; the ellipsis rule is the 3.15 block's
+   at the end */
 .ep-act { display: block; height: 1.5em; white-space: nowrap; color: var(--muted); }
 
 /* 3.7-fold-1 */
@@ -402,9 +401,8 @@ th.sort-desc::after { content: "▼"; margin-left: 4px; font-size: 11px; color: 
 
 /* 3.7-fold-3 + 3.7r */
 /* 3.7s page half: the last-active phrase at the right end of the live head line, muted. One
-   line whatever the model id (the fold-1 height invariant). 3.7u: drawn whole at its own
-   width (no 12em cap, no ellipsis): the head is one nowrap line and the column floor grows to
-   hold it, so a long model plus this phrase widens the card instead of hiding either. */
+   line whatever the model id (the fold-1 height invariant). Drawn whole (flex: none, no 12em
+   cap): it is short and bounded, and the model beside it is the item that gives way (3.15). */
 .endpoint.state-live .ep-active { margin-left: auto; flex: none; white-space: nowrap; }
 
 /* 3.7l timeline */
@@ -458,8 +456,8 @@ th.sort-desc::after { content: "▼"; margin-left: 4px; font-size: 11px; color: 
 /* the card's job row as two FIXED lines (the coordinator's screenshot read: the one-line row
    cut after "2 files · …" at card width, hiding the ctx bar, the speed, the errors and the
    activity — the figures the row exists for). Line 1: the mark, name, elapsed and the bits
-   that are there, nowrap (3.7u: whole, no ellipsis — the card grows to hold the line; the
-   overflow rule is the 3.7u block below). Line 2 (.ep-act, styled above): the
+   that are there, nowrap (the ellipsis rule is the 3.15 block below). Line 2 (.ep-act,
+   styled above): the
    activity. Both lines pin their own height at one line-box (height: 1.5em on the .ep-jobs
    font, the same 1.5 fold-1 pinned) and .ep-job itself contributes no box of its own, so the
    row is a constant 2 lines whatever the job carries — an empty .ep-act is an empty line of
@@ -467,55 +465,24 @@ th.sort-desc::after { content: "▼"; margin-left: 4px; font-size: 11px; color: 
    job vs the same job with its activity removed report equal card heights). */
 .ep-job-figs { white-space: nowrap; height: 1.5em; }
 
-/* 3.7u */
-/* no card text is hidden (operator 2026-10-30: "I don't like the '...' convention because it
-   hides information"). The card's one-line rows — the endpoint head, the job row's figures line
-   and its activity line — never wrap and never ellipsise: app.js measures each one's whole
-   width after every render and raises the grid's --card-floor (the .hosts rule) until the
-   widest fits, never lowering it. Past the cap (a floor wider than #hosts: one full-width
-   column) the line still wider than its card scrolls sideways in its own barless box: no
-   scrollbar anywhere (U3, 3.7u-fix — scrollbar-width: thin made Chromium ignore the 3 px
-   ::-webkit-scrollbar rules and take a classic bar: 10 px stolen from a 21.75 px line box,
-   and the rules are dead once scrollbar-width is set, so they are gone), and the overflow
-   affordance is a class app.js toggles on each measured line: a 2 px muted band at the
-   bottom edge, a background that adds no height, plus the ew-resize cursor. Decided over the
-   alternatives (3.7u, acceptance 3): a wrap moves the card's height (3.7n); an ellipsis or a
-   clip hides; text spilling past the card's border pushes the whole page sideways; a stock
-   scrollbar (~15 px) would grow the line. The head's height is pinned to the one line it
-   always was (the name's 1.4 line box plus its 1 px dotted underline: 22.6875 px measured);
-   the two job lines were already pinned at 1.5em. */
-.host .ep-head { flex-wrap: nowrap; white-space: nowrap; overflow-x: auto; overflow-y: hidden; }
+/* 3.15 */
+/* the card's width is the grid's, never its text's (operator 2026-11-17, reversing 3.7u's "the
+   card grows to its widest text and keeps that width": a long tool line or a down endpoint's
+   error left one card per row). Every one-line text on a card — the endpoint head, the job
+   row's figures line and its activity line, and every .ep-line (the speeds note, the last-seen
+   span, a down card's error, its "running when it dropped" line, the host card's note, a
+   dormant endpoint's whole line) — is nowrap, clipped to its card and ends in an ellipsis; the
+   builder puts the whole text in the element's title. Heights stay pinned to one line box
+   (3.7n: no text moves a card's height): the head at the name's 1.4 line box plus its 1 px
+   dotted underline, the two job lines at 1.5em, an .ep-line at 1.4em of its own font, a dormant
+   line (a whole .endpoint, border-box) with its 8 px vertical padding and 1 px top border. The
+   detail page's .ep-error keeps its own rule (overflow-wrap: anywhere): it is not a card. */
+.host .ep-head { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
 .host .endpoint.state-live .ep-head { height: calc(1.4em + 1px); }
-.host .ep-job-figs, .host .ep-act { overflow-x: auto; overflow-y: hidden; }
-/* U1 (3.7u-fix): every one-line text element on a card shares this one device — the speeds
-   note, the last-seen span, a down card's error, its "running when it dropped" line, the
-   host card's note and a dormant endpoint's whole line: nowrap, scrolling in its own box past
-   the cap, pinned to one line box so no text can raise the card's height (the floor counts
-   them; the same measuring pass as the head). The pinned height is the element's natural one:
-   1.4em of its own font — a link's dotted underline does not grow a block line box (measured:
-   the dormant line stood at 1.4em + its own box), and a dormant line, being a whole .endpoint,
-   counts its 8 px vertical padding and 1 px top border inside that height (border-box).
-   The detail page's .ep-error keeps its own rule (overflow-wrap: anywhere): the detail is
-   not a card and its lines may wrap. */
-.host .ep-line { white-space: nowrap; overflow-x: auto; overflow-y: hidden; height: 1.4em; }
+.host .ep-job-figs, .host .ep-act, .host .ep-line { overflow: hidden; text-overflow: ellipsis; }
+.host .ep-line { white-space: nowrap; height: 1.4em; min-width: 0; }
 .host .endpoint.state-dormant { height: calc(1.4em + 9px); }
-/* U3: no scrollbar steals height in any browser — the barless box; see the block above.
-   A test pins the set of scrolling classes to raiseCardFloor's measuring selector. */
-.host .ep-head, .host .ep-job-figs, .host .ep-act, .host .ep-line { scrollbar-width: none; }
-/* the overflow affordance (app.js toggles the class on the measured lines): a 2 px muted band
-   at the line's bottom edge — a background adds no height — and the cursor says the line
-   scrolls; no title (the text itself is visible and scrolling, unlike an ellipsis) */
-.host .overflows { background: linear-gradient(to top, var(--muted) 2px, transparent 2px);
-  cursor: ew-resize; }
-/* the measuring pass (app.js cardNeed): for the span of one synchronous read, every measured
-   line and tile text takes its max-content width, so the read is the text's own width, never
-   the width the card happens to stretch it to (a 1fr column wider than the floor would
-   otherwise ratchet the floor up to whatever the window gave it); flex items also keep it
-   (flex-shrink: 0) so a shrinking parent cannot hide a line's true width from the read. A line
-   that is a flex item is measured through its row (P-1: its own box left the row's free space
-   counted as chrome), so every flex row holding an .ep-line is here too: .ep-head (a down
-   endpoint's .ep-seen) and .host-head (.host-note) — a test pins the set */
-.hosts.measuring .ep-head, .hosts.measuring .host-head, .hosts.measuring .ep-job-figs, .hosts.measuring .ep-act,
-.hosts.measuring .figures .fig > .label, .hosts.measuring .figures .fig > .num,
-.hosts.measuring .figures .fig > .kv { width: max-content; }
-.hosts.measuring .ep-line { width: max-content; flex-shrink: 0; }
+/* in a flex row (the head, the host head) the text item gives way, the rest keep their width:
+   the model id on a live head, the last-seen span on a down head, the note beside the host name
+   (the .ep-line rule above) */
+.host .ep-head .ep-model { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

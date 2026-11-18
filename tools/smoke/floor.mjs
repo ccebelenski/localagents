@@ -1,16 +1,13 @@
-// 3.7u-fix P-1: the column floor across window sizes. Opens the overview at the first width, then
-// resizes through the rest, waiting `settle_s` (several snapshot pushes: the floor is measured
-// after every render, there is no resize listener) before each sample, and evaluates floor.js at
-// each step: the page's floor beside the text's need measured independently, the grid's columns.
-// The floor is a high-water mark of TEXT: it must hold at the widest line's need whatever the
-// window did, and the columns must come back when the window does.
-// usage: node tools/smoke/floor.mjs <devtools-port> <url> [widths=2200,2000,2200,1400,2200] [settle_s=3]
-// prints one JSON line per step and a SUMMARY line; exits 1 if any step's floorIsText or
-// needIsText is false, or — above the 760 px narrow query — the first card's width exceeds
-// 1.5 x the floor (3.10g F4: the cap is a card rule, and a released override used to pass).
+// 3.15: the fixed column floor across window sizes. Opens the overview at the first width, then
+// resizes through the rest, waiting `settle_s` before each sample, and evaluates floor.js at each
+// step: the stylesheet's floor unmoved, the columns the window's arithmetic, every card between
+// one track and 1.5 floors (3.10g: the cap is a card rule, and a released override used to pass),
+// and no sideways page scroll.
+// usage: node tools/smoke/floor.mjs <devtools-port> <url> [widths=2200,1840,1600,1400,1000,760,2200] [settle_s=2]
+// prints one JSON line per step and a SUMMARY line; exits 1 if any step's `ok` is false.
 import { readFileSync } from "node:fs";
 
-const [port, url, widthsArg = "2200,2000,2200,1400,2200", settleArg = "3"] = process.argv.slice(2);
+const [port, url, widthsArg = "2200,1840,1600,1400,1000,760,2200", settleArg = "2"] = process.argv.slice(2);
 const widths = widthsArg.split(",").map(Number);
 const settle = +settleArg * 1000;
 const probe = readFileSync(new URL("./floor.js", import.meta.url), "utf8");
@@ -43,15 +40,8 @@ for (let i = 0; i < widths.length; i++) {
   steps.push(o);
   console.log(JSON.stringify(o));
 }
-// 3.10g (F4 fold): above the narrow query (760 px) a card never grows past one and a half
-// floors. The cap is a card rule, so a released override — a later top-level
-// `.host { max-width: none; }` — shows up as a wide card while floorIsText and needIsText
-// stay true; the old exit logic only checked those two. At/below 760 px the query releases
-// the cap on purpose (the phone's card is the window).
-const cardOk = (s) => s.w <= 760 || s.cardWidth == null || s.floor == null
-  || s.cardWidth <= s.floor * 1.5 + 1;
-const ok = steps.every((s) => s.floorIsText && s.needIsText && cardOk(s));
-console.log("SUMMARY " + JSON.stringify({ ok, steps: steps.map((s) => `${s.w}: floor ${s.floor} need ${s.need} text ${s.oracle} cols ${s.columns} card ${s.cardWidth} cardOk ${cardOk(s)}`), logs }));
+const ok = steps.every((s) => s.ok);
+console.log("SUMMARY " + JSON.stringify({ ok, steps: steps.map((s) => `${s.w}: floor ${s.floor} cols ${s.columns}/${s.expectCols} cards ${s.cards.join(",")} page ${s.pageScroll} ok ${s.ok}`), logs }));
 await fetch(`http://127.0.0.1:${port}/json/close/${target.id}`);
 ws.close();
 process.exit(ok ? 0 : 1);

@@ -166,7 +166,10 @@ unknown node is quiet the same way — the head note "unknown", the sentence in 
 hidden on a down node too, a down node with nothing left to draw has no card, and the
 hidden-count line names it "<endpoint> (node down)".) (True now (3.10g, 2026-10-30): a card
 never stretches past one and a half floors — a lone column packs left and leaves space rather
-than spreading the fixed tiles across the window; the floor itself is unchanged.)
+than spreading the fixed tiles across the window; the floor itself is unchanged.) (True now (3.15,
+2026-11-17, the operator reversing 3.7u): the card floor is a fixed 500 px and nothing a card says
+moves it; the columns follow the window alone, and a card line wider than its card ends in an
+ellipsis with its whole text in the title.)
 
 ## 5. Page and navigation
 

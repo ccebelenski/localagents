@@ -95,10 +95,9 @@ SMOKE_CLASSES = ["host", "endpoint", "state-live", "state-down", "state-dormant"
                  "pill",
                  # 3.7-fold-3 (3.7s page half): the last-active phrase on the live head line
                  "ep-active",
-                 # 3.7u-fix (U1/U3): the one shared class for every one-line text element on a
-                 # card, and the class the floor's pass marks on the lines that scroll in their
-                 # own box (worn through classList.toggle, which the scan below reads)
-                 "ep-line", "overflows"]
+                 # 3.7u-fix (U1): the one shared class for every one-line text element on a
+                 # card (3.15: each ends in an ellipsis, its whole text in the title)
+                 "ep-line"]
 # the classes the job page's smoke names (story 3.4's brief): the page root and its sections,
 # the status classes the header's mark takes (a queued job takes one more, styled but not
 # smoked)
@@ -139,8 +138,7 @@ def test_the_page_carries_every_class_the_smoke_and_spec_name():
     script, and the stylesheet styles it."""
     text = (STATIC / "index.html").read_text() + (STATIC / "app.js").read_text() + (STATIC / "job.js").read_text()
     # the overview's `cls += "node-down"` style and the job page's status class map values
-    # (3.7u-fix: classList.toggle too — the overflows class is never in a class string, it is
-    # toggled on measured lines by raiseCardFloor)
+    # (and a class worn through classList.toggle, which is never in a class string)
     strings = re.findall(r'class="([^"]*)"|class: "([^"]*)"|cls \+?= "([^"]*)"|"(node-[a-z]+)"|"(status-[a-z]+)"'
                          r'|classList\.toggle\("([^"]+)"', text)
     classes = {c for groups in strings for s in groups for c in s.split()}
@@ -308,12 +306,12 @@ def test_the_server_gone_badge_is_gone_and_a_lost_server_inks_the_pill():
     assert re.search(r'statusPill\(lost \? "lost" : job\.status\)', row_src)
 
 
-# --- story 3.7u: no ellipsis on the cards ---------------------------------------------------------
+# --- story 3.15: the card's width is the grid's; its long text ends in an ellipsis ---------------
 
-# every `text-overflow: ellipsis` rule the stylesheet may hold, by its exact selector, each naming
-# something that is never inside a host card (3.7u, the operator: "I don't like the '...'
-# convention because it hides information"). A card rule with an ellipsis, or a new ellipsis rule
-# anywhere, fails until it is listed here with why it is not card text.
+# every `text-overflow: ellipsis` rule the stylesheet may hold, by its exact selector. 3.15
+# (operator 2026-11-17, reversing 3.7u's "no ellipsis on the cards": a long tool line or a down
+# endpoint's error drew one card per row) puts the card's one-line texts back on the ellipsis,
+# their whole text in the title; a new ellipsis rule anywhere fails until it is listed here.
 ELLIPSIS_OUTSIDE_CARDS = {
     "#meta .db",      # the header's database path (elided from the left; the title holds it)
     "td.cut",         # the jobs and requests tables' long cells (the title holds the text)
@@ -321,6 +319,13 @@ ELLIPSIS_OUTSIDE_CARDS = {
     ".tl-label a",    # the timeline's endpoint labels (section.fleet, after the cards)
     ".tl-job",        # the timeline's job bars
 }
+ELLIPSIS_ON_CARDS = {
+    ".host .ep-job-figs", ".host .ep-act", ".host .ep-line",  # the job row's two lines, every .ep-line
+    ".host .ep-head .ep-model",  # the live head's model id: the head's one item that gives way
+    ".figures .fig .label", ".figures .fig .num",  # the tiles, below the floor (a narrow window)
+}
+# the classes of the card's one-line texts: each must be clipped by some .host rule
+CARD_LINES = {"ep-head", "ep-job-figs", "ep-act", "ep-line", "ep-model"}
 
 
 def _css_rules(css):
@@ -330,18 +335,40 @@ def _css_rules(css):
     return [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)]
 
 
-def test_no_ellipsis_rule_applies_inside_a_host_card():
-    """3.7u: no card text ends in an ellipsis. Every selector of every rule that sets
-    ``text-overflow: ellipsis`` is one of the listed non-card selectors, and none of them names a
-    card class (the card's lines are ep-head, ep-model, ep-active, ep-job-figs, ep-act and the
-    field grid's tile label and value)."""
+def test_the_ellipsis_rules_are_exactly_the_listed_ones():
+    """3.15: the card's one-line texts end in an ellipsis; outside the cards the four old permits
+    stand. The set is exact both ways, so a card line losing its ellipsis fails as surely as a
+    new one appearing."""
     rules = _css_rules((STATIC / "app.css").read_text())
     selectors = {s.strip() for sel, body in rules if re.search(r"text-overflow\s*:\s*ellipsis", body)
                  for s in sel.split(",")}
-    assert selectors  # the scan sees the rules it is about (the header's path keeps one)
-    assert selectors <= ELLIPSIS_OUTSIDE_CARDS, sorted(selectors - ELLIPSIS_OUTSIDE_CARDS)
+    assert selectors == ELLIPSIS_OUTSIDE_CARDS | ELLIPSIS_ON_CARDS, (
+        sorted(selectors - ELLIPSIS_OUTSIDE_CARDS - ELLIPSIS_ON_CARDS),
+        sorted(ELLIPSIS_OUTSIDE_CARDS | ELLIPSIS_ON_CARDS - selectors))
     card = re.compile(r"\.(host|endpoint|ep-[\w-]+|figures|fig|hosts)(?![\w-])")
     assert [s for s in ELLIPSIS_OUTSIDE_CARDS if card.search(s)] == []
+
+
+def test_every_card_line_is_clipped_never_scrolled():
+    """3.15: every one-line card text is ``overflow: hidden`` under a ``.host`` rule (the
+    ellipsis needs it; a hidden overflow also keeps a long line off the page), and nothing on a
+    card scrolls any more — 3.7u's barless scroll boxes, their ``overflows`` mark and the
+    measuring rules are gone with the floor they served."""
+    css = (STATIC / "app.css").read_text()
+    rules = _css_rules(css)
+    clipped = set()
+    for sel, body in rules:
+        if not re.search(r"overflow\s*:\s*hidden", body):
+            continue
+        for s in sel.split(","):
+            if s.strip().startswith(".host "):
+                clipped.add(s.split()[-1].lstrip(".").split(".")[-1])
+    assert CARD_LINES <= clipped, sorted(CARD_LINES - clipped)
+    for sel, body in rules:
+        if any(s.strip().startswith((".host ", ".hosts")) for s in sel.split(",")):
+            assert not re.search(r"overflow(-x)?\s*:\s*(auto|scroll)", body), sel
+            assert "scrollbar-width" not in body, sel
+    assert ".overflows" not in css and ".measuring" not in css
 
 
 def _js_function(js, name):
@@ -352,169 +379,67 @@ def _js_function(js, name):
     return m.group(0)
 
 
+def test_every_card_line_carries_its_whole_text_in_the_title():
+    """3.15 (the operator's choice: "Ellipsis + tooltip"): an ellipsised line is still readable
+    whole on hover. Every ``ep-line`` built by a card builder sets a title in the same attribute
+    object; the job row's activity line and its figures line carry theirs; the model keeps the
+    full served id."""
+    js = _app_js()
+    builders = "".join(_js_function(js, n) for n in ("liveEndpoint", "downEndpoint", "dormantEndpoint",
+                                                     "hostCard", "epJobRow"))
+    lines = re.findall(r'h\("\w+", \{ class: "([^"]*\bep-line\b[^"]*)"([^}]*)\}', builders)
+    assert {c.split()[0] for c, _ in lines} >= {"ep-note", "ep-seen", "ep-error", "ep-jobs", "endpoint",
+                                                "host-note"}, lines
+    assert [c for c, attrs in lines if "title:" not in attrs] == []
+    row = _js_function(js, "epJobRow")
+    assert re.search(r'class: "ep-act", title: act', row), row
+    assert 'figs.setAttribute("title", figs.textContent);' in row
+    assert re.search(r'class: "ep-model", title: ep\.model', _js_function(js, "liveEndpoint"))
+
+
 def test_ep_job_row_cuts_no_text():
-    """3.7u: the card's job row draws the activity whole (3.7-fold-5 cut it at 60 chars and
-    appended an ellipsis; the full text rode only in the title). No slice, substring or
-    ellipsis-appending concatenation in epJobRow."""
+    """The script never cuts a job line (3.7-fold-5 once cut the activity at 60 chars and
+    appended an ellipsis; 3.15 leaves the cut to the stylesheet, the whole text in the title).
+    No slice, substring or ellipsis-appending concatenation in epJobRow."""
     body = _js_function(_app_js(), "epJobRow")
     assert "last_activity" in body  # the extraction found the row builder
     assert re.search(r"\.(slice|substring|substr)\(", body) is None
     assert re.search(r"\+\s*\"…\"", body) is None
 
 
-def test_the_card_floor_starts_where_the_stylesheet_does_and_only_rises():
-    """3.7u: the grid's column floor is app.css's ``--card-floor`` (360px, the old fixed
-    minimum) until app.js measures a wider card; app.js's copy is the same number, the grid
-    caps the floor at its own width, and raiseCardFloor only ever raises it (the high-water
-    mark: one assignment of the floor, behind a greater-than)."""
+def test_the_card_floor_is_the_stylesheets_fixed_number():
+    """3.15: the grid's column floor is app.css's ``--card-floor`` alone (500px: three columns at
+    the Recent jobs table's own minimum width), capped at the grid's width; app.js never
+    measures a card's text or touches the floor (3.7u's raiseCardFloor, its high-water mark and
+    the ``cardLayout`` export are gone), so no text can widen a card."""
     css = (STATIC / "app.css").read_text()
     hosts = next(body for sel, body in _css_rules(css) if sel == ".hosts")  # the first: not @media's
-    css_floor = re.search(r"--card-floor:\s*(\d+)px", hosts)
-    assert css_floor is not None
+    assert re.search(r"--card-floor:\s*500px", hosts), hosts
     assert "minmax(min(var(--card-floor), 100%), 1fr)" in hosts
     js = _app_js()
-    js_floor = re.search(r"var CARD_FLOOR_MIN = (\d+);", js)
-    assert js_floor is not None and js_floor.group(1) == css_floor.group(1)
-    body = _js_function(js, "raiseCardFloor")
-    assert re.findall(r"cardLayout\.floor = [^;]+;", body) == ["cardLayout.floor = cardLayout.need;"]
-    assert "if (cardLayout.need > cardLayout.floor) {" in body
-
-
-def test_every_card_line_the_css_makes_scrollable_is_measured_by_the_floor():
-    """3.7u-fix (U1/U3): the card's one-line texts live by one device — the stylesheet scrolls
-    them (an ``overflow-x: auto`` rule under ``.host``) and raiseCardFloor measures them (its
-    line selector). The lists are each other's oracle: a class the CSS scrolls but the floor
-    does not measure can wrap or spill the page; one the floor measures but the CSS does not
-    scroll grows a bar or a second line. Every scrolling class must also suppress its bar
-    (U3: a scrollbar steals height from a pinned line box)."""
-    rules = _css_rules((STATIC / "app.css").read_text())
-    scrollable = set()
-    for sel, body in rules:
-        if not re.search(r"overflow-x\s*:\s*auto", body):
-            continue
-        for s in sel.split(","):
-            if not s.strip().startswith(".host"):
-                continue
-            scrollable.update(m.group(1) for m in re.finditer(r"\.([A-Za-z][\w-]*)", s)
-                              if m.group(1) != "host")
-    assert scrollable  # the scan sees the 3.7u block it is about
-    js = _app_js()
-    measured_sel = re.search(r'querySelectorAll\("(\.ep-head[^"]*)"\)', _js_function(js, "raiseCardFloor"))
-    assert measured_sel is not None
-    measured = {m.group(1) for m in re.finditer(r"\.([A-Za-z][\w-]*)", measured_sel.group(1))}
-    assert scrollable == measured, (sorted(scrollable - measured), sorted(measured - scrollable))
-    suppressed = set()
-    for sel, body in rules:
-        if re.search(r"scrollbar-width\s*:\s*none", body):
-            for s in sel.split(","):
-                suppressed.update(m.group(1) for m in re.finditer(r"\.([A-Za-z][\w-]*)", s))
-    assert scrollable <= suppressed, sorted(scrollable - suppressed)
+    for gone in ("--card-floor", "raiseCardFloor", "cardLayout", "CARD_FLOOR_MIN", '"overflows"', '"measuring"'):
+        assert gone not in js, gone
 
 
 def test_no_webkit_scrollbar_rule_remains_in_the_stylesheet():
-    """3.7u-fix U3 (app.css:419-422 at 3.7u): once ``scrollbar-width`` is set, Chromium follows
-    the standard property and ignores the 3 px ``::-webkit-scrollbar`` rules — the thin bar it
-    took stole 10 px from the pinned line box (clientHeight 12 of 21.75). The webkit pair was
-    dead weight and its bar a height thief; none may come back."""
+    """3.7u-fix U3: the 3 px ``::-webkit-scrollbar`` rules were dead weight once
+    ``scrollbar-width`` was set, and their bar a height thief; none may come back."""
     rules = _css_rules((STATIC / "app.css").read_text())
     offenders = [sel for sel, _ in rules if "::-webkit-scrollbar" in sel]
     assert offenders == [], offenders
 
 
-def _ep_line_parents(src):
-    """For every class literal in ``src`` that carries ``ep-line``: (the literal, the first class
-    of the ``h(...)`` call whose children array holds that line directly — None when the line is
-    not built inside another ``h()``, e.g. a function's return value). A small scanner: comments
-    and string literals are skipped, brackets tracked on a stack of (char, position)."""
-    out = []
-    stack = []
-    i, n = 0, len(src)
-    while i < n:
-        c = src[i]
-        if src.startswith("//", i):
-            i = src.index("\n", i)
-            continue
-        if src.startswith("/*", i):
-            i = src.index("*/", i) + 2
-            continue
-        if c in "\"'":
-            j = i + 1
-            while src[j] != c:
-                j += 2 if src[j] == "\\" else 1
-            lit = src[i + 1:j]
-            if c == '"' and re.search(r"class:\s*$", src[max(0, i - 12):i]) and "ep-line" in lit.split():
-                # the stack at a child's class literal: ( parent h-call, [ children, ( child h-call, { attrs
-                parent = None
-                if [ch for ch, _ in stack[-4:]] == ["(", "[", "(", "{"]:
-                    m = re.match(r'\("\w+",\s*\{\s*class:\s*"([^"]+)"', src[stack[-4][1]:])
-                    if m:
-                        parent = m.group(1).split()[0]
-                out.append((lit, parent))
-            i = j + 1
-            continue
-        if c in "([{":
-            stack.append((c, i))
-        elif c in ")]}":
-            stack.pop()
-        i += 1
-    return out
-
-
-def test_every_flex_row_holding_a_card_line_is_measured_at_max_content():
-    """P-1 (Opus review of the page folds, 3.7u-fix): a line that is a flex item — .ep-seen in a
-    down endpoint's head, .host-note beside the host name — is measured through its ROW: its own
-    box left the row's free space counted as chrome, so every such line needed its card's whole
-    width and the floor followed the window up for the page's life (one column at 2200 px). The
-    row reads its text only at max-content, which app.css's .measuring rule gives; this gate
-    reads the card builders for every ``ep-line`` built directly inside another element, and
-    every such parent the stylesheet makes a flex container must be in the .measuring
-    max-content set. What width the row then reads is the smoke's (tools/smoke/floor.mjs)."""
+def test_in_place_comparisons_read_the_live_node_as_it_is():
+    """3.15: with 3.7u's ``overflows`` mark gone, nothing is set on a live card node after it is
+    built, so the in-place helpers compare the live node's own serialisation and class string
+    with the fresh build's (the masking helpers builtHTML/builtClass went with the mark)."""
     js = _app_js()
-    found = []
-    for name in ("liveEndpoint", "downEndpoint", "dormantEndpoint", "hostCard", "epJobRow", "jobsBlock"):
-        found += _ep_line_parents(_js_function(js, name))
-    parents = {p for _, p in found}
-    # the scan sees what it is about: the two flex rows and a block parent
-    assert {"ep-head", "host-head", "endpoint"} <= parents, found
-    flex, max_content = set(), set()
-    for sel, body in _css_rules((STATIC / "app.css").read_text()):
-        for part in (p.strip() for p in sel.split(",")):
-            if not part:
-                continue
-            classes = set(re.findall(r"\.([A-Za-z][\w-]*)", part.split()[-1]))
-            if re.search(r"display\s*:\s*(inline-)?flex\b", body):
-                flex |= classes
-            if part.startswith(".hosts.measuring") and re.search(r"width\s*:\s*max-content", body):
-                max_content |= classes
-    rows = {p for p in parents if p in flex}
-    assert rows >= {"ep-head", "host-head"}, (rows, sorted(flex))
-    assert rows <= max_content, sorted(rows - max_content)
-    # and the floor measures a flex item through its row (the substitution in raiseCardFloor)
-    assert re.search(r"/flex/\.test\(getComputedStyle\(line\.parentNode\)\.display\)",
-                     _js_function(js, "raiseCardFloor"))
-
-
-def test_in_place_comparisons_mask_the_overflows_mark():
-    """P-2 (Opus review of the page folds, 3.7u-fix): raiseCardFloor marks scrolling lines on the
-    LIVE nodes; the in-place update compares live nodes with freshly built ones, which never carry
-    the mark, so a raw outerHTML or className comparison replaced the whole endpoint (or host
-    head) on every push whenever a line scrolled. Every comparison in the two in-place helpers
-    reads the live side through the masking helpers, and the helpers mask the very class
-    raiseCardFloor toggles. (Node identity across pushes is the smoke's: tools/smoke/keep.js.)"""
-    js = _app_js()
-    toggled = re.findall(r'classList\.toggle\("([^"]+)"', _js_function(js, "raiseCardFloor"))
-    assert toggled == ["overflows"], toggled
-    assert re.search(r'var OVERFLOW_MARK = "' + toggled[0] + '";', js)
-    for helper in ("builtHTML", "builtClass"):
-        assert "OVERFLOW_MARK" in _js_function(js, helper), helper
+    assert "builtHTML" not in js and "builtClass" not in js and "OVERFLOW_MARK" not in js
+    assert "function sameAsBuilt(liveEl, builtEl) { return liveEl.outerHTML === builtEl.outerHTML; }" in js
     update = _js_function(js, "updateHostInPlace")
     swap = _js_function(js, "swapEndpointSubBlocks")
-    # no raw read of a live node's serialisation or class string is left in either helper; the
-    # one className read allowed is the freshly built side's
-    assert ".outerHTML" not in update and ".outerHTML" not in swap
-    assert re.findall(r"[\w\]\[.]+\.className", update + swap) == ["newEp.children[i].className"]
     assert update.count("sameAsBuilt(") == 2 and swap.count("sameAsBuilt(") == 1
-    assert swap.count("builtClass(") == 1
+    assert "oldEp.children[i].className !== newEp.children[i].className" in swap
 
 
 # --- story 3.4: the job detail page (job.js) ----------------------------------------------------
