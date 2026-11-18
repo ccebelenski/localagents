@@ -16,8 +16,9 @@ ai9 with a resume). Every review found no defect in the rule as written (3.15, 6
 its own worktree/session management tools to every job and a permission deny did not stop them
 (one ran live) — the job's config now switches their plugins off, so an OpenCode job gets exactly
 Claude Code's default seven tools; and the Anthropic shim code had been copied rather than moved
-(the duplicate is gone). The record of every story is EPICS Epic 6. Next: 6.9-6.12 (6.8, the
-policy translation, landed 2026-11-18 at the operator's go and was reviewed clean); the operator's open items:
+(the duplicate is gone). The record of every story is EPICS Epic 6. Next: 6.10-6.12 (6.8, the
+policy translation, landed 2026-11-18 at the operator's go and was reviewed clean; 6.9 ON HOLD: the
+operator is re-evaluating the whole router layer); the operator's open items:
 OpenCode sometimes replaces a session's MCP process (cancel/resume from a parent may reach a server
 that does not own the job), and the monitor at :8765 still runs the code it was started with.
 

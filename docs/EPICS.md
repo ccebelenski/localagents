@@ -3312,6 +3312,11 @@ local backends' errors. (True now: settled by 6.2's captures, below.)
 - ☐ **6.9 Router and calibration across harnesses.** Calibration through the seam; whether
   capability cells and speed curves are keyed by harness as well as model (the same model may
   score differently under two harnesses) is a design question for the operator.
+  **ON HOLD (operator 2026-11-18):** "Let's hold off on calibration right now - I'm re-evaluating
+  the whole router layer since the coordinating models seem to do a good job picking lanes
+  already". Nothing of 6.9 is started. What it would need stays as written above; the router and
+  calibration keep running Claude Code jobs only (calibration passes no harness, so its jobs take
+  the default).
 - ☐ **6.10 Docs.** README and docs/using.md for both clients and both harnesses.
 - ☐ **6.11 Installation (placeholder, to shape).** Today install is the README's seven manual
   steps (`uv tool install -e .`, copy `models.example.yaml`, `claude mcp add`, the auto-background
