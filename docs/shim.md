@@ -1,7 +1,16 @@
 # What the shim does
 
-Both llama.cpp and vLLM speak `/v1/messages` natively, so pointing
-`ANTHROPIC_BASE_URL` at them almost works. The shim handles what doesn't.
+Every job's requests go through an in-process shim on their way to the backend. It
+records each one (timing, message count, byte size, the backend's usage) in the
+`requests` table, puts the endpoint's real `api_key` on it so the session never sees the
+key, and writes the `thinking`/`effort` levers into the body when a caller set them.
+It speaks two APIs, one per harness: Anthropic's `/v1/messages` for Claude Code jobs and
+OpenAI's `/v1/chat/completions` for OpenCode jobs. llama.cpp, Strata and vLLM serve both.
+
+## Claude Code jobs: `/v1/messages`
+
+The backends speak `/v1/messages` natively, so pointing `ANTHROPIC_BASE_URL` at them
+almost works. The shim handles what doesn't.
 
 Claude Code puts `role: system` entries
 inside `messages` — the skills listing, a token-budget marker, and one more per
@@ -33,8 +42,22 @@ Claude Code opens every session with a request to `/api/hello`,
 which no local backend serves. The shim answers it itself, so the backend never sees
 it and it is not counted as an error.
 
-Everything the shim does is a no-op when it isn't needed, and every request is
-recorded with its timing, message count, byte size and reported usage.
+Claude Code's ToolSearch tool answers with a `tool_reference` item inside a tool result.
+llama.cpp's Qwen template accepts only text there and fails the request with HTTP 500
+("Unexpected item type in content"); the shim rewrites each such item as a line of text
+naming the tool.
+
+Everything the shim does is a no-op when it isn't needed.
+
+## OpenCode jobs: `/v1/chat/completions`
+
+An OpenCode job's requests are relayed as OpenCode wrote them. The backends' usage is
+mapped onto the same columns as a Claude Code job's, so every figure reads the same way:
+both count the cached part of the prompt inside `prompt_tokens` and state it as
+`prompt_tokens_details.cached_tokens`, so `input_tokens` is the uncached part and
+`cache_read_tokens` the cached one. The generation clock starts at the first chunk that
+carries generated text, reasoning or a tool call, not at the role announcement before it.
+On vLLM, `--enable-prompt-tokens-details` is needed for the cached part here too.
 
 ## Context windows
 
@@ -52,6 +75,12 @@ Two layers keep a session inside the real window:
    `exceed_context_size_error`; vLLM's Anthropic endpoint reports it as an HTTP 500
    `internal_error`; Strata refuses earlier, because it counts `max_tokens` against
    the window. All three are translated.
+
+An OpenCode job gets the window as its model's `limit.context` in the configuration the
+server writes for it, with an output budget of an eighth of the window (8k to 32k), and
+OpenCode compacts on its own before it fills. An overflow that still happens goes back to
+OpenCode as the backend sent it; OpenCode compacts and retries on llama.cpp's and Strata's
+errors. Either way the request's row notes the overflow.
 
 At 64k this works but thrashes: Claude Code's ~20k of fixed prompt and tool
 schemas, plus a ~7k-token compaction summary (~55 s on a 27B) and the files it

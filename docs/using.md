@@ -1,7 +1,9 @@
 # Using localagents
 
 The tools, the relay subagent, the status line, and where a job's record lives. The
-[README](../README.md) covers setup; this page is the rest of the day-to-day.
+[README](../README.md) covers setup; this page is the rest of the day-to-day. It is written
+for a Claude Code session running Claude Code jobs; what differs with OpenCode, as the
+coordinator or as the harness a job runs in, is in [opencode.md](opencode.md).
 
 Claude picks it up like any tool. Ask for it by name and it'll do the right thing:
 
@@ -9,7 +11,7 @@ Claude picks it up like any tool. Ask for it by name and it'll do the right thin
 
 What Claude does behind that: `list_models` to see what's up and pick a model, then
 `run_agent` with the brief and `wait_s` set to the job's timeout. The call blocks
-until the job ends; after the auto-background delay Claude Code moves it to a
+until the job ends; in Claude Code, after the auto-background delay it is moved to a
 background task (shown in `/tasks`), Claude keeps working, and the final job record
 arrives as a task notification. Claude reads `diff_files` (a worktree job's changed
 files, shell writes included; null for a job with no worktree) or the worktree diff, and
@@ -19,7 +21,7 @@ waits — e.g. `running: 312s, 9 turns, 23 tool calls, 2 errors; Bash: uv run py
 to about 28 hours. To run several jobs, Claude makes one blocking call per job; each
 one notifies on its own when it finishes.
 
-A job's commands may run in the background by default, as in any Claude Code session. That
+A Claude Code job's commands may run in the background by default, as in any Claude Code session. That
 has one cost worth knowing. A session that starts a background task outlives its result,
 because the harness waits for the task and then takes another turn, and the job holds its
 slot all that time. A task that never exits holds it until the job's timeout. While a job is
@@ -61,7 +63,7 @@ to check with you if the id looks unfamiliar, and `list_models` flags windows un
 | tool | what it does |
 |---|---|
 | `list_models` | endpoints with live health (`host` up/down separately from the endpoint), served ids, context window, slot occupancy |
-| `run_agent` | start a job: `task`, `model`, `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `max_turns`, `permission_mode`, `resume_job`, `background_tasks`, … |
+| `run_agent` | start a job: `task`, `model`, `endpoint`, `harness` (`claude-code`/`opencode`), `cwd`, `isolation` (`none`/`worktree`), `wait_s`, `timeout_s`, `max_turns`, `permission_mode`, `allowed_tools`, `system_prompt_append`, `resume_job`, `background_tasks`, `priority`, … |
 | `wait_job` / `wait_jobs` / `cancel_job` | the waits block on any server's job — another server's is polled from its row in the shared database — reporting progress while they block; `wait_jobs` takes several ids (`mode` all/any); `cancel_job` stops a job this server started and returns its final record once the session's teardown has settled it (up to two minutes, with progress; a `note` says when it has not) |
 | `job_status` / `job_log` / `list_jobs` | read any server's jobs, from the database; `job_log(tools=N)` adds the last N tool calls and carries a `note` when neither the finished job's `transcripts` row nor its directory exists — a finished job's transcript is read from the database, so it outlives the file's retention — `job_log(tail_lines=0)` returns the whole transcript, `list_jobs(all=True)` spans every server's, and the listing answers with the 50 newest by default (`limit=0` lists everything) |
 | `foreign_job` | the answer only `cancel_job` and `run_agent(resume_job=…)` give for a job another server started (they need its process); the waits and the three reads above work on any job |
@@ -159,12 +161,14 @@ an endpoint that could not be read shows the session count alone. Queued jobs ar
 listed under the running ones in the order they will be admitted. Finished jobs
 stay on the line for two minutes with a check mark (or a cross, clock, null sign or
 dagger — `✗`, `⏱`, `∅`, `†` — for failed, timed out, cancelled and lost), compaction
-count included.
+count included. A job that did not run in Claude Code carries its harness's name after
+its mark (`⟳ opencode Qwen3.8-27B ...`).
 
 "Live" means the heartbeat: a server is shown while its last beat is under a minute
 old (and its pid still exists). A server that exited or was killed drops off the line
 as its jobs age out; the next server to start marks that one's unfinished jobs `lost`.
-The line is scoped to the Claude Code session asking: each server records as its owner
+The line is scoped to the Claude Code session asking (OpenCode has no status line; its
+jobs record the calling OpenCode session as `owner_session` instead): each server records as its owner
 the nearest Claude Code process it runs under (native `claude`, or an npm install running
 as `node` with a `claude` entry in its command line; its parent pid when there is none),
 so a session's own jobs match their session whichever way the server was started
@@ -196,8 +200,9 @@ numbers are rows in SQLite (see [The database](#the-database) below): the brief 
 `jobs.task` column and every backend request is a row in the `requests` table with
 timing, size and usage, written directly by the shim. `job_status` answers from those
 rows: `usage` as the sums over the job's requests, `tool_calls` with `tool_counts` per
-tool, `errors`, `last_tool`, `files_touched`, `ctx_tokens` and `gen_tps`. `tool_mix` sorts the job's tool calls by what they did. Its
-`reads` are Read, Grep, Glob and shell commands that only read, searched, listed or
+tool, `errors`, `last_tool`, `files_touched`, `ctx_tokens` and `gen_tps`. `tool_mix` sorts the job's tool calls by what they did, reading each
+tool by its harness's names. Its `reads` are the reading tools (Read, Grep, Glob in Claude
+Code; read, grep, glob in OpenCode) and shell commands that only read, searched, listed or
 inspected git; `edits` are the edit tools; `other` is programs, test runs, shell writes
 and every other tool; `unclassified` is a command the classifier could not place, mostly
 one that may have been cut in storage (a Bash command is stored up to 2000 characters,
@@ -211,8 +216,10 @@ worktree job's diff against its base, recorded when the job finishes (at most 10
 with `worktree.files_n` counting them all, and without the files git ignores). A file git ignores that the job left is named in
 `worktree.note` instead, and it keeps the tree. It is null
 for a job with no worktree, one that has not finished, or one whose diff could not be read. `compactions`
-is a column of its own: the runner counts the harness's `compact_boundary` messages
-into it. When a session reports a result while background tasks it started are still
+is a column of its own: for a Claude Code job the runner counts its `compact_boundary`
+messages, for an OpenCode job the shim counts each new conversation checkpoint the
+session sends. `harness` names the harness the job ran in and `owner_session` the
+OpenCode session that called `run_agent` (null from Claude Code). When a session reports a result while background tasks it started are still
 alive, `last_activity` reads `result reported; waiting on 1 background task:
 <description>` until they end, and the progress and status lines show the same. If the
 timeout or a cancel ends such a session, the record keeps the result and `error` says when
@@ -223,7 +230,8 @@ finishes, so it outlives the directory below.
 
 The directory — `~/.local/state/localagents/jobs/<id>/`, where `<id>` is the job's uuid
 (the same `job_id` the tools take; it also names the worktree branch `local-agent/<id>`)
-— holds `transcript.txt` (what the agent said and did) and nothing else unless
+— holds `transcript.txt` (what the agent said and did; an OpenCode job also keeps the
+OpenCode configuration it ran with in `opencode-config/`) and nothing else unless
 debugging is on: `events.jsonl` (every SDK message, tool results included; it was 98%
 of a 6 GB state directory before it became opt-in) with `defaults.log_events: true` or
 `LOCALAGENTS_LOG_EVENTS=1`, and `requests_full.jsonl` (every request body) with

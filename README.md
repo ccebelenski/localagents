@@ -1,12 +1,12 @@
 # localagents
 
-**Hand Claude Code's grunt work to a model running on your own hardware.**
+**Hand your coding agent's grunt work to a model running on your own hardware.**
 
-localagents is an MCP server that gives Claude Code a `run_agent` tool. Each call
-starts a full headless Claude Code session — same tools, same `CLAUDE.md`, same
-working tree — except its API traffic goes to a llama.cpp or vLLM server you run
-instead of to Anthropic. Claude writes the brief and checks the result. The local
-model does the work, and the Anthropic tokens go where Claude is actually needed.
+localagents is an MCP server that gives Claude Code or OpenCode a `run_agent` tool. Each
+call starts a full headless agent session in your working tree, a Claude Code session by
+default or an OpenCode one, except its API traffic goes to a llama.cpp, vLLM or Strata
+server you run. The coordinating model writes the brief and checks the result. The local
+model does the work, and the paid tokens go where the bigger model is actually needed.
 
 A 27B Qwen on one GPU can handle "add a CLI for this module and tests to match" on
 its own, while Opus does the design instead of watching pytest. Two local agents can
@@ -17,34 +17,35 @@ It comes with a web **monitor** for the servers and the jobs running on them.
 ## How it works
 
 ```
-Claude Code (your session)
-   │  MCP: run_agent(task, model=...)
+Claude Code or OpenCode (your session)
+   │  MCP: run_agent(task, model=..., harness=...)
    ▼
-localagents ── spawns ──▶ headless `claude` (Agent SDK)
-   │                          │  ANTHROPIC_BASE_URL
-   │                          ▼
-   └──── in-process shim ◀────┘   normalises requests, logs them,
-              │                   translates backend errors
+localagents ── spawns ──▶ headless `claude` (Agent SDK)   or   `opencode run`
+   │                          │ /v1/messages                    │ /v1/chat/completions
+   │                          ▼                                 ▼
+   └──── in-process shim ◀─────────────────────────────────────┘  logs every request,
+              │                                                    adapts Claude Code's
               ▼
-   llama-server / vllm   (/v1/messages, on your machine or your LAN)
+   llama-server / vllm / strata   (on your machine or your LAN)
 ```
 
-Pointing `ANTHROPIC_BASE_URL` at a local server almost works by itself. localagents
-adds three things on top. The config is a list of servers. The model each one is
-serving, the real context window and how many slots are busy are read from the server
-on every call. You start and stop models yourself. A shim between Claude Code and the
-backend mediates the requests, reports the real context window and translates overflow
-errors ([what the shim does](docs/shim.md)). Every result is recorded in one SQLite
-database, so Claude can read a job after the work is completed.
+Pointing an agent at a local server almost works by itself. localagents adds three things
+on top. The config is a list of servers. The model each one is serving, the real context
+window and how many slots are busy are read from the server on every call. You start and
+stop models yourself. A shim between the agent and the backend records every request,
+keeps the session inside the real context window and smooths over what local servers do
+differently ([what the shim does](docs/shim.md)). Every result is recorded in one SQLite
+database, so the coordinator can read a job after the work is completed.
 
 ## Quick start
 
-You need Python 3.12+, [uv](https://docs.astral.sh/uv/), Claude Code (the Agent
-SDK bundles its own `claude` binary, so nothing else to install), and a server that
-speaks Anthropic's `/v1/messages`: llama.cpp's `llama-server`, Strata, or vLLM. The
-model has to be able to drive Claude Code — solid native tool calling and a context
-window of 128k or more per request. Qwen3.8-27B works well. Smaller windows work but
-compact constantly; see [Context windows](docs/shim.md#context-windows).
+You need Python 3.12+, [uv](https://docs.astral.sh/uv/), and a llama.cpp
+`llama-server`, Strata or vLLM server. Jobs run in Claude Code unless you ask for
+OpenCode; the Agent SDK bundles its own `claude` binary, so there is nothing else to
+install for them (OpenCode jobs need `opencode` on your `PATH`). The model has to be able
+to drive a coding agent: solid native tool calling and a context window of 128k or more
+per request. Qwen3.8-27B works well. Smaller windows work but compact constantly; see
+[Context windows](docs/shim.md#context-windows).
 
 1. **Install it.** Editable, so edits in the checkout take effect:
 
@@ -121,15 +122,12 @@ opencode mcp add local --global -- localagents --config "$PWD/models.yaml"
 mkdir -p ~/.config/opencode/agents && ln -s "$PWD/agents/opencode/local-agent.md" ~/.config/opencode/agents/
 ```
 
-The server reads the client's name when OpenCode connects and gives it OpenCode's
-instructions; `--client opencode` after `localagents` says so explicitly. OpenCode
-waits on a `run_agent` call for as long as the job runs, so there is no
-auto-background setting. To run several jobs at once, give each one to the
-`local-agent` subagent. Subagents run in the background and report when their job
-ends. The relay only gets the server's tools (registered as `local`); under another
-name, copy the file and change `local_*` in its permissions and the tool names in its
-text. The jobs themselves are still headless Claude Code sessions. There is no status
-line for OpenCode yet.
+OpenCode waits on a `run_agent` call for as long as the job runs, so there is no
+auto-background setting; to run several jobs at once, give each to the `local-agent`
+subagent. Whichever client you use, `run_agent(harness="opencode")` (or
+`defaults.harness: opencode`) runs a job in OpenCode instead of Claude Code.
+[docs/opencode.md](docs/opencode.md) covers both, including how the job settings
+translate.
 
 `localagents monitor` opens the [Monitor](#monitor) at <http://127.0.0.1:8765/> when you
 want to watch. The tools, the relay subagent, the status line and where a job's record
@@ -137,8 +135,9 @@ lives are in [docs/using.md](docs/using.md).
 
 ## Backends
 
-An endpoint is anything that serves Anthropic's `/v1/messages` and lists its models
-at `/v1/models`. Beyond that, what localagents can see depends on the backend and
+An endpoint is anything that lists its models at `/v1/models` and serves the API the
+job's harness speaks: Anthropic's `/v1/messages` for Claude Code jobs, OpenAI's
+`/v1/chat/completions` for OpenCode jobs. llama.cpp, Strata and vLLM serve both. Beyond that, what localagents can see depends on the backend and
 on how you start it. The `backend:` key in `models.yaml` picks the probe.
 
 | localagents reads | llama.cpp | Strata | vLLM |
@@ -292,12 +291,12 @@ endpoints:
     host: gpu-server
 ```
 
-`endpoints` are places that serve `/v1/messages`, and that is all the file holds; which
+`endpoints` are the servers, and that is all the file holds; which
 model a server is serving is found by probing it. Order is priority: with no model
 named, the first endpoint that is up and serving something wins. `backend`
 (`llama.cpp`, `vllm`, `strata`, `other`) selects the probe; `host` groups endpoints
-under one card in the monitor; `env` adds environment variables to sessions that run
-against that endpoint. `api_key` is sent on every call to that endpoint (as both
+under one card in the monitor; `env` adds environment variables to Claude Code sessions
+that run against that endpoint. `api_key` is sent on every call to that endpoint (as both
 `x-api-key` and `Authorization: Bearer`). It stays in the MCP server: the delegated
 session is given the placeholder `local` and the shim swaps the real key in, so an
 agent's `env` or Bash never sees it.
@@ -305,11 +304,14 @@ agent's `env` or Bash never sees it.
 `run_agent(model=...)` takes a served id, a glob, or a fuzzy name (`qwen3.8-27b` finds
 `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL`); `endpoint=` pins a server. Both are only needed
 when more than one thing is up. An optional `defaults:` section holds `model` (a
-standing preference in the same syntax), `permission_mode` (`acceptEdits`),
-`allowed_tools` and `disallowed_tools`, `setting_sources`, `max_turns` (60),
-`timeout_s` (1800), `probe_timeout_s` (2.5), `job_retention_days` (7), the debugging
-switches `log_events` and `dump_requests`, and `system_prompt_append`, a suffix telling
-the agent it's a delegate and how to report back. `monitor:` is the monitor's own
+standing preference in the same syntax), `harness` (`claude-code` or `opencode`),
+`permission_mode` (`acceptEdits`), `allowed_tools` and `disallowed_tools`,
+`setting_sources`, `max_turns` (60), `timeout_s` (1800), `background_tasks` (true) with
+`bash_timeout_s` (600) and `bash_max_timeout_s` (1800) for foreground-only jobs,
+`probe_timeout_s` (2.5), `job_retention_days` (7), the debugging switches `log_events` and
+`dump_requests`, and `system_prompt_append`, a suffix telling the agent it's a delegate and
+how to report back. The tool and permission settings use Claude Code's names; an
+OpenCode job gets them translated ([docs/opencode.md](docs/opencode.md)). `monitor:` is the monitor's own
 section, above.
 
 ## Further reading
@@ -318,6 +320,8 @@ section, above.
   line, job records and the database.
 - [docs/monitor.md](docs/monitor.md) — the monitor's flags, the page, the smoke test
   and the routes.
+- [docs/opencode.md](docs/opencode.md) — OpenCode as the coordinator and as the
+  harness a job runs in, and how the job settings translate.
 - [docs/shim.md](docs/shim.md) — what the shim rewrites and why, and how a session is
   kept inside the real context window.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — running from a checkout, the tests, and a

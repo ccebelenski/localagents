@@ -4,8 +4,8 @@
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- Something that serves `/v1/messages` locally if you want to run a real job:
-  llama.cpp's `llama-server`, Strata, or vLLM (see the README's Backends section for the flags).
+- A llama.cpp `llama-server`, Strata or vLLM server if you want to run a real job (see the
+  README's Backends section for the flags), and `opencode` on your `PATH` for an OpenCode job.
 
 ## Setup
 
@@ -61,16 +61,19 @@ finishes. A hand drop from the `queue` tool on such a waiting job closes it as
 |---|---|
 | `server.py` | the MCP tools; thin, mostly argument handling |
 | `registry.py` | `models.yaml` (endpoints only), endpoint probing (health, served ids, context window, slots, metrics), model resolution |
-| `runner.py` | one job = one headless Claude Code session via the Agent SDK; env, worktrees, transcript |
-| `shim.py` | the in-process HTTP proxy every session talks through; all backend-specific fixups go here |
+| `runner.py` | one job, whatever its harness: worktrees, the shim, the job's lifetime, cancel and timeout |
+| `harnesses/` | the session a job runs: `claude_code.py` (the Agent SDK) and `opencode.py` (`opencode run`), each with its tool vocabulary (`*_tools.py`, shared kinds in `tools.py`); `policy.py` resolves a job's settings once and `opencode_policy.py` translates them for OpenCode |
+| `clients/` | the coordinator a server answers (Claude Code or OpenCode): the tool descriptions and instructions, shared text in `__init__.py`, each client's own sentences in its module |
+| `shim.py` | the in-process HTTP proxy every session talks through: recording, the key, the levers; `shim_anthropic.py` is its `/v1/messages` version (Claude Code's fixups go there), `shim_openai.py` its `/v1/chat/completions` version, `shim_wire.py` what both share |
 | `db.py` | the shared SQLite file: path, schema, migrations, `open_db` (WAL, busy timeout) |
 | `jobs.py` | job records: the `jobs` and `mcp_servers` rows, the job directory and transcript, retention pruning, the startup lost-job mark |
 | `derive.py` | read-time derivations over the `requests`/`tool_calls` rows: usage totals, per-tool counts, the last tool, the whole `job_status` dict for a row |
 | `status.py` | the status-line renderer: reads every live server's jobs from the shared database; `localagents statusline` runs it without importing the server |
 | `router/` | the routing package, holding the d3 server, brief scoring, selection, the queue, the job gates and verdicts, and the command tools; `docs/router.md` explains the parts |
-| `agents/local-agent.md` | Claude Code subagent that relays one job and reports its record; the fallback where auto-backgrounding is off |
+| `agents/claude-code/local-agent.md` | Claude Code subagent that relays one job and reports its record; the fallback where auto-backgrounding is off (`agents/local-agent.md` is a symlink to it, for older installs) |
+| `agents/opencode/local-agent.md` | OpenCode's relay: the way to run several jobs at once from OpenCode |
 
-A note on `agents/local-agent.md`: the frontmatter must be valid YAML, so quote the
+A note on `agents/claude-code/local-agent.md`: the frontmatter must be valid YAML, so quote the
 description. The first version had an unquoted description containing `model: <served id>`;
 a colon-space inside a plain scalar is a YAML error ("mapping values are not allowed here"),
 and Claude Code then falls back to a lenient parse that keeps `name` and `description` and
@@ -80,8 +83,9 @@ only visible symptom is "Tools: All tools" in the agent listing. `tests/test_age
 parses the file and checks the keys so this cannot come back quietly.
 
 Backend quirks belong in the shim, not in the runner. If a new server rejects
-something Claude Code sends, the fix is a normalisation in `shim.py` with a unit test
-that uses the real error body you saw.
+something Claude Code sends, the fix is a normalisation in `shim_anthropic.py` with a unit
+test that uses the real error body you saw. Something true of one harness goes in its
+module under `harnesses/`; the runner holds only what every harness shares.
 
 ## Seeding a database for the monitor
 

@@ -74,8 +74,8 @@ too long for its card ends in "…", and hovering it shows the whole text.
 Under the cards is the **Recent jobs** table: running and queued jobs, then the last ten
 finished. Each row has a status pill — one of them is `lost`, for a job whose MCP server
 stopped beating — and the numbers from the status line: where it ran, how long, turns,
-tool calls and errors, context fill, speed, and what it was last doing. A non-zero error
-count is a link. Below that a timeline draws each live endpoint's busy intervals with
+tool calls and errors, context fill, speed, and what it was last doing. A job that ran in
+OpenCode has an `opencode` badge beside its status. A non-zero error count is a link. Below that a timeline draws each live endpoint's busy intervals with
 its jobs as bars on top.
 
 Tables sort by header and filter per column, with a filter that fits the column (a
@@ -87,9 +87,9 @@ loaded from the internet.
 
 An endpoint's name opens its own page — every figure it reports as a tile with a
 sparkline, the jobs that ran on it, its restarts and outages, and its requests. A job
-opens the job page: the usage and `/metrics` numbers, the files it touched, a timeline
-of its tool calls with errors in red, its requests, and the transcript tail. The job
-page also shows the build stamp of the MCP server that ran it, with a note when the
+opens the job page: the usage and `/metrics` numbers, the harness it ran in, the files
+it touched, a timeline of its tool calls with errors in red, its requests, and the
+transcript tail. The job page also shows the build stamp of the MCP server that ran it, with a note when the
 monitor's own code is newer; that is how you notice a server left running on old code.
 
 Two rows in the request tables are not what they look like. Claude Code's connection

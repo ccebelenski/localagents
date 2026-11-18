@@ -475,6 +475,10 @@ async def run_probe_job(reg, store, conn, ep, served_id, probe: Probe, run_dir, 
             # server, and no ancestor CLAUDE.md or settings reach the session
             strict_mcp_config=True,
             setting_sources=[],
+            # Epic 6.9 is on hold (the operator, 2026-11-18): the probes are built for Claude Code
+            # (its stub prefix, its [thinking] lines), so a calibration job runs there whatever
+            # defaults.harness says
+            harness="claude-code",
         )
     except server.JobRefused as e:
         return ProbeOutcome("skipped", 0.0, str(e.reply.get("error") or e), None)

@@ -1448,3 +1448,25 @@ def test_check_reads_the_recorded_base_not_head(tmp_path):
     assert seen.read_text() == base
     subprocess.run(["git", "-C", str(root), "update-ref", "-d", calibrate.PROBE_BASE_REF], check=True)
     assert calibrate._probe_base(root) != base  # nothing recorded: HEAD, the job's commit
+
+
+def test_a_calibration_job_runs_in_claude_code_whatever_the_default(conn, probes, monkeypatch, tmp_path):
+    """Epic 6.9 is on hold (operator 2026-11-18); the probes are built for Claude Code (its stub
+    prefix, its [thinking] lines), so a calibration job names its harness rather than taking
+    defaults.harness, which may say opencode."""
+    ep = _endpoint()
+    reg = FakeRegistry({"ep": ep}, probe={"up": True, "models": ["served"]})
+    job = _fake_job(_store(conn), "job-h", "", tmp_path)
+    seen = {}
+
+    async def start_job(**kw):
+        seen.update(kw)
+        return job
+
+    class Store:
+        async def wait(self, jid, timeout_s):
+            return job
+
+    monkeypatch.setattr(calibrate.server, "start_job", start_job)
+    asyncio.run(calibrate.run_probe_job(reg, Store(), conn, ep, "served", probes["alpha"], tmp_path / "run", 30.0))
+    assert seen["harness"] == "claude-code"
