@@ -2876,6 +2876,117 @@ the SDD ledger and docs/retros/2026-11-04-router-live-test.md.
 
 True now (2026-11-04 evening): Epic 5 DONE; live-tested on the real store and accepted by the consumer; nothing pushed ("No push because we are not complete"); what follows is a new epic. The morning line read: phases 1, 2 and 3 complete; the router is feature complete pending the operator's own read; `model: auto` routes, queues and explains; the record names the served model and endpoint with routed_by; suite 1298 passed, 1 skipped; nothing pushed (the operator gates the push). The 2026-11-03 line read: phases 1 and 2 complete, phase 3 waits for the go.
 
+## Epic 6: OpenCode beside Claude Code (operator 2026-11-17)
+
+The operator, from an OpenCode session that could not reach the server: "what would it take to
+adapt it to handle both claude code as it does now and opencode?" On the coordinator's
+assessment (a small coordinator side, an epic-sized worker side, a short experiment to settle the
+unknowns first): "Yes, I think that is the right path - I'm interested in robust, usable, and
+complete rather than 'cheap'. This is a tool I use all the time. As part of that epic I would
+probably include a placeholder to improve the installation process - I don't think we have one,
+and while an LLM can do it easily it would be nice to automate." Order against the benchmark epic
+(the handoff's "next"): the operator's call.
+
+Two halves. **Coordinator**: OpenCode is the client calling the MCP tools, as Claude Code is
+today. **Harness**: a job runs as a headless OpenCode session instead of a headless Claude Code
+one. The two are independent: an OpenCode coordinator may launch Claude Code jobs and the
+reverse. Rules for the whole epic: Claude Code's behaviour is unchanged at every step (its
+suite stays green unmodified apart from moved seams); one owner per fact (one module
+knows each harness's tool names, one knows its launch, one parses its events); every OpenCode
+parser is tested against CAPTURED lines (6.2), never typed ones. The operator, the same day:
+"I would not conflate claude code with opencode - if we need two versions of things, then factor
+out the common stuff and create the versions. And using openai endpoints rather than claude
+endpoints might be better too." So: no blended wording or one file serving both — where the two
+differ there are two versions (two relay agents, two instruction texts, two launchers, two event
+parsers, two policy translations) over a factored common core, and nothing harness-specific
+lives in the core. The OpenCode harness talks to the backends' OpenAI-compatible API by
+default: the shim's relay core is factored out of its Anthropic version and gains an OpenAI
+version (`/v1/chat/completions`, OpenAI SSE usage), so per-job accounting holds for both.
+
+Coupling map (coordinator's explore pass, 2026-11-17; file:line at main e920a25). The runner
+does not build a `claude` argv: it calls `claude_agent_sdk.query()` with `ClaudeAgentOptions`
+(runner.py:610-637) and reads typed SDK messages in `_apply_message` (runner.py:409-504:
+`init`, `compact_boundary`, `task_*`, `ResultMessage`). `build_env` (runner.py:51-90) is all
+`ANTHROPIC_*`/`CLAUDE_CODE_*`. The shim is Anthropic Messages on both sides (shim.py), with
+Claude-Code-shaped repairs (the `prompt is too long` overflow rewrite, `/api/hello`,
+`count_tokens` fallback). Claude Code tool names are hard-coded in derive.py:19,192
+(`EDIT_TOOLS`, `READ_TOOLS`), `Bash` in derive.py, router/feedback.py:172 and monitor/smoke.py.
+Config defaults are Claude Code vocabulary (registry.py:187-213: `permission_mode`,
+`allowed_tools`, `setting_sources`, `background_tasks`). Owner detection walks /proc for a
+`claude` process (db.py:903-948). Calibration runs through the runner (router/calibrate.py).
+Tests: ~45 SDK-object constructions in 7 files, 8 files stub `runner.query`.
+
+OpenCode facts (V2 docs, opencode v2.3.1 on this box): `opencode run --format json --session
+<id> --model provider/model --agent <a> --auto`, `--standalone` for a private server (without it
+every run shares the user's one background service and its one config); custom providers via
+`@opencode/ai/providers/openai-compatible` or `anthropic-compatible` with `settings.baseURL`;
+agents carry `steps` (the max-turns analogue), `permissions` rules and `system` (which REPLACES
+the base prompt); compaction is automatic (`compaction.buffer`, `keep.tokens`) and recovers once
+from a too-long rejection, with `session.compaction.*` events; MCP tool calls default to a 12 h
+execution timeout and carry the calling session in `_meta["ai.opencode/sessionID"]`. Unverified:
+the `--format json` event shapes, how a standalone run takes a per-job config, whether an
+Anthropic-compatible provider works through the shim, whether the overflow recovery fires on
+local backends' errors.
+
+- ☐ **6.1 OpenCode as the coordinator.** Register the server in `opencode.json`
+  (`mcp.servers.<name>`, `type: "local"`); the job's owner from `_meta["ai.opencode/sessionID"]`
+  when present (under OpenCode the server's parent is the shared service, so the /proc walk
+  would name one owner for every session), the walk kept for Claude Code; the server's
+  INSTRUCTIONS in two versions over a common core, the one sent chosen by the connecting client
+  (MCP `initialize` names it) — the Claude Code text as today, the OpenCode text without Claude
+  Code's settings (server.py:36-61; the `run_agent` and `cancel_job` descriptions likewise
+  split their client-specific sentences out); an OpenCode relay agent as its own file beside
+  `agents/local-agent.md`; the status line's OpenCode equivalent if there is one (to check).
+  Gate: suite; an OpenCode session lists models, runs and waits on a job, and its owner is the
+  session ID; a Claude Code session unchanged.
+- ☐ **6.2 Capture experiment.** `opencode run --standalone --format json` against real
+  endpoints with an OpenAI-compatible provider (the route the operator prefers), plus one
+  Anthropic-compatible run for comparison. Endpoints the operator allowed (2026-11-17): ai9
+  (llama.cpp), ai1 and ai2 (Strata); no vLLM. Captured into tests/fixtures: the event stream of
+  a job with tool calls, a tool error, a compaction, a step cap, a cancel and a resume; and each
+  backend's OpenAI-side shapes the shim's OpenAI version must read (SSE usage, an overflow
+  error). Settles every "unverified" above.
+- ☐ **6.3 The harness seam, Claude Code behind it.** The job lifecycle every harness shares
+  (worktree, timeout, cancel, heartbeat, the job record's writes) factored into a core; launch,
+  environment, event parsing and resume are the harness's own version behind one interface. The
+  Claude Code version is today's code moved, not rewritten. Gate: the suite unchanged in count and green; a replayed job's record identical
+  before and after.
+- ☐ **6.4 Harness on the job record.** A `harness` column on jobs (schema bump: the shared
+  store's migration note applies), `run_agent(harness=)`, a default in `models.yaml`, shown in
+  the status line, the monitor's tables and the job page.
+- ☐ **6.5 One tool vocabulary.** Each harness's own map from its tool names to the common kinds
+  (edit, read, shell, web, MCP) and its input keys; derive.py, router/feedback.py, the monitor and the smoke read
+  kinds through it, never names.
+- ☐ **6.6 The shim's OpenAI version.** The relay core (per-job routing, request rows, timing,
+  stall data, the endpoint's api_key) factored out of the Anthropic version; an OpenAI version
+  over it (`/v1/chat/completions`, OpenAI SSE usage into the same request rows, the backend's
+  overflow error passed through in the shape OpenCode's recovery reads — from 6.2's captures);
+  derive.py reads usage by request kind, not by the `/v1/messages` path. The Anthropic version
+  unchanged for Claude Code.
+- ☐ **6.7 The OpenCode harness.** Per-job standalone run in the job's worktree with a generated
+  config (an OpenAI-compatible provider at the shim's OpenAI version (6.6), model, context limit,
+  compaction, permissions, steps, instructions);
+  the event parser from 6.2's captures onto the same job fields (turns, tool calls and results,
+  session ID, result, error, compactions, last activity); resume by session; cancel with the
+  private server torn down; foreground-only's equivalent or a stated no-op.
+- ☐ **6.8 Policy translation.** `permission_mode`, `allowed_tools`, `disallowed_tools`,
+  `max_turns`, `system_prompt_append`, `setting_sources`, `background_tasks`: the common
+  fields read once, each harness's translation its own module, each mapping stated (and refused where there is no equivalent, never silently
+  dropped).
+- ☐ **6.9 Router and calibration across harnesses.** Calibration through the seam; whether
+  capability cells and speed curves are keyed by harness as well as model (the same model may
+  score differently under two harnesses) is a design question for the operator.
+- ☐ **6.10 Docs.** README and docs/using.md for both clients and both harnesses.
+- ☐ **6.11 Installation (placeholder, to shape).** Today install is the README's seven manual
+  steps (`uv tool install -e .`, copy `models.example.yaml`, `claude mcp add`, the auto-background
+  env, the relay agent symlink, the status line). The operator: automate it. Shape to settle: a
+  `localagents install` (or `setup`) that is idempotent and re-runnable, detects which clients
+  are installed (Claude Code, OpenCode) and registers the server with each the operator picks,
+  writes `models.yaml` from endpoints it probes and the operator confirms, installs the relay
+  agents and the status line hook, checks with a live `list_models`, and has an `uninstall`
+  that reverses exactly what it wrote. To decide: interactive versus flags, user versus project
+  scope, and whether it edits client configs directly or prints what to run.
+
 ## Epic 4: operations (V2, not scheduled)
 
 Open items the operator has named but not shaped (2026-10-30): database purge ("It does need to
